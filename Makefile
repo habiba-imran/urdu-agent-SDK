@@ -1,4 +1,4 @@
-.PHONY: gate gate0 test lint db-sync db-reset usage fixtures secrets rls-check bundle-check
+.PHONY: gate gate0 test lint db-sync db-reset db-inspect usage fixtures secrets rls-check bundle-check
 BASH := C:/Progra~1/Git/bin/bash.exe
 PY := python
 gate: secrets lint test rls-check usage-check
@@ -23,6 +23,8 @@ db-sync:
 	@echo "Run db-inspector subagent. Never hand-edit supabase/SCHEMA.md."
 db-reset:
 	@$(PY) scripts/db_reset.py
+db-inspect:
+	@$(PY) scripts/db_inspect.py
 fixtures:
 	@$(PY) scripts/fixture_stats.py
 bundle-check:
