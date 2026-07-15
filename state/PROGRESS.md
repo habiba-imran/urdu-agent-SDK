@@ -23,6 +23,11 @@ phase/0-harness — secrets regex no longer flags `.env.example` (6b9b944), 47 r
 - [X] P0-T01 Install ponytail — `@dietrichgebert/ponytail` installed via npm. `/ponytail-help` is a Claude Code plugin slash command, not testable outside Claude Code. Commit: 917cfab
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
+- **P1-T03 offline-guard scope refinement + isolation test (justified test-file edits).** The test-guard
+  override token was added to: (1) allow-list the FREE Supabase dev host in the conftest guard so the RLS isolation test
+  can hit the real DB — paid providers (Uplift/Gladia/LLMs) stay blocked, so the guard's purpose is
+  intact; (2) add `test_isolation.py` to pytest.ini `python_files`; (3) create `tests/test_isolation.py`.
+  No existing assertion changed. Token removed immediately after.
 - **Lint cleanup of ported P0-T08 test files (human-authorized; lint-level only, no logic).** The
   test-guard override token was added only to rename ambiguous `l` → `ms`/`label` (E741) in
   test_harness.py/test_latency.py and

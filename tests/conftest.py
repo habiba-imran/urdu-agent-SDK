@@ -47,6 +47,28 @@ _LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0", ""}
 _hits = {"n": 0}
 
 
+def _extra_allowed_hosts():
+    """Hosts tests MAY reach beyond loopback: the FREE Supabase dev backend, so the RLS
+    isolation test can hit the real DB. Paid providers (Uplift/Gladia/LLMs) are never
+    added here — they stay blocked, which is the whole point of the guard."""
+    import urllib.parse as _up
+
+    from dotenv import dotenv_values as _dv
+
+    hosts = set()
+    cfg = _dv(os.path.join(_PROJECT_ROOT, ".env.local"))
+    for key in ("SUPABASE_URL", "SUPABASE_DB_URL"):
+        val = cfg.get(key)
+        if val:
+            host = _up.urlparse(val).hostname
+            if host:
+                hosts.add(host)
+    return hosts
+
+
+_ALLOWED = set(_LOOPBACK) | _extra_allowed_hosts()
+
+
 class PaidNetworkBlocked(OSError):
     """A test tried to open a live socket to a non-loopback host.
 
@@ -78,25 +100,25 @@ _orig_create_connection = socket.create_connection
 
 
 def _guard_getaddrinfo(host, *args, **kwargs):
-    if host is not None and _host(host) not in _LOOPBACK:
+    if host is not None and _host(host) not in _ALLOWED:
         raise _block(_host(host))
     return _orig_getaddrinfo(host, *args, **kwargs)
 
 
 def _guard_connect(self, address, *args, **kwargs):
-    if _host(address) not in _LOOPBACK:
+    if _host(address) not in _ALLOWED:
         raise _block(_host(address))
     return _orig_connect(self, address, *args, **kwargs)
 
 
 def _guard_connect_ex(self, address, *args, **kwargs):
-    if _host(address) not in _LOOPBACK:
+    if _host(address) not in _ALLOWED:
         raise _block(_host(address))
     return _orig_connect_ex(self, address, *args, **kwargs)
 
 
 def _guard_create_connection(address, *args, **kwargs):
-    if _host(address) not in _LOOPBACK:
+    if _host(address) not in _ALLOWED:
         raise _block(_host(address))
     return _orig_create_connection(address, *args, **kwargs)
 
