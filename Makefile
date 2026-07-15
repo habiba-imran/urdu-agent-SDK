@@ -12,7 +12,7 @@ lint:
 	@$(PY) -m ruff check . && $(PY) -m ruff format --check . && (cd sdk 2>/dev/null && npm run lint || true)
 secrets:
 	@$(BASH) -c 'gitleaks detect --no-banner --redact -v 2>/dev/null || { echo "GATE FAIL: secrets"; exit 1; }'
-	@$(BASH) -c '! git ls-files | grep -qE '"'"'^\.env'"'"' || { echo "GATE FAIL: .env tracked"; exit 1; }'
+	@$(BASH) -c 'if git ls-files | grep -E '"'"'^\.env'"'"' | grep -qv -e '"'"'\.example'"'"' -e '"'"'\.sample'"'"' -e '"'"'\.template'"'"'; then echo "GATE FAIL: real .env file tracked (not a template)"; exit 1; fi'
 rls-check:
 	@$(PY) scripts/rls_check.py
 usage-check:
