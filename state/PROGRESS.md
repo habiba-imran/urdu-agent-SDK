@@ -16,6 +16,23 @@ Updated: 2026-07-16 | Phase: 0 | Task: P0-T09 | Commit: ed4a3b8 | Branch: phase/
 - [X] P0-T01 Install ponytail — `@dietrichgebert/ponytail` installed via npm. `/ponytail-help` is a Claude Code plugin slash command, not testable outside Claude Code. Commit: 917cfab
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
+- **Caveat B — offline guard in `tests/conftest.py` (justified test-file edit; the test-guard override token was added only for the duration of the edit, then removed so the guard re-arms)** —
+  the ported CER tests reach live providers directly (`helpers.synth_urdu` opens a Uplift Socket.IO
+  connection; env-smoke calls Groq/Gemini/Supabase inline). Running bare `pytest tests/` therefore
+  attempted a live paid call and failed with a connection error, violating CLAUDE.md #8 /
+  30-GUIDE-FREE-TIER.md §7 ("no live API call in any test"). Fix = a session-wide network guard in
+  conftest that (a) blocks any socket/DNS to a non-loopback host so **zero outbound calls** can
+  leave, and (b) converts a guard-tripped test into a **skip with a clear message** instead of a
+  live-call failure. This is NOT rewriting a test to go green — no assertion or expected value is
+  touched; guard-tripped tests SKIP, and any real logic failure (guard not tripped) still FAILS.
+  Token removed immediately after the edit per test-guard.sh.
+- **Import path of ported modules is harness-scoped, and that is acceptable** — `tools.py` imports
+  `pipecat.*`, resolved by `pipecat_stubs/` which `tests/conftest.py` + `pytest.ini` put on
+  `sys.path`. A bare `python -c "import tools"` fails because neither is active outside pytest.
+  Decision: **not** fixed by hacking `sys.path` into the ported product modules. These are
+  transitional pre-Phase-3 files, exercised ONLY by the CER harness (pytest) until Phase 3 rewrites
+  `tools.py` onto the LiveKit function-calling API; they are never invoked as standalone scripts.
+  Harness-only import resolution is therefore correct for how they are used. Revisit at Phase 3.
 - **Pipecat stubs at `pipecat_stubs/`** — tools.py imports `pipecat.adapters.schemas.FunctionSchema` and `pipecat.services.llm_service.FunctionCallParams`. Created minimal shims with equivalent dataclasses. In Phase 3, `tools.py` must be adapted to LiveKit Agents' function-calling API (different schema format, different callback model).
 - **`../urdu-voice-agent/processors.py` not ported fully** — only `sanitize_text()` and stub classes ported. The full `OutputSanitizer`, `InputGuard`, `TurnMetricsObserver`, `NumberDictationPatience`, `InterimPromoter` are Pipecat-specific pipeline processors. Phase 3 must reimplement equivalents on LiveKit Agents.
 - **`../urdu-voice-agent/tests/helpers_pipeline.py` not ported** — uses Pipecat Pipeline/Task infrastructure directly. Tests that depend on it (`test_interruption.py`, `test_latency.py`) are marked `@pytest.mark.skip` in `test_harness.py` until Phase 3.
