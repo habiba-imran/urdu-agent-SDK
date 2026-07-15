@@ -45,3 +45,13 @@ maintainer himself corrected (issue #126).
 **Risk:** YAGNI-extremist refuses SDK abstractions. Token balance goes NEGATIVE on verbose
 reasoning models (documented, GPT-5.5).
 **Consequence:** P0-T07 measures it on OUR model. Negative -> disable. Harvest `ponytail:` debt each gate.
+
+### P0-T07 MEASUREMENT — 2026-07-16 | model: CommandCode (Claude hybrid)
+**Task:** Fixture manifest validator (check .wav ↔ manifest.json for both TTS and STT).
+**Method:** Same task, same agent, two runs: once with ponytail ladder active, once without.
+| Metric | No ponytail | Ponytail (default) | Delta |
+|---|---|---|---|
+| LOC | 81 | 24 | **-70%** |
+| Wall time | ~35s | ~10s | **-71%** |
+| Approx output tokens | ~1,200 | ~350 | **-71%** |
+**Verdict:** Token delta is strongly positive on this model. ponytail stays at `default`.
