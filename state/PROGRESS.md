@@ -1,11 +1,11 @@
 # PROGRESS
-Updated: 2026-07-16 | Phase: 0 | Task: P0-T09 | Commit: <pending> | Branch: phase/0-harness
+Updated: 2026-07-16 | Phase: 0 | Task: P0-T09 | Commit: ed4a3b8 | Branch: phase/0-harness
 
 ## Now
 - [ ] P0-T09 Usage guard + fixture scaffolding — usage_ledger.json + scripts/ present; verify pass
 
 ## Done (newest first)
-- [X] P0-T08 Port IP from old Pipecat repo → persona.py, tools.py, db.py, config.py, session_state.py, tests/ (12 files), DECISIONS.md folded into 40-ADR.md. CER harness: `pytest tests/ -q --collect-only` → 7 tests. Commit: <pending>
+- [X] P0-T08 Port IP from old Pipecat repo → persona.py, tools.py, db.py, config.py, session_state.py, tests/ (12 files), DECISIONS.md folded into 40-ADR.md. CER harness: `pytest tests/ -q --collect-only` → 7 tests. Commit: f5adfbd
 - [X] P0-T07 Measure ponytail — 81→24 LOC (70%), wall time ~35s→~10s (71%). Token delta positive. ponytail stays at `default`. Results in 40-ADR.md. Commit: 5bddd5c
 - [X] P0-T06 Subagents — 4 agents (researcher, reviewer, security, db-inspector). reviewer has no Write. Commit: 917cfab
 - [X] P0-T05 Hooks — bash .claude/hooks/selftest.sh → 12/12 all BLOCK cases exit 2. Commit: 917cfab
