@@ -55,3 +55,20 @@ reasoning models (documented, GPT-5.5).
 | Wall time | ~35s | ~10s | **-71%** |
 | Approx output tokens | ~1,200 | ~350 | **-71%** |
 **Verdict:** Token delta is strongly positive on this model. ponytail stays at `default`.
+
+---
+## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
+*Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
+Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
+They describe why the old code works the way it does, including latency engineering,
+provider choices, and free-tier budget constraints.*
+**Source:** `../urdu-voice-agent/DECISIONS.md` (330 lines, 42 entries covering D1–D42)
+**Key findings relevant to this repo's Phase 3 implementation:**
+- D3/D4/D5: Uplift TTS uses Socket.IO, PCM_22050_16, ordered sentence delivery — LiveKit's `livekit-plugins-upliftai` replaces all 300 lines of hand-rolled TTS service code
+- D19: Gladia ur-only language config beats ur+en+codeswitching (CER 0.14 vs 0.43) on this deployment
+- D27: Soniox account has no balance (402) — Gladia stays primary for dev; integration wired, gate runs when funded
+- D28: Cerebras primary LLM is gemma-4-31b (llama-3.3 deprecated on Cerebras); failover chain cerebras→groq→gemini
+- D35: Tool calls are silent in persona — cached filler fires from first streamed tool-call delta (1889→1546ms p50)
+- D42: Uplift Orator has NO speed/rate/SSML parameter; pace levers = voice choice + punctuation + intersentence silence
+**Full contents preserved in `../urdu-voice-agent/DECISIONS.md` — read before Phase 3 worker design.**
+

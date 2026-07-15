@@ -90,10 +90,25 @@ echo ""
 
 # --- ADR-004 ---
 echo "--- ADR-004 measured numbers ---"
-if grep -q 'P0-T07' docs/40-ADR.md 2>/dev/null; then
-  pass "P0-T07 entry found in ADR-004"
+# Must contain actual numeric deltas (e.g., "-70%", "+27%"), not just the P0-T07 label
+if grep -qE '\|\s*-?[0-9]+%\s*\|' docs/40-ADR.md 2>/dev/null; then
+  pass "ADR-004 contains measured numeric deltas"
 else
-  echo "  WARNING: no P0-T07 measurement entry in ADR-004"
+  fail "ADR-004 has no numeric measurement (must contain values like '-70%' or '+27%')"
+fi
+echo ""
+
+# --- P0-T08 CER harness ---
+echo "--- P0-T08 CER harness ---"
+if command -v python >/dev/null 2>&1; then
+  COLLECTED=$(python -m pytest tests/ -q --collect-only 2>/dev/null | grep -c '::' || true)
+  if [ "$COLLECTED" -ge 1 ] 2>/dev/null; then
+    pass "P0-T08: pytest collects $COLLECTED CER harness tests"
+  else
+    fail "P0-T08: pytest --collect-only found 0 tests (CER harness missing)"
+  fi
+else
+  fail "P0-T08: python not found (cannot verify CER harness)"
 fi
 echo ""
 

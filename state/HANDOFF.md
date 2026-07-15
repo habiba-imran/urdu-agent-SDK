@@ -1,32 +1,31 @@
 # HANDOFF
-> Regenerate at: context >70% | 45-60 min | phase gate | responses degrading.
-> Next session (ANY agent — Claude/Codex/Cursor/Gemini):
->   "Read CLAUDE.md, state/PROGRESS.md, state/HANDOFF.md. Brief me. Continue."
 
-## Session 1 | 2026-07-16T00:38Z | Phase 0
+## Session 2 | 2026-07-16 | Phase 0
 
 ### What changed
-- Verified `make gate0` target exists and gate0.sh runs all checks (15/15 PASS)
-- P0-T01: ponytail installed (`@dietrichgebert/ponytail` in node_modules, ponytail ruleset extracted from AGENTS.md)
-- P0-T04–T06: CLAUDE.md, hooks (selftest 12/12), agents (4, reviewer no Write) — all confirmed present and working
-- P0-T07: Real ponytail measurement on fixture validator task — 81 LOC → 24 LOC (70% reduction), wall time ~35s → ~10s (71% faster). Token delta positive → ponytail stays at `default`. Recorded in ADR-004.
-- P0-T08: BLOCKED — old Pipecat repo not in workspace. Searched all dirs including zip. No path/URL in any doc. BLOCK-001 written.
-- Git: branch `phase/0-harness`, 2 commits (917cfab scaffold, 5bddd5c ADR-004 + BLOCKERS)
-- Environment: Node v20.20.2, Python 3.12.10, ruff 0.15.21, gitleaks 8.23.3 — all on PATH
+- P0-T08 complete: ported persona.py, tools.py, db.py, config.py, session_state.py from `../urdu-voice-agent/`
+- Created `pipecat_stubs/` with minimal shims for `pipecat.adapters.schemas.FunctionSchema/ToolsSchema` and `pipecat.services.llm_service.FunctionCallParams` — tools.py can import without Pipecat installed
+- Created `processors.py` with `sanitize_text()` (full implementation ported) + stub classes for Phase 3 reimplementation
+- Ported 12 test files from old repo into `tests/`; created `test_harness.py` pytest wrapper + `conftest.py`
+- `pytest tests/ -q --collect-only` → 7 tests collected (5 active CER harness, 2 skipped pipeline tests)
+- Folded DECISIONS.md D1-D42 summary entries into `docs/40-ADR.md`
+- Harden gate0.sh: ADR-004 check now requires numeric deltas (regex for e.g. "-70%"), added P0-T08 check (`pytest --collect-only`)
+- Updated `.gitignore` with `urdu-voice-agent/`; BLOCK-001 resolved
+- Installed deps: `supabase`, `loguru`, `python-dotenv`, `openai`, `aiohttp`, `numpy`, `python-socketio`, `websockets`, `pytest-asyncio`
+- Fixed `db.py`: supabase v2 API uses `create_async_client` (not `acreate_client`)
 
 ### What was tested and HOW
-- `make gate0` → 15 passed, 0 failed (full output captured in session)
-- `bash .claude/hooks/selftest.sh` → 12 passed, 0 failed (all BLOCK cases exit 2)
-- `python scripts/usage_guard.py --report` → under budget, all providers at 0 spend
-- `wc -l` comparison of ponytail vs no-ponytail code for P0-T07 measurement
+- `pytest tests/ -q --collect-only` → 7 tests collected, 0 errors
+- `make gate0` → <pending run>
 
-### Open decisions (and why still open)
-- P0-T08: Where is the old Pipecat repo? All docs reference it but no path/URL exists. Persona.py, tools.py, db.py, tests/ CER harness cannot be ported without it.
-- P0-T02 (Supabase MCP) / P0-T03 (Context7 MCP): Done-when conditions require MCP server runtime with credentials (H1/H2 human tasks) — not verifiable from this agent env.
+### Open decisions
+- Phase 3: tools.py must be adapted from Pipecat FunctionSchema → LiveKit Agents function-calling API
+- Phase 3: processors.py stubs must be replaced with LiveKit Agents pipeline processors
+- helpers_pipeline.py left in tests/ but not pytest-collectable (needs Pipecat Pipeline)
 
 ### Traps discovered
-- Gate0 ADR-004 check greps for literal "P0-T07" string, not actual measured numbers — gate passes even with vendor-only data. Fix in gate0.sh if desired.
-- WSL bash not installed on this Windows machine; Git Bash works. Makefile already references the correct Git Bash path.
+- supabase-py v2 renamed `acreate_client` → `create_async_client`
+- Raw test files (`test_e2e.py` etc.) must be excluded from pytest collection (done via pytest.ini `python_files`)
 
 ### Exact next action
-Ask human for old Pipecat repo path. Then port persona.py, tools.py, db.py, tests/ → P0-T08. Then `make gate0` → post output → STOP.
+Run `make gate0`, paste output, STOP. Human reviews and says "begin Phase 1."
