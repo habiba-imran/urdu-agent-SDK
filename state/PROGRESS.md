@@ -1,10 +1,16 @@
 # PROGRESS
-Updated: 2026-07-16 | Phase: 0 | Task: P0 harness hardening (Caveats A+B done) | Commit: 9da575a | Branch: phase/0-harness
+Updated: 2026-07-16 | Phase: 1 (Supabase) | Task: P1-T03 (isolation test) next | Branch: phase/1-supabase
 
 ## Now
-- [ ] P0-T09 Usage guard + fixture scaffolding — usage_ledger.json + scripts/ present; verify pass
+- [ ] P1-T03 tests/test_isolation.py — tenant A's JWT reading tenant B's agents returns 0 rows
+- [ ] P1-T04 db-inspector regenerates supabase/SCHEMA.md + RLS.md
+
+Phase 0 COMPLETE: `make gate0` 16/16 and full `make gate` both green. Pre-existing gate bugs fixed on
+phase/0-harness — secrets regex no longer flags `.env.example` (6b9b944), 47 ruff errors cleared (2ccad68).
 
 ## Done (newest first)
+- [X] P1-T02 rls_check.py — now connects via scripts/dbconn.py (.env.local) and fails if any public table lacks RLS. `make rls-check` → RLS OK on all 6 tables.
+- [X] P1-T01 Supabase schema + RLS — migrations 0001_schema / 0002_rls / 0003_seed_voices + scripts/{dbconn,db_reset}.py + Makefile `db-reset`. `make db-reset` rebuilds from zero (idempotent, verified twice); 6 tables, 6 SELECT tenant-isolation policies, 1 voice seeded. DEV project kevtaxqqjfctdiszdgae.
 - [X] **Caveat B** — offline guard in `tests/conftest.py`: blocks all non-loopback socket/DNS egress and skips (not fails) guard-tripped / no-credential tests. `pytest tests/` → 7 skipped, 0 failed, zero outbound; `--collect-only` still 7. Import-path decision documented (see Live decisions). Commit: 9da575a
 - [X] P0-T08 Port IP from old Pipecat repo → persona.py, tools.py, db.py, config.py, session_state.py, tests/ (12 files), DECISIONS.md folded into 40-ADR.md. CER harness: `pytest tests/ -q --collect-only` → 7 tests. Commit: f5adfbd
 - [X] P0-T07 **REDONE (Caveat A)** — prior entry was estimated tokens + wrong model label ("CommandCode"), invalid per rule 8.3. Replaced with a reproducible deliverable-size measurement: two committed arms under `bench/ponytail/{off,on}/` + `scripts/ponytail_measure.py`. Measured: total lines 119→38 (**-68%**), chars 4407→1227 (-72%), model `claude-opus-4-8[1m]`. Session-token/wall-time NOT self-measurable from the harness → left unreported (protocol for external measurement recorded in 40-ADR.md). Decision unchanged: ponytail at `default`, session-token risk flagged UNVERIFIED. 40-ADR.md ADR-004. Commit: ddf947d
