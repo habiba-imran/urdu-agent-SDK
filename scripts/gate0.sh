@@ -91,7 +91,7 @@ echo ""
 # --- ADR-004 ---
 echo "--- ADR-004 measured numbers ---"
 # Must contain actual numeric deltas (e.g., "-70%", "+27%"), not just the P0-T07 label
-if grep -qE '\|\s*-?[0-9]+%\s*\|' docs/40-ADR.md 2>/dev/null; then
+if grep -qE '\*\*-?[0-9]+%\*\*' docs/40-ADR.md 2>/dev/null; then
   pass "ADR-004 contains measured numeric deltas"
 else
   fail "ADR-004 has no numeric measurement (must contain values like '-70%' or '+27%')"
