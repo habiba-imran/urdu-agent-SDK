@@ -2,7 +2,7 @@
 # In this repo, tools.py only needs the schema shape for the CER harness tests
 # (build_tools_schema) and register_tools. LiveKit Agents has its own equivalent.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 

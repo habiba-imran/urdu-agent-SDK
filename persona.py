@@ -71,7 +71,9 @@ GREETING = "السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش
 
 IDLE_PROMPT_TEXT = "کیا آپ لائن پر ہیں؟"
 IDLE_CLOSE_TEXT = "لگتا ہے آپ مصروف ہیں۔ شکریہ، اللہ حافظ!"
-SESSION_CLOSE_TEXT = "معاف کیجیے، ہماری کال کا وقت ختم ہو رہا ہے۔ TechZone رابطے کا شکریہ، اللہ حافظ!"
+SESSION_CLOSE_TEXT = (
+    "معاف کیجیے، ہماری کال کا وقت ختم ہو رہا ہے۔ TechZone رابطے کا شکریہ، اللہ حافظ!"
+)
 # v5 humanness: a wider pool so a caller who triggers several tool calls in one
 # session never hears the same wait-line twice in a row (played from the startup
 # PCM cache, so all of these are pre-synthesized). Natural Islamabad-shopkeeper

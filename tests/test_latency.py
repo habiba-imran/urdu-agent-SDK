@@ -47,6 +47,7 @@ def _save_combo(report: dict) -> None:
     with open(COMBOS_PATH, "w", encoding="utf-8") as f:
         json.dump(combos, f, ensure_ascii=False, indent=1)
 
+
 UTTERANCES = [
     "MacBook Air M2 کی قیمت کیا ہے؟",
     "دکان کے اوقات کیا ہیں؟",
@@ -170,22 +171,29 @@ async def run_combo(
             if ok:
                 completed += 1
             else:
-                print(f"  turn {i+1}: TIMED OUT" + (" (quota 429)" if contaminated else ""))
+                print(
+                    f"  turn {i + 1}: TIMED OUT"
+                    + (" (quota 429)" if contaminated else "")
+                )
             new = len(harness.session.latencies_ms) - measured_before
             quota_flags.extend([contaminated] * new)
             if contaminated:
-                print(f"  turn {i+1}: provider 429 during turn → quota-excluded in clean stats")
+                print(
+                    f"  turn {i + 1}: provider 429 during turn → quota-excluded in clean stats"
+                )
             await asyncio.sleep(pause)
     finally:
         await harness.stop()
 
     s = harness.session
     lat = s.latencies_ms
-    clean = [l for l, bad in zip(lat, quota_flags) if not bad]
+    clean = [ms for ms, bad in zip(lat, quota_flags) if not bad]
     toks = [t for t in s.tokens_per_turn if t > 0]
     tool_flags = s.tool_turn_flags
     tool_lat = [
-        l for l, is_tool, bad in zip(lat, tool_flags, quota_flags) if is_tool and not bad
+        ms
+        for ms, is_tool, bad in zip(lat, tool_flags, quota_flags)
+        if is_tool and not bad
     ]
     # v3 humanness check: consecutive replies must not open with the same word
     openers = [r.split()[0] for r in harness.tap.responses if r.strip()]
@@ -248,7 +256,9 @@ async def run() -> Check:
 
     selected = [
         c.strip()
-        for c in os.environ.get("LATENCY_COMBOS", "gladia,groq,whisper,smart_turn").split(",")
+        for c in os.environ.get(
+            "LATENCY_COMBOS", "gladia,groq,whisper,smart_turn"
+        ).split(",")
         if c.strip()
     ]
     n_main = int(os.environ.get("LATENCY_TURNS", "10"))
@@ -263,8 +273,11 @@ async def run() -> Check:
         # v3 main combo: cerebras gemma-4-31b + Gladia streaming, vad 0.4 (winner
         # of the v2 0.4/0.5 comparison: p50 1843 vs 2233, no false cutoffs)
         r = await run_combo(
-            "cerebras+gladia@vad0.4", n_main, llm_provider="cerebras",
-            vad_stop_secs=0.4, pause=cerebras_pause,
+            "cerebras+gladia@vad0.4",
+            n_main,
+            llm_provider="cerebras",
+            vad_stop_secs=0.4,
+            pause=cerebras_pause,
         )
         _save_combo(r)
 
@@ -272,16 +285,23 @@ async def run() -> Check:
         # LLM TTFB comparison: groq llama-3.3 fallback on the same STT
         # (paced 20s for the groq 100k/day budget)
         r = await run_combo(
-            "groq+gladia@vad0.4", n_probe, llm_provider="groq",
-            vad_stop_secs=0.4, pause=max(pause, 20.0),
+            "groq+gladia@vad0.4",
+            n_probe,
+            llm_provider="groq",
+            vad_stop_secs=0.4,
+            pause=max(pause, 20.0),
         )
         _save_combo(r)
 
     if "whisper" in selected:
         # STT comparison: segmented Whisper (v1's STT) on the v3 LLM
         r = await run_combo(
-            "cerebras+whisper@vad0.4", n_probe, llm_provider="cerebras",
-            vad_stop_secs=0.4, stt_provider="groq", pause=cerebras_pause,
+            "cerebras+whisper@vad0.4",
+            n_probe,
+            llm_provider="cerebras",
+            vad_stop_secs=0.4,
+            stt_provider="groq",
+            pause=cerebras_pause,
         )
         _save_combo(r)
 
@@ -289,16 +309,23 @@ async def run() -> Check:
         # re-probe Smart Turn v3 with streaming transcripts (v3's verdict was
         # contaminated by Cerebras RPM 429s; RPM-aware pacing decontaminates it)
         r = await run_combo(
-            "cerebras+gladia@smart_turn", n_probe, llm_provider="cerebras",
-            turn_stop_mode="smart_turn", vad_stop_secs=0.4, pause=cerebras_pause,
+            "cerebras+gladia@smart_turn",
+            n_probe,
+            llm_provider="cerebras",
+            turn_stop_mode="smart_turn",
+            vad_stop_secs=0.4,
+            pause=cerebras_pause,
         )
         _save_combo(r)
 
     if "gemini" in selected:
         if await gemini_available():
             r = await run_combo(
-                "gemini+gladia@vad0.4", n_gemini, llm_provider="gemini",
-                vad_stop_secs=0.4, pause=pause,
+                "gemini+gladia@vad0.4",
+                n_gemini,
+                llm_provider="gemini",
+                vad_stop_secs=0.4,
+                pause=pause,
             )
             _save_combo(r)
         else:
@@ -314,7 +341,9 @@ async def run() -> Check:
 
     # acceptance is judged on a full 10-turn conversation — 3-turn probes exist
     # for comparison only and must not win "best combo" on a lucky small sample
-    full_runs = [r for r in combos if r.get("eos_p50") and (r.get("turns_measured") or 0) >= 10]
+    full_runs = [
+        r for r in combos if r.get("eos_p50") and (r.get("turns_measured") or 0) >= 10
+    ]
     best = min(
         full_runs or [r for r in combos if r.get("eos_p50")],
         key=lambda r: r["eos_p50"],
@@ -331,12 +360,17 @@ async def run() -> Check:
             and r.get("llm_failovers", 0) == 0
             for r in combos
         ),
-        str([
-            (r["label"], f"{r['turns_completed']}/{r.get('turns_requested', '?')}",
-             f"failovers={r.get('llm_failovers', '?')}",
-             f"quota_excluded={r.get('quota_excluded_turns', 0)}")
-            for r in combos
-        ]),
+        str(
+            [
+                (
+                    r["label"],
+                    f"{r['turns_completed']}/{r.get('turns_requested', '?')}",
+                    f"failovers={r.get('llm_failovers', '?')}",
+                    f"quota_excluded={r.get('quota_excluded_turns', 0)}",
+                )
+                for r in combos
+            ]
+        ),
     )
     p50 = best["eos_p50"] if best else None
     p95 = best["eos_p95"] if best else None

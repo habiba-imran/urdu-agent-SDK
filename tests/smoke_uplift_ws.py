@@ -39,11 +39,13 @@ async def main() -> int:
 
     @sio.event(namespace=NAMESPACE)
     async def connect():
-        print(f"[{time.monotonic()-t0:6.3f}s] connected, sid={sio.get_sid(NAMESPACE)}")
+        print(
+            f"[{time.monotonic() - t0:6.3f}s] connected, sid={sio.get_sid(NAMESPACE)}"
+        )
 
     @sio.on("*", namespace=NAMESPACE)
     async def any_event(event, data=None):
-        stamp = f"[{time.monotonic()-t0:6.3f}s]"
+        stamp = f"[{time.monotonic() - t0:6.3f}s]"
         # Uplift wraps server->client messages in a Socket.IO 'message' event
         # with a 'type' field: ready / audio_start / audio / audio_end / error.
         if event == "message" and isinstance(data, dict):
@@ -58,7 +60,9 @@ async def main() -> int:
                 raw = b""
             if not first_chunk_at:
                 first_chunk_at.append(time.monotonic() - t0)
-                print(f"{stamp} first audio chunk ({len(raw)} bytes) seq={data.get('sequence')}")
+                print(
+                    f"{stamp} first audio chunk ({len(raw)} bytes) seq={data.get('sequence')}"
+                )
             audio.extend(raw)
         elif event == "audio_end":
             print(f"{stamp} audio_end: {data}")
@@ -73,7 +77,7 @@ async def main() -> int:
 
     @sio.event(namespace=NAMESPACE)
     async def disconnect():
-        print(f"[{time.monotonic()-t0:6.3f}s] disconnected")
+        print(f"[{time.monotonic() - t0:6.3f}s] disconnected")
 
     print(f"connecting to {URL} ns={NAMESPACE} voice={VOICE_ID}")
     await sio.connect(
@@ -96,7 +100,7 @@ async def main() -> int:
         },
         namespace=NAMESPACE,
     )
-    print(f"[{time.monotonic()-t0:6.3f}s] synthesize sent requestId={req_id}")
+    print(f"[{time.monotonic() - t0:6.3f}s] synthesize sent requestId={req_id}")
 
     try:
         await asyncio.wait_for(done.wait(), timeout=30)
@@ -124,7 +128,9 @@ async def main() -> int:
         s = int.from_bytes(audio[i : i + 2], "little", signed=True)
         peak = max(peak, abs(s))
     ttfb = first_chunk_at[0] - (send_at - t0) if first_chunk_at else -1
-    print(f"PASS: wrote {OUT_WAV}: {dur:.2f}s audio, peak={peak}, tts_ttfb={ttfb*1000:.0f}ms")
+    print(
+        f"PASS: wrote {OUT_WAV}: {dur:.2f}s audio, peak={peak}, tts_ttfb={ttfb * 1000:.0f}ms"
+    )
     if dur <= 0 or peak < 500:
         print("FAIL: audio too short or silent")
         return 1

@@ -62,7 +62,9 @@ def cer(expected: str, got: str) -> float:
     return 1.0 - matched / max(len(e), 1)
 
 
-async def gladia_transcribe_stream(wav_bytes: bytes, region: str) -> tuple[str, float, float]:
+async def gladia_transcribe_stream(
+    wav_bytes: bytes, region: str
+) -> tuple[str, float, float]:
     """Stream a WAV to Gladia live API. Returns (text, init_secs, eos_to_final_secs)."""
     with wave.open(io.BytesIO(wav_bytes), "rb") as w:
         rate = w.getframerate()
@@ -110,7 +112,9 @@ async def gladia_transcribe_stream(wav_bytes: bytes, region: str) -> tuple[str, 
                     await ws.send_json(
                         {
                             "type": "audio_chunk",
-                            "data": {"chunk": base64.b64encode(pcm[i : i + chunk]).decode()},
+                            "data": {
+                                "chunk": base64.b64encode(pcm[i : i + chunk]).decode()
+                            },
                         }
                     )
                     await asyncio.sleep(0.095)
@@ -121,7 +125,9 @@ async def gladia_transcribe_stream(wav_bytes: bytes, region: str) -> tuple[str, 
             deadline = time.monotonic() + len(pcm) / 2 / rate + 15
             while time.monotonic() < deadline:
                 try:
-                    msg = await ws.receive(timeout=max(0.1, deadline - time.monotonic()))
+                    msg = await ws.receive(
+                        timeout=max(0.1, deadline - time.monotonic())
+                    )
                 except asyncio.TimeoutError:
                     break
                 if msg.type != aiohttp.WSMsgType.TEXT:
@@ -242,7 +248,9 @@ def add_shop_noise(wav_bytes: bytes, snr_db: float = 15.0, seed: int = 7) -> byt
 
     with wave.open(io.BytesIO(wav_bytes), "rb") as w:
         rate = w.getframerate()
-        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float64)
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(
+            np.float64
+        )
 
     rng = np.random.default_rng(seed)
     white = rng.standard_normal(len(pcm))
@@ -273,7 +281,9 @@ async def probe_regions(sample_wav: bytes, check: Check) -> str:
         inits, finals = [], []
         for _ in range(2):
             try:
-                _, init_s, eos_final_s = await gladia_transcribe_stream(sample_wav, region)
+                _, init_s, eos_final_s = await gladia_transcribe_stream(
+                    sample_wav, region
+                )
                 inits.append(init_s)
                 if eos_final_s == eos_final_s:  # not NaN
                     finals.append(eos_final_s)
@@ -283,7 +293,9 @@ async def probe_regions(sample_wav: bytes, check: Check) -> str:
             "init_ms": round(1000 * sum(inits) / len(inits)) if inits else None,
             "eos_final_ms": round(1000 * sum(finals) / len(finals)) if finals else None,
         }
-        print(f"  {region}: init={stats[region]['init_ms']}ms eos→final={stats[region]['eos_final_ms']}ms")
+        print(
+            f"  {region}: init={stats[region]['init_ms']}ms eos→final={stats[region]['eos_final_ms']}ms"
+        )
 
     def score(r):
         s = stats[r]
@@ -294,7 +306,11 @@ async def probe_regions(sample_wav: bytes, check: Check) -> str:
     winner = min(stats, key=score)
     RESULTS["regions"] = stats
     RESULTS["region_winner"] = winner
-    check.ok("region probe completed", any(s["eos_final_ms"] for s in stats.values()), str(stats))
+    check.ok(
+        "region probe completed",
+        any(s["eos_final_ms"] for s in stats.values()),
+        str(stats),
+    )
     print(f"  → region winner: {winner}")
     return winner
 
@@ -337,7 +353,7 @@ async def run() -> Check:
             soniox_eos_final.append(round(1000 * s_eos_final))
         rows.append((u, s_text, g_text, w_text, s_cer, g_cer, w_cer))
         print(
-            f"  [{i+1}] soniox CER {s_cer:.2f} ({round(1000*s_eos_final) if s_eos_final==s_eos_final else '?'}ms eos→final) "
+            f"  [{i + 1}] soniox CER {s_cer:.2f} ({round(1000 * s_eos_final) if s_eos_final == s_eos_final else '?'}ms eos→final) "
             f"| gladia CER {g_cer:.2f} | whisper CER {w_cer:.2f}"
         )
         print(f"      said   : {u}")
@@ -348,17 +364,28 @@ async def run() -> Check:
     avg_s = sum(soniox_cers) / len(soniox_cers)
     avg_g = sum(gladia_cers) / len(gladia_cers)
     avg_w = sum(whisper_cers) / len(whisper_cers)
-    med_eos = sorted(soniox_eos_final)[len(soniox_eos_final) // 2] if soniox_eos_final else None
+    med_eos = (
+        sorted(soniox_eos_final)[len(soniox_eos_final) // 2]
+        if soniox_eos_final
+        else None
+    )
     script_ratio = urdu_script_ratio(" ".join(r[1] for r in rows))
     expected_ratio = urdu_script_ratio(" ".join(UTTERANCES))
     RESULTS.update(
-        soniox_avg_cer=round(avg_s, 3), gladia_avg_cer=round(avg_g, 3),
-        whisper_avg_cer=round(avg_w, 3), soniox_eos_final_ms=soniox_eos_final,
-        soniox_script_ratio=round(script_ratio, 2), rows=rows,
+        soniox_avg_cer=round(avg_s, 3),
+        gladia_avg_cer=round(avg_g, 3),
+        whisper_avg_cer=round(avg_w, 3),
+        soniox_eos_final_ms=soniox_eos_final,
+        soniox_script_ratio=round(script_ratio, 2),
+        rows=rows,
     )
     print(f"\n  average CER: soniox={avg_s:.3f} gladia={avg_g:.3f} whisper={avg_w:.3f}")
-    print(f"  soniox eos→final per utterance (ms): {soniox_eos_final} (median {med_eos})")
-    print(f"  soniox urdu-script ratio: {script_ratio:.2f} (expected text: {expected_ratio:.2f})")
+    print(
+        f"  soniox eos→final per utterance (ms): {soniox_eos_final} (median {med_eos})"
+    )
+    print(
+        f"  soniox urdu-script ratio: {script_ratio:.2f} (expected text: {expected_ratio:.2f})"
+    )
 
     check.ok(
         "streaming + fallback engines transcribe Urdu (avg CER < 0.5)",
@@ -401,9 +428,16 @@ async def run() -> Check:
         primary_cer <= 0.129 + 0.03,
         f"{primary_name} {primary_cer:.3f} vs anchor 0.129 (today's whisper: {avg_w:.3f})",
     )
-    best = min((avg_g, "Gladia"), (avg_w, "Whisper"), *( [(avg_s, "Soniox")] if not soniox_unavailable else [] ))
-    check.ok("accuracy comparison recorded (informational)", True,
-             f"{best[1]} is most accurate for Urdu on this set")
+    best = min(
+        (avg_g, "Gladia"),
+        (avg_w, "Whisper"),
+        *([(avg_s, "Soniox")] if not soniox_unavailable else []),
+    )
+    check.ok(
+        "accuracy comparison recorded (informational)",
+        True,
+        f"{best[1]} is most accurate for Urdu on this set",
+    )
 
     # --- noise robustness (v3 CHANGE 4.4): shop noise at ~15dB SNR, CER delta ---
     print("\n-- Noise robustness: primary STT on shop-noise-mixed audio (~15dB SNR) --")
@@ -418,7 +452,9 @@ async def run() -> Check:
     avg_noisy = sum(noisy_cers) / len(noisy_cers)
     delta = avg_noisy - avg_g
     RESULTS["gladia_noisy_avg_cer"] = round(avg_noisy, 3)
-    print(f"  gladia clean CER {avg_g:.3f} → noisy CER {avg_noisy:.3f} (delta +{delta:.3f})")
+    print(
+        f"  gladia clean CER {avg_g:.3f} → noisy CER {avg_noisy:.3f} (delta +{delta:.3f})"
+    )
     check.ok(
         "noisy-audio CER delta reported (15dB SNR shop noise, primary STT)",
         avg_noisy < 0.6,

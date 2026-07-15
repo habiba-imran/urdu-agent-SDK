@@ -60,7 +60,10 @@ DEEPGRAM_TTFS_P99 = float(os.environ.get("DEEPGRAM_TTFS_P99", "0.7"))
 # Master switch for the automatic Gladia→Deepgram failover (on by default; the
 # wrap is skipped anyway when no DEEPGRAM_API_KEY is set or primary is deepgram).
 STT_FALLBACK_ENABLED = os.environ.get("STT_FALLBACK_ENABLED", "1").lower() not in (
-    "0", "false", "no", "off",
+    "0",
+    "false",
+    "no",
+    "off",
 )
 
 # --- Soniox (v3 CHANGE 1) --------------------------------------------------------
@@ -68,13 +71,30 @@ SONIOX_MODEL = "stt-rt-v5"
 # context_version 2 object (dict form of pipecat's SonioxContextObject)
 SONIOX_CONTEXT = {
     "general": [
-        {"key": "domain", "value": "laptop shop customer support call, Islamabad, Pakistan"},
-        {"key": "language", "value": "Urdu with embedded English tech terms, Urdu script"},
+        {
+            "key": "domain",
+            "value": "laptop shop customer support call, Islamabad, Pakistan",
+        },
+        {
+            "key": "language",
+            "value": "Urdu with embedded English tech terms, Urdu script",
+        },
     ],
     "text": "Customer calls TechZone Laptops about MacBook prices, warranty, reservations.",
     "terms": [
-        "TechZone", "MacBook", "MacBook Air", "MacBook Pro", "AppleCare",
-        "M1", "M2", "M3", "M4", "RAM", "SSD", "Islamabad", "warranty",
+        "TechZone",
+        "MacBook",
+        "MacBook Air",
+        "MacBook Pro",
+        "AppleCare",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "RAM",
+        "SSD",
+        "Islamabad",
+        "warranty",
     ],
 }
 
@@ -92,7 +112,10 @@ GLADIA_LANGUAGES = [
     s.strip() for s in os.environ.get("GLADIA_LANGUAGES", "ur").split(",") if s.strip()
 ]
 GLADIA_CODE_SWITCHING = os.environ.get("GLADIA_CODE_SWITCHING", "0").lower() in (
-    "1", "true", "yes", "on",
+    "1",
+    "true",
+    "yes",
+    "on",
 )
 # v5 noise defense at the STT layer (research D41). speech_threshold near 1 makes
 # Gladia stricter about calling background sound "speech"; 0.8 rejects shop-floor
@@ -100,7 +123,10 @@ GLADIA_CODE_SWITCHING = os.environ.get("GLADIA_CODE_SWITCHING", "0").lower() in 
 # (better accuracy in noise, small latency cost) — env-toggleable if latency regresses.
 GLADIA_SPEECH_THRESHOLD = float(os.environ.get("GLADIA_SPEECH_THRESHOLD", "0.8"))
 GLADIA_AUDIO_ENHANCER = os.environ.get("GLADIA_AUDIO_ENHANCER", "1").lower() in (
-    "1", "true", "yes", "on",
+    "1",
+    "true",
+    "yes",
+    "on",
 )
 # silence (s) after which Gladia finalizes an utterance. 0.1 keeps finals ahead
 # of the VAD stop event (0.3 measured ~700ms of post-eos final latency — D16)
@@ -115,8 +141,19 @@ GLADIA_TTFS_P99 = 0.7
 # correctness for latency. Set >0 (e.g. 0.12) to enable if quality improves.
 STT_PROMOTE_INTERIM_AFTER_SECS = 0.0
 GLADIA_CUSTOM_VOCAB = [
-    "TechZone", "MacBook", "MacBook Air", "MacBook Pro", "AppleCare",
-    "M1", "M2", "M3", "M4", "RAM", "SSD", "Islamabad", "warranty",
+    "TechZone",
+    "MacBook",
+    "MacBook Air",
+    "MacBook Pro",
+    "AppleCare",
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "RAM",
+    "SSD",
+    "Islamabad",
+    "warranty",
 ]
 
 # --- LLM generation ----------------------------------------------------------
@@ -140,10 +177,10 @@ STT_PROMPT = (
 # longer start_secs makes brief noise bursts fail to open a turn. Note the
 # browser client's auto-gain can BOOST ambient noise toward speech level during
 # silence, which is why we lean on confidence/min_volume, not volume alone.
-VAD_CONFIDENCE = float(os.environ.get("VAD_CONFIDENCE", "0.8"))   # was 0.7
+VAD_CONFIDENCE = float(os.environ.get("VAD_CONFIDENCE", "0.8"))  # was 0.7
 VAD_START_SECS = float(os.environ.get("VAD_START_SECS", "0.35"))  # was 0.2
 VAD_STOP_SECS = float(os.environ.get("VAD_STOP_SECS", "0.5"))
-VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.7"))   # was 0.6
+VAD_MIN_VOLUME = float(os.environ.get("VAD_MIN_VOLUME", "0.7"))  # was 0.6
 
 # --- Turn taking ---------------------------------------------------------------
 # "vad"        → SpeechTimeoutUserTurnStopStrategy (pure VAD + transcript gate)

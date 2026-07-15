@@ -7,6 +7,9 @@ and asserts duration > 0 and non-silence.
 Run: uv run python tests/smoke_uplift_service.py
 """
 
+# Imports intentionally follow sys.path setup + load_dotenv() below, so E402 is expected here.
+# ruff: noqa: E402
+
 import asyncio
 import os
 import sys
@@ -35,7 +38,9 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from services.uplift_tts import UpliftTTSService
 
 OUT_WAV = os.path.join(os.path.dirname(__file__), "out_uplift_service_smoke.wav")
-TEXT = "جی بالکل، میک بُک ایئر ایم ٹو اسٹاک میں موجود ہے۔ قیمت تین لاکھ پندرہ ہزار روپے ہے۔"
+TEXT = (
+    "جی بالکل، میک بُک ایئر ایم ٹو اسٹاک میں موجود ہے۔ قیمت تین لاکھ پندرہ ہزار روپے ہے۔"
+)
 SAMPLE_RATE = 22050
 
 

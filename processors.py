@@ -6,8 +6,6 @@ This file exists so the ported tests can import and run without refactoring.
 """
 
 import re
-import sys
-from typing import Optional
 
 from loguru import logger
 
@@ -15,7 +13,9 @@ from loguru import logger
 
 _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200d\u2060\ufeff]")
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_BRACKET_DIRECTION_RE = re.compile(r"\[.*?\]|\(.*?\)\s*(?:click|tap|press|say).*", re.IGNORECASE)
+_BRACKET_DIRECTION_RE = re.compile(
+    r"\[.*?\]|\(.*?\)\s*(?:click|tap|press|say).*", re.IGNORECASE
+)
 _EMOJI_RE = re.compile(
     "["
     "\U0001f600-\U0001f64f"
@@ -54,6 +54,7 @@ def sanitize_text(text: str) -> str:
 
 # --- Placeholder classes for Phase 3 reimplementation ---
 
+
 class InputGuard:
     """Placeholder — will be reimplemented on LiveKit Agents."""
 
@@ -88,11 +89,12 @@ class InterimPromoter:
 
 class SessionState:
     """Re-export from session_state module for test compatibility."""
+
     pass
 
 
 # Also expose session_state's SessionState directly
 try:
-    from session_state import SessionState  # noqa: F811
+    from session_state import SessionState  # noqa: F811,F401  (intentional re-export)
 except ImportError:
     pass

@@ -55,7 +55,10 @@ class LLMTextTap(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, LLMTextFrame) and not getattr(frame, "skip_tts", False):
             self._current += frame.text
-        from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame
+        from pipecat.frames.frames import (
+            LLMFullResponseEndFrame,
+            LLMFullResponseStartFrame,
+        )
 
         if isinstance(frame, LLMFullResponseStartFrame):
             self._current = ""
@@ -83,7 +86,12 @@ class QuotaErrorWatcher(BaseObserver):
         self._seen.add(frame.id)
         if isinstance(frame, ErrorFrame):
             msg = str(getattr(frame, "error", "")).lower()
-            if "429" in msg or "quota" in msg or "too_many_requests" in msg or "rate limit" in msg:
+            if (
+                "429" in msg
+                or "quota" in msg
+                or "too_many_requests" in msg
+                or "rate limit" in msg
+            ):
                 self.times.append(time.monotonic())
 
 
@@ -103,7 +111,9 @@ class TransportSink(FrameProcessor):
         self.bot_speaking = False
         self.turn_done = asyncio.Event()
         self.interrupted_at: float | None = None
-        self.text_log: list[tuple[float, str]] = []  # (time, sentence) released downstream
+        self.text_log: list[
+            tuple[float, str]
+        ] = []  # (time, sentence) released downstream
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -119,8 +129,12 @@ class TransportSink(FrameProcessor):
             self.audio.extend(frame.audio)
             if not self.bot_speaking:
                 self.bot_speaking = True
-                await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
-                await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+                await self.push_frame(
+                    BotStartedSpeakingFrame(), FrameDirection.UPSTREAM
+                )
+                await self.push_frame(
+                    BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM
+                )
             await self.push_frame(frame, direction)
             if self.pace_audio:
                 await asyncio.sleep(len(frame.audio) / 2 / max(frame.sample_rate, 1))
@@ -128,8 +142,12 @@ class TransportSink(FrameProcessor):
         elif isinstance(frame, TTSStoppedFrame):
             if self.bot_speaking:
                 self.bot_speaking = False
-                await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
-                await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+                await self.push_frame(
+                    BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM
+                )
+                await self.push_frame(
+                    BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM
+                )
             self.turn_done.set()
         elif isinstance(frame, InterruptionFrame):
             self.interrupted_at = time.monotonic()
@@ -181,8 +199,6 @@ class PipelineHarness:
             LLMUserAggregatorParams,
         )
         from pipecat.processors.audio.vad_processor import VADProcessor
-        from pipecat.services.groq.stt import GroqSTTService
-        from pipecat.transcriptions.language import Language
 
         self.session = SessionState()
         self.sink = TransportSink()
@@ -301,7 +317,9 @@ class PipelineHarness:
         self._runner_task: asyncio.Task | None = None
 
     async def start(self):
-        db.record_conversation_start(self.session.conversation_id, channel="latency-test")
+        db.record_conversation_start(
+            self.session.conversation_id, channel="latency-test"
+        )
         self._runner_task = asyncio.create_task(self.runner.run(self.task))
         # pre-warm the primary LLM (mirrors bot.py's prewarm at client connect)
         try:
@@ -312,7 +330,10 @@ class PipelineHarness:
                 await llm._client.aio.models.generate_content(
                     model=config.GEMINI_LLM_MODEL,
                     contents="ok",
-                    config={"max_output_tokens": 1, "thinking_config": {"thinking_budget": 0}},
+                    config={
+                        "max_output_tokens": 1,
+                        "thinking_config": {"thinking_budget": 0},
+                    },
                 )
             else:  # OpenAI-compatible services (Cerebras, Groq) via their own client
                 await llm._client.chat.completions.create(
@@ -342,7 +363,9 @@ class PipelineHarness:
         chunk = int(rate * 0.02) * 2  # 20 ms
         for i in range(0, len(pcm), chunk):
             await self.task.queue_frame(
-                InputAudioRawFrame(audio=pcm[i : i + chunk], sample_rate=rate, num_channels=1)
+                InputAudioRawFrame(
+                    audio=pcm[i : i + chunk], sample_rate=rate, num_channels=1
+                )
             )
             if realtime:
                 await asyncio.sleep(0.018)

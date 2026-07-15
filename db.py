@@ -44,7 +44,9 @@ async def timed_read(coro: Coroutine, what: str = "read") -> Any:
     try:
         return await asyncio.wait_for(coro, timeout=config.TOOL_READ_TIMEOUT_SECS)
     except asyncio.TimeoutError as e:
-        logger.warning(f"Supabase {what} timed out after {config.TOOL_READ_TIMEOUT_SECS}s")
+        logger.warning(
+            f"Supabase {what} timed out after {config.TOOL_READ_TIMEOUT_SECS}s"
+        )
         raise DBTimeout(what) from e
 
 
@@ -73,7 +75,9 @@ async def _insert_conversation(conversation_id: str, channel: str):
 
 
 def record_conversation_start(conversation_id: str, channel: str = "webrtc"):
-    fire_and_forget(_insert_conversation(conversation_id, channel), "conversation-start")
+    fire_and_forget(
+        _insert_conversation(conversation_id, channel), "conversation-start"
+    )
 
 
 async def _end_conversation(conversation_id: str, summary: str | None):
@@ -81,7 +85,9 @@ async def _end_conversation(conversation_id: str, summary: str | None):
     patch: dict[str, Any] = {"ended_at": "now()"}
     if summary:
         patch["summary"] = summary
-    await client.table("conversations").update(patch).eq("id", conversation_id).execute()
+    await (
+        client.table("conversations").update(patch).eq("id", conversation_id).execute()
+    )
 
 
 def record_conversation_end(conversation_id: str, summary: str | None = None):
@@ -99,7 +105,9 @@ async def _insert_message(conversation_id: str, role: str, content: str):
 
 def record_message(conversation_id: str, role: str, content: str):
     if content and content.strip():
-        fire_and_forget(_insert_message(conversation_id, role, content.strip()), "message")
+        fire_and_forget(
+            _insert_message(conversation_id, role, content.strip()), "message"
+        )
 
 
 async def _insert_turn_metrics(row: dict):

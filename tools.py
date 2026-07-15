@@ -64,7 +64,9 @@ async def _get_products() -> list[dict]:
     if _products_cache and time.monotonic() - _products_cache_at < _PRODUCTS_TTL:
         return _products_cache
     client = await db.get_client()
-    res = await db.timed_read(client.table("products").select("*").execute(), "products")
+    res = await db.timed_read(
+        client.table("products").select("*").execute(), "products"
+    )
     _products_cache = res.data or []
     _products_cache_at = time.monotonic()
     return _products_cache
@@ -176,7 +178,8 @@ async def get_shop_info(params: FunctionCallParams):
     try:
         client = await db.get_client()
         res = await db.timed_read(
-            client.table("shop_info").select("*").eq("id", 1).single().execute(), "shop_info"
+            client.table("shop_info").select("*").eq("id", 1).single().execute(),
+            "shop_info",
         )
     except Exception as e:
         logger.error(f"get_shop_info failed: {e}")
@@ -190,12 +193,14 @@ async def get_shop_info(params: FunctionCallParams):
 async def _find_or_create_customer(name: str, phone: str) -> int:
     client = await db.get_client()
     res = await db.timed_read(
-        client.table("customers").select("id").eq("phone", phone).execute(), "customer-lookup"
+        client.table("customers").select("id").eq("phone", phone).execute(),
+        "customer-lookup",
     )
     if res.data:
         return res.data[0]["id"]
     created = await asyncio.wait_for(
-        client.table("customers").insert({"name": name, "phone": phone}).execute(), timeout=4
+        client.table("customers").insert({"name": name, "phone": phone}).execute(),
+        timeout=4,
     )
     return created.data[0]["id"]
 
@@ -292,7 +297,11 @@ async def create_support_ticket(params: FunctionCallParams):
         created = await asyncio.wait_for(
             client.table("support_tickets")
             .insert(
-                {"customer_id": customer_id, "category": category, "description": description}
+                {
+                    "customer_id": customer_id,
+                    "category": category,
+                    "description": description,
+                }
             )
             .execute(),
             timeout=4,
@@ -343,7 +352,9 @@ def make_end_conversation_summary(session: SessionState):
         db.record_conversation_end(session.conversation_id, summary or None)
         session.summary_written = True
         session.end_requested = True
-        await params.result_callback({"status": "saved", "instruction": "Close the call warmly."})
+        await params.result_callback(
+            {"status": "saved", "instruction": "Close the call warmly."}
+        )
 
     return end_conversation_summary
 
@@ -360,10 +371,16 @@ def build_tools_schema() -> ToolsSchema:
                 description="Search inventory; returns up to 3 products with exact PKR price and stock. Call before quoting any price or availability.",
                 properties={
                     "query": {"type": "string"},
-                    "condition": {"type": "string", "enum": ["new", "used", "open_box"]},
+                    "condition": {
+                        "type": "string",
+                        "enum": ["new", "used", "open_box"],
+                    },
                     # string: llama-3.3 sometimes quotes numbers and Groq hard-rejects
                     # integer-typed params on mismatch; the handler parses digits
-                    "max_price_pkr": {"type": "string", "description": "Max budget in PKR digits."},
+                    "max_price_pkr": {
+                        "type": "string",
+                        "description": "Max budget in PKR digits.",
+                    },
                 },
                 required=["query"],
             ),
@@ -386,7 +403,10 @@ def build_tools_schema() -> ToolsSchema:
                     "name": {"type": "string"},
                     "phone": {"type": "string"},
                     "product_id": {"type": "integer"},
-                    "pickup_or_delivery": {"type": "string", "enum": ["pickup", "delivery"]},
+                    "pickup_or_delivery": {
+                        "type": "string",
+                        "enum": ["pickup", "delivery"],
+                    },
                     "notes": {"type": "string"},
                 },
                 required=["name", "phone", "product_id", "pickup_or_delivery"],
@@ -397,7 +417,10 @@ def build_tools_schema() -> ToolsSchema:
                 properties={
                     "name": {"type": "string"},
                     "phone": {"type": "string"},
-                    "category": {"type": "string", "enum": ["repair", "warranty", "complaint", "query"]},
+                    "category": {
+                        "type": "string",
+                        "enum": ["repair", "warranty", "complaint", "query"],
+                    },
                     "description": {"type": "string"},
                 },
                 required=["name", "phone", "category", "description"],
@@ -431,4 +454,6 @@ def register_tools(llm, session: SessionState):
     llm.register_function("create_reservation", create_reservation)
     llm.register_function("create_support_ticket", create_support_ticket)
     llm.register_function("schedule_callback", schedule_callback)
-    llm.register_function("end_conversation_summary", make_end_conversation_summary(session))
+    llm.register_function(
+        "end_conversation_summary", make_end_conversation_summary(session)
+    )

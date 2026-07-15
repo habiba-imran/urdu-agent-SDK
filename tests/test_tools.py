@@ -10,8 +10,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from helpers import Check, FakeFunctionCallParams
 
-import config
-
 
 async def call(handler, **arguments):
     params = FakeFunctionCallParams(handler.__name__, arguments)
@@ -27,8 +25,13 @@ async def run() -> Check:
     check = Check("tools")
 
     # --- validation helpers ---
-    check.ok("phone: valid 0300...", tz.normalize_pk_phone("0300 1234567") == "03001234567")
-    check.ok("phone: +92 normalized", tz.normalize_pk_phone("+92 300 1234567") == "03001234567")
+    check.ok(
+        "phone: valid 0300...", tz.normalize_pk_phone("0300 1234567") == "03001234567"
+    )
+    check.ok(
+        "phone: +92 normalized",
+        tz.normalize_pk_phone("+92 300 1234567") == "03001234567",
+    )
     check.ok("phone: landline rejected", tz.normalize_pk_phone("051 2345678") is None)
     check.ok("phone: short rejected", tz.normalize_pk_phone("0300123") is None)
 
@@ -39,7 +42,9 @@ async def run() -> Check:
     check.ok("search_products: <=3 results", res and len(res["matches"]) <= 3)
 
     res = await call(tz.search_products, query="macbook", condition="used")
-    ok = res and res["matches"] and all(m["condition"] == "used" for m in res["matches"])
+    ok = (
+        res and res["matches"] and all(m["condition"] == "used" for m in res["matches"])
+    )
     check.ok("search_products: condition filter", bool(ok))
     check.ok(
         "search_products: used units expose battery health",
@@ -100,7 +105,9 @@ async def run() -> Check:
         product_id=first["product_id"],
         pickup_or_delivery="pickup",
     )
-    check.ok("create_reservation: missing name rejected", res.get("error") == "missing_name")
+    check.ok(
+        "create_reservation: missing name rejected", res.get("error") == "missing_name"
+    )
 
     res = await call(
         tz.create_reservation,
@@ -109,7 +116,10 @@ async def run() -> Check:
         product_id=first["product_id"],
         pickup_or_delivery="pickup",
     )
-    check.ok("create_reservation: invalid phone rejected", res.get("error") == "invalid_phone")
+    check.ok(
+        "create_reservation: invalid phone rejected",
+        res.get("error") == "invalid_phone",
+    )
 
     res = await call(
         tz.create_reservation,
@@ -118,7 +128,10 @@ async def run() -> Check:
         product_id=999999,
         pickup_or_delivery="delivery",
     )
-    check.ok("create_reservation: bad product rejected", res.get("error") == "product_not_found")
+    check.ok(
+        "create_reservation: bad product rejected",
+        res.get("error") == "product_not_found",
+    )
 
     # --- create_support_ticket ---
     res = await call(
@@ -128,7 +141,9 @@ async def run() -> Check:
         category="repair",
         description="Screen flickering on MacBook Air",
     )
-    check.ok("create_support_ticket: happy path", bool(res.get("ticket_id")), str(res)[:100])
+    check.ok(
+        "create_support_ticket: happy path", bool(res.get("ticket_id")), str(res)[:100]
+    )
     res = await call(
         tz.create_support_ticket,
         name="Test Khareedar",
@@ -136,7 +151,10 @@ async def run() -> Check:
         category="repair",
         description="",
     )
-    check.ok("create_support_ticket: empty description", res.get("error") == "missing_description")
+    check.ok(
+        "create_support_ticket: empty description",
+        res.get("error") == "missing_description",
+    )
 
     # --- schedule_callback ---
     res = await call(
@@ -146,7 +164,9 @@ async def run() -> Check:
         preferred_time="kal shaam 5 baje",
         reason="price negotiation with manager",
     )
-    check.ok("schedule_callback: happy path", bool(res.get("callback_id")), str(res)[:100])
+    check.ok(
+        "schedule_callback: happy path", bool(res.get("callback_id")), str(res)[:100]
+    )
 
     # --- end_conversation_summary ---
     session = SessionState()
@@ -156,7 +176,10 @@ async def run() -> Check:
     await asyncio.sleep(1.0)  # let fire-and-forget insert land
     handler = tz.make_end_conversation_summary(session)
     res = await call(handler, summary="Customer reserved a MacBook Air M1.")
-    check.ok("end_conversation_summary: saved + end requested", res.get("status") == "saved" and session.end_requested)
+    check.ok(
+        "end_conversation_summary: saved + end requested",
+        res.get("status") == "saved" and session.end_requested,
+    )
     await asyncio.sleep(1.5)
     conv = (
         await client.table("conversations")

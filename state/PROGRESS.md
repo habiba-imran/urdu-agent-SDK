@@ -17,6 +17,11 @@ Updated: 2026-07-16 | Phase: 0 | Task: P0 harness hardening (Caveats A+B done) |
 - [X] P0-T01 Install ponytail — `@dietrichgebert/ponytail` installed via npm. `/ponytail-help` is a Claude Code plugin slash command, not testable outside Claude Code. Commit: 917cfab
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
+- **Lint cleanup of ported P0-T08 test files (human-authorized; lint-level only, no logic).** The
+  test-guard override token was added only to rename ambiguous `l` → `ms`/`label` (E741) in
+  test_harness.py/test_latency.py and
+  convert one `lambda` to a `def` (E731) in test_interruption.py. No assertion, expected value, or
+  control flow changed; `pytest tests/` stays 7 skipped. Token removed immediately after.
 - **Caveat B — offline guard in `tests/conftest.py` (justified test-file edit; the test-guard override token was added only for the duration of the edit, then removed so the guard re-arms)** —
   the ported CER tests reach live providers directly (`helpers.synth_urdu` opens a Uplift Socket.IO
   connection; env-smoke calls Groq/Gemini/Supabase inline). Running bare `pytest tests/` therefore

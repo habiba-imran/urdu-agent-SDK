@@ -43,7 +43,11 @@ async def run() -> Check:
             f"{row['name']}, {row['city']}",
         )
 
-    res = await client.table("products").select("id, brand, condition, battery_health").execute()
+    res = (
+        await client.table("products")
+        .select("id, brand, condition, battery_health")
+        .execute()
+    )
     check.ok("products seeded (15 SKUs)", len(res.data) == 15, f"{len(res.data)} rows")
     brands = {r["brand"] for r in res.data}
     check.ok("non-Apple options present", {"Dell", "Lenovo"} <= brands, str(brands))

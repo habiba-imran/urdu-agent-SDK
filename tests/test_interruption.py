@@ -38,9 +38,13 @@ async def test_min_words_gate(check: Check):
         pass
 
     await strategy.process_frame(BotStartedSpeakingFrame())
-    r1 = await strategy.process_frame(TranscriptionFrame("ہاں", "u", time_now_iso8601()))
+    r1 = await strategy.process_frame(
+        TranscriptionFrame("ہاں", "u", time_now_iso8601())
+    )
     one_word_blocked = r1 == ProcessFrameResult.CONTINUE
-    r2 = await strategy.process_frame(TranscriptionFrame("رکیے ذرا سنیں", "u", time_now_iso8601()))
+    r2 = await strategy.process_frame(
+        TranscriptionFrame("رکیے ذرا سنیں", "u", time_now_iso8601())
+    )
     two_words_pass = r2 == ProcessFrameResult.STOP
     check.ok("min-words gate: 1 word ignored while bot speaks", one_word_blocked)
     check.ok("min-words gate: 2+ words interrupt", two_words_pass)
@@ -53,7 +57,9 @@ async def run() -> Check:
 
     # Synthesize inputs up front
     warmup_q = await synth_urdu("MacBook Air M2 کی قیمت کیا ہے؟")
-    long_q = await synth_urdu("مجھے تمام MacBook ماڈلز کے بارے میں تفصیل سے بتائیں، ہر ایک کی خصوصیات کیا ہیں؟")
+    long_q = await synth_urdu(
+        "مجھے تمام MacBook ماڈلز کے بارے میں تفصیل سے بتائیں، ہر ایک کی خصوصیات کیا ہیں؟"
+    )
     barge = await synth_urdu("رکیے رکیے، مجھے صرف سب سے سستے کی قیمت بتائیں")
 
     harness = PipelineHarness(turn_stop_mode="vad")
@@ -77,7 +83,9 @@ async def run() -> Check:
         _fillers = {" ".join(f.split()) for f in persona.TOOL_FILLERS}
 
         def reply_playing() -> bool:
-            return any(" ".join(t.split()) not in _fillers for _, t in harness.sink.text_log)
+            return any(
+                " ".join(t.split()) not in _fillers for _, t in harness.sink.text_log
+            )
 
         t0 = time.monotonic()
         while not reply_playing() and time.monotonic() - t0 < 40:
@@ -148,7 +156,10 @@ async def run() -> Check:
             # context (TTSSpeakFrame append_to_context=False) — don't count them
             # as "spoken" when comparing against context (D23 harness fillers)
             fillers = {" ".join(f.split()) for f in persona.TOOL_FILLERS}
-            norm = lambda s: " ".join(s.split())
+
+            def norm(s):
+                return " ".join(s.split())
+
             # sentence released well before the barge MUST be in context; one
             # released within ~0.3s of the InterruptionFrame is a boundary case
             # (the queue clear may drop it before the aggregator sees it) and MAY be
@@ -158,10 +169,14 @@ async def run() -> Check:
                 for t, txt in harness.sink.text_log
                 if norm(txt) not in fillers and t <= interrupt_at + 0.05
             ]
-            must_spoken = " ".join(txt for t, txt in released if t <= interrupt_at - 0.3).strip()
+            must_spoken = " ".join(
+                txt for t, txt in released if t <= interrupt_at - 0.3
+            ).strip()
             may_spoken = " ".join(txt for t, txt in released).strip()
             full = max(
-                (r.strip() for r in full_responses[n_before_longq:]), key=len, default=""
+                (r.strip() for r in full_responses[n_before_longq:]),
+                key=len,
+                default="",
             )
             ctx = next(
                 (
@@ -183,10 +198,15 @@ async def run() -> Check:
                 f"context kept {len(ctx)} chars; released-before-barge {len(may_spoken)} chars "
                 f"(full response was {len(full)} chars)"
             )
-        check.ok("context matches exactly what was spoken before the barge", truncated_ok, detail)
+        check.ok(
+            "context matches exactly what was spoken before the barge",
+            truncated_ok,
+            detail,
+        )
         check.ok(
             "bot answered the barge-in question",
-            len(full_responses) >= n_responses_before + 1 and len(harness.sink.audio) > 0,
+            len(full_responses) >= n_responses_before + 1
+            and len(harness.sink.audio) > 0,
             f"{len(full_responses)} LLM responses in session",
         )
     finally:

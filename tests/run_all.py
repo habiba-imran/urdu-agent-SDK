@@ -45,8 +45,15 @@ def load_saved_suites() -> list[dict]:
     """All persisted suite results, in canonical suite order."""
     if not os.path.isdir(RESULTS_DIR):
         return []
-    order = {"env_smoke": 0, "schema": 1, "tools": 2, "e2e": 3, "latency_v2": 4,
-             "interruption": 5, "stt_accuracy": 6}
+    order = {
+        "env_smoke": 0,
+        "schema": 1,
+        "tools": 2,
+        "e2e": 3,
+        "latency_v2": 4,
+        "interruption": 5,
+        "stt_accuracy": 6,
+    }
     suites = []
     for fn in os.listdir(RESULTS_DIR):
         if fn.endswith(".json") and fn != "latency_combos.json":
@@ -83,7 +90,9 @@ async def main():
             ran_checks.append(await module.run())
         except Exception:
             traceback.print_exc()
-            print(f"SUITE {module_name} CRASHED — its saved results (if any) are unchanged")
+            print(
+                f"SUITE {module_name} CRASHED — its saved results (if any) are unchanged"
+            )
 
     if "env" in selected:
         await run_suite("1. ENV SMOKE TESTS", "test_env_smoke")
@@ -107,8 +116,10 @@ async def main():
 
     total = sum(len(c.results) for c in ran_checks)
     failed = sum(1 for c in ran_checks for _, ok, _ in c.results if not ok)
-    print(f"\n{'='*60}\nTHIS RUN: {total - failed}/{total} passed in {elapsed/60:.1f} min")
-    print(f"Report written to TEST_REPORT.md (merged with previously saved suites)")
+    print(
+        f"\n{'=' * 60}\nTHIS RUN: {total - failed}/{total} passed in {elapsed / 60:.1f} min"
+    )
+    print("Report written to TEST_REPORT.md (merged with previously saved suites)")
     return 1 if failed else 0
 
 
@@ -134,7 +145,9 @@ def write_report(suites, combos, elapsed):
         for label, ok, detail in c["results"]:
             total += 1
             failed += 0 if ok else 1
-            lines.append(f"| {label} | {'✅ PASS' if ok else '❌ FAIL'} | {detail[:160]} |")
+            lines.append(
+                f"| {label} | {'✅ PASS' if ok else '❌ FAIL'} | {detail[:160]} |"
+            )
         lines.append("")
 
     if combos:

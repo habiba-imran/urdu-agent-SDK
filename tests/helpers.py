@@ -1,5 +1,8 @@
 """Shared helpers for the self-test suite (STEP 9)."""
 
+# Imports intentionally follow sys.path setup + load_dotenv() below, so E402 is expected here.
+# ruff: noqa: E402
+
 import asyncio
 import base64
 import io
@@ -89,7 +92,9 @@ async def groq_transcribe(wav_bytes: bytes) -> tuple[str, float]:
     """Transcribe WAV bytes with Groq whisper-large-v3 (ur). Returns (text, seconds)."""
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+    client = AsyncOpenAI(
+        api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1"
+    )
     t0 = time.monotonic()
     res = await client.audio.transcriptions.create(
         file=("audio.wav", wav_bytes, "audio/wav"),
@@ -156,7 +161,9 @@ class AgentConversation:
         from session_state import SessionState
 
         self.session = SessionState()
-        self.messages: list[dict] = [{"role": "system", "content": persona.SYSTEM_PROMPT}]
+        self.messages: list[dict] = [
+            {"role": "system", "content": persona.SYSTEM_PROMPT}
+        ]
         self.tools_json = _openai_tools()
         self.tool_calls_made: list[tuple[str, dict]] = []
         self._handlers = {
@@ -166,7 +173,9 @@ class AgentConversation:
             "create_reservation": tz_tools.create_reservation,
             "create_support_ticket": tz_tools.create_support_ticket,
             "schedule_callback": tz_tools.schedule_callback,
-            "end_conversation_summary": tz_tools.make_end_conversation_summary(self.session),
+            "end_conversation_summary": tz_tools.make_end_conversation_summary(
+                self.session
+            ),
         }
 
     async def _completion(self, provider: str):
@@ -220,7 +229,11 @@ class AgentConversation:
                 else "cerebras"
             )
             # failover chain mirrors production: cerebras → groq → gemini
-            self._fallbacks = {"cerebras": "groq", "groq": "gemini", "gemini": "cerebras"}
+            self._fallbacks = {
+                "cerebras": "groq",
+                "groq": "gemini",
+                "gemini": "cerebras",
+            }
 
         for _ in range(max_rounds):
             resp = None
@@ -246,7 +259,9 @@ class AgentConversation:
                         continue
                     if is_rate and attempt < 3:
                         fallback = self._fallbacks[self._provider]
-                        print(f"  ⚠️ LLM failover: {self._provider} → {fallback} ({str(e)[:80]})")
+                        print(
+                            f"  ⚠️ LLM failover: {self._provider} → {fallback} ({str(e)[:80]})"
+                        )
                         self._provider = fallback
                         continue
                     raise
@@ -286,7 +301,9 @@ class AgentConversation:
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(params.result, ensure_ascii=False, default=str),
+                        "content": json.dumps(
+                            params.result, ensure_ascii=False, default=str
+                        ),
                     }
                 )
 

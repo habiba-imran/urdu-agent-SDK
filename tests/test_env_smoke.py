@@ -27,7 +27,11 @@ async def run() -> Check:
     # 2. Groq Whisper STT
     try:
         text, secs = await groq_transcribe(wav)
-        check.ok("Groq Whisper (GROQ_API_KEY)", len(text) > 0, f"{secs*1000:.0f}ms → {text!r}")
+        check.ok(
+            "Groq Whisper (GROQ_API_KEY)",
+            len(text) > 0,
+            f"{secs * 1000:.0f}ms → {text!r}",
+        )
     except Exception as e:
         check.ok("Groq Whisper (GROQ_API_KEY)", False, str(e)[:150])
 
@@ -52,7 +56,11 @@ async def run() -> Check:
         check.ok(
             f"Groq LLM ({config.GROQ_LLM_MODEL})",
             quota_hit,
-            ("key valid, free-tier quota exhausted → Gemini failover covers it: " if quota_hit else "")
+            (
+                "key valid, free-tier quota exhausted → Gemini failover covers it: "
+                if quota_hit
+                else ""
+            )
             + str(e)[:130],
         )
 
@@ -66,7 +74,11 @@ async def run() -> Check:
             model=config.GEMINI_LLM_MODEL,
             contents="Reply with exactly: OK",
         )
-        check.ok("Gemini (GOOGLE_API_KEY)", "OK" in (res.text or "").upper(), (res.text or "")[:60])
+        check.ok(
+            "Gemini (GOOGLE_API_KEY)",
+            "OK" in (res.text or "").upper(),
+            (res.text or "")[:60],
+        )
     except Exception as e:
         check.ok("Gemini (GOOGLE_API_KEY)", False, str(e)[:150])
 
@@ -84,10 +96,14 @@ async def run() -> Check:
         import uuid as _uuid
 
         conv_id = str(_uuid.uuid4())
-        await client.table("conversations").insert(
-            {"id": conv_id, "channel": "smoke-test"}
-        ).execute()
-        got = await client.table("conversations").select("id").eq("id", conv_id).execute()
+        await (
+            client.table("conversations")
+            .insert({"id": conv_id, "channel": "smoke-test"})
+            .execute()
+        )
+        got = (
+            await client.table("conversations").select("id").eq("id", conv_id).execute()
+        )
         await client.table("conversations").delete().eq("id", conv_id).execute()
         check.ok("Supabase write", bool(got.data), conv_id)
     except Exception as e:
