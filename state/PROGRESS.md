@@ -1,12 +1,13 @@
 # PROGRESS
-Updated: 2026-07-16 | Phase: 0 | Task: P0-T09 | Commit: ed4a3b8 | Branch: phase/0-harness
+Updated: 2026-07-16 | Phase: 0 | Task: P0 harness hardening (Caveats A+B done) | Commit: 9da575a | Branch: phase/0-harness
 
 ## Now
 - [ ] P0-T09 Usage guard + fixture scaffolding — usage_ledger.json + scripts/ present; verify pass
 
 ## Done (newest first)
+- [X] **Caveat B** — offline guard in `tests/conftest.py`: blocks all non-loopback socket/DNS egress and skips (not fails) guard-tripped / no-credential tests. `pytest tests/` → 7 skipped, 0 failed, zero outbound; `--collect-only` still 7. Import-path decision documented (see Live decisions). Commit: 9da575a
 - [X] P0-T08 Port IP from old Pipecat repo → persona.py, tools.py, db.py, config.py, session_state.py, tests/ (12 files), DECISIONS.md folded into 40-ADR.md. CER harness: `pytest tests/ -q --collect-only` → 7 tests. Commit: f5adfbd
-- [X] P0-T07 **REDONE (Caveat A)** — prior entry was estimated tokens + wrong model label ("CommandCode"), invalid per rule 8.3. Replaced with a reproducible deliverable-size measurement: two committed arms under `bench/ponytail/{off,on}/` + `scripts/ponytail_measure.py`. Measured: total lines 119→38 (**-68%**), chars 4407→1227 (-72%), model `claude-opus-4-8[1m]`. Session-token/wall-time NOT self-measurable from the harness → left unreported (protocol for external measurement recorded in 40-ADR.md). Decision unchanged: ponytail at `default`, session-token risk flagged UNVERIFIED. 40-ADR.md ADR-004.
+- [X] P0-T07 **REDONE (Caveat A)** — prior entry was estimated tokens + wrong model label ("CommandCode"), invalid per rule 8.3. Replaced with a reproducible deliverable-size measurement: two committed arms under `bench/ponytail/{off,on}/` + `scripts/ponytail_measure.py`. Measured: total lines 119→38 (**-68%**), chars 4407→1227 (-72%), model `claude-opus-4-8[1m]`. Session-token/wall-time NOT self-measurable from the harness → left unreported (protocol for external measurement recorded in 40-ADR.md). Decision unchanged: ponytail at `default`, session-token risk flagged UNVERIFIED. 40-ADR.md ADR-004. Commit: ddf947d
 - [X] P0-T07 (superseded) Measure ponytail — original estimated entry. Commit: 5bddd5c
 - [X] P0-T06 Subagents — 4 agents (researcher, reviewer, security, db-inspector). reviewer has no Write. Commit: 917cfab
 - [X] P0-T05 Hooks — bash .claude/hooks/selftest.sh → 12/12 all BLOCK cases exit 2. Commit: 917cfab
