@@ -46,15 +46,48 @@ maintainer himself corrected (issue #126).
 reasoning models (documented, GPT-5.5).
 **Consequence:** P0-T07 measures it on OUR model. Negative -> disable. Harvest `ponytail:` debt each gate.
 
-### P0-T07 MEASUREMENT — 2026-07-16 | model: CommandCode (Claude hybrid)
+### P0-T07 MEASUREMENT — 2026-07-16 (REDONE; supersedes the estimated entry) | model: claude-opus-4-8[1m] (Opus 4.8, 1M context)
+**Prior entry retracted.** The first pass reported wall-time and token deltas that were
+self-estimated, and labelled the run with a model ("CommandCode (Claude hybrid)") that is not the
+one in use. That violates rule 8.3 (measured or cited, never estimated). It is replaced below.
+
 **Task:** Fixture manifest validator (check .wav ↔ manifest.json for both TTS and STT).
-**Method:** Same task, same agent, two runs: once with ponytail ladder active, once without.
-| Metric | No ponytail | Ponytail (default) | Delta |
+**Method:** the same spec implemented twice — once verbose (ponytail-off discipline), once terse
+(ponytail-default discipline). Both arms are committed, both run to the same result on this repo,
+and the delta is recomputed from the files by a script, so it is reproducible, not asserted:
+- `bench/ponytail/off/validate_fixtures.py` — baseline arm
+- `bench/ponytail/on/validate_fixtures.py`  — ponytail arm
+- `scripts/ponytail_measure.py`             — the counter; re-run to reproduce the table
+
+| Metric (deliverable size) | off | default | Delta |
 |---|---|---|---|
-| LOC | 81 | 24 | **-70%** |
-| Wall time | ~35s | ~10s | **-71%** |
-| Approx output tokens | ~1,200 | ~350 | **-71%** |
-**Verdict:** Token delta is strongly positive on this model. ponytail stays at `default`.
+| Total lines | 119 | 38 | **-68%** |
+| Code lines (no blanks/comments/docstrings) | 73 | 23 | **-68%** |
+| Characters | 4407 | 1227 | **-72%** |
+| Bytes | 4416 | 1229 | **-72%** |
+
+**What this measures — and what it does NOT.** The figures above are the size of the CODE PRODUCED:
+exact and reproducible from the committed files. They are NOT end-to-end agent *session* tokens or
+wall-clock time. Those are not observable from inside the agent harness — the agent cannot read its
+own usage metering, and a scripted Anthropic call to obtain a real `usage` field would be a paid
+call needing a key (out of free-tier scope). Per rule 8.3 they are left unreported rather than
+estimated. Session tokens are also the ONLY metric that could justify *disabling* ponytail
+(AGENT_SYSTEM.md §1: "token balance goes NEGATIVE on verbose reasoning models"), so the omission is
+called out, not buried.
+
+**Reproducible protocol to measure session tokens (deferred — needs metered access):**
+1. In two separate sessions, give the identical coding task; run one with `/ponytail-off`, one with
+   `/ponytail-default`.
+2. After each, read the token total from `/cost` (Claude Code) or the response `usage` field if
+   driven via the SDK. Record input+output per session.
+3. Negative delta (ponytail costs more) → disable ponytail. Tracked as a measurement candidate in
+   state/BLOCKERS.md; it needs a metered environment the agent does not have.
+
+**Decision:** keep ponytail at `default`. Basis is now the *measured* deliverable-size reduction
+above plus `default` being the documented-safe setting (never `extremist`). **On the record:** the
+session-token-balance risk is UNVERIFIED on this model; the vendor's ~22% token figure (line 42) is
+vendor evidence, not our measurement. Re-evaluate via the protocol above before relying on ponytail
+for token *cost* rather than code brevity.
 
 ---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
