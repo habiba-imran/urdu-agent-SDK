@@ -16,6 +16,9 @@ Read-only mirror of live RLS state. Regenerate: `make db-inspect`.
 ## usage_events  (RLS: ENABLED)
 - policy tenant_isolation_usage [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
 
+## used_nonces  (RLS: ENABLED)
+- (no policies)
+
 ## voices  (RLS: ENABLED)
 - policy voices_read_all [SELECT] USING (enabled)
 

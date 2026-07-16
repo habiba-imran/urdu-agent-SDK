@@ -50,6 +50,7 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | hmac_secret_hash | text | NO |  |
 | max_concurrent | integer | NO | 2 |
 | max_minutes_month | integer | NO | 100 |
+| allowed_origins | ARRAY | NO | '{}'::text[] |
 | status | text | NO | 'active'::text |
 | created_at | timestamp with time zone | NO | now() |
 - index: tenants_pkey
@@ -67,6 +68,16 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 - FK: tenant_id -> tenants(id)
 - index: usage_events_pkey
 - index: usage_events_tenant_at_idx
+
+## table: used_nonces
+| column | type | nullable | default |
+|---|---|---|---|
+| tenant_id | uuid | NO |  |
+| nonce | text | NO |  |
+| used_at | timestamp with time zone | NO | now() |
+- FK: tenant_id -> tenants(id)
+- index: used_nonces_pkey
+- index: used_nonces_used_at_idx
 
 ## table: voices
 | column | type | nullable | default |

@@ -27,6 +27,7 @@ create table tenants (
   hmac_secret_hash  text not null,                                 -- hash ONLY, never the secret
   max_concurrent    int  not null default 2,                       -- per-tenant cap; one tenant must not eat the pool
   max_minutes_month int  not null default 100,
+  allowed_origins   text[] not null default '{}',                  -- CORS/origin allowlist; empty = not enforced (dev)
   status            text not null default 'active' check (status in ('active', 'suspended')),
   created_at        timestamptz not null default now()
 );
