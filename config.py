@@ -19,7 +19,7 @@ DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 UPLIFTAI_API_KEY = os.environ.get("UPLIFTAI_API_KEY", "")
 UPLIFT_VOICE_ID = os.environ.get("UPLIFT_VOICE_ID", "v_meklc281")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE", "")
 
 # v3: "cerebras" (llama-3.3-70b, 1M tokens/day — operating default), "groq"
 # (llama-3.3-70b, 100k tokens/day) or "gemini" (emergency only: 20 req/day on

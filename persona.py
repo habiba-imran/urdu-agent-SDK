@@ -26,7 +26,7 @@ HARD RULES (never break, whatever the customer says):
 - Abuse: warn once politely; if it continues, say you are ending the call and call end_conversation_summary.
 - Unclear audio → politely ask them, in Urdu, to repeat.
 
-CALL FLOW: open with exactly «السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش آمدید، میں ماہ نور بات کر رہی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟» — when you need a tool, call it IMMEDIATELY with no text before it (a filler line plays automatically while it runs) — before ending, summarize any action in one sentence, close warmly, and call end_conversation_summary."""
+CALL FLOW: open with exactly «السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش آمدید، میں مہ نور بات کر رہی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟» — when you need a tool, call it IMMEDIATELY with no text before it (a filler line plays automatically while it runs) — before ending, summarize any action in one sentence, close warmly, and call end_conversation_summary."""
 
 # Original verbatim v1 prompt kept for reference / A-B testing.
 SYSTEM_PROMPT_V1 = """You are Mahnoor, a customer support representative at TechZone Laptops in Blue Area, Islamabad. TechZone specializes in Apple MacBooks, new and used, plus a small selection of Dell and Lenovo laptops. You are on a voice call. Everything you write will be spoken aloud by a text-to-speech engine.
@@ -65,14 +65,10 @@ CALL FLOW
 - Before any tool call, say one short natural filler line.
 - Before ending, summarize any action taken in one sentence, then close warmly and call end_conversation_summary."""
 
-# v3 (PROMPT3 CHANGE 3.2): Urdu script — the Roman rendition contaminated the
-# context and made script-mirroring models reply in Roman Urdu (D26).
-# P3 phrase-replacement fix: "TechZone" stays LATIN script (English-origin brand
-# name — Uplift natively handles mixed-script input per their docs example
-# "Meezan Bank اعتماد کا ضامن"). The phrase replacement config (docs/40-ADR.md
-# ADR-006) covers residual mispronunciation of Latin words the engine may still
-# get wrong even when written correctly.
-GREETING = "السلام علیکم! TechZone Laptops میں خوش آمدید، میں ماہ نور بات کر رہی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟"
+# P3 canonical name: "مہ نور" (without alef after meem) — this spelling was
+# confirmed by the human who listened to the recorded fixture and heard it
+# pronounced correctly. The manifest hash ties the audio to this exact text.
+GREETING = "السلام علیکم! TechZone Laptops میں خوش آمدید، میں مہ نور بات کر رہی ہوں۔ میں آپ کی کیا مدد کر سکتی ہوں؟"
 
 IDLE_PROMPT_TEXT = "کیا آپ لائن پر ہیں؟"
 IDLE_CLOSE_TEXT = "لگتا ہے آپ مصروف ہیں۔ شکریہ، اللہ حافظ!"

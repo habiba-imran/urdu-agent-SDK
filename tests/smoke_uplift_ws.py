@@ -26,7 +26,7 @@ NAMESPACE = "/text-to-speech/multi-stream"
 URL = "https://api.upliftai.org"
 OUT_WAV = os.path.join(os.path.dirname(__file__), "out_uplift_smoke.wav")
 
-TEXT = "السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش آمدید، میں ماہ نور بات کر رہی ہوں۔"
+TEXT = "السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش آمدید، میں مہ نور بات کر رہی ہوں۔"
 
 
 async def main() -> int:
