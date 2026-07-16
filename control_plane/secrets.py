@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 from dotenv import dotenv_values
 
@@ -40,7 +41,12 @@ class EnvSecretProvider(DictSecretProvider):
     """Dev provider: CP_TENANT_SECRETS = {"<tenant_id>": "<secret>", ...} in .env.local."""
 
     def __init__(self, env_file: str = ".env.local"):
-        raw = dotenv_values(env_file).get("CP_TENANT_SECRETS", "") or "{}"
+        # env var wins over the file, so a server process can be handed a secret map directly
+        raw = (
+            os.environ.get("CP_TENANT_SECRETS")
+            or dotenv_values(env_file).get("CP_TENANT_SECRETS", "")
+            or "{}"
+        )
         try:
             mapping = json.loads(raw)
         except json.JSONDecodeError:

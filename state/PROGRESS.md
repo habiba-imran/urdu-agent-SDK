@@ -73,3 +73,8 @@ Updated: 2026-07-16 | Phase: 2 (Control plane) | Task: GATE 2 reached — awaiti
 - LiveKit Build: 10-20s cold starts. Expected. Do not debug. Do not optimise.
 - Supabase free projects PAUSE after 7 days idle. `make db-reset` must always work.
 - supabase-py v2 uses `create_async_client` (not `acreate_client` as in the old repo — db.py fixed)
+- **LiveKit `/rtc/validate` has a ~60s JWT clock-skew LEEWAY**: a token up to ~45s past exp still
+  validates (401 only at 60s+). So a minted 120s token is usable for ~180s max, not a hard 120s.
+  `tests/test_token_widen_live.py` (live gate) proves expiry by waiting PAST the leeway; a tighter
+  wait reads as a false "expired token accepted" (it did once — retracted, see BLOCKERS.md). If a
+  strict 120s ceiling ever matters, mint a shorter TTL. Live gate: 6/6 attacks rejected.

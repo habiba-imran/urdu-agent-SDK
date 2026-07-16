@@ -15,6 +15,10 @@
 
 ## Open
 _(none)_
+> Note: the P2 token-widen live gate briefly wrote a BLOCK-SEC here for "LiveKit accepted an
+> expired token". Investigated and RETRACTED as a false positive — it was LiveKit's ~60s JWT
+> clock-skew leeway (tokens 60s+ past exp ARE rejected), not a vulnerability. The test's wait
+> margin was too tight; fixed to wait past the leeway. See docs/40-ADR.md / HANDOFF.
 
 ## Resolved
 ## BLOCK-001 | P0-T08 | 2026-07-16T00:35Z   [RESOLVED 2026-07-16]
