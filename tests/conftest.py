@@ -26,6 +26,7 @@ for _path in (_PIPECAT_STUBS, _PROJECT_ROOT):
 # Load .env.local into os.environ so downstream flag checks work. Skip silently if absent.
 try:
     from dotenv import load_dotenv as _load_dotenv
+
     _load_dotenv(os.path.join(_PROJECT_ROOT, ".env.local"))
 except Exception:
     pass

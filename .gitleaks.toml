@@ -1,0 +1,12 @@
+# .gitleaks.toml — targeted allow-list for test fixture values.
+# These are intentionally non-secret dev-test strings committed as test harness data.
+# Real secrets live only in .env.local and are never committed.
+# Path-scoped: only tests/test_mint.py is excluded from scanning.
+# A real secret added elsewhere in the repo would still be caught.
+
+[allowlist]
+  description = "fake dev test fixture secrets in the mint harness"
+
+  paths = [
+    '''tests/test_mint.py''',
+  ]

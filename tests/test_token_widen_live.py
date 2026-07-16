@@ -247,15 +247,26 @@ def main() -> int:
         # LiveKit /rtc/validate honours a ~60s JWT clock-skew leeway (measured: exp-45s -> 200,
         # exp-60s -> 401), so we wait to exp + 90s to test a *genuinely* rejected token. A tighter
         # margin would sit inside the leeway and read as a false "expired token accepted".
-        hr("CHECK 5 — wait for the token to pass expiry + LiveKit's ~60s leeway, then /rtc/validate")
+        hr(
+            "CHECK 5 — wait for the token to pass expiry + LiveKit's ~60s leeway, then /rtc/validate"
+        )
         margin = 90
         wait = max(0, claims["exp"] - int(time.time()) + margin)
-        print(f"waiting {wait}s (exp={claims['exp']} + {margin}s past LiveKit's ~60s leeway) ...")
+        print(
+            f"waiting {wait}s (exp={claims['exp']} + {margin}s past LiveKit's ~60s leeway) ..."
+        )
         time.sleep(wait)
         sc5, body5 = validate(token)
-        print(f"token {int(time.time()) - claims['exp']}s past exp: LiveKit -> {sc5} | {body5}")
+        print(
+            f"token {int(time.time()) - claims['exp']}s past exp: LiveKit -> {sc5} | {body5}"
+        )
         if sc5 == 200:
-            vulns.append(("LiveKit accepted a token well past expiry (beyond leeway)", f"{sc5} {body5}"))
+            vulns.append(
+                (
+                    "LiveKit accepted a token well past expiry (beyond leeway)",
+                    f"{sc5} {body5}",
+                )
+            )
 
         hr("VERDICT")
         if vulns:
