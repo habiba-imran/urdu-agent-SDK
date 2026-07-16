@@ -53,3 +53,30 @@ If it's wrong, nothing else matters.
 `persona.py` · `tools.py` · `db.py` · **`tests/` CER harness (most valuable)** · `DECISIONS.md` → `40-ADR.md`
 **Scrapped:** `bot.py` pipeline wiring · `services/uplift_tts.py` (the LiveKit plugin replaces
 300 lines of hand-rolled Socket.IO — that's the whole reason we chose LiveKit) · `processors.py` · `static/`
+
+## Phrase-replacement convention (P3, ADR-006)
+Uplift's TTS engine handles mixed-script input natively (confirmed from their own docs example:
+"Meezan Bank اعتماد کا ضامن"). To get correct pronunciation, the system follows a TWO-LAYER
+approach:
+
+**Layer 1 — Persona convention (the common case):** words of genuine English origin — brand
+names (TechZone, MacBook, Dell, Lenovo), technical terms (laptop, WiFi, warranty, battery health),
+product names (MacBook Air M2, ThinkPad, XPS), and units (256GB, 8GB RAM) — are written in
+LATIN script inline within otherwise-normal Urdu sentences. Everything else stays proper Urdu
+script and grammar. Do NOT transliterate English-origin words into Urdu script.
+
+Correct: «TechZone میں MacBook Air M2 256GB 315000 روپے کا ہے»
+Wrong:   «ٹیک زون میں میک بک ایئر ایم ٹو 256GB 315000 روپے کا ہے»
+
+The measured mispronunciation came from the old persona transliterating brand names into
+Urdu script (D42), which the engine reads differently.
+
+**Layer 2 — Phrase replacement config (the safety net):** committed at .uplift_phrase_config.
+Covers residual cases: (a) Latin words the engine may still mispronounce even when written
+correctly (e.g., "MacBook" → "میک بک" phonetically), (b) common LLM misspellings,
+(c) multi-word terms ("battery health"). The configId is wired into every TTS call path
+(worker/factories.py for live sessions, scripts/record_fixture.py for fixture recording).
+Creating/updating the config is a REST CRUD operation (POST /v1/synthesis/phrase-replacement-config)
+that does NOT consume TTS budget — no audio is generated.
+
+Full rationale and the complete phrase list in docs/40-ADR.md ADR-006.

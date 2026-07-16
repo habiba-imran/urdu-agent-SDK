@@ -8,6 +8,16 @@ session or against fixtures — never here.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+
+def _phrase_config_id() -> str | None:
+    """Read the committed phrase replacement configId, if any."""
+    cfg_path = Path(__file__).resolve().parent.parent / ".uplift_phrase_config"
+    if cfg_path.exists():
+        raw = cfg_path.read_text(encoding="utf-8").strip()
+        return raw or None
+    return None
 
 
 def make_tts(voice_id: str):
@@ -18,10 +28,15 @@ def make_tts(voice_id: str):
     nothing to replay, so fixture mode raises rather than silently returning a broken TTS.
     """
     mode = os.getenv("UPLIFT_MODE", "fixture")
+    phrase_id = _phrase_config_id()
     if mode in ("record", "live"):
         from livekit.plugins import upliftai
 
-        return upliftai.TTS(voice_id=voice_id, output_format="WAV_22050_16")
+        return upliftai.TTS(
+            voice_id=voice_id,
+            output_format="WAV_22050_16",
+            phrase_replacement_config_id=phrase_id,
+        )
     raise NotImplementedError(
         "FixtureTTS replay lands in P3-T04, after the reference fixture is recorded "
         "(human-approved). See services/tts_cache.py and scripts/record_fixture.py."

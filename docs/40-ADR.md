@@ -146,6 +146,56 @@ recording (`scripts/record_fixture.py`) is what actually COMPLETES P3-T01. This 
 the measured value once the human runs the recording. Until then, the plugin is UNVERIFIED-BY-US.
 
 ---
+## ADR-006 Two-layer phrase-replacement for Uplift pronunciation   [ACCEPTED]
+Date: 2026-07-17 | Decided by: the human (recorded here per that instruction)
+
+**Context:** Listening to the recorded reference greeting fixture revealed that the old persona
+transliterated English-origin brand names into Urdu script — "ٹیک زون" for "TechZone", "لیپ ٹاپس"
+for "Laptops" — and the engine read them wrong. The product issue is real and audible in the
+committed fixture.
+
+**Evidence — Uplift's own docs confirm mixed-script works natively.** Their Node.js SDK docs show
+an explicitly mixed example: "Meezan Bank اعتماد کا ضامن" — English-origin brand name in Latin
+script, rest in Urdu script. Their phrase replacement docs state the feature handles exactly
+this: brand names, technical terms, LLM misspellings, and regional variations.
+
+**Evidence — Budget safety.** Phrase replacement config CRUD (`POST /v1/synthesis/phrase-replacement-config`)
+is a REST config operation documented separately from TTS synthesis. It returns a `configId`, not
+audio bytes. Creating a config does NOT synthesize audio — it modifies config state. Confirmed
+by the endpoint appearing alongside `list/get/update` config management endpoints rather than
+under "Text to Speech" synthesis. **Cost: zero TTS budget consumed.**
+
+**Decision — Two layers:**
+
+**Layer 1: Persona convention (the common case).** The system prompt instructs the LLM to write
+English-origin words (brands/tech terms/products/units) in Latin script inline within Urdu
+sentences. This covers ~90% of the problem — the LLM just stops transliterating. Example of
+correct output: «TechZone میں MacBook Air M2 256GB 315000 روپے کا ہے» — not the old «ٹیک زون میں
+میک بک ایئر ایم ٹو ہے».
+
+**Layer 2: Phrase replacement config (the safety net).** A committed config at `.uplift_phrase_config`
+(configId `38949e76-6ad9-4ff4-9caa-61419b387fc0`) covers residual cases:
+- Latin words the engine still mispronounces even when written correctly (`"MacBook"` → `"میک بک"`)
+- Common LLM misspellings
+- Multi-word technical terms (`"battery health"` → `"بیٹری ہیلتھ"`)
+
+Full config contents (9 entries, v1): `{macbook→میک بک, MacBook→میک بک, ThinkPad→تھنک پیڈ,
+warranty→وارنٹی, Bluetooth→بلوٹوتھ, WiFi→وائی فائی, HDMI→ایچ ڈی ایم آئی, USB→یو ایس بی,
+battery health→بیٹری ہیلتھ}`
+
+**Wiring:** configId read from `.uplift_phrase_config` by both `worker/factories.py` (live
+sessions) and `scripts/record_fixture.py` (fixture recording). Both pass it as the
+`phrase_replacement_config_id` keyword argument to `upliftai.TTS(...)`.
+
+**The recorded greeting: what a fresh synthesis would sound like.** Without the Layer 1 change,
+the old greeting `السلام علیکم! ٹیک زون لیپ ٹاپس میں خوش آمدید...` went through the engine with
+transliterated brand names and mispronounced them. With Layer 1 (persona now outputting "TechZone")
++ Layer 2 (`MacBook→میک بک` in the config), a fresh synthesis would produce: the engine reads
+the Latin "TechZone" correctly per its native mixed-script handling, and any residual LLM/
+engine mismatches are caught by the phrase config. The human should evaluate whether to spend
+budget on a re-record now or fold it into P3-T04.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

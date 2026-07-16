@@ -100,9 +100,19 @@ def main() -> int:
 
     from livekit.plugins import upliftai
 
+    phrase_config_id = None
+    cfg_path = ROOT / ".uplift_phrase_config"
+    if cfg_path.exists():
+        phrase_config_id = cfg_path.read_text(encoding="utf-8").strip() or None
+        if phrase_config_id:
+            print(f"phrase config: {phrase_config_id}")
+
     async def synth() -> tuple[bytes, int]:
         tts = upliftai.TTS(
-            voice_id=args.voice, output_format=args.format, api_key=api_key
+            voice_id=args.voice,
+            output_format=args.format,
+            api_key=api_key,
+            phrase_replacement_config_id=phrase_config_id,
         )
         pcm = bytearray()
         sr = 22050
