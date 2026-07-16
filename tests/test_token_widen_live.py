@@ -62,11 +62,12 @@ def hr(title: str) -> None:
     print("\n" + "=" * 78 + "\n" + title + "\n" + "=" * 78)
 
 
-def validate(token: str) -> tuple[int, str]:
-    """Ask LiveKit Cloud itself whether this token is acceptable."""
-    r = httpx.get(
-        f"{LK_HTTPS}/rtc/validate", params={"access_token": token}, timeout=20
-    )
+def validate(token: str, room: str | None = None) -> tuple[int, str]:
+    """Ask LiveKit Cloud itself whether this token is acceptable (optionally for a requested room)."""
+    params = {"access_token": token}
+    if room is not None:
+        params["room"] = room
+    r = httpx.get(f"{LK_HTTPS}/rtc/validate", params=params, timeout=20)
     return r.status_code, r.text.strip()
 
 
@@ -202,6 +203,15 @@ def main() -> int:
                     f"{sc3} {body3}",
                 )
             )
+        # 3b (informational) — /rtc/validate takes a ?room= param but IGNORES it (validates the token
+        # only): a valid token + a DIFFERENT requested room still returns 200. Room binding is enforced
+        # at CONNECT time (LiveKit seats you in the token's embedded room), which the forged-room 401
+        # above already protects. Recorded so a future LiveKit change enforcing room here shows up.
+        sc_rm, body_rm = validate(token, room="requested-" + str(uuid.uuid4()))
+        print(
+            f"unmodified token + ?room=DIFFERENT: LiveKit -> {sc_rm} | {body_rm}  "
+            "(validate IGNORES the room param; binding is enforced at connect — see forged-room 401 above)"
+        )
 
         # CHECK 4 — tamper room + extend exp, re-signed with wrong secret
         hr(
