@@ -1,14 +1,18 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 3 (Worker) | Task: P3-T01 human-approved | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 3 (Worker) | Task: prior-session verified (Session 6); P3-T06/T08 next | Branch: phase/3-worker
 
 ## Now
-- P3-T01 recording HUMAN-APPROVED. One fixture recorded: reference greeting `c6228ded...`
-  (`v_meklc281`, WAV_22050_16, 8.4s, 372KB, uplift_tts_sec=8). Human listened + confirmed
-  audible Urdu. Hash verified: sha256(voice|text)[:32] matches manifest. "مہ نور" is canonical
-  (human-confirmed by ear); persona.py updated to match.
-- P3-T04 fixture-TTS wiring (needs the fixture — P3-T01 now unblocked)
-- P3-T05 Soniox→402 live check (needs live call; human-approved only)
-- P3-T06 Gemini live TPM measurement (needs live call; human-approved only)
+- P3-T01 recording HUMAN-APPROVED, DONE. TWO fixtures on disk: **canonical `e2c70ca90ee456cfe0a790af434dec7d`**
+  (Latin "TechZone Laptops", 8.6s/380KB, human-listened + approved 2026-07-17) + the earlier
+  **superseded `c6228ded...`** (Urdu-script brand, 8.4s — kept on disk, marked superseded in manifest).
+  Both manifest hashes recompute exactly. Ledger `uplift_tts_sec=17` (both recordings). "مہ نور" (no
+  alef) is canonical in persona.py + smoke test; no alef-spelling remains in code (Session-6 verified).
+- [X] P3-T04 fixture-TTS wiring — `worker/factories.py` FixtureTTS (max_retry=0, fail-fast) replays the
+  cached WAV. `tests/test_tts.py` → 3 passed incl `test_fixture_tts_plays_cached_wav`. (commit 3c0af56)
+- [X] P3-T05 Soniox→402 seam verified. The "N attempts" retry is livekit-agents FRAMEWORK (stt.py,
+  default `max_retry=3` in APIConnectOptions) — NOT our wrapper, not the soniox plugin. Fail-fast option:
+  pass `max_retry=0` to make_stt's STT (FixtureTTS already does). Moot in dev: `STT_PROVIDER=gladia`.
+- P3-T06 Gemini LLM wiring + TPM measurement (live call; human-approved only)
 - P3-T08 5-concurrent LiveKit (needs deployed worker)
 - Gate 3 human-listen (needs a real call — blocks approval of this phase)
 - 🔴 **CER harness has 3 real failures** in `make gate`: test_schema/test_tools/test_e2e.
