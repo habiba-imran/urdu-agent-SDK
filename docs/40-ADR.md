@@ -126,6 +126,26 @@ scoped-JWT mint, not the absence of a service_role key. If either attack succeed
 the first suspect.
 
 ---
+## P3-T01 — Uplift plugin API (DECLARED; measured values pending the human-approved recording)
+Date: 2026-07-16 | plugin: `livekit-plugins-upliftai` 1.6.5 (read from source, NOT yet exercised live)
+
+**Declared (from `livekit/plugins/upliftai/tts.py`):**
+- Sample rate is FIXED at **22050 Hz, mono** (`DEFAULT_SAMPLE_RATE=22050`, `num_channels=1`). Every
+  output format is 22.05 kHz except `ULAW_8000_8` (8 kHz telephony µ-law, out of scope).
+- **No latency/model tier** — the constructor has no `model` param (no ElevenLabs flash-vs-multilingual
+  equivalent). Levers are `voice_id` (voice/character; pace is intrinsic per D42) and `output_format`.
+- `output_format` ∈ {PCM_22050_16, WAV_22050_16/32, MP3_22050_32 (default)/64/128, OGG_22050_16,
+  ULAW_8000_8}. The plugin default `MP3_22050_32` is LOSSY 32 kbps — wrong for a golden reference
+  fixture; we record `WAV_22050_16` (lossless).
+
+**Decision:** fixture voice `v_meklc281`, format `WAV_22050_16`. Reference utterance lives in
+`tests/fixtures/reference_greeting.txt` (fixture key `c6228ded3cd7af7e5d49954e0cbae817`).
+
+🔴 **PENDING:** the MEASURED sample rate + "is it audible Urdu?" confirmation from the human-approved
+recording (`scripts/record_fixture.py`) is what actually COMPLETES P3-T01. This entry is updated with
+the measured value once the human runs the recording. Until then, the plugin is UNVERIFIED-BY-US.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

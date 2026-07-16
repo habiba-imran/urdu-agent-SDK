@@ -2,14 +2,29 @@
 Updated: 2026-07-16 | Phase: 3 (Worker) | Task: P3-T01 recording — awaiting human approval | Branch: phase/3-worker
 
 ## Now
-- **BLOCKED on human approval**: P3-T01 (verify the Uplift plugin) needs a HUMAN-APPROVED
-  `UPLIFT_MODE=record` session (~5s of the 10-min Uplift budget). Tool ready + inspectable:
-  `scripts/record_fixture.py` (12s hard cap + pre-call length guard; refuses without UPLIFT_MODE=record).
-  Awaiting go-ahead on the exact command. Plugin API (read from source): **22050 Hz mono, NO
-  latency/model tier**; recommended `WAV_22050_16` (lossless — plugin default MP3_22050_32 is lossy),
-  voice `v_meklc281`. Verified sample rate → 40-ADR.md AFTER the recording. Do not record unattended.
+- P3 groundwork DONE (no live call): P3-T03 RLS-scoped config load (`worker/config.py`), P3-T07 usage
+  emission (`worker/usage.py`), worker skeleton (`worker/{main,factories}.py`). `tests/test_worker.py`
+  → 4 passed. P3-T02 cache + P3-T01 recorder already committed. ADR P3-T01 declared-API scaffolded.
+- **BLOCKED on human approval / live calls** for the rest: P3-T01 recording (verify Uplift plugin),
+  then P3-T04 fixture-TTS wiring (needs the fixture), P3-T05 Soniox→402 live check, P3-T06 Gemini live
+  TPM, P3-T08 5-concurrent LiveKit, and the Gate 3 human-listen. Recorder ready: `scripts/record_fixture.py`
+  (WAV_22050_16, v_meklc281, `tests/fixtures/reference_greeting.txt`, 12s cap). Do not record unattended.
+- 🔴 **KNOWN FLAW to review (offline guard masks real failures).** conftest's `pytest_runtest_call`
+  skips a FAILED test when `_HAS_CREDENTIALS` is false — but that flag reads `os.environ`, and our creds
+  live in `.env.local`, so it's ALWAYS false. Result: a genuine failure in a Supabase-connected test is
+  silently converted to a SKIP (it just hid a psycopg ProactorEventLoop bug in worker/config as a skip).
+  Not fixed unilaterally (it's the human's Caveat B guard + touches CER-test skipping). Recommendation:
+  make the CER harness skip explicitly, then have the guard skip ONLY on guard-tripped (paid-host) fails.
 
 ## Done (newest first)
+- [X] P3-T03 RLS-scoped agent config load — `worker/config.py` `load_agent_config` (authenticated role
+  + tenant JWT claim). Own agent loads; a cross-tenant agent → `AgentNotFound` (RLS/IDOR at the worker
+  layer). Sync (psycopg async can't use Windows ProactorEventLoop; the worker calls via to_thread).
+- [X] P3-T07 usage_events emission — `worker/usage.py` `record_usage` (stt_sec/tts_sec/llm_tokens/
+  agent_sec). `tests/test_worker.py` → 4 passed.
+- [structure] P3-T03 worker skeleton — `worker/{main,factories}.py`. Entrypoint parses room metadata,
+  loads config, assembles the session via provider factories (lazy imports); untrusted prompt → persona
+  slot only. Live wiring (FixtureTTS, session.start, provider media) = P3-T04+.
 - [X] P3-T02 TTS fixture cache — `services/tts_cache.py` (key/get/require/store + WAV wrap). Cache miss
   in fixture mode → hard LookupError, ZERO network (`tests/test_tts.py`). services/__init__.py added.
 - [tool] P3-T01 recorder `scripts/record_fixture.py` written (verifies the plugin, records ONE fixture,
