@@ -7,5 +7,14 @@
     "sample_rate": 22050,
     "output_format": "WAV_22050_16",
     "recorded_at": "2026-07-16T18:43:20.194328+00:00"
+  },
+  "e2c70ca90ee456cfe0a790af434dec7d": {
+    "voiceId": "v_meklc281",
+    "text": "السلام علیکم، TechZone Laptops میں خوش آمدید۔ میں مہ نور بات کر رہی ہوں، میں آپ کی کیا مدد کر سکتی ہوں؟",
+    "ms": 8626,
+    "bytes": 380460,
+    "sample_rate": 22050,
+    "output_format": "WAV_22050_16",
+    "recorded_at": "2026-07-16T22:16:52.595314+00:00"
   }
 }

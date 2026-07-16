@@ -7,7 +7,9 @@ session or against fixtures — never here.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import uuid
 from pathlib import Path
 
 
@@ -23,12 +25,65 @@ def _phrase_config_id() -> str | None:
 def make_tts(voice_id: str):
     """Uplift TTS. UPLIFT_MODE=fixture (default) replays committed fixtures; record/live call Uplift.
 
-    Fixture replay (a FixtureTTS reading services/tts_cache.py) is wired in P3-T04, once the
-    reference fixture has been recorded (UPLIFT_MODE=record, human-approved) — until then there is
-    nothing to replay, so fixture mode raises rather than silently returning a broken TTS.
+    Fixture mode delegates to FixtureTTS, which reads from services/tts_cache.py.  A cache miss
+    is a hard LookupError — never a silent live call.  Record/live mode creates a real
+    livekit-plugins-upliftai TTS instance.
     """
     mode = os.getenv("UPLIFT_MODE", "fixture")
     phrase_id = _phrase_config_id()
+    if mode == "fixture":
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from services.tts_cache import require as _require, key as _tts_key  # noqa: E402
+
+        # register_fixture_tts – we define the adapter inline so the LiveKit import
+        # stays lazy (only loaded inside the FixtureTTS class body).
+        from livekit.agents.tts import TTS, ChunkedStream, SynthesizedAudio, TTSCapabilities  # noqa: E402
+        from livekit.agents import APIConnectOptions  # noqa: E402
+        from livekit import rtc  # noqa: E402
+
+        _default_conn = APIConnectOptions(max_retry=0)
+
+        class FixtureTTS(TTS):
+            def __init__(self):
+                super().__init__(
+                    capabilities=TTSCapabilities(streaming=False),
+                    sample_rate=22050,
+                    num_channels=1,
+                )
+
+            def synthesize(self, text, *, conn_options=None):
+                return _FixtureChunkedStream(
+                    tts=self, input_text=text,
+                    conn_options=conn_options or _default_conn,
+                    voice_id=voice_id,
+                )
+
+        class _FixtureChunkedStream(ChunkedStream):
+            def __init__(self, *, tts, input_text, conn_options, voice_id):
+                super().__init__(tts=tts, input_text=input_text,
+                                 conn_options=conn_options)
+                self._voice_id = voice_id
+
+            async def _run(self, output_emitter):
+                wav = _require(self._voice_id, self._input_text)
+                sample_rate = 22050
+                num_channels = 1
+                pcm = wav[44:]
+                samples_per_channel = len(pcm) // (num_channels * 2)
+                request_id = str(uuid.uuid4())
+                output_emitter.initialize(
+                    request_id=request_id,
+                    sample_rate=sample_rate, num_channels=num_channels,
+                    mime_type="audio/pcm",
+                )
+                output_emitter.push(pcm)
+                output_emitter.flush()
+                output_emitter.end_input()
+                await output_emitter.join()
+
+        return FixtureTTS()
+
     if mode in ("record", "live"):
         from livekit.plugins import upliftai
 
@@ -37,10 +92,6 @@ def make_tts(voice_id: str):
             output_format="WAV_22050_16",
             phrase_replacement_config_id=phrase_id,
         )
-    raise NotImplementedError(
-        "FixtureTTS replay lands in P3-T04, after the reference fixture is recorded "
-        "(human-approved). See services/tts_cache.py and scripts/record_fixture.py."
-    )
 
 
 def make_stt():
