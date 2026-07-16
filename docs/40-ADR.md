@@ -174,14 +174,11 @@ correct output: «TechZone میں MacBook Air M2 256GB 315000 روپے کا ہے
 میک بک ایئر ایم ٹو ہے».
 
 **Layer 2: Phrase replacement config (the safety net).** A committed config at `.uplift_phrase_config`
-(configId `38949e76-6ad9-4ff4-9caa-61419b387fc0`) covers residual cases:
-- Latin words the engine still mispronounces even when written correctly (`"MacBook"` → `"میک بک"`)
-- Common LLM misspellings
-- Multi-word technical terms (`"battery health"` → `"بیٹری ہیلتھ"`)
-
-Full config contents (9 entries, v1): `{macbook→میک بک, MacBook→میک بک, ThinkPad→تھنک پیڈ,
-warranty→وارنٹی, Bluetooth→بلوٹوتھ, WiFi→وائی فائی, HDMI→ایچ ڈی ایم آئی, USB→یو ایس بی,
-battery health→بیٹری ہیلتھ}`
+(configId `38949e76-6ad9-4ff4-9caa-61419b387fc0`) exists as the wiring target. It is currently
+EMPTY (0 entries). Mappings from the old repo's D42 list were removed — they were ported on
+assumption, not measured. Layer 1 (Latin-script convention) may be sufficient on its own. When a
+real mispronunciation is heard in a recording, the specific problem phrase goes here as a tested
+correction, not a guessed one.
 
 **Wiring:** configId read from `.uplift_phrase_config` by both `worker/factories.py` (live
 sessions) and `scripts/record_fixture.py` (fixture recording). Both pass it as the
