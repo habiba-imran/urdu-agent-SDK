@@ -1,11 +1,18 @@
 # PROGRESS
-Updated: 2026-07-16 | Phase: 1 (Supabase) | Task: GATE 1 reached — awaiting human RLS review | Branch: phase/1-supabase
+Updated: 2026-07-16 | Phase: 2 (Control plane) | Task: GATE 2 reached — awaiting human token-widen review | Branch: phase/2-control-plane
 
 ## Now
-- GATE 1 reached; all P1 tasks green. STOP for the human gate: read every RLS policy by hand
-  (41-HUMAN-TASKS Phase 1). Do not start Phase 2 until the human says "begin Phase 2".
+- GATE 2 reached; all P2 tasks green (pytest tests/test_mint.py → 11 passed). STOP for the human gate:
+  attempt to widen a minted token yourself — it must fail (41-HUMAN-TASKS Phase 2). Do not start
+  Phase 3 until the human says "begin Phase 3".
 
 ## Done (newest first)
+- [X] P2-T01..T06 Control plane / token mint — `control_plane/{mint,secrets,app}.py`. HMAC verify +
+  ≤60s replay window (T01), single-use nonce store `used_nonces` (T02), quota concurrent+minutes (T03),
+  scoped LiveKit JWT room=uuid4/identity=uuid4/TTL=120s/roomJoin-one-room (T04), session row + quota
+  increment in the mint txn (T05), FastAPI `POST /v1/session` + per-tenant origin allowlist + rate
+  limit (T06). GATE 2: `pytest tests/test_mint.py` → 11 passed (all reject cases + token scope/TTL).
+- [X] P2-prep authorize service_role (ADR-005) + Supabase-paid housekeeping + .env.local @→%40. Commit on phase/1-supabase.
 - [X] P1-T04 SCHEMA.md/RLS.md mirror — scripts/db_inspect.py (read-only introspection) + `make db-inspect`. Regenerates deterministically → matches live (no git diff). NOTE: the guide's db-inspector subagent+MCP is not dispatchable in this harness; this read-only script is the equivalent.
 - [X] P1-T03 test_isolation.py — cross-tenant read = 0 rows, verified against live DB. Offline guard now allow-lists the free Supabase host; paid providers stay blocked. Commit: ae8b263
 - [X] P1-T02 rls_check.py — now connects via scripts/dbconn.py (.env.local) and fails if any public table lacks RLS. `make rls-check` → RLS OK on all 6 tables.
@@ -22,6 +29,14 @@ Updated: 2026-07-16 | Phase: 1 (Supabase) | Task: GATE 1 reached — awaiting hu
 - [X] P0-T01 Install ponytail — `@dietrichgebert/ponytail` installed via npm. `/ponytail-help` is a Claude Code plugin slash command, not testable outside Claude Code. Commit: 917cfab
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
+- **P2 gate test (justified test-file edits).** The test-guard override token was added only to create
+  `tests/test_mint.py` (the Phase 2 gate — a NEW test, not a rewrite of an existing one) and add it to
+  pytest.ini `python_files`. Token removed immediately after.
+- **HMAC secret storage — OPEN decision flagged for the human (Phase 2).** `tenants.hmac_secret_hash`
+  says "hash only, never the secret", but HMAC verification needs the RAW secret. Resolved with a
+  `control_plane/secrets.py` SecretProvider: raw secrets stay in the trusted tier (never a DB table),
+  the DB keeps only the hash. Dev reads `CP_TENANT_SECRETS` JSON from .env.local; tests inject. The
+  PROD store (Supabase Vault / secret manager / encrypted column) is deferred — needs a human call.
 - **P1-T03 offline-guard scope refinement + isolation test (justified test-file edits).** The test-guard
   override token was added to: (1) allow-list the FREE Supabase dev host in the conftest guard so the RLS isolation test
   can hit the real DB — paid providers (Uplift/Gladia/LLMs) stay blocked, so the guard's purpose is
