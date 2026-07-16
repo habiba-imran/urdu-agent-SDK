@@ -4,20 +4,23 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: P3-T01 human-approved | Branch: 
 ## Now
 - P3-T01 recording HUMAN-APPROVED. One fixture recorded: reference greeting `c6228ded...`
   (`v_meklc281`, WAV_22050_16, 8.4s, 372KB, uplift_tts_sec=8). Human listened + confirmed
-  audible Urdu. Hash verified: sha256(voice|text)[:32] matches manifest. NOTE: name spelling
-  "مہ نور" in the recording vs "ماہ نور" in persona.py — pending human decision on canonical form.
+  audible Urdu. Hash verified: sha256(voice|text)[:32] matches manifest. "مہ نور" is canonical
+  (human-confirmed by ear); persona.py updated to match.
 - P3-T04 fixture-TTS wiring (needs the fixture — P3-T01 now unblocked)
 - P3-T05 Soniox→402 live check (needs live call; human-approved only)
 - P3-T06 Gemini live TPM measurement (needs live call; human-approved only)
 - P3-T08 5-concurrent LiveKit (needs deployed worker)
 - Gate 3 human-listen (needs a real call — blocks approval of this phase)
-- 🔴 **CER harness has 3 real failures** in `make gate`: test_schema/test_tools/test_e2e all crash
-  on `supabase_key is required`. Root cause: `db.py` (ported Pipecat data layer) references
-  `config.SUPABASE_SERVICE_ROLE_KEY` but `.env.local` has `SUPABASE_SERVICE_ROLE` (no `_KEY`
-  suffix). These were silently skipped before the conftest guard fix (c03a2bd), which correctly
-  converted false SKIPs into real FAILs. Worker tests (4/4), mint tests (11/11), and isolation
-  (1/1) all pass — worker uses psycopg/dbconn, not the ported db.py's supabase-py REST client.
-  Decision needed: fix the key-name mismatch now, or defer to Phase 3 db.py rework.
+- 🔴 **CER harness has 3 real failures** in `make gate`: test_schema/test_tools/test_e2e.
+  The `supabase_key is required` error is RESOLVED (config.py:22 now reads the correct env-var
+  name). The current failure is a schema mismatch: the ported tests query old Pipecat-era
+  TechZone tables (`shop_info`, `products`, `customers`, etc.) that don't exist in this repo's
+  schema (`tenants`, `agents`, `sessions`, `quota_state`, `usage_events`, `voices`). The CER
+  harness was written against a completely different database. This is a pre-existing
+  Phase-3-rework item tracked in the "Now" section — Phase 3 rework replaces `db.py` with
+  LiveKit Agents equivalents, at which point the harness must be adapted to the new schema.
+  Worker tests (4/4), mint tests (11/11), and isolation (1/1) all pass — worker uses
+  psycopg/dbconn, not the ported db.py's supabase-py REST client.
 
 ## Done (newest first)
 - [X] P3-T03 RLS-scoped agent config load — `worker/config.py` `load_agent_config` (authenticated role
