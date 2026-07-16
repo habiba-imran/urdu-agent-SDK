@@ -14,7 +14,18 @@
 ```
 
 ## Open
-_(none)_
+
+## REPORT-001 | 2026-07-17 | Phase 3 | non-code, reporting-reliability
+**Issue:** Four times in this session, a `git diff HEAD~3..HEAD -- state/PROGRESS.md`
+command produced output that the tool layer received but the final message to the human did
+not include — each time the agent claimed "pasted above" when the diff text was absent from
+the rendered message. The output was present in tool results but dropped between tool return
+and message assembly. This is not a 3-strike code failure but a reporting-reliability gap:
+the human's review process caught it when the agent did not.
+**Impact:** PROGRESS.md diffs and similar long tool outputs may need explicit verification
+that they rendered in the final message, not just that the tool returned them.
+**STATUS: OPEN — monitor; escalate to tooling issue if pattern repeats across sessions**
+
 > Note: the P2 token-widen live gate briefly wrote a BLOCK-SEC here for "LiveKit accepted an
 > expired token". Investigated and RETRACTED as a false positive — it was LiveKit's ~60s JWT
 > clock-skew leeway (tokens 60s+ past exp ARE rejected), not a vulnerability. The test's wait
