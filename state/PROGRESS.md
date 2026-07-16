@@ -1,12 +1,19 @@
 # PROGRESS
-Updated: 2026-07-16 | Phase: 2 (Control plane) | Task: GATE 2 reached — awaiting human token-widen review | Branch: phase/2-control-plane
+Updated: 2026-07-16 | Phase: 3 (Worker) | Task: P3-T01 recording — awaiting human approval | Branch: phase/3-worker
 
 ## Now
-- GATE 2 reached; all P2 tasks green (pytest tests/test_mint.py → 11 passed). STOP for the human gate:
-  attempt to widen a minted token yourself — it must fail (41-HUMAN-TASKS Phase 2). Do not start
-  Phase 3 until the human says "begin Phase 3".
+- **BLOCKED on human approval**: P3-T01 (verify the Uplift plugin) needs a HUMAN-APPROVED
+  `UPLIFT_MODE=record` session (~5s of the 10-min Uplift budget). Tool ready + inspectable:
+  `scripts/record_fixture.py` (12s hard cap + pre-call length guard; refuses without UPLIFT_MODE=record).
+  Awaiting go-ahead on the exact command. Plugin API (read from source): **22050 Hz mono, NO
+  latency/model tier**; recommended `WAV_22050_16` (lossless — plugin default MP3_22050_32 is lossy),
+  voice `v_meklc281`. Verified sample rate → 40-ADR.md AFTER the recording. Do not record unattended.
 
 ## Done (newest first)
+- [X] P3-T02 TTS fixture cache — `services/tts_cache.py` (key/get/require/store + WAV wrap). Cache miss
+  in fixture mode → hard LookupError, ZERO network (`tests/test_tts.py`). services/__init__.py added.
+- [tool] P3-T01 recorder `scripts/record_fixture.py` written (verifies the plugin, records ONE fixture,
+  logs real usage). Refuses without UPLIFT_MODE=record. The recording itself is human-gated — see Now.
 - [X] P2-T01..T06 Control plane / token mint — `control_plane/{mint,secrets,app}.py`. HMAC verify +
   ≤60s replay window (T01), single-use nonce store `used_nonces` (T02), quota concurrent+minutes (T03),
   scoped LiveKit JWT room=uuid4/identity=uuid4/TTL=120s/roomJoin-one-room (T04), session row + quota
