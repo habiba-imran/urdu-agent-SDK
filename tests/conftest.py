@@ -23,14 +23,19 @@ for _path in (_PIPECAT_STUBS, _PROJECT_ROOT):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+# Load .env.local into os.environ so downstream flag checks work. Skip silently if absent.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(os.path.join(_PROJECT_ROOT, ".env.local"))
+except Exception:
+    pass
+
 # Default every paid provider to its offline/fixture path (30-GUIDE-FREE-TIER.md §6/§7).
 for _var in ("UPLIFT_MODE", "GLADIA_MODE", "LLM_MODE"):
     os.environ.setdefault(_var, "fixture")
 
-# Is the harness configured to reach any real backend? At Phase 0 there is no .env.local, so these
-# are all empty. When unconfigured, a live-dependent test cannot run and must SKIP rather than fail
-# on a missing-credential error (which surfaces before any socket, so the network guard can't catch
-# it). Once Phase 1+ populates .env.local this flips to True and such failures become real again.
+# Has the harness been configured to reach any real backend? Credentials live in .env.local
+# (now loaded above into os.environ), so this check reflects the actual state.
 _CREDENTIAL_VARS = (
     "SUPABASE_URL",
     "SUPABASE_DB_URL",
