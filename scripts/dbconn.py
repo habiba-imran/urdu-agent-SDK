@@ -27,7 +27,9 @@ def conn_kwargs() -> dict:
         "host": p.hostname,
         "port": p.port or 5432,
         "user": p.username or "postgres",
-        "password": p.password or "",
+        # unquote so this works whether the URL's password is percent-encoded (%40)
+        # or has a literal '@'; the value passed to libpq must be the real password.
+        "password": up.unquote(p.password or ""),
         "dbname": (p.path or "/postgres").lstrip("/") or "postgres",
         "sslmode": "require",
     }

@@ -14,7 +14,7 @@ The plan is free tiers, rotate when exhausted. Here is what that actually buys:
 | LiveKit Build | 1,000 agent-min/mo · 5 concurrent · **hard cap, calls FAIL past it** | ⚠️ Adequate *if* budgeted. Rotation loses your URL + keys + project. |
 | Gladia | limited free hours | 🟡 Workable |
 | Gemini | generous TPM/RPD free tier | ✅ Fine, no rotation needed |
-| Supabase | 2 free projects/org · **pauses after 7 days inactive** | ⚠️ Rotation = new ref = re-run migrations (fine, they're code) |
+| Supabase | **Pro plan (PAID, 2026-07-16)** — no 7-day pause, no free-tier cap | ✅ No rotation, no pause. Tracked in usage_ledger as `supabase_db_mb` (informational, not capped). |
 
 **Uplift is the killer. 10 minutes is not a tier, it's a demo.**
 
@@ -121,13 +121,16 @@ Also: Build has **10–20s cold starts** (prevention is Ship+). **Expect it. Do 
 
 ---
 
-## 5. SUPABASE FREE — the 7-day pause trap
+## 5. SUPABASE — now on the Pro (paid) plan
 
-Free projects **pause after 7 days of inactivity**. Your dev DB will vanish mid-build over a weekend.
+**Updated 2026-07-16: Supabase is on the paid Pro plan. The 7-day free-tier pause NO LONGER
+applies** — the dev DB will not vanish over a weekend. The discipline below stays anyway, because
+it is just good practice and makes the eventual prod cutover trivial:
 
 - Migrations are **code**, in `supabase/migrations/`. Never click-ops.
-- `make db-reset` must rebuild the entire DB from zero. Test this in Phase 1, not when it breaks.
-- Restoring an unpaused project, or a fresh one, is then a 2-minute job.
+- `make db-reset` rebuilds the entire DB from zero (verified in Phase 1). Keep it working.
+- Supabase usage is now tracked in `state/usage_ledger.json` as `supabase_db_mb` — informational
+  only (paid plan, no hard free-tier cap that fails the gate).
 
 ---
 

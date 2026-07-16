@@ -34,8 +34,15 @@ Your dev DB will vanish over a weekend. Test the rebuild in Phase 1, not when it
 
 ## 4. RLS
 Every table. No exceptions. `rls_check.py` gates it.
-The control plane uses a scoped role with `tenant_id` in the JWT. `service_role` appears in exactly
-one place: `.env.local`, for migrations, run by a human.
+The app path (Phase 3 worker) uses a scoped role with `tenant_id` in the JWT — RLS governs it.
+
+🔴 **UPDATED per docs/40-ADR.md ADR-005 (2026-07-16): the agent IS now authorized to use
+`service_role`** — reversing the original "migrations only, human-run, never read by the agent" rule.
+But the authorization is NARROW: use `service_role` ONLY in the server-side control plane / token
+mint, which authenticates tenants by HMAC (not a JWT) and must cross the tenant boundary before any
+JWT exists. Everywhere RLS can already govern (tenant-scoped app reads), use the scoped
+`authenticated` role — NOT service_role. `service_role` only ever touches DEV (uva-dev/uva-prod
+split); production stays out of the agent's reach. Read ADR-005 for the full scope and rationale.
 
 ## 5. `db-inspector` is the ONLY agent that touches the MCP
 Read-only tools, dev only, regenerates the two mirror files. Nothing else gets MCP access.

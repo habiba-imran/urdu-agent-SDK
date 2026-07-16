@@ -13,6 +13,11 @@ BUDGETS = {  # docs/30-GUIDE-FREE-TIER.md §3-4. HARD limits from vendor free ti
         "note": "LiveKit Build HARD CAP — calls FAIL past it",
     },
     "gladia_stt_sec": {"limit": 36000, "note": "Gladia free tier"},
+    # Paid provider (limit None): tracked for visibility, never fails the gate (ADR-005 / paid Pro).
+    "supabase_db_mb": {
+        "limit": None,
+        "note": "Supabase Pro (PAID) — tracked, no free-tier cap",
+    },
 }
 
 
@@ -30,6 +35,9 @@ def main():
     print(f"{'provider':<20}{'used':>10}{'limit':>10}{'left':>10}  note")
     for k, b in BUDGETS.items():
         used = u.get(k, 0)
+        if b["limit"] is None:  # paid/uncapped provider — tracked, never fails the gate
+            print(f"{k:<20}{used:>10}{'paid':>10}{'-':>10}  {b['note']}")
+            continue
         left = b["limit"] - used
         flag = "" if left > 0 else "  <-- EXHAUSTED"
         if left <= 0:

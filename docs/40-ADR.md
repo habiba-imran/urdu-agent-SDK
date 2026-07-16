@@ -90,6 +90,42 @@ vendor evidence, not our measurement. Re-evaluate via the protocol above before 
 for token *cost* rather than code brevity.
 
 ---
+## ADR-005 Agent may use service_role for the control plane (dev only)   [ACCEPTED]
+Date: 2026-07-16 | Decided by: the human (recorded here per that instruction)
+
+**Deviation, stated plainly.** 33-GUIDE-SUPABASE.md originally said `service_role` is for migrations
+only, run by a HUMAN, and NEVER read by the agent. That is now SUPERSEDED: the agent is authorized to
+use `SUPABASE_SERVICE_ROLE_KEY` in server-side code going forward.
+
+**What changed.** The agent now has `service_role` access, which BYPASSES RLS by design.
+
+**Why.** The Phase 2 control plane / token mint (`POST /v1/session`) authenticates each tenant by
+**HMAC — not by a Supabase JWT** — and must read a tenant's secret/status/quota and write the session
++ quota rows BEFORE any tenant JWT exists. RLS cannot govern a trusted service that, by design,
+operates across the tenant boundary; so the mint's DB layer genuinely requires RLS bypass. This was a
+human call, recorded here as the permanent record, not a one-line comment.
+
+**Scope — narrowed, not blanket. Where service_role IS and IS NOT used:**
+- USE service_role ONLY in server-side control-plane / mint operations that must cross the tenant
+  boundary before authentication: tenant + agent lookup for HMAC verify and the IDOR check,
+  `quota_state` read/increment, and the `sessions` insert (Phase 2, P2-T03 / P2-T05).
+- Do NOT use it for anything RLS can already govern. Tenant-scoped reads during a live call (Phase 3
+  worker reading its own tenant's rows) use the `authenticated` role carrying the tenant JWT.
+- The ported `db.py` currently builds its default client with service_role and targets OLD-schema
+  tables (conversations/messages/turn_metrics, not in this schema). It is Phase-3 rework and will move
+  to the scoped role wherever RLS applies. Tracked as a Phase-3 item.
+
+**Mitigation still in force.** The uva-dev / uva-prod project split (H1): the agent's service_role key
+only ever touches DEV. Production is never in the agent's reach — that is the durable control. RLS
+bypass on dev cannot exfiltrate prod data.
+
+**Phase 7 note.** Phase 7's human gate ("attempt a cross-tenant read + a token-widening attack; both
+must fail") must be run KNOWING the agent has broader dev-DB access than the original design assumed.
+Those attacks must still fail regardless — what makes them fail is RLS on the app path plus the ≤120s
+scoped-JWT mint, not the absence of a service_role key. If either attack succeeds, this deviation is
+the first suspect.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

@@ -18,7 +18,9 @@ where the attacker could read them. ~800 points on HN. RLS did not help.
 ## 3. The lethal trifecta — never allow all three at once
 1. broad data access · 2. exposure to untrusted content · 3. an exfiltration channel
 Break **any one leg** and the attack dies. Our breaks:
-- (1) scoped role, never `service_role`; MCP read-only + dev-only
+- (1) scoped role on the app/worker path; MCP read-only + dev-only. **Exception (ADR-005):** the
+  control-plane mint may use `service_role` (DEV only) — safe here because the mint runs no LLM and
+  has no exfiltration channel, so trifecta legs (2) and (3) are absent from that path.
 - (2) tenant prompts are data, never instructions
 - (3) no MCP write; agent output never re-enters a privileged tool
 
