@@ -1,99 +1,134 @@
 # HANDOFF
 
-## Session 7 | 2026-07-17 | Phase 3 (Worker) — non-live work DONE, live items queued
-Branch: `phase/3-worker`. Working tree clean at handoff. Resume from `state/PROGRESS.md` + this file.
+## Session 8 | 2026-07-17 | Phase 5 (Voice Picker) — GATE 5 CLOSED. Stopped hard, awaiting "begin Phase 6".
+Branch: `phase/3-worker`. HEAD: `aaa7bf7`. Working tree clean at handoff (verified: `git status --short` → empty).
+Resume from `CLAUDE.md` -> `state/PROGRESS.md` -> `docs/00-INDEX.md` (routes to the right guide) -> this file.
 
-### Where Phase 3 stands
-- **Phase-3 gate = `pytest tests/test_worker.py` → 5/5 green.** (NOT full `make gate`: that shows 3
-  pre-existing CER-harness schema-mismatch failures from the ported db.py — tracked, Phase-3 rework.)
-- **Everything buildable without live/paid calls is DONE.** What remains is entirely live-gated and is
-  queued for the human in `state/MORNING_QUEUE.md`.
+## STANDING RULES ESTABLISHED THIS SESSION — NOT YET WRITTEN INTO CLAUDE.md/AGENT_SYSTEM.md
+These were given verbally across Session 8 and are NOT in any committed doc. A resuming agent
+that only reads CLAUDE.md/AGENT_SYSTEM.md will NOT know these. Follow them exactly:
 
-### What changed this session (all committed)
-- Verified the prior agent's claims (Session-6 audit): worker/mint/isolation/tts tests green, manifest
-  hashes correct, ledger 0→8→17, name spelling canonical. Marked `c6228ded` fixture superseded in the
-  manifest; fixed persona.py:29 to Latin "TechZone Laptops". (32fbefa, 320e18e)
-- **worker session.start() wired** (6cdebf1): `build_agent(cfg)` puts OUR `SYSTEM_INSTRUCTIONS` in
-  `Agent(instructions=...)` and the UNTRUSTED tenant prompt in `chat_ctx` as a framed system DATA
-  message — never concatenated into instructions (31-GUIDE §4). New test proves an injected "IGNORE
-  ALL PREVIOUS INSTRUCTIONS" prompt lands in chat_ctx, not instructions.
-- **worker launchable** (bac00ee): `python -m worker.main dev` via cli.run_app(WorkerOptions(...)).
-  Installed the worker's media plugins: gladia (STT), silero (VAD); upliftai (TTS) + google (LLM)
-  already present.
-- **metadata-source bug fixed** (2f65587): the mint sets {tenant_id, agent_id} in the PARTICIPANT JWT
-  metadata, but entrypoint read `ctx.room.metadata` (never set). Now: `ctx.connect()` →
-  `ctx.wait_for_participant()` → `json.loads(participant.metadata)`. Worker-only, no Phase-2 change.
-- **P3-T06 prep** (8918c39): `scripts/measure_gemini_tpm.py` (Gemini TPM/throttle measurement, refuses
-  live without `--confirm-live`); installed livekit-plugins-google + google-genai. 41-HUMAN-TASKS H3
-  corrected: the key is `UPLIFTAI_API_KEY` (config.py + first-party plugin read that; `UPLIFT_API_KEY`
-  in the doc was dead — you said you'd delete it from .env.local yourself).
-- **morning helpers** (2f65587): `scripts/provision_demo_tenant.py --commit` (seed a demo tenant/agent,
-  free DB write), `scripts/mint_demo_token.py --tenant --agent --secret` (mint a real scoped join
-  token, local JWT + free DB write). `state/MORNING_QUEUE.md` has every live command + cost + checks.
+1. **Live/paid API call sign-off.** NEVER run a live/paid call (Uplift, Gladia, Soniox, Gemini,
+   LiveKit, `UPLIFT_MODE=record`, starting the worker, or any live LiveKit session) without
+   explicit prior sign-off on the EXACT command. Early in the session this meant "the human runs
+   it themselves"; later in the session the human explicitly directed the agent to run specific
+   live commands itself after giving explicit approval + exact design (e.g. the washroom-singer
+   re-run, the Supabase Storage upload). **Read the human's most recent instruction literally** —
+   if they say "run X and paste the output," that IS the sign-off; don't wait for a second
+   confirmation, but don't extrapolate approval beyond the exact scope given either.
+2. **Any new live-pipeline test design needs approval before it runs, no exceptions** — even a
+   redesign that seems obviously safer than the original (this was a direct correction after the
+   agent redesigned + ran a concurrency test mid-task without pausing for approval first).
+3. **Standing operating pattern:** work a full phase's tasks in one long, uninterrupted haul — no
+   stopping for permission between individual tasks. Stop HARD only at: the phase's actual machine
+   gate, a human-gate item (`docs/41-HUMAN-TASKS.md`), any live/paid API call, or the 3-strike
+   rule. Post full gate output + every human-gate line batched at the end, not piecemeal. Then wait
+   for explicit "begin Phase N+1." Applies to every remaining phase (6, 7, 8).
+4. **Never invent a number.** If a true value is genuinely unrecoverable (e.g. lost mid-crash
+   data), say so plainly and give a conservative, reasoned estimate with explicit rationale, then
+   correct the record openly — modeled on how ADR-016 and ADR-019 both did this. Never silently
+   guess or silently omit.
+5. **Full literal output required for gate/verification evidence** — never summarized/paraphrased
+   when reporting command output back to the human.
+6. **Never merge, tag a phase gate, or start a new phase without explicit human "begin Phase N".**
+7. Standard project rules still apply on top of these: verify API signatures against installed
+   source (never guess), 3-strike rule -> `state/BLOCKERS.md`, cite sources.
 
-### Env / deps installed this session (not in git — record for cold resume)
-livekit-plugins-google, google-genai, livekit-plugins-silero, (livekit-plugins-gladia already there),
-livekit-plugins-upliftai. `.env.local`: `STT_PROVIDER=gladia`, `UPLIFT_MODE=fixture`, both
-`UPLIFTAI_API_KEY` (live) and dead `UPLIFT_API_KEY` present (human to delete the dead one).
+## Where the build stands
+- **Phases 1-4: closed.** Phase 3 GATE 3 closed (docs/23, ADR-014/016). Phase 4 GATE 4 closed,
+  human line signed off (dist/index.js + index.d.ts personally reviewed by the human).
+- **Phase 5 (Voice Picker): GATE 5 CLOSED this session, every line with real evidence** (not
+  assumed) — see `docs/40-ADR.md` ADR-018 (non-live prep) and **ADR-019 (the full live-recording
+  incident + resolution — read this one in full, it's the main event of this session)**.
+- **P3-T09 (tool-calling wiring) and remaining voice/persona/prosody polish are DEFERRED** to a
+  dedicated end-of-build pass (ADR-013) — do not touch until that pass explicitly begins.
+- Ledger, verified by reading `state/usage_ledger.json` directly right now:
+  `uplift_tts_sec=327/600`, `livekit_agent_min=7/1000`, `gladia_stt_sec=0`,
+  `supabase_db_mb=0`, `livekit_adaptive_interruption_req=0`.
 
-### LIVE items — HELD, queued in MORNING_QUEUE.md (do NOT run without explicit human approval)
-1. `python scripts/measure_gemini_tpm.py --turns 8 --confirm-live` (P3-T06 TPM — approved earlier but
-   the human's do-not list said HOLD, so HELD). Cost: 8 free-tier Gemini calls, no Uplift/LiveKit.
-2. Gate-3 human-listen: one live Urdu call. HUMAN runs (worker + client + live media). Uplift budget
-   risk if UPLIFT_MODE=live.
-3. P3-T08 5-concurrent live LiveKit test. NOTE: a headless livekit.rtc client HANGS in this env
-   (proven Session 5) — the concurrency driver likely needs the Agents Playground / browser tabs, not
-   a headless script. Flagged.
+## What happened this session (all committed, newest first)
+- **`aaa7bf7`** — GATE 5 closed. `washroom-singer` disabled (`voices.enabled=false`, human
+  decision, NOT deleted — see below). `scripts/upload_voice_previews.py` (new): uploads previews
+  to a **private Supabase Storage bucket** `voice-previews` (chosen over a new CDN vendor — reuses
+  existing free-tier Supabase credentials), signs URLs (7-day TTL), populates
+  `voices.preview_url`. Run live: **81/81 uploaded+signed+DB-updated**. Full GATE 5 checklist
+  verified with real evidence (see "Exact commands/evidence" below).
+- **`25232a4`** — Human-approved re-run of the 2 remaining P5-T02 voices with a **per-voice cap
+  override** (`MAX_SECONDS_OVERRIDES = {"washroom-singer": 10.0}` in
+  `scripts/record_voice_previews.py`, default stays 6.0 for everyone else). Result:
+  `wholesale-trader` recorded cleanly (3.80s, normal range — confirms it was only ever collateral
+  damage from the crash bug, never itself slow). `washroom-singer` **still exceeded even the
+  raised 10.0s cap**, reaching a real measured **10.07s** — logged to ledger (not lost this time),
+  correctly skipped rather than auto-raising the cap again. Ledger 313 -> 327.
+- **`4104415`** — The core incident fix. Human's live `UPLIFT_MODE=record` run of
+  `scripts/record_voice_previews.py` crashed on `washroom-singer` (80/82 recorded), losing
+  unlogged spend and killing the rest of the run. Root cause verified (not guessed): re-fetched
+  `docs.upliftai.org/orator_voices` — washroom-singer's file codename `ai_naat_p4_m_za` indicates
+  a "naat" (Islamic devotional, melismatic/sung) voice model, genuinely much slower than ordinary
+  speech, not a bug/text/config issue. Ledger corrected 305 -> 313 (+8s reasoned estimate: 6.0s
+  confirmed floor + 2s pad for streaming-chunk overshoot, grounded in reading the installed
+  `upliftai` plugin's actual incremental delivery — full reasoning in ADR-019). Script fixed:
+  `synth_one()` now raises a local `CapExceeded` (carries partial pcm) instead of `SystemExit`
+  inside the try block, so partial spend is never silently lost again; the per-voice loop logs it
+  and `continue`s to the next voice instead of killing the whole run.
+- **`01bbcfa`, `3d4ce26`** — earlier Phase-5 prep (voice catalogue seed, picker UI scaffold,
+  enable-check trigger, the original P5-T02 script) — see ADR-018 for full account.
+- Before Phase 5: Phase 4 client SDK implemented + GATE 4 closed (`45a4ef4`), Phase 3 GATE 3
+  closed with real usage instrumentation + corrected concurrency test + a real race condition
+  found and fixed (`5904368`, `61a6c20` — ADR-014/016/017).
 
-### Open follow-ups (non-blocking)
-- P3-T07 usage_events on session END is not yet wired to session metrics (record_usage exists; needs a
-  live session's duration/STT/TTS seconds). Small follow-up after the live call.
-- FixtureTTS strips a fixed 44-byte WAV header — fine for our fixtures, fragile if a WAV has extra chunks.
+## A reporting-precision correction (last thing that happened, worth knowing)
+The human caught an apparent mismatch in the agent's own GATE 5 report: "82/82 cards render" vs
+"81/81 previews uploaded." Investigated and confirmed **not a bug** — the picker UI query
+(`voice-picker/index.html` lines 74-78) has **no client-side `enabled` filter at all**; it relies
+entirely on the RLS policy `voices_read_all USING (enabled)` to filter server-side. Fresh
+re-verified live: 82 enabled rows = **81 catalogue voices** (all with real previews, all playable)
+**+ 1 unrelated pre-existing row** (`v_meklc281` / "Uplift Orator (default)", the separate legacy
+demo voice from `0003_seed_voices.sql`, explicitly out of P5-T02/T03 scope since ADR-018, never
+had a preview). `washroom-singer` correctly absent from all 82 rendered cards, confirmed twice.
+Both original numbers (82 and 81) were real and correct — the agent's phrasing just juxtaposed two
+different denominators in a way that looked like an inconsistency. No code/data change needed;
+this is purely a "be more precise when reporting counts with different scopes" lesson. If this
+comes up again, the exact breakdown is: `select id from voices where enabled=true and
+preview_url is null` -> only `v_meklc281`.
 
-### Priority-2 forward prep done this session (PREP ONLY — review fresh, NOT "done")
-- `docs/50-FORWARD-PREP-P4-P8.md` — per-phase (4–8) task breakdown + 6 open questions (0844bee).
-- `requirements.txt` — 25 direct deps pinned from the installed env (c841e4b). Phase-7 prep + makes a
-  cold clone reproducible (many pkgs were pip-installed ad-hoc across sessions).
-- `sdk/` — Phase-4 PUBLIC TYPE SURFACE stub only (f0df147): typed events/errors exactly per docs/24,
-  every method throws "not implemented — Phase 4". No npm install, no wiring, zero Phase-3 dependency.
+## Exact commands/evidence for GATE 5 (if the human wants to re-verify or extend)
+- DB check: `select count(*) from voices where enabled=true` -> 82; `... and preview_url is not
+  null` -> 81; the one gap is `v_meklc281` (expected, out of scope).
+- Real signed-URL fetch test: `httpx.get(signed_url)` -> 200, `content-type: audio/wav`, bytes
+  match local file exactly, RIFF/WAVE header present.
+- Real expiry test: created a `create_signed_url(path, 2)` (2-second TTL), fetched immediately
+  (200), waited 4s, fetched again -> **400 InvalidJWT "exp claim timestamp check failed"**.
+- Real Playwright/Chromium run against `voice-picker/index.local.html` (gitignored, generated by
+  `python voice-picker/render_config.py` from `.env.local` — regenerate if missing): 82 cards, 81
+  enabled play buttons, 1 disabled (`v_meklc281`), `washroom-singer` absent, 6 total network
+  requests during load + 3 play-button clicks, **zero** to any `upliftai`/`uplift.ai` host.
+- `pytest tests/test_worker.py` -> 5/5 green throughout (Phase-5 changes don't touch the worker).
 
-### Incident (non-blocking, resolved)
-A transient git **fsync error** ("Bad file descriptor" / "Function not implemented") crashed one commit
-and left a stale `.git/index.lock`. Repo verified INTACT (`git log` + `git fsck --connectivity-only`
-clean); removed the lock, commit succeeded (f0df147). `E:\Finova-Internal` may be cloud-synced / AV-
-scanned — if fsync errors recur, just retry the git op (not corruption).
+## Open items / not decided (flagged, not silently assumed)
+- `washroom-singer`: disabled, not deleted. If ever revisited, needs a purpose-built short line
+  (not the shared greeting text) rather than another cap increase — explicitly not attempted here.
+- Uplift dashboard true-up against the ledger's 327s: human said they'll check it themselves when
+  convenient, not blocking. If they report a different number, that wins over the reasoned
+  estimate in ADR-019 — update the ledger/ADR if/when they do.
+- `voice-picker/` hosting location (standalone vs Phase-6 admin portal) — still undecided (ADR-018).
+- Artwork-to-voice mapping (3-4 owned artworks vs 81 voices) — still undecided (ADR-017/018).
+- The `cache-control` upload option on Supabase Storage isn't echoed as a literal `Cache-Control`
+  response header — Supabase sets `Expires` instead (same effective 7-day window), Cloudflare
+  confirmed actually caching it. Noted as a minor discrepancy in ADR-019, not fixed/investigated
+  further (not blocking, "long cache" goal is functionally met).
 
-### Current status (updated after Q1 fired + Q2 staged — 2026-07-17)
-- **Q1 DONE:** Gemini TPM measured + recorded in `docs/40-ADR.md` (commit bbfad23): 6 rapid calls OK
-  (1.9–3.5s each), turn 7 → `429 RESOURCE_EXHAUSTED` (free-tier RPM cap). Ledger untouched (17/600).
-- **Q2 STAGED (NOT run):** demo tenant `demo-gate3` seeded in dev DB — tenant_id
-  `ca72956b-8f55-4374-8332-a659ba9ec5fc`, agent_id `71f87c75-1150-489e-8b1d-bbf4e0488bf0`, voice
-  v_meklc281, gemini-2.5-flash, persona 3606 chars. **Secret BURNED** (pasted in chat) — re-provision
-  fresh for future tests (see PROGRESS Traps). Worker NOT run; `UPLIFT_MODE` untouched (=fixture).
-
-### Gate-3 human-listen — STAGED, the HUMAN runs it (agent: do NOT run the worker/mint/live session)
-Recommendation: `UPLIFT_MODE=live` (fixture can't synth the LLM's dynamic replies — every TTS call
-cache-misses; even the greeting text ≠ the one recorded fixture). Budget ~20–40s of 600.
-**Item-2 risk (metadata fix is UNVERIFIED by any test):** if `participant.metadata` comes through
-empty, `build_session(md)` throws `KeyError: 'agent_id'` / `AgentNotFound` in the WORKER LOG and the
-agent never greets — this fails BEFORE any TTS, so ZERO Uplift is spent. Success = agent greets in
-Urdu ("…TechZone Laptops…مہ نور…").
-Human steps (own terminals): (1) .env.local `UPLIFT_MODE=live` (revert after); (2)
-`python -m worker.main dev`; (3) `python scripts/mint_demo_token.py --tenant <tid> --agent <aid>
---secret <secret>`; (4) join room at https://agents-playground.livekit.io (manual connect: paste
-wsUrl + token). First-live unknowns: Playground manual connect + worker auto-dispatch to the room.
-
-### Exact next action for a RESUMING agent
-1. Read CLAUDE.md, docs/00-INDEX.md, this file, state/PROGRESS.md, state/MORNING_QUEUE.md,
-   docs/23-PHASE-3-WORKER.md, docs/40-ADR.md (P3-T06 + P3-T01). Brief the human.
-2. Ask the human the **Gate-3 outcome** (did the agent greet in Urdu? was it good?).
-   - PASS → record in PROGRESS + ADR; Phase-3 human gate met. Remaining Phase-3: P3-T08 5-concurrent
-     (live, MORNING_QUEUE Q3), P3-T07 usage-on-session-end wiring, full Gate-3 checklist. Do NOT start
-     Phase 4 without explicit "begin Phase 4".
-   - FAIL (config didn't load / KeyError) → item-2 metadata fix needs iteration: inspect the worker
-     log, re-verify the participant-metadata read (or dispatch/room-metadata) against livekit.agents
-     source — DO NOT guess. Re-provision a fresh demo tenant (secret is burned).
-3. Standing rules (unchanged): NO live/paid call (Uplift/Gladia/Gemini/LiveKit/UPLIFT_MODE=record)
-   without explicit human approval on the exact command; no Gate-3 call or P3-T08 live run started by
-   the agent; no phase-gate merge/tag; no Phase 4 real tasks. Full LITERAL output, no summaries.
-   3-strike rule. Verify APIs against installed source/Context7, never guess.
+## Exact next action for a RESUMING agent
+1. Read `CLAUDE.md`, `state/PROGRESS.md`, `docs/00-INDEX.md` (route to the Phase-6 guide when the
+   human says "begin Phase 6"), this file, and `docs/40-ADR.md` ADR-019 in full (not just this
+   summary — it has the complete reasoning chain for the washroom-singer incident).
+2. Confirm continuity to the human before doing anything: state back HEAD commit (`aaa7bf7`),
+   branch (`phase/3-worker`), the real ledger value (327/600 uplift_tts_sec), and that GATE 5 is
+   closed. Re-read the "STANDING RULES" section above out loud in your own words if asked.
+3. **Do not start Phase 6 work** until the human explicitly says "begin Phase 6" — currently
+   stopped hard awaiting that instruction. If the human instead has follow-up questions about
+   Phase 5 (e.g. the 82/81 count, washroom-singer's disposition, the ledger correction reasoning),
+   answer from ADR-019 + this file's evidence section — don't re-derive from scratch or guess.
+4. If asked to continue Phase 5 in some way not covered here, treat it as new work under the same
+   standing rules (sign-off before any live/paid call, batch-report at the gate, etc.) — Phase 5's
+   GATE is closed but that doesn't forbid legitimate follow-up if the human raises one.
