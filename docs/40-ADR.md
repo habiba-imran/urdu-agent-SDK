@@ -1839,6 +1839,56 @@ should be updated to reflect the actual scope once this pass is further along.
 **Status: ACCEPTED 2026-07-18.**
 
 ---
+## ADR-030 CER-harness's 3 old failures verified against the corrected schema — still fail, recommend retirement, NOT decided here   [PROPOSED — recommendation only]
+Date: 2026-07-18 | `tests/test_harness.py::TestCERHarness::{test_schema,test_tools,test_e2e}`,
+ADR-026 GATE 8 "full suite green" line, ADR-029
+
+**Checked honestly, per direct instruction — not forced.** With `worker/tools.py` now live
+(ADR-029), re-ran `pytest tests/test_harness.py -v` fresh to see whether the 3 pre-existing
+CER-harness failures resolve against the corrected schema. **They do not — same 3 tests, same
+failure count, same character:** `test_schema`/`test_e2e` still raise `db.DBClientRemoved`
+(ADR-022's intentional removal, root-level `db.py` — untouched by this pass); `test_tools` still
+`KeyError: 'matches'` (root-level `tools.py`'s `search_products`, also untouched). **This is not
+a partial improvement or a new failure mode — genuinely unchanged.**
+
+**Why, precisely — not "still broken," but "structurally cannot pass."** These 3 tests exercise
+the OLD, ROOT-LEVEL `tools.py`/`db.py` (Pipecat-shaped, imports `pipecat.*`, TechZone demo:
+`search_products`, `shop_info`, `customers`, `reservations`) — a completely different pair of
+modules from the NEW `worker/tools.py` this session built. ADR-029 already decided, deliberately,
+NOT to rebuild that business domain (products/customers/reservations) — the real schema has no
+such tables and the SDK's own spec never calls for them. **"Fixing" these 3 tests would mean
+reversing ADR-029's scope decision and building a retail-catalogue schema this project has
+explicitly chosen not to have.** They are not "not yet fixed" — they test a business domain that,
+by today's own decision, will never exist here. That makes them obsolete artifacts of the ported
+Pipecat demo, not a to-do item.
+
+**Recommendation, not a decision — flagged for the human, same standard as every other
+GATE-checklist-redefinition question in this build.** Retire `TestCERHarness::test_schema`,
+`::test_tools`, `::test_e2e` (and by extension the root-level `tools.py`/`db.py`/`persona.py`
+demo files they depend on, and `tests/helpers.py`'s TechZone-specific fixtures) rather than
+attempt to fix them — replace their role in "full suite green" with real coverage of
+`worker/tools.py`'s actual tools (`tests/test_worker.py` already covers this: 10/10, schema
+shape + live DB writes + the tenant-scoping guarantee). Not done unilaterally here — deleting or
+skipping tests is exactly the kind of decision this project's own test-guard discipline
+(`docs/32-GUIDE-TESTING.md`) requires a human sign-off for, and it also directly resolves ADR-026's
+still-open "full suite green vs. the ADR-013 carve-out" tension, which was explicitly left for a
+human decision rather than assumed.
+
+**If accepted:** GATE 8's "full suite green" line would then genuinely close (no other suite
+failures exist as of this session) — a real, no-longer-blocked line, not a redefinition of what
+the checklist means. **If not accepted** (i.e., the human wants the old TechZone tool suite
+rebuilt against a new schema after all): that reopens the scoping question ADR-029 already
+answered via direct question — worth knowing now, not after more work is built on the current
+direction.
+
+**Evidence.** `pytest tests/test_harness.py -v` (2026-07-18, post-ADR-029, full output this
+session's record — 3 failed, 4 skipped, identical to every prior run since Phase 3); `worker/
+tools.py` vs. root-level `tools.py`/`db.py` (confirmed distinct modules, no shared code, grep);
+ADR-029 (the scope decision this recommendation is downstream of).
+
+**Status: PROPOSED — recommendation only, awaiting human decision, not acted on unilaterally.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
