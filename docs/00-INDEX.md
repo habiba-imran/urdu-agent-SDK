@@ -35,6 +35,7 @@
 | `10-SPEC.md` | What we're building. Out-of-scope list. |
 | `11-ARCHITECTURE.md` | System design, data flow, the multi-tenant model. |
 | `60-RUNBOOK-CAP-EXHAUSTION.md` | P8-T03. What happens (server + SDK) when a tenant hits a cap — fails, does not queue. Read before building any host-platform integration UX. |
+| `61-GUIDE-DEV-TO-PROD.md` | P8-T05. Every env-var/config/account change needed to flip dev → prod, and what does NOT change. Read before any prod deploy. |
 
 ## Live state (never in docs/ — always current)
 
