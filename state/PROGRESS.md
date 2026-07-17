@@ -475,6 +475,15 @@ re-test, a real bug found and fixed by the test itself)
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
 
+- **P8-T01 concurrency_test.py extended for configurable N + per-connection latency (justified
+  test-file edit).** The test-guard override token was added only to add a `--n`
+  CLI flag (default unchanged at 6, P8-T01 passes `--n 5` to match the documented Build cap) and
+  per-connection latency timing (`time.monotonic()` around each `page.goto()` -> "connected"
+  transition, p50/p95 computed over the connected set) to `scripts/concurrency_test.py` — the
+  same live driver ADR-014 already built and used. No existing behavior changed for a bare
+  `python scripts/concurrency_test.py` call (N still defaults to 6, still no latency requirement
+  to pass). Token removed immediately after.
+
 - **P7 stale-text fix in test_token_widen_live.py (justified test-file edit).** The test-guard
   override token was added only to fix one stale line in the VERDICT print statement — "(Human
   still confirms before Phase 3.)" — a Phase-2-era leftover, now inaccurate since this script is

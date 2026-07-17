@@ -38,6 +38,8 @@ from control_plane.secrets import DictSecretProvider, secret_hash  # noqa: E402
 from dbconn import conn_kwargs  # noqa: E402
 
 N_CONCURRENT = 6  # LiveKit Build free-tier cap is 5; the 6th must fail cleanly.
+# --n overrides this at the CLI (P8-T01 passes --n 5 to load-test exactly at the documented cap,
+# without exercising the "6th must fail" assumption ADR-014 already found unreproduced).
 HTTP_PORT = 8934
 POLL_TIMEOUT_S = 25
 POLL_INTERVAL_S = 0.5
@@ -119,14 +121,21 @@ def main() -> int:
         help="publish a real synthetic audio track per session (ADR-014 addendum (b) re-test) "
         "instead of joining with zero media",
     )
+    ap.add_argument(
+        "--n",
+        type=int,
+        default=N_CONCURRENT,
+        help=f"number of concurrent connections (default {N_CONCURRENT})",
+    )
     args = ap.parse_args()
+    n = args.n
 
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
         tenant_id, agent_id, secret = provision_fresh_tenant(conn)
     print(f"provisioned fresh tenant={tenant_id} agent={agent_id} (max_concurrent=20)")
 
-    print(f"minting {N_CONCURRENT} fresh tokens...")
-    tokens = mint_tokens(N_CONCURRENT, tenant_id, agent_id, secret)
+    print(f"minting {n} fresh tokens...")
+    tokens = mint_tokens(n, tenant_id, agent_id, secret)
     for i, tok in enumerate(tokens):
         print(f"  [{i}] room={tok['roomName']}")
 
@@ -134,11 +143,16 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{HTTP_PORT}/scripts/concurrency_test_client.html"
     print(f"local HTTP server up on :{HTTP_PORT}")
 
-    results = [None] * N_CONCURRENT
+    results = [None] * n
+    # P8-T01: per-connection wall-clock latency, page.goto() -> observed "connected" status.
+    # None until resolved; stays None for anything that never reaches "connected" (excluded from
+    # p50/p95 below, since a latency number for a connection that never connected is meaningless).
+    connect_started_at: list[float | None] = [None] * n
+    connect_latency_s: list[float | None] = [None] * n
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            pages = [browser.new_page() for _ in range(N_CONCURRENT)]
+            pages = [browser.new_page() for _ in range(n)]
 
             tone_qs = "&publishTone=1" if args.tone else ""
             mode = (
@@ -146,15 +160,14 @@ def main() -> int:
                 if args.tone
                 else "no media (zero tracks)"
             )
-            print(
-                f"opening {N_CONCURRENT} room connections roughly simultaneously — {mode}..."
-            )
+            print(f"opening {n} room connections roughly simultaneously — {mode}...")
             for i, (page, tok) in enumerate(zip(pages, tokens)):
                 url = f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
+                connect_started_at[i] = time.monotonic()
                 page.goto(url)
 
             deadline = time.monotonic() + POLL_TIMEOUT_S
-            pending = set(range(N_CONCURRENT))
+            pending = set(range(n))
             while pending and time.monotonic() < deadline:
                 for i in list(pending):
                     try:
@@ -167,6 +180,8 @@ def main() -> int:
                         or text.startswith("disconnected")
                     ):
                         results[i] = text
+                        if text.startswith("connected"):
+                            connect_latency_s[i] = time.monotonic() - connect_started_at[i]
                         pending.discard(i)
                 if pending:
                     time.sleep(POLL_INTERVAL_S)
@@ -195,7 +210,31 @@ def main() -> int:
 
             print("\n--- results ---")
             for i, r in enumerate(results):
-                print(f"  [{i}] room={tokens[i]['roomName']}: {r}")
+                lat = connect_latency_s[i]
+                lat_str = f" ({lat * 1000:.0f}ms to connected)" if lat is not None else ""
+                print(f"  [{i}] room={tokens[i]['roomName']}: {r}{lat_str}")
+
+            samples = sorted(v for v in connect_latency_s if v is not None)
+            if samples:
+
+                def _pct(data: list[float], pct: float) -> float:
+                    # nearest-rank method — simplest defensible choice for small-N samples;
+                    # NOT claiming statistical rigor at n<10, see the caveat printed below.
+                    idx = max(0, min(len(data) - 1, round(pct / 100 * (len(data) - 1))))
+                    return data[idx]
+
+                p50 = _pct(samples, 50)
+                p95 = _pct(samples, 95)
+                print(
+                    f"\nconnect-latency p50={p50 * 1000:.0f}ms p95={p95 * 1000:.0f}ms "
+                    f"(n={len(samples)} successful connections, nearest-rank method)"
+                )
+                if len(samples) < 10:
+                    print(
+                        f"CAVEAT: n={len(samples)} is a small sample -- p95 at this N is "
+                        "effectively just the max observed value, not a statistically stable "
+                        "95th percentile. Reported as measured, not treated as a stable SLO."
+                    )
 
             for page in pages:
                 try:
@@ -210,7 +249,7 @@ def main() -> int:
     n_connected = sum(1 for r in results if r and r.startswith("connected"))
     n_failed = sum(1 for r in results if r and r.startswith("failed"))
     print(
-        f"\nsummary: connected={n_connected} failed={n_failed} other={N_CONCURRENT - n_connected - n_failed}"
+        f"\nsummary: connected={n_connected} failed={n_failed} other={n - n_connected - n_failed}"
     )
     print(
         f"\ncleanup: delete from tenants where id = '{tenant_id}';  -- cascades agents/sessions"
