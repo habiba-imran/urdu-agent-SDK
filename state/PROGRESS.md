@@ -172,3 +172,22 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items q
   `tests/test_token_widen_live.py` (live gate) proves expiry by waiting PAST the leeway; a tighter
   wait reads as a false "expired token accepted" (it did once — retracted, see BLOCKERS.md). If a
   strict 120s ceiling ever matters, mint a shorter TTL. Live gate: 6/6 attacks rejected.
+- 🔴 **LiveKit plugin registration requires the main thread — lazy per-job plugin imports crash.**
+  `livekit.agents.Plugin.register_plugin()` raises `RuntimeError: Plugins must be registered on
+  the main thread` unless called from `threading.main_thread()` (`livekit/agents/plugin.py`
+  L30-33). Each job runs in its own subprocess (`multiprocessing`, name `"job_proc"`); the job
+  entrypoint executes as an asyncio task there, NOT on that subprocess's real main thread
+  (`livekit/agents/ipc/job_proc_lazy_main.py`). `worker/factories.py`'s lazy
+  `from livekit.plugins import ...` calls inside `make_stt`/`make_tts`/`make_llm`/`_load_vad` —
+  written lazy so the module loads without every provider installed — fire off-thread the first
+  time a job runs, and crash on the FIRST provider imported (hit live on the first Gate-3 attempt,
+  2026-07-17: `stt=make_stt()` → gladia). This is NOT the item-2 metadata bug — `build_session(md)`
+  had already been called successfully when the crash hit. Fixed via `WorkerOptions.prewarm_fnc`
+  (`worker/main.py::prewarm`), which LiveKit runs once per job subprocess on its real main thread
+  before any job entrypoint starts (`worker.py` L437; `ipc/job_proc_lazy_main.py` L92-99:
+  `client.initialize()` strictly before `client.run()`). Importing each plugin there registers it
+  in `sys.modules` so the later per-job lazy import just hits the cache. See docs/40-ADR.md ADR-007.
+  **Any future provider added to `factories.py` must also be added to `prewarm` in `worker/main.py`
+  or it will crash the same way the first time a live job actually uses it** — no test catches
+  this; it only manifests when the LiveKit CLI spawns a real job subprocess, which `pytest` never
+  does.

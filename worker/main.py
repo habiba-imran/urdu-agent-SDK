@@ -88,6 +88,43 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # worker/usage.record_usage — wire to the session's close/metrics events once measured live.
 
 
+def prewarm(proc: Any) -> None:  # proc: livekit.agents.JobProcess
+    """Import provider plugins on the process's real main thread before any job runs.
+
+    `livekit.agents.Plugin.register_plugin()` raises unless called from
+    `threading.main_thread()` (livekit/agents/plugin.py). Each job runs in its own
+    subprocess (multiprocessing, name "job_proc"; livekit/agents/ipc/job_proc_lazy_main.py),
+    and the job entrypoint executes as an asyncio task there — not on that subprocess's OS
+    main thread. factories.py's make_stt/make_tts/make_llm/_load_vad lazily
+    `from livekit.plugins import ...` *inside* the entrypoint call path, so the plugin's
+    module-level `Plugin.register_plugin()` call fires off-thread and crashes
+    (`RuntimeError: Plugins must be registered on the main thread`) the first time each
+    provider module is imported.
+
+    `WorkerOptions.prewarm_fnc` runs once per job subprocess, synchronously, on that
+    subprocess's actual main thread, before any job entrypoint starts: `proc_main()` calls
+    `client.initialize()` (invokes prewarm_fnc) strictly before `client.run()` (starts job
+    handling) — worker.py L437, ipc/job_proc_lazy_main.py L92-99. Importing each plugin
+    module here registers it once, correctly, on that thread; the later per-job lazy import
+    in factories.py then just hits the `sys.modules` cache and never re-registers.
+    See docs/40-ADR.md.
+    """
+    import os
+
+    from livekit.plugins import google, silero  # noqa: F401
+
+    stt_provider = os.getenv("STT_PROVIDER", "gladia").lower()
+    if stt_provider == "soniox":
+        from livekit.plugins import soniox  # noqa: F401
+    elif stt_provider == "deepgram":
+        from livekit.plugins import deepgram  # noqa: F401
+    else:
+        from livekit.plugins import gladia  # noqa: F401
+
+    if os.getenv("UPLIFT_MODE", "fixture") in ("record", "live"):
+        from livekit.plugins import upliftai  # noqa: F401
+
+
 if __name__ == "__main__":
     # Launch as a LiveKit agent worker. Running this connects LIVE to LiveKit Cloud — human-only.
     #   python -m worker.main dev     (dev mode)   |   python -m worker.main start   (prod)
@@ -97,4 +134,4 @@ if __name__ == "__main__":
     from livekit.agents import WorkerOptions, cli
 
     load_dotenv(".env.local")
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

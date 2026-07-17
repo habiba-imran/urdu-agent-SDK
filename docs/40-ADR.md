@@ -220,6 +220,51 @@ cerebras→groq→gemini failover chain — wire it in the Phase-3 worker LLM pa
 (17/600 uplift, 0 livekit) before + after — Gemini touches neither.
 
 ---
+## ADR-007 Worker `prewarm_fnc` imports provider plugins on the main thread   [ACCEPTED]
+Date: 2026-07-17 | Found live during the Gate-3 human-listen call; fix verified against installed
+`livekit.agents` source, human-approved to apply.
+
+**Context.** The first live Gate-3 attempt crashed immediately on job dispatch:
+`RuntimeError: Plugins must be registered on the main thread`, raised by
+`livekit.agents.Plugin.register_plugin()` (`livekit/agents/plugin.py` L30-33) when
+`worker/factories.py::make_stt()` lazily imported `livekit.plugins.gladia` from inside the job
+entrypoint. `factories.py`'s lazy-import design is deliberate (module docstring: "so this
+module... load[s] without every provider plugin installed and nothing touches the network at
+import") and is correct for keeping `pytest tests/test_worker.py` fast and dependency-light — but
+it collided with a LiveKit Agents constraint we had not previously verified: each job runs in its
+own subprocess (`multiprocessing`, name `"job_proc"`; `livekit/agents/ipc/job_proc_lazy_main.py`),
+and the job entrypoint executes as an asyncio task on that subprocess — not on its actual OS main
+thread. Plugin registration is guarded to the main thread only, so the FIRST import of any plugin
+module from inside the entrypoint call path crashes. This is a distinct failure from the item-2
+metadata-read risk flagged in HANDOFF — `build_session(md)` had already run successfully; the
+crash was purely in provider-plugin construction.
+
+**Decision.** Add `worker/main.py::prewarm(proc)` and wire it via
+`WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm)`. `prewarm_fnc` is a first-class
+LiveKit Agents hook that runs once per job subprocess, synchronously, on that subprocess's real
+main thread, strictly before any job entrypoint starts — verified via source: `worker.py` L437
+passes `options.prewarm_fnc` into the proc pool as `initialize_process_fnc`; `ipc/job_proc_lazy_main.py`
+`proc_main()` (L68-99) calls `client.initialize()` (which invokes it) before `client.run()` (which
+is what starts job/entrypoint handling). `prewarm` imports the `STT_PROVIDER`-selected STT plugin,
+the `google` LLM plugin, and the `silero` VAD plugin unconditionally, and the `upliftai` TTS plugin
+only when `UPLIFT_MODE` is `record`/`live` — mirroring `factories.py`'s own env-driven selection so
+prewarm never imports a plugin the job won't actually use.
+
+**Consequences.** `factories.py`'s lazy-import design is preserved as-is (no behavior change to
+provider selection; `pytest tests/test_worker.py` reconfirmed 5/5 green after the fix, since
+`pytest` never spawns a real job subprocess and so never exercised this path). The per-job lazy
+imports become `sys.modules` cache hits once `prewarm` has run for that subprocess. **Any future
+provider added to `factories.py` must also be added to `prewarm`**, or it will hit this identical
+crash the first time it's used in a real live job — there is no unit-test coverage for this
+failure mode; it only manifests under the actual LiveKit CLI job-subprocess model.
+
+**Evidence.** `livekit/agents/plugin.py` L30-33 (the main-thread guard); `livekit/agents/ipc/job_proc_lazy_main.py`
+L1-99 (subprocess model; `proc_main`/`client.initialize`/`client.run` ordering); `livekit/agents/worker.py`
+L186 (`prewarm_fnc` field, default `_default_setup_fnc`), L437 (wired into the proc pool). Full
+crash traceback and the fixed worker's clean re-registration log are in the Gate-3 session
+transcript, 2026-07-17. Trap logged in `state/PROGRESS.md` Traps section.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
