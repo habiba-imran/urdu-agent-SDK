@@ -1,6 +1,11 @@
 # PHASE 5 — VOICE PICKER
 **Goal:** browse every Uplift voice with artwork + instant preview. **Zero live TTS.**
-⚠️ **BLOCKED on H9 #5** (artwork licence). Build with placeholders; do not ship art until answered.
+~~⚠️ BLOCKED on H9 #5 (artwork licence). Build with placeholders; do not ship art until answered.~~
+**RESOLVED 2026-07-17 (ADR-017):** no longer blocked. The picker uses **3-4 owned artworks**, not
+Uplift's licensed character art — H9 #5 doesn't gate this phase. Open design question this
+resolution introduces, not yet decided: with 60+ voices and only 3-4 owned artworks, how are
+voices mapped to artwork (grouped by category/gender/tone? one shared generic image? something
+else)? Flagged for a human call when P5-T04 (picker UI) is reached — not assumed here.
 
 ## The rule
 🔴 **Never proxy live TTS for previews.** That is a free-TTS farm — an attacker loops the picker

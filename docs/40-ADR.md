@@ -949,6 +949,64 @@ work, not a decision to make now.
 record — a direct human instruction in this session.
 
 ---
+## ADR-018 Phase 5 non-live work: real voice catalogue, DB-level enable check, picker UI scaffold   [ACCEPTED]
+Date: 2026-07-17 | P5-T01, P5-T04, P5-T05, non-live | `supabase/migrations/0005_*`, `0006_*`,
+`voice-picker/`
+
+**P5-T01 — voice catalogue source and confidence, stated plainly.** Uplift does not document a
+programmatic "list voices" API endpoint (checked: no such path exists in their API reference as of
+2026-07-17). The only source is their docs page `docs.upliftai.org/orator_voices`. Extracted via
+**three independent WebFetch calls** (different prompts, one asking for a different column
+schema) that agreed exactly on the total count (82) and every field checked across overlapping
+rows — treated as adequately corroborated for a docs-sourced (not raw-API) dataset, but flagged at
+that confidence level, not overclaimed as API-verified. `gender` is derived mechanically from the
+internal "File" codename's `_m_`/`_f_` pattern (consistent across all 82 entries), except
+`khwajasara` — left `NULL` rather than mechanically labeled, since the source page itself
+described this voice as androgynous/gender-unspecified across every extraction attempt, not a
+one-off artifact. `supabase/migrations/0005_voices_catalogue.sql` seeds these 82 as the current
+picker catalogue; `v_meklc281` (this project's own demo voice, seeded in `0003`) and Uplift's other
+"Legacy" voices are a separate, smaller, differently-ID'd set for existing integrations — **not**
+merged into the new catalogue; whether they should ever appear in the picker is an open question,
+not decided here. Applied directly (not via `make db-reset`, which would wipe unrelated tenant
+data) — `voices` now has 83 rows, verified.
+
+**P5-T05 — DB-level enforcement, not application code.** A FK alone can't express "and the
+referenced voice must be enabled" (Postgres CHECK constraints can't do cross-table lookups). Added
+a `BEFORE INSERT OR UPDATE OF voice_id` trigger on `agents` (`0006_agents_voice_enabled_check.sql`)
+that raises `check_violation` if the target voice isn't enabled. Chosen over application-level
+validation because no agent-creation application code exists yet (that's Phase 6 admin-portal
+territory) — a DB-level trigger means no future write path can bypass it, including ones not yet
+written. Tested live against the real dev DB, both directions: disabling a real voice and
+attempting an insert correctly raised `CheckViolation`; re-enabling and inserting succeeded; test
+tenant/agent rows cleaned up (cascade delete). Not a fixture/mock test — the actual trigger, the
+actual table, verified by trying to break it.
+
+**P5-T04 — UI scaffold, two things deliberately left undecided rather than guessed.**
+`voice-picker/index.html` queries the real `voices` table directly via `@supabase/supabase-js` +
+the public anon key — safe by the RLS policy `voices_read_all [SELECT] USING (enabled)`
+(`supabase/RLS.md`), the same trust model every Supabase client app relies on; no custom backend
+needed just to list voices. Verified live (Playwright, against the real free dev DB — not a
+provider call): renders all 83 real voice cards, every play button correctly disabled since
+`preview_url` is `NULL` everywhere (P5-T02 hasn't run). Two things NOT decided here, flagged rather
+than silently assumed: (1) **where this UI is actually hosted/embedded** — a new top-level
+`voice-picker/` directory was created as a minimal, framework-agnostic scaffold, but whether it
+belongs inside Phase 6's admin portal, as a standalone tool, or something else was not decided;
+(2) **the artwork-to-voice mapping** (ADR-017: 3-4 owned artworks, 82 voices) — cards show a
+deterministic generated color-monogram placeholder instead of guessing which artwork maps to which
+voice, since that's a real design decision, not an engineering one.
+
+**Consequences.** GATE 5's actual checklist ("all voices render," "preview plays," "zero calls to
+Uplift," "signed URLs expire") still needs P5-T02 (live Uplift recording, human-approved, not yet
+run) and P5-T03 (CDN upload) before it can close — this entry only closes the non-live prep work.
+`pytest tests/test_worker.py` reconfirmed 5/5 green throughout (Phase-5 changes don't touch the
+worker).
+
+**Evidence.** `docs.upliftai.org/orator_voices` (3 independent fetches, 2026-07-17);
+`supabase/RLS.md` (the `voices_read_all` policy); live trigger test (both directions, this
+session); live Playwright render test against the real dev DB (83/83 cards, 83/83 correctly
+disabled).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

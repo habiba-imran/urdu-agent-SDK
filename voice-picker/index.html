@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  Phase 5 voice picker (P5-T04 scaffold). docs/25-PHASE-5-VOICE-PICKER.md.
+
+  Reads the `voices` table directly via Supabase's JS client + the PUBLIC anon key — safe by
+  design: RLS policy `voices_read_all [SELECT] USING (enabled)` means the anon role can only ever
+  see enabled voices (supabase/RLS.md), the same trust model as every other public Supabase client
+  app. No custom backend needed just to list voices.
+
+  "Never proxy live TTS for previews" (this doc's own rule): the play button plays
+  `preview_url` directly — a pre-rendered, CDN-hosted file (P5-T02/T03), never a live Uplift call.
+  Every preview_url is currently NULL (P5-T02 hasn't run — that's the live, human-approved Uplift
+  recording step, staged and awaiting sign-off) — every play button below is correctly disabled
+  until that data exists. This page is not fake/mocked: it queries the real `voices` table (83
+  rows: 82 from the real Uplift catalogue seeded in supabase/migrations/0005_voices_catalogue.sql,
+  ADR-018) + this project's own v_meklc281 demo voice), it's just honestly showing that the
+  audio isn't there yet.
+
+  Artwork: deliberately NOT wired here. ADR-017 decided the picker uses 3-4 OWNED artworks instead
+  of Uplift's licensed character art, but WHICH voices map to WHICH of the 3-4 pieces is an open
+  design question (docs/25-PHASE-5-VOICE-PICKER.md flags it) — not decided by this scaffold. Each
+  card shows a neutral generated monogram placeholder instead of guessing a mapping.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Voice Picker (scaffold)</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 24px; }
+  h1 { font-size: 1.1rem; font-weight: 600; color: #999; }
+  #status { color: #f80; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+  .card { background: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 10px; padding: 12px; }
+  .monogram {
+    width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-weight: 700; font-size: 1.1rem; color: #111; margin-bottom: 8px;
+  }
+  .name { font-weight: 600; font-size: 0.95rem; }
+  .gender { color: #999; font-size: 0.8rem; margin-bottom: 8px; text-transform: capitalize; }
+  button.play {
+    width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #333;
+    background: #222; color: #eee; cursor: pointer; font-size: 0.85rem;
+  }
+  button.play:disabled { opacity: 0.35; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<h1>Voice Picker — scaffold (P5-T04). Preview audio pending P5-T02 (live Uplift recording, not yet approved/run).</h1>
+<div id="status">loading voices…</div>
+<div class="grid" id="grid"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+  // __SUPABASE_URL__ / __SUPABASE_ANON_KEY__ are placeholders filled by
+  // voice-picker/render_config.py from .env.local — never hardcoded here. The anon key is the
+  // PUBLIC Supabase key, safe in client code by design (RLS governs what it can actually read).
+  const SUPABASE_URL = "__SUPABASE_URL__";
+  const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
+
+  const statusEl = document.getElementById("status");
+  const gridEl = document.getElementById("grid");
+
+  function monogramColor(name) {
+    // Deterministic, cheap pseudo-color from the name — not a design decision, just keeps
+    // placeholder cards visually distinct until real artwork mapping is decided.
+    let hash = 0;
+    for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    return `hsl(${hash % 360}, 45%, 55%)`;
+  }
+
+  (async () => {
+    try {
+      const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const { data, error } = await client
+        .from("voices")
+        .select("id, display_name, gender, preview_url")
+        .order("display_name");
+      if (error) throw error;
+
+      statusEl.textContent = `${data.length} voices (real data from the voices table, RLS-filtered to enabled only)`;
+      for (const v of data) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const initial = (v.display_name || "?").trim()[0].toUpperCase();
+        card.innerHTML = `
+          <div class="monogram" style="background:${monogramColor(v.display_name)}">${initial}</div>
+          <div class="name">${v.display_name}</div>
+          <div class="gender">${v.gender || "unspecified"}</div>
+          <button class="play" ${v.preview_url ? "" : "disabled"} data-url="${v.preview_url || ""}">
+            ${v.preview_url ? "▶ Play" : "No preview yet"}
+          </button>
+        `;
+        card.querySelector("button").addEventListener("click", (e) => {
+          const url = e.target.dataset.url;
+          if (url) new Audio(url).play();
+        });
+        gridEl.appendChild(card);
+      }
+    } catch (err) {
+      statusEl.textContent = "failed to load voices: " + (err && err.message ? err.message : String(err));
+    }
+  })();
+</script>
+</body>
+</html>

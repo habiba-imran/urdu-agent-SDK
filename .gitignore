@@ -8,3 +8,4 @@ dist/
 /tmp/
 *.log
 urdu-voice-agent/
+voice-picker/index.local.html

@@ -1,6 +1,37 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 4 (Client SDK) — machine gate lines closed, **HUMAN GATE pending**
-(dist/ secret inspection is the human's own step) | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 5 (Voice Picker) — non-live work done (P5-T01/T04/T05), **STOPPED
+HARD at P5-T02** (live Uplift recording needs explicit sign-off on the exact command) |
+Branch: phase/3-worker
+
+## Now (Session 8 continued — Phase 4 HUMAN GATE signed off, Phase 5 begun and non-live work done)
+- **GATE 4 human line signed off by the human** — dist/index.js and index.d.ts personally reviewed:
+  zero real credentials, the grep matches are comments only, error handling doesn't leak internal
+  detail, mic-enable behavior matches spec. Phase 4 fully closed.
+- **"begin Phase 5" received. Read docs/25-PHASE-5-VOICE-PICKER.md, routed correctly.** Corrected
+  its stale "BLOCKED on H9 #5" header (ADR-017 already resolved this) rather than leaving it
+  contradicting the ADR.
+- **P5-T01 (voice catalogue) done** — real 82-voice Uplift catalogue seeded (`0005_voices_
+  catalogue.sql`), sourced from `docs.upliftai.org/orator_voices` via 3 independent WebFetch
+  extractions that agreed on count + fields (no "list voices" API exists to pull this from
+  programmatically — checked, not assumed). `voices` table: 83 rows (82 + the existing
+  `v_meklc281` demo voice). Full sourcing/confidence account: ADR-018.
+- **P5-T05 (voice_id FK enable-check) done** — a DB-level trigger (`0006_agents_voice_enabled_
+  check.sql`), since a plain FK can't express "and it must be enabled" and no agent-creation
+  application code exists yet to validate it there. Tested live both directions against the real
+  dev DB (disabled voice rejected, enabled voice accepted), cleaned up after.
+- **P5-T04 (picker UI) scaffolded** — `voice-picker/index.html`, queries the real `voices` table
+  directly via Supabase JS client + the public anon key (safe: RLS `voices_read_all USING
+  (enabled)`). Verified live via Playwright against the real dev DB: 83/83 real voice cards render,
+  83/83 play buttons correctly disabled (no preview audio exists yet). Two things deliberately left
+  undecided, not guessed: where this UI is ultimately hosted (Phase 6 admin portal vs standalone),
+  and the artwork-to-voice mapping (82 voices, 3-4 owned artworks per ADR-017) — placeholder
+  monogram avatars used instead of a fabricated mapping.
+- **🔴 STOPPED HARD before P5-T02** — pre-rendering one line per voice requires
+  `UPLIFT_MODE=record`, a live/paid Uplift call. Per the explicit process rule just re-confirmed
+  this session ("any new live-pipeline test design gets proposed and approved before it runs, no
+  exceptions" — extends naturally to any live/paid step, not just tests), the exact command is
+  proposed to the human and NOT run without their sign-off. Not attempted.
+- No live/paid API call made anywhere in this Phase-5 work.
 
 ## Now (Session 8 continued — GATE 3 follow-up: real usage instrumentation, corrected concurrency
 re-test, a real bug found and fixed by the test itself)
