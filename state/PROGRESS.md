@@ -421,6 +421,24 @@ re-test, a real bug found and fixed by the test itself)
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
 
+- **P7 human-gate attack scripts (justified test-file edit).** The test-guard override token was
+  added only to create two NEW standalone, narrated scripts for the human to personally run as
+  the actual Phase 7 human-gate act (same not-pytest-collected pattern as
+  `tests/test_token_widen_live.py`): `tests/test_cross_tenant_read_live.py` (human-gate item 1,
+  "read tenant B's agents using tenant A's credentials") and
+  `tests/test_admin_boundary_live.py` (the proposed ADR-021 third human-gate item — draft only,
+  not yet approved). The agent dry-ran both to prove they work, but that is NOT being treated as
+  satisfying the human gate itself — that still requires the human to personally execute them,
+  same standard as every gate so far. No existing test's assertions changed. Token removed
+  immediately after.
+
+- **P7 injection-gate script (justified test-file edit).** The test-guard override token was
+  added only to create `tests/test_injection_live.py` — a NEW standalone script (live Gemini
+  call, deliberately NOT added to `pytest.ini` `python_files`, same not-pytest-collected pattern
+  as `tests/test_token_widen_live.py`), proving docs/27-PHASE-7-SECURITY.md's INJECTION checklist
+  line live against the real `worker/main.py` construction. No existing test's assertions
+  changed. Token removed immediately after.
+
 - **P6 gate test (justified test-file edit).** The test-guard override token was added only to
   create `tests/test_admin.py` (the Phase 6 gate — a NEW test, not a rewrite of an existing one)
   and add it to `pytest.ini` `python_files`, same precedent as the P2 gate test entry below. No
