@@ -27,6 +27,9 @@ from dbconn import conn_kwargs  # noqa: E402
 from .mint import MintError, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from admin.audit import record_mint_rejection  # noqa: E402
+
 _ENV = dotenv_values(Path(__file__).resolve().parent.parent / ".env.local")
 _LK_URL = _ENV.get("LIVEKIT_URL", "")
 _LK_KEY = _ENV.get("LIVEKIT_API_KEY", "")
@@ -62,6 +65,7 @@ def create_session(
     x_signature: str = Header(...),
 ):
     if _rate_limited(x_tenant_id):
+        record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
     try:
         with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
@@ -79,4 +83,5 @@ def create_session(
                 origin=request.headers.get("origin"),
             )
     except MintError as e:
+        record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
