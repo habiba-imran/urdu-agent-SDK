@@ -50,8 +50,22 @@ livekit-plugins-upliftai. `.env.local`: `STT_PROVIDER=gladia`, `UPLIFT_MODE=fixt
   live session's duration/STT/TTS seconds). Small follow-up after the live call.
 - FixtureTTS strips a fixed 44-byte WAV header — fine for our fixtures, fragile if a WAV has extra chunks.
 
-### Exact next action
-Human: work MORNING_QUEUE.md top-to-bottom (approve each live command). Q1 (Gemini TPM) is lowest-risk.
-Do NOT start Phase 4 or the Gate-3 call without the human. Agent (if resuming before human): Phase-3
-non-live is exhausted — see PROGRESS "Now"; only Priority-2 later-phase PREP (docs task breakdowns,
-sdk/ scaffold with ZERO Phase-3 dependency) is allowed, logged separately as prep, not "done".
+### Priority-2 forward prep done this session (PREP ONLY — review fresh, NOT "done")
+- `docs/50-FORWARD-PREP-P4-P8.md` — per-phase (4–8) task breakdown + 6 open questions (0844bee).
+- `requirements.txt` — 25 direct deps pinned from the installed env (c841e4b). Phase-7 prep + makes a
+  cold clone reproducible (many pkgs were pip-installed ad-hoc across sessions).
+- `sdk/` — Phase-4 PUBLIC TYPE SURFACE stub only (f0df147): typed events/errors exactly per docs/24,
+  every method throws "not implemented — Phase 4". No npm install, no wiring, zero Phase-3 dependency.
+
+### Incident (non-blocking, resolved)
+A transient git **fsync error** ("Bad file descriptor" / "Function not implemented") crashed one commit
+and left a stale `.git/index.lock`. Repo verified INTACT (`git log` + `git fsck --connectivity-only`
+clean); removed the lock, commit succeeded (f0df147). `E:\Finova-Internal` may be cloud-synced / AV-
+scanned — if fsync errors recur, just retry the git op (not corruption).
+
+### Exact next action — STOPPED (safe work exhausted)
+All Phase-3 NON-LIVE work + all safe Priority-2 forward prep are DONE and committed; working tree
+clean. Everything remaining is LIVE-gated (see `MORNING_QUEUE.md`) or needs Phase-3 Gate-3 / a human
+decision. Per the mandate I am **stopping rather than drifting** into disallowed Phase-4 wiring.
+Human: start with MORNING_QUEUE.md **Q1** (Gemini TPM — lowest risk). There is nothing further an
+autonomous agent can safely do without you.
