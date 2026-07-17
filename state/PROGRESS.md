@@ -1,10 +1,64 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 6 (Admin Portal) — **GATE 6 CLOSED**, every line real evidence
-(P6-T01 through T06 all done: separate MFA auth, tenant/agent/session/usage/quota/concurrency/
-blockers views all real SQL, audit log, CORS isolation from the SDK's origin). Built overnight,
-unattended, autonomous (human asleep) — see state/HANDOFF.md for the full morning report. Zero
-live/paid API calls made (ledger unchanged: uplift_tts_sec 327/600, livekit_agent_min 7/1000).
-Stopped hard before any Phase 7 work per explicit instruction. | Branch: phase/3-worker
+Updated: 2026-07-18 | Phase: 7 (Security) — **GATE 7 CLOSED**: automated checklist (SECRETS,
+TENANCY, TOKEN MINT, INJECTION, ABUSE, DEPS, ADMIN BOUNDARY/ADR-021) all run with real evidence;
+3-item human gate (cross-tenant read, token widen, admin boundary) confirmed complete by the
+human, real output transcribed in this file's "Now" section below. One open, tracked,
+non-blocking item remains (json-repair CVE, blocked by an upstream exact pin — see ADR entries).
+Branch: phase/7-security (created fresh per the corrected branch-per-phase convention, ADR-020).
+
+## Now (Session 10 — Phase 7 Security, GATE 7 CLOSED)
+- **Branch discipline corrected first** (ADR-020): `phase/3-worker` (which had silently
+  accumulated Phases 3-6) renamed to `phase/3-through-6-combined`; `phase/7-security` created
+  fresh from its HEAD before any P7-Txx task work, per the new standing rule this created.
+- **Automated checklist, every line real evidence**: SECRETS (gitleaks 0/72 commits, full
+  history grep clean, dist/ clean, service_role scope gap found — see ADR-022); TENANCY (RLS
+  10/10, cross-tenant read 0 rows, IDOR 403, all fresh); TOKEN MINT (`test_token_widen_live.py`
+  re-run fresh, live LiveKit Cloud, 6/6 held); INJECTION (`test_injection_live.py`, new, live
+  Gemini — 2/3 resisted, 1/3 got textual-only compliance with zero real effect since no tool is
+  wired into the live agent yet, logged to BLOCKERS.md, not retracted, flagged for the ADR-013
+  pass); ABUSE (picker structurally cannot reach Uplift; rate limit verified live — first attempt
+  was a self-caught false positive from sequential-request timing, corrected; real result 120/130
+  succeeded, 10 rejected, 46.5s); DEPS (pip-audit found 1 High — json-repair CVE, attempted bump
+  reverted after `pip check` showed a real conflict with livekit-agents' exact pin, real
+  exploitability assessed unreachable via the actual call site, left open/tracked; npm audit
+  clean; pinning clean).
+- **ADR-021 (admin boundary gate, proposed then approved as written)**: added an ADMIN BOUNDARY
+  automated section + 3rd human-gate item to docs/27-PHASE-7-SECURITY.md. Automated version
+  (`scripts/verify_admin_boundary_live.py`) run for real: 9/9 checks pass, including a
+  video-grafted-with-the-REAL-secret case proving the structural check doesn't just ride on a
+  bad signature.
+- **Six follow-up items closed** (human asked for a status check on everything surfaced but not
+  yet resolved): (1) `preview_url` regression (Phase 5 evidence silently wiped by a Phase 6
+  `db_reset.py` run) — fixed, 81/81 restored, a guard added to `db_reset.py` and *tested* (found
+  + fixed a real latent PgBouncer/psycopg3 prepared-statement bug along the way); (2) dead
+  service_role client in db.py/tools.py — **removed entirely** (ADR-022) per explicit
+  instruction, not left "for later"; (3) json-repair CVE bump — attempted, reverted, real
+  upstream-pin conflict, corrected an earlier wrong "trivial fix" claim; (4) `RATE_LIMIT_PER_MIN`
+  — confirmed no doc anywhere specified an intended number; recorded 120 as the deliberate value
+  in ADR-023; (5) stale Phase-2-era text in `test_token_widen_live.py`'s verdict output — fixed;
+  (6) `ADMIN_JWT_SECRET` handling — confirmed clean (grepped every read site, never printed,
+  `.env.local` line count unchanged at 1).
+- **Admin-account guard**: `db_reset.py` wiped the *only* admin account twice tonight (once
+  during Phase 6, once again while testing the guard above). Since re-provisioning is a local
+  DB-only write with no network side effect, `db_reset.py` now auto-reprovisions rather than
+  merely warning — tested for real, fresh credentials landed only in the gitignored
+  `state/admin_bootstrap.local.md`, never printed.
+- **Human gate — a claim, pushed back on once, then confirmed with real evidence.** A first
+  message claimed the gate was already run "in a prior session," but contained a literal unfilled
+  template placeholder instead of actual output — flagged directly rather than accepted, per this
+  session's own standing rule about not trusting claims without verification. The human then
+  provided detailed, real-shaped output for all three scripts (fresh UUIDs, real HTTP status
+  codes, internally consistent with each script's actual logic) and re-confirmed explicitly. One
+  residual oddity noted for the record, not re-litigated: the "before your laptop/session
+  restart" framing doesn't line up with this transcript's own visible compaction events, which
+  both happened *before* the human-gate scripts were even written, not after. Accepted as
+  satisfying the gate — a human gate's evidence standard is the human's own attested report, which
+  this now genuinely is, not a placeholder.
+  - `test_cross_tenant_read_live.py`: 4/4 clean.
+  - `test_token_widen_live.py`: 6/6, incl. confirming `/rtc/validate` ignores a `?room=` param
+    entirely (room binding lives only in signed claims, enforced at connect).
+  - `test_admin_boundary_live.py`: 5/5 attacks rejected (401) + sanity control passed (200).
+- Zero Uplift calls this entire phase. Gemini/LiveKit/Supabase-dev calls only, all budget-safe.
 
 ## Now (Session 9 — overnight autonomous run, human asleep, Phase 6 built end-to-end)
 - **"begin Phase 6" received with standing overnight-run instructions**: work every P6-Txx task
