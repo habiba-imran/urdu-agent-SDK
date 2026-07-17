@@ -1,8 +1,101 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 5 (Voice Picker) — **GATE 5 CLOSED**, every line real evidence (P5-T01
-through T05 all done: catalogue, live recording incident + fix (ADR-019), CDN + signed URLs,
-picker UI, DB enable-check). washroom-singer disabled (not deleted) per human decision. Stopped
-hard, awaiting "begin Phase 6." | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 6 (Admin Portal) — **GATE 6 CLOSED**, every line real evidence
+(P6-T01 through T06 all done: separate MFA auth, tenant/agent/session/usage/quota/concurrency/
+blockers views all real SQL, audit log, CORS isolation from the SDK's origin). Built overnight,
+unattended, autonomous (human asleep) — see state/HANDOFF.md for the full morning report. Zero
+live/paid API calls made (ledger unchanged: uplift_tts_sec 327/600, livekit_agent_min 7/1000).
+Stopped hard before any Phase 7 work per explicit instruction. | Branch: phase/3-worker
+
+## Now (Session 9 — overnight autonomous run, human asleep, Phase 6 built end-to-end)
+- **"begin Phase 6" received with standing overnight-run instructions**: work every P6-Txx task
+  in one long haul, self-audit with real evidence at every step, no new live/paid API call of any
+  kind tonight (even categories pre-approved in earlier sessions), 3-strike -> BLOCKERS.md and
+  move to independent work, stop hard before Phase 7, write one consolidated report in
+  state/HANDOFF.md at the end. Read `docs/26-PHASE-6-ADMIN.md`, `docs/41-HUMAN-TASKS.md` (no
+  Phase-6-specific human-gate row exists in that table — flagged, not invented, see HANDOFF),
+  `AGENT_SYSTEM.md`, `supabase/SCHEMA.md`/`RLS.md`, `docs/32-GUIDE-TESTING.md`,
+  `docs/31-GUIDE-SECURITY.md` before starting.
+- **P6-T01 admin auth** — `admin_users` (mandatory RFC 6238 TOTP + PBKDF2-SHA256 password hash,
+  both implemented directly from stdlib/the public RFC rather than adding `pyotp`/`bcrypt` mid-
+  unattended-session — flagged as a judgment call). Admin JWT (`aud="admin-portal"`,
+  `iss="uva-admin"`, own `ADMIN_JWT_SECRET`) verified structurally and cryptographically distinct
+  from a real LiveKit tenant `AccessToken` — both cross-directions tested against the actual
+  `livekit-api` SDK output, not a mocked shape. `0007_admin.sql` (new): `admin_users`,
+  `admin_audit_log`, `mint_rejections`, RLS enabled with zero policies (used_nonces precedent).
+  Applied live to the dev DB (`make db-reset` clean, `rls_check.py` -> 10/10 OK,
+  `supabase/SCHEMA.md`/`RLS.md` regenerated via `db_inspect.py`, never hand-edited).
+- **P6-T02..T05 dashboard views** (`admin/queries.py`) — every number is one literal SQL query:
+  `list_tenants`, `list_agents` (real rollup of `usage_events` via `sessions`), `list_sessions`,
+  `usage_by_tenant_day_kind` (cost estimate at the ONE published figure, `$0.0044/min`,
+  10-SPEC.md, applied only to `kind='agent_sec'` — `stt_sec`/`tts_sec`/`llm_tokens` have no
+  published $/unit anywhere in this repo, so `cost_usd` stays `None` for them rather than
+  inventing a number, rule 8.3), `quota_near_cap`, `live_concurrency` (deliberately does NOT
+  assert a LiveKit-side cap — ADR-014 already found the documented "5 concurrent" figure
+  unreproduced; surfaces only our own `quota_state` accounting, notes the ADR explicitly),
+  `blockers` (429/403 rates over the new `mint_rejections` table). Smoke-tested against real
+  throwaway rows in the live dev DB before the formal test suite existed, cleaned up after.
+- **P6-T06 audit log + mint-rejection logging** — `admin/audit.py::record_admin_action` (every
+  successful admin call) and `record_mint_rejection`, wired into `control_plane/app.py`'s existing
+  `MintError`/rate-limit branches (additive; `pytest tests/test_mint.py` reconfirmed 11/11 green
+  after). Before tonight, no 401/403/429 was EVER persisted anywhere, so the "blockers" view had
+  no real data source — this was a genuine gap in Phase 2, not something this task could route
+  around. Uses its own short-lived autocommit connection so a rejection survives the mint
+  transaction's rollback; a logging failure is caught and logged at WARNING, never silently
+  swallowed (AGENT_SYSTEM.md §9: "zero *silent* errors").
+- **`admin/app.py`** — separate FastAPI app/process from `control_plane/app.py`. Every route but
+  `/admin/login` requires `Authorization: Bearer <admin JWT>`. CORS allowlist
+  (`ADMIN_PORTAL_ORIGINS`) is fixed/separately-configured, never derived from any tenant's
+  `allowed_origins` — verified live that an arbitrary tenant-shaped `Origin` header gets no
+  `Access-Control-Allow-Origin` back. `grep -rE admin sdk/src sdk/dist` -> zero matches (also a
+  real test, `test_sdk_bundle_never_references_admin`). `ADMIN_JWT_SECRET` auto-generated +
+  persisted to `.env.local` on first run (no human available overnight to provision one — flagged
+  judgment call, see HANDOFF). `scripts/provision_admin.py` (new, non-live, same category as
+  `provision_demo_tenant.py`) bootstrapped one real usable admin account; credentials written ONLY
+  to `state/admin_bootstrap.local.md` (new gitignore entry), never printed to any tool
+  output/tracked file — the demo-gate3 burned-secret lesson (BLOCKERS.md) applied proactively.
+- **GATE 6 — `tests/test_admin.py`, 27 tests, all 4 checklist lines proven live, re-verified fresh
+  twice (not trusted from an earlier run in the same session):**
+  ```
+  [x] every dashboard number == a SQL query over usage_events   -- usage aggregation compared
+                                                                    directly against a hand-written
+                                                                    raw SQL query, not re-derived
+  [x] admin JWT cannot be used as a tenant JWT (and vice versa) -- both directions, real
+                                                                    livekit-api AccessToken +
+                                                                    real admin JWT, signature AND
+                                                                    shape checked
+  [x] every admin action written to an audit log               -- function-level AND end-to-end
+                                                                    through the real HTTP path
+  [x] admin portal is NOT reachable from the SDK's origin       -- CORS non-echo (live) + zero
+                                                                    references in sdk/src, sdk/dist
+  ```
+- **Self-audit caught a false-positive gate report, corrected before claiming done.** A background
+  `make gate` run's completion notification claimed "exit code 0"; the pipe to `tail` had silently
+  swallowed `make`'s real exit code (2, lint failure). Re-ran capturing the exit code explicitly
+  inside the log file itself and found it genuinely red — 9 pre-existing `ruff check` errors (all
+  in files untouched before tonight) plus 13 files not matching `ruff format`, including every new
+  `admin/*.py` file. Fixed with `ruff check --fix` + `ruff format .` (mechanical, zero behavior
+  change) plus one `# noqa: E402` and one dead-variable deletion for the two non-auto-fixable
+  errors; `pytest tests/test_worker.py` reconfirmed 5/5 green after touching `worker/factories.py`.
+  This is the exact failure mode the "self-audit, verify with real evidence, don't trust a
+  summary" instruction was written to catch — logged here as the process working, not as an aside.
+- **`make gate` (full project) still fails on exactly 3 tests — pre-existing, not new tonight, not
+  fixed, explicitly out of scope**: `test_harness.py::TestCERHarness::{test_schema,test_tools,
+  test_e2e}` — the ported CER harness querying old Pipecat-era tables (`shop_info`, `products`,
+  etc.) that don't exist in this repo's schema. Already tracked in this file's "Live decisions"
+  section ("Phase 3 gate vs full make gate — clarified") and explicitly deferred by ADR-013
+  (`tools.py` rework, end-of-build pass, not started — direct instruction not to touch any part of
+  it until that pass begins). Phase 6's OWN gate, `pytest tests/test_admin.py -q`, is the
+  authoritative one per `docs/00-INDEX.md`'s per-phase routing table, and it is 27/27 green.
+  `rls_check.py` (10/10 OK) and `usage_guard.py` (ledger unchanged, confirming zero live/paid
+  calls) independently re-verified since `make`'s sequential prerequisites never reached them.
+- **No live/paid API call of any kind made tonight**, per the hard rule — no Uplift/Gladia/Gemini/
+  LiveKit call attempted or needed (admin portal work touches only the free-tier dev Postgres
+  connection, same trust tier as every prior phase's schema/RLS work). Ledger confirmed unchanged
+  by direct read before and after: `uplift_tts_sec=327/600`, `livekit_agent_min=7/1000`.
+- **Did NOT start Phase 7** — no adversarial/security-attack work attempted, per explicit
+  instruction that it needs the human personally, wide awake.
+- Commits: `ced0007` (P6-T01), `450770d` (P6-T02..T05), `c29abfb` (P6-T06), `97bbbe0`
+  (admin/app.py), `2457dd6` (GATE 6 test suite), `a4ab567` (pre-existing lint cleanup, unrelated).
 
 ## Now (Session 8 continued — P5-T02 live recording crash: washroom-singer, lost partial spend,
 script fixed, NOT re-run)
@@ -267,6 +360,11 @@ re-test, a real bug found and fixed by the test itself)
   psycopg/dbconn, not the ported db.py's supabase-py REST client.
 
 ## Done (newest first)
+- [X] **(S9, overnight/autonomous) Phase 6 — GATE 6 CLOSED.** Admin auth separate from tenant auth
+  (MFA-mandatory, distinct JWT), all 6 dashboard views as real SQL, audit log, mint-rejection
+  logging (new — Phase 2 never persisted a 401/403/429 anywhere before this), CORS isolation from
+  the SDK's origin. `tests/test_admin.py` 27/27. Commits `ced0007`..`a4ab567` (6 total, see "Now"
+  above for the full breakdown). Zero live/paid calls; Phase 7 not started.
 - [X] **(S7) worker session.start() wiring + participant-metadata fix** — `worker/main.py`:
   `build_agent(cfg)` = Agent(instructions=SYSTEM_INSTRUCTIONS, chat_ctx=persona); untrusted prompt →
   chat_ctx DATA (security test `test_persona_injected_as_data_not_system_instructions` proves it's not
