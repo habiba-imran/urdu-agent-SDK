@@ -193,6 +193,33 @@ engine mismatches are caught by the phrase config. The human should evaluate whe
 budget on a re-record now or fold it into P3-T04.
 
 ---
+## P3-T06 — Gemini free-tier throttling (MEASURED 2026-07-17, not assumed)
+model: `gemini-2.5-flash` | `scripts/measure_gemini_tpm.py --turns 8 --confirm-live` | human-approved.
+8 rapid sequential calls (16 input tok, ~11 output tok each):
+
+| turn | latency_ms | status |
+|---|---|---|
+| 1 | 3547 | OK |
+| 2 | 3172 | OK |
+| 3 | 2937 | OK |
+| 4 | 2485 | OK |
+| 5 | 2859 | OK |
+| 6 | 1922 | OK |
+| 7 | 203 | **429 RESOURCE_EXHAUSTED (throttled)** |
+| 8 | 609 | **429 RESOURCE_EXHAUSTED (throttled)** |
+
+**Throttle onset: turn 7** — the free-tier RPM cap hits after ~6 rapid calls (~18s). Successful-call
+latency 1.9–3.5s. (Exact RPM not captured — the script truncates the 429 body; observed as a hard
+reject after 6 rapid calls.)
+**D14 parallel (Groq throttled to TTFB 13–30s at ~4 turns):** Gemini's free-tier failure mode is a
+HARD 429 (it REJECTS, not slows) — different shape from Groq's latency creep. In a real voice call
+turns are spaced by seconds of user speech, so a single caller is less likely to hit the RPM cap than
+this burst test; but a burst, or several concurrent tenants, WILL 429. **Implication:** production
+needs the paid Gemini tier and/or LLM failover (the ported config.py already defines a
+cerebras→groq→gemini failover chain — wire it in the Phase-3 worker LLM path). Ledger unchanged
+(17/600 uplift, 0 livekit) before + after — Gemini touches neither.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
