@@ -175,19 +175,29 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items q
 - 🔴 **LiveKit plugin registration requires the main thread — lazy per-job plugin imports crash.**
   `livekit.agents.Plugin.register_plugin()` raises `RuntimeError: Plugins must be registered on
   the main thread` unless called from `threading.main_thread()` (`livekit/agents/plugin.py`
-  L30-33). Each job runs in its own subprocess (`multiprocessing`, name `"job_proc"`); the job
-  entrypoint executes as an asyncio task there, NOT on that subprocess's real main thread
-  (`livekit/agents/ipc/job_proc_lazy_main.py`). `worker/factories.py`'s lazy
-  `from livekit.plugins import ...` calls inside `make_stt`/`make_tts`/`make_llm`/`_load_vad` —
-  written lazy so the module loads without every provider installed — fire off-thread the first
-  time a job runs, and crash on the FIRST provider imported (hit live on the first Gate-3 attempt,
-  2026-07-17: `stt=make_stt()` → gladia). This is NOT the item-2 metadata bug — `build_session(md)`
-  had already been called successfully when the crash hit. Fixed via `WorkerOptions.prewarm_fnc`
-  (`worker/main.py::prewarm`), which LiveKit runs once per job subprocess on its real main thread
-  before any job entrypoint starts (`worker.py` L437; `ipc/job_proc_lazy_main.py` L92-99:
-  `client.initialize()` strictly before `client.run()`). Importing each plugin there registers it
-  in `sys.modules` so the later per-job lazy import just hits the cache. See docs/40-ADR.md ADR-007.
-  **Any future provider added to `factories.py` must also be added to `prewarm` in `worker/main.py`
-  or it will crash the same way the first time a live job actually uses it** — no test catches
-  this; it only manifests when the LiveKit CLI spawns a real job subprocess, which `pytest` never
-  does.
+  L30-33). `worker/factories.py`'s lazy `from livekit.plugins import ...` calls inside
+  `make_stt`/`make_tts`/`make_llm`/`_load_vad` — written lazy so the module loads without every
+  provider installed — fire off-thread the first time a job runs, and crash on the FIRST provider
+  imported (hit live on the first Gate-3 attempt, 2026-07-17: `stt=make_stt()` → gladia). This is
+  NOT the item-2 metadata bug — `build_session(md)` had already been called successfully when the
+  crash hit. **On Windows the mechanism is: `JobExecutorType` defaults to `THREAD`, not `PROCESS`**
+  (`worker.py` L126-130 — a `BrokenPipeError` workaround), so each "job process" is actually a
+  plain `threading.Thread` (`"job_thread_runner"`, `ipc/job_proc_lazy_main.py::thread_main()`
+  L459-480) running INSIDE the worker's own OS process, not a separate subprocess — meaning
+  `WorkerOptions.prewarm_fnc` does NOT run on the true main thread either on this platform (a first
+  fix attempt assumed it did, based on the `PROCESS`-executor code path; that assumption was wrong
+  and crashed identically on the next live attempt, this time inside `prewarm` itself, on
+  `google`/`silero`). **Actual fix:** call `worker/main.py::prewarm(None)` directly at true
+  `__main__` top-level scope, before `cli.run_app()` — the one place on Windows guaranteed to be
+  the real main thread, since no job thread exists yet; `sys.modules` is process-wide, so every
+  later import (from `prewarm_fnc`, or the per-job lazy imports, from any thread) just hits the
+  cache. `prewarm_fnc` stays wired too, for portability to non-Windows (`PROCESS`-executor)
+  platforms where it genuinely does run on the job subprocess's own main thread. `prewarm()`
+  returns the plugin module names it imported, and `__main__` asserts each is in `sys.modules`
+  before calling `cli.run_app()` — direct evidence, not inference, confirmed live: LiveKit's own
+  log then emits `"plugin registered"` for all four. See docs/40-ADR.md ADR-007 (revised the same
+  day after the first fix failed live — read it, not just this summary, for the full account).
+  **Any future provider added to `factories.py` must also be added to `prewarm`** or it will crash
+  the same way the first time a live job actually uses it on Windows — no test catches this; the
+  whole failure mode is invisible to `pytest`, which never invokes the `__main__` block or spawns a
+  real job thread/process.

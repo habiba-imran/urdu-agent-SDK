@@ -88,41 +88,66 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # worker/usage.record_usage — wire to the session's close/metrics events once measured live.
 
 
-def prewarm(proc: Any) -> None:  # proc: livekit.agents.JobProcess
-    """Import provider plugins on the process's real main thread before any job runs.
+def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
+    """Import provider plugins so `Plugin.register_plugin()` runs on a real main thread.
 
     `livekit.agents.Plugin.register_plugin()` raises unless called from
-    `threading.main_thread()` (livekit/agents/plugin.py). Each job runs in its own
-    subprocess (multiprocessing, name "job_proc"; livekit/agents/ipc/job_proc_lazy_main.py),
-    and the job entrypoint executes as an asyncio task there — not on that subprocess's OS
-    main thread. factories.py's make_stt/make_tts/make_llm/_load_vad lazily
-    `from livekit.plugins import ...` *inside* the entrypoint call path, so the plugin's
-    module-level `Plugin.register_plugin()` call fires off-thread and crashes
-    (`RuntimeError: Plugins must be registered on the main thread`) the first time each
-    provider module is imported.
+    `threading.main_thread()` (livekit/agents/plugin.py L30-33).
 
-    `WorkerOptions.prewarm_fnc` runs once per job subprocess, synchronously, on that
-    subprocess's actual main thread, before any job entrypoint starts: `proc_main()` calls
-    `client.initialize()` (invokes prewarm_fnc) strictly before `client.run()` (starts job
-    handling) — worker.py L437, ipc/job_proc_lazy_main.py L92-99. Importing each plugin
-    module here registers it once, correctly, on that thread; the later per-job lazy import
-    in factories.py then just hits the `sys.modules` cache and never re-registers.
-    See docs/40-ADR.md.
+    CORRECTED mechanism (the first version of this fix was wrong — see docs/40-ADR.md
+    ADR-007 for the full account, kept for the record rather than silently erased): on
+    Windows, LiveKit defaults to `JobExecutorType.THREAD` (worker.py L126-130 — a
+    BrokenPipeError workaround for `multiprocessing` on some Windows Python builds). Under
+    THREAD execution, each "job process" is actually a plain `threading.Thread`
+    ("job_thread_runner", ipc/job_proc_lazy_main.py `thread_main()` L459-480) running
+    INSIDE this same OS process and sharing its `sys.modules` cache — it is NOT a separate
+    subprocess. `WorkerOptions.prewarm_fnc` is invoked from that same non-main thread
+    (`client.initialize()` inside `thread_main`), so calling it as `prewarm_fnc` alone does
+    NOT satisfy the main-thread guard on this platform — confirmed live: it crashed exactly
+    like the original per-job lazy import in factories.py.
+
+    The fix: call `prewarm(None)` directly at true `__main__` top-level scope, before
+    `cli.run_app()` — the one place on Windows guaranteed to run on the process's actual
+    main thread, since no job thread exists yet. `sys.modules` is process-wide, so every
+    later import of the same module (from `prewarm_fnc`, or the per-job lazy imports in
+    factories.py, from ANY thread) just hits the cache and never re-registers.
+
+    `prewarm_fnc` is still wired into `WorkerOptions` below for portability: on non-Windows
+    platforms the default is `JobExecutorType.PROCESS`, where each job genuinely gets its
+    own OS subprocess and `prewarm_fnc` DOES run on that subprocess's own real main thread,
+    before its job entrypoint (`proc_main()`, ipc/job_proc_lazy_main.py L68-99:
+    `client.initialize()` strictly before `client.run()`) — so it remains the correct
+    mechanism there, even though it is redundant (and harmless) on Windows.
+
+    Returns the dotted plugin module names imported, so the caller can verify against
+    `sys.modules` with direct evidence rather than assuming the import succeeded.
     """
     import os
 
     from livekit.plugins import google, silero  # noqa: F401
 
+    imported = ["livekit.plugins.google", "livekit.plugins.silero"]
+
     stt_provider = os.getenv("STT_PROVIDER", "gladia").lower()
     if stt_provider == "soniox":
         from livekit.plugins import soniox  # noqa: F401
+
+        imported.append("livekit.plugins.soniox")
     elif stt_provider == "deepgram":
         from livekit.plugins import deepgram  # noqa: F401
+
+        imported.append("livekit.plugins.deepgram")
     else:
         from livekit.plugins import gladia  # noqa: F401
 
+        imported.append("livekit.plugins.gladia")
+
     if os.getenv("UPLIFT_MODE", "fixture") in ("record", "live"):
         from livekit.plugins import upliftai  # noqa: F401
+
+        imported.append("livekit.plugins.upliftai")
+
+    return imported
 
 
 if __name__ == "__main__":
@@ -130,8 +155,29 @@ if __name__ == "__main__":
     #   python -m worker.main dev     (dev mode)   |   python -m worker.main start   (prod)
     # Loads .env.local so LIVEKIT_*, GOOGLE_API_KEY, UPLIFTAI_API_KEY, STT_PROVIDER, UPLIFT_MODE
     # resolve for the livekit CLI + plugins.
+    import sys
+
     from dotenv import load_dotenv
-    from livekit.agents import WorkerOptions, cli
 
     load_dotenv(".env.local")
+
+    # Run prewarm() HERE, directly, at true __main__ top-level scope — this process's
+    # guaranteed real main thread, before cli.run_app() ever spawns a job thread/process.
+    # See prewarm()'s docstring above for why this is required on Windows.
+    _prewarmed = prewarm(None)
+
+    # Direct evidence, not inference: confirm each plugin module prewarm() imported is
+    # actually in sys.modules before any job thread/process exists. If one is missing, the
+    # main-thread fix did not do what its comment assumes — fail loudly here rather than
+    # mid-live-call.
+    for _mod in _prewarmed:
+        if _mod not in sys.modules:
+            raise RuntimeError(
+                f"prewarm() claimed to import {_mod} but it is not in sys.modules — "
+                "main-thread plugin registration did not happen as expected. See ADR-007."
+            )
+    print(f"[prewarm] confirmed in sys.modules before any job thread: {_prewarmed}")
+
+    from livekit.agents import WorkerOptions, cli
+
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

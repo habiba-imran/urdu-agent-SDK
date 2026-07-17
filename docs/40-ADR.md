@@ -220,9 +220,11 @@ cerebras→groq→gemini failover chain — wire it in the Phase-3 worker LLM pa
 (17/600 uplift, 0 livekit) before + after — Gemini touches neither.
 
 ---
-## ADR-007 Worker `prewarm_fnc` imports provider plugins on the main thread   [ACCEPTED]
+## ADR-007 Worker imports provider plugins at true `__main__` scope, on the real main thread   [ACCEPTED]
 Date: 2026-07-17 | Found live during the Gate-3 human-listen call; fix verified against installed
-`livekit.agents` source, human-approved to apply.
+`livekit.agents` source, human-approved to apply. **Revised same day** — the first accepted fix
+below was itself wrong and failed on a second live attempt; this entry documents the corrected
+mechanism, not the original guess, so a future reader isn't misled by the first draft.
 
 **Context.** The first live Gate-3 attempt crashed immediately on job dispatch:
 `RuntimeError: Plugins must be registered on the main thread`, raised by
@@ -231,37 +233,68 @@ Date: 2026-07-17 | Found live during the Gate-3 human-listen call; fix verified 
 entrypoint. `factories.py`'s lazy-import design is deliberate (module docstring: "so this
 module... load[s] without every provider plugin installed and nothing touches the network at
 import") and is correct for keeping `pytest tests/test_worker.py` fast and dependency-light — but
-it collided with a LiveKit Agents constraint we had not previously verified: each job runs in its
-own subprocess (`multiprocessing`, name `"job_proc"`; `livekit/agents/ipc/job_proc_lazy_main.py`),
-and the job entrypoint executes as an asyncio task on that subprocess — not on its actual OS main
-thread. Plugin registration is guarded to the main thread only, so the FIRST import of any plugin
-module from inside the entrypoint call path crashes. This is a distinct failure from the item-2
-metadata-read risk flagged in HANDOFF — `build_session(md)` had already run successfully; the
-crash was purely in provider-plugin construction.
+it collided with a LiveKit Agents constraint we had not previously verified. This is a distinct
+failure from the item-2 metadata-read risk flagged in HANDOFF — `build_session(md)` had already
+run successfully; the crash was purely in provider-plugin construction.
 
-**Decision.** Add `worker/main.py::prewarm(proc)` and wire it via
-`WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm)`. `prewarm_fnc` is a first-class
-LiveKit Agents hook that runs once per job subprocess, synchronously, on that subprocess's real
-main thread, strictly before any job entrypoint starts — verified via source: `worker.py` L437
-passes `options.prewarm_fnc` into the proc pool as `initialize_process_fnc`; `ipc/job_proc_lazy_main.py`
-`proc_main()` (L68-99) calls `client.initialize()` (which invokes it) before `client.run()` (which
-is what starts job/entrypoint handling). `prewarm` imports the `STT_PROVIDER`-selected STT plugin,
-the `google` LLM plugin, and the `silero` VAD plugin unconditionally, and the `upliftai` TTS plugin
-only when `UPLIFT_MODE` is `record`/`live` — mirroring `factories.py`'s own env-driven selection so
-prewarm never imports a plugin the job won't actually use.
+**First fix attempt (WRONG — kept here only as engineering record).** We initially assumed every
+job runs in its own OS subprocess (`multiprocessing`, name `"job_proc"`), and added
+`WorkerOptions.prewarm_fnc`, reasoning it would run on that subprocess's own main thread before
+the job entrypoint. `pytest` stayed green and the worker restarted cleanly — but the fix crashed
+identically on the very next live join, this time on `from livekit.plugins import google, silero`
+*inside `prewarm` itself*. `prewarm_fnc` was not exempt from the same guard; our model of where it
+executes was incomplete.
+
+**Actual mechanism (verified after the second failure).** `livekit/agents/worker.py` L126-130:
+```python
+if sys.platform.startswith("win"):
+    # Some python versions on Windows gets a BrokenPipeError when creating a new process
+    _default_job_executor_type = JobExecutorType.THREAD
+else:
+    _default_job_executor_type = JobExecutorType.PROCESS
+```
+On Windows (our dev platform), the default job executor is `THREAD`, not `PROCESS`. Under
+`THREAD` execution, each "job process" is actually a plain `threading.Thread` named
+`"job_thread_runner"` (`ipc/job_proc_lazy_main.py::thread_main()` L459-480), spawned **inside the
+same OS process** as the worker and sharing its `sys.modules` cache — it is NOT a separate
+subprocess. `thread_main()` calls `client.initialize()`, which invokes `prewarm_fnc`, from inside
+that thread — which is not the process's main thread. So on Windows, `prewarm_fnc` alone never
+satisfies the main-thread guard, regardless of what it imports.
+
+**Decision.** Call `worker/main.py::prewarm(None)` directly at true `__main__` top-level scope,
+**before** `cli.run_app()` is invoked — the one place on Windows guaranteed to execute on the
+process's actual main thread, since no job thread exists yet. `sys.modules` is process-wide, so
+every later import of the same module — from `prewarm_fnc`, or the per-job lazy imports in
+`factories.py`, from any thread — hits the cache and never re-registers. `prewarm_fnc` is still
+also wired into `WorkerOptions` for portability: on non-Windows platforms the default genuinely is
+`JobExecutorType.PROCESS`, where each job gets its own OS subprocess and `prewarm_fnc` *does* run
+on that subprocess's own real main thread before its job entrypoint (`proc_main()`,
+`ipc/job_proc_lazy_main.py` L68-99: `client.initialize()` strictly before `client.run()`) — so it
+remains correct there, redundant-but-harmless on Windows. `prewarm()` now returns the dotted names
+of every plugin module it imported; `__main__` asserts each one is actually in `sys.modules`
+before calling `cli.run_app()` and prints the confirmed list — direct evidence, not an inference
+from Python's general import-caching behavior, checked on every worker start. Live output at the
+corrected startup: `[prewarm] confirmed in sys.modules before any job thread:
+['livekit.plugins.google', 'livekit.plugins.silero', 'livekit.plugins.gladia',
+'livekit.plugins.upliftai']`, immediately followed by LiveKit's own `"plugin registered"` log line
+for all four — independent confirmation from the framework itself.
 
 **Consequences.** `factories.py`'s lazy-import design is preserved as-is (no behavior change to
-provider selection; `pytest tests/test_worker.py` reconfirmed 5/5 green after the fix, since
-`pytest` never spawns a real job subprocess and so never exercised this path). The per-job lazy
-imports become `sys.modules` cache hits once `prewarm` has run for that subprocess. **Any future
-provider added to `factories.py` must also be added to `prewarm`**, or it will hit this identical
-crash the first time it's used in a real live job — there is no unit-test coverage for this
-failure mode; it only manifests under the actual LiveKit CLI job-subprocess model.
+provider selection; `pytest tests/test_worker.py` reconfirmed 5/5 green after both the original
+and the corrected fix, since `pytest` never invokes the `__main__` block or spawns a real job
+thread/process, so it cannot exercise this path either way — this class of bug is invisible to the
+unit-test gate by construction). **Any future provider added to `factories.py` must also be added
+to `prewarm`**, or it will hit this identical crash the first time it's used in a real live job on
+Windows. The `sys.modules` assertion in `__main__` will now fail loudly and immediately on worker
+startup if that's ever missed, rather than surfacing mid-live-call.
 
-**Evidence.** `livekit/agents/plugin.py` L30-33 (the main-thread guard); `livekit/agents/ipc/job_proc_lazy_main.py`
-L1-99 (subprocess model; `proc_main`/`client.initialize`/`client.run` ordering); `livekit/agents/worker.py`
-L186 (`prewarm_fnc` field, default `_default_setup_fnc`), L437 (wired into the proc pool). Full
-crash traceback and the fixed worker's clean re-registration log are in the Gate-3 session
+**Evidence.** `livekit/agents/plugin.py` L30-33 (the main-thread guard); `livekit/agents/worker.py`
+L126-130 (`JobExecutorType` platform default — the fact that actually mattered), L186
+(`prewarm_fnc` field), L437 (wired into the proc pool); `livekit/agents/ipc/job_proc_lazy_main.py`
+L68-99 (`proc_main`, the `PROCESS`-executor path — correct for non-Windows) and L459-480
+(`thread_main`, the `THREAD`-executor path actually taken on Windows — where the first fix's
+assumption broke). Full crash tracebacks (both attempts) and the corrected worker's clean
+re-registration log, including the `sys.modules` evidence line, are in the Gate-3 session
 transcript, 2026-07-17. Trap logged in `state/PROGRESS.md` Traps section.
 
 ---
