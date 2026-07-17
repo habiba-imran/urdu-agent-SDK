@@ -313,6 +313,11 @@ re-test, a real bug found and fixed by the test itself)
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
 
+- **P6 gate test (justified test-file edit).** The test-guard override token was added only to
+  create `tests/test_admin.py` (the Phase 6 gate — a NEW test, not a rewrite of an existing one)
+  and add it to `pytest.ini` `python_files`, same precedent as the P2 gate test entry below. No
+  existing test's assertions changed. Token removed immediately after.
+
 - **Name spelling canonicalisation — "مہ نور" in smoke test file (justified test-file edit).**
   The test-guard override token was added only to update the hard-coded TEXT string in
   `tests/smoke_uplift_ws.py` from "ماہ نور" to "مہ نور" — a spelling alignment with the
