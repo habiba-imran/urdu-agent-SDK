@@ -119,7 +119,16 @@ def main() -> int:
     import psycopg
 
     updated = 0
-    with psycopg.connect(**conn_kwargs()) as conn:
+    # prepare_threshold=None: this connection goes through Supabase's PgBouncer TRANSACTION-mode
+    # pooler (port 6543 in SUPABASE_DB_URL), which multiplexes client sessions across backend
+    # server processes. psycopg3 auto-promotes a repeated query to a server-side PREPARE after
+    # 5 executions by default (prepare_threshold=5) — this loop runs the same UPDATE 81 times on
+    # one connection, so it crosses that threshold. The auto-generated statement name can already
+    # exist on whichever backend the pooler hands this connection (left over from another
+    # session's prepare, since transaction pooling doesn't guarantee DISCARD ALL between clients
+    # on the same backend), raising DuplicatePreparedStatement. Disabling server-side prepare is
+    # the documented fix for psycopg3 + PgBouncer transaction pooling.
+    with psycopg.connect(**conn_kwargs(), prepare_threshold=None) as conn:
         for voice_id, signed_url in signed_urls.items():
             conn.execute(
                 "update voices set preview_url = %s where id = %s",

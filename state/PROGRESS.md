@@ -421,6 +421,12 @@ re-test, a real bug found and fixed by the test itself)
 
 ## Live decisions (not yet promoted to docs/40-ADR.md)
 
+- **P7 stale-text fix in test_token_widen_live.py (justified test-file edit).** The test-guard
+  override token was added only to fix one stale line in the VERDICT print statement — "(Human
+  still confirms before Phase 3.)" — a Phase-2-era leftover, now inaccurate since this script is
+  reused as regression tooling well past Phase 3. No assertion or check logic changed, text-only.
+  Token removed immediately after.
+
 - **P7 human-gate attack scripts (justified test-file edit).** The test-guard override token was
   added only to create two NEW standalone, narrated scripts for the human to personally run as
   the actual Phase 7 human-gate act (same not-pytest-collected pattern as

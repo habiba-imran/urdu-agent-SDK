@@ -282,7 +282,9 @@ def main() -> int:
             "All six checks behaved: every widen/replay/expiry attack was rejected by"
         )
         print(
-            "LiveKit Cloud or the live endpoint. (Human still confirms before Phase 3.)"
+            "LiveKit Cloud or the live endpoint. (Human still confirms personally — see "
+            "docs/27-PHASE-7-SECURITY.md HUMAN GATE item 2 — this script is reused as "
+            "regression tooling across phases, not a one-time Phase 2/3 check.)"
         )
         return 0
     finally:
