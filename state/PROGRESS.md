@@ -1,5 +1,25 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 3 (Worker) — **GATE 3 CLOSED**, moving into Phase 4 | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 4 (Client SDK) — machine gate lines closed, **HUMAN GATE pending**
+(dist/ secret inspection is the human's own step) | Branch: phase/3-worker
+
+## Now (Session 8 continued — Phase 4 implemented, stopped hard at its human gate)
+- **Phase 4 done, non-live, one long haul, per the new standing operating pattern.**
+  `sdk/src/index.ts` is a real implementation now (not the earlier stub): P4-T01/T02 transport +
+  session lifecycle (`connect()` POSTs the host's `sessionEndpoint`, connects via `livekit-client`,
+  enables the caller's mic), P4-T03 typed events (`transcript`/`speaking`/`ended`/`error`, each
+  wired to a specific, verified `RoomEvent`), P4-T04 error taxonomy (`quota_exceeded`/
+  `agent_not_found`/`session_failed`, never leaking raw internal error text), P4-T05 build + bundle
+  scan. Full design record: `docs/40-ADR.md` ADR-015.
+- **GATE 4 machine-checkable lines are green:** `make bundle-check` → EXIT 0;
+  `grep -rE '(API_KEY|SECRET|SERVICE_ROLE|Bearer )' dist/` → zero matches; `npm ls` → only
+  `livekit-client` + `typescript`(dev), zero provider SDKs; bundle size recorded (5765B raw /
+  2162B gzipped). "Works from a foreign origin" verified by code inspection only (no live
+  two-origin test — none needed given no same-origin assumption exists in the code).
+- **🔴 STOPPED HARD at Phase 4's HUMAN GATE — not proceeding to Phase 5 without it.** Per
+  `docs/24-PHASE-4-CLIENT-SDK.md`'s own line, inspecting `dist/` for secrets is explicitly the
+  human's personal job, not something the automated grep (even though it passed) satisfies on its
+  own. Full gate output posted to the human; waiting for explicit go-ahead before Phase 5.
+- No live/paid API call was made anywhere in Phase 4.
 
 ## Now (Session 8 continued — GATE 3 closed, P3-T09 + voice polish explicitly deferred)
 - **New standing operating pattern (human instruction, 2026-07-17):** work a full phase's tasks in

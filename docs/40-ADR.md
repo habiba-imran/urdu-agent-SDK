@@ -672,6 +672,72 @@ mint.py` L121-128 (the control-plane's own quota check, deliberately avoided via
 Playwright-based driver).
 
 ---
+## ADR-015 Phase 4 client SDK: real implementation, GATE 4 machine lines closed   [ACCEPTED]
+Date: 2026-07-17 | P4-T01 through P4-T05, non-live | `sdk/src/index.ts`
+
+**Context.** Phase 3's Gate-3 confirmed the session/token contract
+(`{token, wsUrl, roomName}` — `control_plane.mint.mint_session`), which the Phase-4 scaffold
+(committed earlier, `sdk/src/index.ts` throwing "not implemented — Phase 4" everywhere) was
+explicitly waiting on before real work could start. All non-live Phase-4 tasks done in one pass per
+the new standing operating pattern.
+
+**Decision — implementation shape, verified against installed `livekit-client` 2.20.1 source, not
+guessed:**
+- **P4-T01/T02 (transport + session lifecycle).** `connect({agentId})` POSTs
+  `options.sessionEndpoint` with `{publishableKey, agentId}`, expects
+  `{token, wsUrl, roomName}` back (this SDK's own public contract — the host's server is expected
+  to relay our control plane's `POST /v1/session` response verbatim, since we don't control their
+  endpoint's shape and this is the natural pass-through). Connects via `new Room(); room.connect
+  (wsUrl, token)` (`livekit-client` L16405-16408). **Beyond the literal API sketch in
+  `docs/24-PHASE-4-CLIENT-SDK.md`:** `connect()` also calls
+  `room.localParticipant.setMicrophoneEnabled(true)` and fails the whole `connect()` call if it
+  throws — a voice agent SDK that never publishes the caller's microphone doesn't do what the
+  product is for, so this was added on that reasoning rather than left out because the doc's
+  4-line sketch didn't spell it out. If this is unwanted (e.g., a push-to-talk product built on top
+  of this SDK), it's a one-line change to make opt-in — flagged, not silently assumed permanent.
+- **P4-T03 (typed events).** `on(event, cb)` backs a plain listener-set map. `'transcript'` ←
+  `RoomEvent.TranscriptionReceived` (segments → `{text, final}, `livekit-client` L30465-30467).
+  `'speaking'` ← `RoomEvent.ActiveSpeakersChanged` (boolean: any active speaker, L12238-12245).
+  `'ended'` ← `RoomEvent.Disconnected` (L12130, passes the disconnect reason through).
+  `'error'` ← `RoomEvent.MediaDevicesError` for POST-connect device failures (mic unplugged
+  mid-call, permission revoked — L12360-12364) — a genuinely new wiring decision, since the doc's
+  API sketch lists `'error'` as subscribable but doesn't say what fires it; initial-connect
+  failures instead reject the `connect()` promise (a `try`/`await` failure), which is the more
+  idiomatic split (setup errors reject, runtime errors emit).
+- **P4-T04 (error taxonomy).** HTTP `429` from `sessionEndpoint` → `quota_exceeded`; `404` →
+  `agent_not_found`; anything else non-2xx, a network/fetch failure, an incomplete JSON response,
+  or a LiveKit connect failure → `session_failed`. Raw error text/exceptions are never attached to
+  the thrown `UvaError` for any of the internal-failure paths (network, JSON parse, LiveKit
+  connect) — only `MediaDevicesError`'s message is passed through, deliberately, since that's the
+  end user's own local browser/device error, not something about our infrastructure, and is
+  actionable for the host app to display ("please allow microphone access").
+- **P4-T05 (build + bundle scan).** `npm run build` = `tsc` (unbundled ESM output; `livekit-client`
+  stays an external import for the host's own bundler to resolve — the scaffold's original build
+  script choice, kept as-is, a normal pattern for published npm libraries). `dist/index.js`:
+  **5765 bytes raw, 2162 bytes gzipped**. `dist/index.d.ts`: 1485 bytes.
+
+**GATE 4 result — full account in `docs/24-PHASE-4-CLIENT-SDK.md`.** `make bundle-check` → EXIT 0.
+`grep -rE '(API_KEY|SECRET|SERVICE_ROLE|Bearer )' dist/` → zero matches (exit code 1). `npm ls` →
+only `livekit-client` + `typescript`(dev), zero provider SDKs. "Works from a foreign origin" is
+verified by code inspection (no same-origin assumption anywhere in the code — `sessionEndpoint`
+and `wsUrl` are both runtime-supplied, no cookies sent, nothing reads `window.location`), not by an
+actual live two-origin test — flagged as inspected, not empirically run. **HUMAN GATE — per
+`docs/24`'s own line, "you personally grep `dist/`" — is NOT satisfied by the automated grep above
+and is not claimed to be; it is the human's own remaining step.**
+
+**Consequences.** No live/paid API call was made anywhere in Phase 4 — `sessionEndpoint` was never
+actually called against a real host server (none exists yet), so `connect()`'s live path is
+type-checked and code-reviewed but not exercised end-to-end. That end-to-end exercise naturally
+happens once a real host integration exists (Phase 5+ or an external integrator), not invented here
+as a fake test harness.
+
+**Evidence.** `sdk/node_modules/livekit-client/dist/src/room/participant/LocalParticipant.d.ts`
+L95-100 (`setMicrophoneEnabled`); `livekit-client.esm.mjs` L12103, L12130, L12238-12245,
+L12360-12364, L30465-30467 (the `RoomEvent` definitions cited above); `control_plane/app.py` and
+`control_plane/mint.py` (the response shape this SDK's contract mirrors); literal `make
+bundle-check`, secret-grep, and `npm ls` output pasted to the human alongside this gate.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

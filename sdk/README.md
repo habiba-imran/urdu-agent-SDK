@@ -1,17 +1,24 @@
-# @uva/client — Urdu Voice Agent client SDK (Phase 4 SCAFFOLD)
+# @uva/client — Urdu Voice Agent client SDK
 
-⚠️ **Scaffold only.** Only the public TYPE surface + exact event/error names (per
-`docs/24-PHASE-4-CLIENT-SDK.md`) are defined in `src/index.ts`. Every method throws
-"not implemented — Phase 4". The real transport/session wiring (livekit-client) is Phase-4 work and
-must NOT be built until Phase 3's Gate-3 confirms the session/token contract.
+Implemented 2026-07-17, after Phase-3 Gate-3 confirmed the session/token contract
+(`{token, wsUrl, roomName}` from `control_plane.mint.mint_session`). `src/index.ts` is real, not a
+stub — `connect()`/`on()`/`disconnect()` all work against a live LiveKit room.
 
-Design invariants (docs/24):
-- **Zero secrets in the bundle.** `publishableKey` identifies, never authorises.
+Design invariants (docs/24-PHASE-4-CLIENT-SDK.md):
+- **Zero secrets in the bundle.** `publishableKey` identifies, never authorises. Confirmed:
+  `grep -rE '(API_KEY|SECRET|SERVICE_ROLE|Bearer )' dist/` → zero matches.
 - The SDK talks only to the HOST platform's own `sessionEndpoint` (their server holds their HMAC
-  secret and calls our mint), then to LiveKit. Never directly to Uplift/Gladia/Gemini/Supabase.
-- Gate (`make bundle-check`): `dist/` must contain no `API_KEY|SECRET|SERVICE_ROLE|Bearer`, and no
-  provider SDK in the dep tree.
+  secret and calls our mint), then to LiveKit via `livekit-client`. Never directly to
+  Uplift/Gladia/Gemini/Supabase. Confirmed: `npm ls` → only `livekit-client` + `typescript` (dev),
+  no provider SDK in the dep tree.
+- `sessionEndpoint` contract: this SDK POSTs `{publishableKey, agentId}` and expects
+  `{token, wsUrl, roomName}` on success (the host's server is expected to relay our control plane's
+  `POST /v1/session` response verbatim); non-2xx maps to the public `UvaErrorCode` taxonomy
+  (`429` → `quota_exceeded`, `404` → `agent_not_found`, anything else → `session_failed`) — raw
+  server/network error text is never attached to the thrown `UvaError`.
 
-TODO at Phase 4 (not done):
-- Verify + pin `livekit-client` version (Phase 7 wants exact pins; `^2.0.0` here is a scaffold guess).
-- `npm install`, implement P4-T01..T05, then `make bundle-check`.
+Build: `npm run build` (`tsc`, unbundled ESM — `livekit-client` stays an external import, resolved
+by the HOST app's own bundler when they `npm install @uva/client`, same as most npm libraries).
+`dist/index.js` is ~4.8KB raw / ~1.8KB gzipped for our own code; `livekit-client` itself is a much
+larger transitive dependency the host's bundler pulls in separately — see `docs/40-ADR.md` for the
+full Gate-4 record.
