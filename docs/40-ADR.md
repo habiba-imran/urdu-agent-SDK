@@ -1440,6 +1440,27 @@ ceilings" table (diff alongside this entry).
 choice to revisit, just an honest snapshot of what is and isn't known as of 2026-07-18.**
 
 ---
+## ADR-025 P8-T04 ponytail-debt — ledger confirmed empty, GATE 8 line satisfied   [ACCEPTED]
+Date: 2026-07-18 | `.claude/commands/ponytail-debt.md`, GATE 8 line "ponytail debt resolved or
+accepted"
+
+**Check run, real command, not assumed clean.** The `/ponytail-debt` slash command isn't
+invokable outside the Claude Code runtime; its own documented fallback (`.claude/commands/
+ponytail-debt.md`) is `grep -rn 'ponytail:' --include='*.py' --include='*.ts' .`. Run three times
+across this session (once during the earlier Phase-7/8 status check, once when staging this
+entry, once immediately before writing this ADR, to make sure nothing changed in between):
+**zero matches, every time.**
+
+**Decision.** No deferred-shortcut markers exist anywhere in `.py`/`.ts` source. GATE 8's line
+"ponytail debt resolved or accepted" is satisfied by the first branch (resolved — there is none),
+not the second (nothing needed explicit acceptance here).
+
+**Evidence.** `grep -rn "ponytail:" --include='*.py' --include='*.ts' .` — empty output, run
+2026-07-18, this session, immediately before this entry.
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
