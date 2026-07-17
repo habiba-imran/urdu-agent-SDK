@@ -5,7 +5,7 @@
 |---|---|---|
 | H1 | Supabase: create **two** projects `uva-dev`, `uva-prod`. Agent touches dev ONLY. | ☐ |
 | H2 | LiveKit Cloud → **Build (free)**. Save `LIVEKIT_URL/API_KEY/API_SECRET`. | ☐ |
-| H3 | Uplift → free. Save `UPLIFT_API_KEY`. ⚠️ **10 minutes total — read 30-GUIDE-FREE-TIER.md** | ☐ |
+| H3 | Uplift → free. Save `UPLIFTAI_API_KEY` (the name the first-party plugin + config.py read — NOT `UPLIFT_API_KEY`). ⚠️ **10 minutes total — read 30-GUIDE-FREE-TIER.md** | ☐ |
 | H4 | Gladia → free. Save `GLADIA_API_KEY`. | ☐ |
 | H5 | Google AI Studio → free Gemini key. | ☐ |
 | H6 | All keys → `.env.local`. Confirm `.env*` in `.gitignore` **before first commit**. | ☐ |
