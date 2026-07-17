@@ -152,6 +152,19 @@ def main() -> int:
     if cfg_path.exists():
         phrase_config_id = cfg_path.read_text(encoding="utf-8").strip() or None
 
+    class CapExceeded(Exception):
+        """Raised when a voice's per-line synthesis crosses PER_VOICE_MAX_SECONDS.
+
+        Carries the partial pcm/sample-rate that was actually streamed (and billed by Uplift)
+        before the abort, so the caller can log real spend instead of losing it -- see the
+        washroom-singer incident (docs/40-ADR.md ADR-019): the old SystemExit-inside-try-block
+        design discarded this data and killed the whole run instead of just this one voice.
+        """
+
+        def __init__(self, pcm: bytes, sr: int):
+            self.pcm = pcm
+            self.sr = sr
+
     async def synth_one(voice_id: str, text: str) -> tuple[bytes, int]:
         tts = upliftai.TTS(
             voice_id=voice_id,
@@ -166,14 +179,13 @@ def main() -> int:
                 sr = ev.frame.sample_rate
                 pcm += bytes(ev.frame.data)
                 if len(pcm) / (2 * sr) > PER_VOICE_MAX_SECONDS:
-                    raise SystemExit(
-                        f"ABORT: {voice_id} exceeded the {PER_VOICE_MAX_SECONDS}s per-line cap."
-                    )
+                    raise CapExceeded(bytes(pcm), sr)
         finally:
             await tts.aclose()
         return bytes(pcm), sr
 
     recorded = 0
+    skipped = 0
     total_recorded_sec = 0.0
     for p in plan:
         current_used = load_ledger().get("uplift_tts_sec", 0)
@@ -181,7 +193,19 @@ def main() -> int:
             print(f"\nSTOPPING before {p['id']}: not enough budget remaining. Partial run saved.")
             break
 
-        pcm, sr = asyncio.run(synth_one(p["id"], p["text"]))
+        try:
+            pcm, sr = asyncio.run(synth_one(p["id"], p["text"]))
+        except CapExceeded as e:
+            partial_duration = len(e.pcm) / (2 * e.sr)
+            increment("uplift_tts_sec", round(partial_duration))
+            skipped += 1
+            print(
+                f"  [{p['id']}] SKIPPED: exceeded the {PER_VOICE_MAX_SECONDS}s per-line cap at "
+                f"{partial_duration:.2f}s (logged to ledger, no preview file written). "
+                "Continuing with the next voice."
+            )
+            continue
+
         duration = len(pcm) / (2 * sr)
         wav = pcm_to_wav(pcm, sr)
         p["out_path"].write_bytes(wav)
@@ -191,7 +215,10 @@ def main() -> int:
         print(f"  [{p['id']}] recorded {duration:.2f}s -> {p['out_path']}")
 
     final_used = load_ledger().get("uplift_tts_sec", 0)
-    print(f"\nDone: {recorded}/{len(plan)} recorded, {total_recorded_sec:.1f}s this run.")
+    print(
+        f"\nDone: {recorded}/{len(plan)} recorded, {skipped} skipped (cap exceeded), "
+        f"{total_recorded_sec:.1f}s this run."
+    )
     print(f"ledger: uplift_tts_sec={final_used}/600")
     return 0
 

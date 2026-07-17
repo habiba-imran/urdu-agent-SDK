@@ -1007,6 +1007,78 @@ session); live Playwright render test against the real dev DB (83/83 cards, 83/8
 disabled).
 
 ---
+## ADR-019 P5-T02 recording crash: washroom-singer cap breach, lost partial spend, script fix   [ACCEPTED]
+Date: 2026-07-17 | P5-T02, `scripts/record_voice_previews.py`, `state/usage_ledger.json`
+
+**What happened.** Human ran `UPLIFT_MODE=record python scripts/record_voice_previews.py` (live,
+human-approved). It recorded 80/82 voices, then crashed on `washroom-singer`: that voice's
+synthesis of the identical short greeting line exceeded the script's `PER_VOICE_MAX_SECONDS = 6.0`
+per-line cap, which every other voice cleared in 2.6-5.1s. `wholesale-trader` (next alphabetically)
+was never attempted — not because it was itself slow, but because the abort killed the whole
+script rather than skipping one voice. Confirmed on disk: exactly 80 `.wav` files in
+`voice-picker/previews/`, missing exactly `washroom-singer` and `wholesale-trader`.
+
+**Ledger: true value, lost spend, and a reasoned correction.** Read `state/usage_ledger.json`
+directly (not estimated, not a stale in-session figure): `uplift_tts_sec=305` at the moment of the
+crash. The old `synth_one()` raised `SystemExit` *inside* the accumulation loop, before its own
+`return bytes(pcm), sr` line — so the partial `pcm` bytearray (real, already-billed Uplift audio)
+was discarded on the way out: never written to a file (confirmed: no partial `washroom-singer.wav`
+exists on disk), never passed to `increment()`, and the `SystemExit` message itself carries no
+numeric duration. This spend is genuinely unrecoverable from any log or file this script produced.
+Per the same standard as ADR-016's race-condition correction, a stated, reasoned estimate was
+applied instead of leaving the gap silent: **+8s**, applied via `usage_guard.increment` —
+`uplift_tts_sec` 305 -> **313** (verified by re-reading the file after). Reasoning: (a) a **6.0s
+confirmed floor** — the abort only fires once `len(pcm) / (2*sr)` has already crossed the cap, so
+at least that much audio was generated and received; (b) a **+2s reasoned pad** for the overshoot
+between crossing 6.0s and the check actually firing, grounded in reading the installed plugin
+(`.../livekit/plugins/upliftai/tts.py`, `ChunkedStream._run` lines 396-412): Uplift delivers audio
+as discrete WebSocket `"audio"` messages, each base64-decoded and pushed as one `audio_data` chunk
+onto an `asyncio.Queue`, consumed and appended to `pcm` one chunk at a time — i.e. genuinely
+incremental streaming, not one giant blob, so the overshoot at abort time is bounded by roughly one
+chunk, not unbounded. The exact per-message chunk size is **not** documented or verified (would
+require a live call to pin down, not done), so 2s is a deliberately generous, explicitly-labeled
+pad, not a measured figure. **Residual, unresolved uncertainty, stated plainly, not papered over:**
+whether Uplift's server-side synthesis job continues running (and billing) after the client stops
+reading is unknown from the client library alone; this correction assumes billing tracks bytes
+actually delivered to the client (consistent with this project's own ledger convention, which
+meters received PCM bytes everywhere else), and could still be an undercount if Uplift's real
+billing works differently. If the human checks Uplift's own dashboard and finds a different figure,
+that number wins over this reasoned estimate.
+
+**Root cause: verified, not guessed.** Re-fetched `docs.upliftai.org/orator_voices` (2026-07-17,
+same source ADR-018 used) for `washroom-singer` specifically: description *"A gloriously tone-deaf
+shower singer — every note off-key, yet utterly unable to stop belting,"* Group "Only in Pakistan,"
+internal File codename `ai_naat_p4_m_za`. "Naat" is Islamic devotional poetry traditionally
+performed in a melismatic, drawn-out, sung/chanted style, categorically different from ordinary
+speech — unlike, e.g., `khateeb` (religious orator, File `ai_maulvi_p1_m_mna`, spoken not sung).
+This is a **genuinely slower vocal delivery style baked into the voice model itself**, not a bug
+and not specific to this script's text/config: all 81 other voices ran the identical code path,
+identical `phrase_replacement_config_id`, identical text, and none crashed; `wholesale-trader`'s
+absence is explained entirely by the crash-killed-the-run bug (item below), not by its own speed —
+it was never attempted. Conclusion: **voice character, not a bug** — though the fix below still
+treats a cap breach as an expected, handleable case rather than assuming it can't happen again.
+
+**Fix: don't lose the spend, don't kill the run.** `synth_one()` now raises a local `CapExceeded`
+exception carrying the partial `pcm`/`sr` instead of `SystemExit` inside the `try` block, so the
+partial data survives the abort. The per-voice loop in `main()` catches `CapExceeded`, logs the
+actual partial duration reached (`increment("uplift_tts_sec", round(partial_duration))` — partial
+synthesis still costs real budget, silence about it is worse than the abort itself), prints a clear
+skip message, and `continue`s to the next voice instead of letting the exception kill the whole
+script — 80 good recordings should never be put at risk by one bad line. No preview file is written
+for a capped voice (a clip truncated mid-note isn't a usable preview). **Not re-run yet** — per
+standing process, any live-pipeline re-run needs explicit sign-off; the two remaining voices
+(`washroom-singer`, `wholesale-trader`) are queued for a human-approved re-run, and `washroom-singer`
+specifically also needs an explicit decision on its per-voice cap (whether to raise
+`PER_VOICE_MAX_SECONDS` for it, trim its line, or accept/replace the voice) — deliberately left
+undecided here, not silently bumped, per direct instruction.
+
+**Evidence.** `state/usage_ledger.json` (305 before, 313 after, both read directly);
+`voice-picker/previews/` directory listing (80 files, diffed against the 82-voice catalogue minus
+`v_meklc281`); installed `livekit/plugins/upliftai/tts.py` (`ChunkedStream._run`,
+`WebSocketClient._on_message`/`synthesize`); `docs.upliftai.org/orator_voices` (re-fetched
+2026-07-17, `washroom-singer` and `khateeb` entries).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
