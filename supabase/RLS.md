@@ -10,6 +10,9 @@ Read-only mirror of live RLS state. Regenerate: `make db-inspect`.
 ## agents  (RLS: ENABLED)
 - policy tenant_isolation_agents [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
 
+## escalations  (RLS: ENABLED)
+- policy tenant_isolation_escalations [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
 ## mint_rejections  (RLS: ENABLED)
 - (no policies)
 

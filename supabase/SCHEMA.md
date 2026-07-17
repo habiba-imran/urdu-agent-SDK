@@ -38,6 +38,20 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 - FK: voice_id -> voices(id)
 - index: agents_pkey
 
+## table: escalations
+| column | type | nullable | default |
+|---|---|---|---|
+| id | bigint | NO | nextval('escalations_id_seq'::regclass) |
+| tenant_id | uuid | NO |  |
+| session_id | uuid | YES |  |
+| reason | text | NO |  |
+| contact_info | text | YES |  |
+| requested_at | timestamp with time zone | NO | now() |
+| status | text | NO | 'pending'::text |
+- FK: session_id -> sessions(id)
+- FK: tenant_id -> tenants(id)
+- index: escalations_pkey
+
 ## table: mint_rejections
 | column | type | nullable | default |
 |---|---|---|---|
@@ -70,6 +84,7 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | ended_at | timestamp with time zone | YES |  |
 | duration_sec | integer | YES |  |
 | end_reason | text | YES |  |
+| summary | text | YES |  |
 - FK: agent_id -> agents(id)
 - FK: tenant_id -> tenants(id)
 - index: sessions_pkey

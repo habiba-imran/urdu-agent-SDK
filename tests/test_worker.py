@@ -22,6 +22,12 @@ from dbconn import conn_kwargs  # noqa: E402
 
 from worker.config import AgentConfig, AgentNotFound, load_agent_config  # noqa: E402
 from worker.usage import record_usage  # noqa: E402
+from worker.tools import (  # noqa: E402
+    FIXED_TOOLS,
+    AgentUserdata,
+    end_conversation_summary,
+    escalate_to_human,
+)
 
 
 def _kw():
@@ -47,7 +53,7 @@ def two_tenants():
         (ag_a, a, ag_b, b),
     )
     yield {"a": a, "b": b, "ag_a": ag_a, "ag_b": ag_b, "conn": conn}
-    for t in ("usage_events", "sessions", "quota_state", "agents"):
+    for t in ("escalations", "usage_events", "sessions", "quota_state", "agents"):
         conn.execute(f"delete from {t} where tenant_id in (%s,%s)", (a, b))
     conn.execute("delete from tenants where id in (%s,%s)", (a, b))
     conn.close()
@@ -109,3 +115,118 @@ def test_persona_injected_as_data_not_system_instructions():
         str(m.get("content")) for m in agent.chat_ctx.to_dict()["items"]
     )
     assert inject in ctx_text
+
+
+# --- P3-T09 (ADR-013 deferred pass, scope ADR-029): worker/tools.py's two fixed tools --------
+
+
+def test_build_agent_wires_fixed_tools():
+    from worker.config import AgentConfig
+    from worker.main import build_agent
+
+    cfg = AgentConfig(
+        agent_id="a",
+        tenant_id="t",
+        name="n",
+        prompt="a persona",
+        voice_id="v_meklc281",
+        llm_model="gemini-2.5-flash",
+    )
+    agent = build_agent(cfg)
+    assert list(agent.tools) == FIXED_TOOLS
+
+
+def test_fixed_tool_schemas_exclude_runcontext_and_expose_only_real_args():
+    from livekit.agents.llm import utils
+
+    summary_schema = utils.function_arguments_to_pydantic_model(
+        end_conversation_summary
+    ).model_json_schema()
+    assert set(summary_schema["properties"]) == {"summary"}
+    assert summary_schema["required"] == ["summary"]
+
+    escalate_schema = utils.function_arguments_to_pydantic_model(
+        escalate_to_human
+    ).model_json_schema()
+    assert set(escalate_schema["properties"]) == {"reason", "contact_info"}
+    assert escalate_schema["required"] == ["reason"]
+
+
+class _FakeRunContext:
+    """Duck-types the one attribute these tools read (`ctx.userdata`) -- FunctionTool.__call__
+    just forwards args to the plain function, so a real livekit.agents.RunContext (which needs a
+    live AgentSession/SpeechHandle/FunctionCall to construct) isn't needed to unit-test our own
+    tool logic; that's LiveKit's own dispatch machinery, not ours to re-test here."""
+
+    def __init__(self, userdata):
+        self.userdata = userdata
+
+
+def _mk_session_row(conn, tenant_id, agent_id):
+    room_name = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    conn.execute(
+        "insert into sessions (id, tenant_id, agent_id, room_name) values (%s,%s,%s,%s)",
+        (session_id, tenant_id, agent_id, room_name),
+    )
+    return session_id, room_name
+
+
+def test_end_conversation_summary_writes_to_the_real_session_row(two_tenants):
+    import asyncio
+
+    conn = two_tenants["conn"]
+    session_id, room_name = _mk_session_row(conn, two_tenants["a"], two_tenants["ag_a"])
+    ud = AgentUserdata(
+        tenant_id=two_tenants["a"], agent_id=two_tenants["ag_a"], room_name=room_name
+    )
+    ctx = _FakeRunContext(ud)
+
+    result = asyncio.run(
+        end_conversation_summary(ctx, summary="caller asked about pricing")
+    )
+    assert result == {"status": "saved"}
+
+    row = conn.execute(
+        "select summary from sessions where id=%s", (session_id,)
+    ).fetchone()
+    assert row[0] == "caller asked about pricing"
+
+
+def test_escalate_to_human_writes_a_real_row_linked_to_the_session(two_tenants):
+    import asyncio
+
+    conn = two_tenants["conn"]
+    session_id, room_name = _mk_session_row(conn, two_tenants["a"], two_tenants["ag_a"])
+    ud = AgentUserdata(
+        tenant_id=two_tenants["a"], agent_id=two_tenants["ag_a"], room_name=room_name
+    )
+    ctx = _FakeRunContext(ud)
+
+    result = asyncio.run(
+        escalate_to_human(ctx, reason="wants a callback", contact_info="0300-1234567")
+    )
+    assert result == {"status": "escalated"}
+
+    row = conn.execute(
+        "select tenant_id, session_id, reason, contact_info, status from escalations "
+        "where session_id=%s",
+        (session_id,),
+    ).fetchone()
+    assert str(row[0]) == two_tenants["a"]
+    assert str(row[1]) == session_id
+    assert row[2] == "wants a callback"
+    assert row[3] == "0300-1234567"
+    assert row[4] == "pending"
+
+
+def test_escalate_to_human_cannot_write_under_a_different_tenant_id(two_tenants):
+    """The tenant_id used in the write comes from AgentUserdata (populated at session-build time
+    from RLS-verified AgentConfig), never from a tool-call argument -- there is no argument an
+    attacker-controlled tenant prompt or a hostile tool-call could use to redirect the write to a
+    different tenant. This test documents that by construction, not by trying to break it."""
+    import inspect
+
+    sig = inspect.signature(escalate_to_human)
+    assert "tenant_id" not in sig.parameters
+    assert set(sig.parameters) == {"ctx", "reason", "contact_info"}

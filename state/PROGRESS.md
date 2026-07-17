@@ -10,6 +10,25 @@ ponytail-debt, and all 8 phase-gate tags (rollback-tested) are genuinely done. P
 remains closed (unchanged). Branch: phase/8-prod-ready (created fresh, ADR-020 convention).
 
 ## Now (Session 12 — reconcile Gladia contradiction, begin ADR-013 pile)
+- **P3-T09 injection-gate mandatory re-run (justified test-file edit).** The
+  test-guard override token was added only to update `tests/test_injection_live.py`: pass
+  `tools=FIXED_TOOLS` to the live `llm.chat()` call (previously no tools existed at all, so this
+  line was untestable — now tools.py is live and callable, and the standing instruction is that
+  this re-run is a hard gate on tools.py's own completion, not a separate later task), add one
+  new attack testing whether hostile persona text can force an inappropriate/manipulated real
+  tool call, and — after a real false positive was found and investigated live — fix the
+  pre-existing compliance-detection logic for the original 3 attacks (was: any tool call at all
+  counted as "complied"; now: text-only for those 3, since a legitimate unrelated tool call was
+  being wrongly flagged). Token removed immediately after.
+
+- **P3-T09 tools gate (justified test-file edit).** The test-guard override
+  token was added only to extend `tests/test_worker.py`: add `escalations` to the `two_tenants`
+  fixture's cleanup (a real table as of migration 0008), and add new tests for
+  `worker/tools.py`'s two fixed tools (`end_conversation_summary`, `escalate_to_human`) — real
+  DB writes, real schema-shape checks (RunContext excluded, correct args), and a check that
+  `build_agent()` wires `tools=FIXED_TOOLS`. No existing test's assertions changed. Token removed
+  immediately after.
+
 - **Gladia contradiction investigation (justified test-file edit).** The test-guard override
   token was added only to add a `--stagger-ms` flag to
   `scripts/concurrency_test.py`, spreading `page.goto()` calls apart instead of firing them in a

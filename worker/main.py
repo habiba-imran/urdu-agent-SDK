@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import AgentConfig, load_agent_config
 from .factories import make_llm, make_stt, make_tts
+from .tools import FIXED_TOOLS, AgentUserdata
 
 # OUR fixed operating instructions. The tenant prompt is NEVER concatenated into this string.
 SYSTEM_INSTRUCTIONS = (
@@ -36,20 +37,25 @@ _PERSONA_FRAME = (
 
 
 def build_agent(cfg: AgentConfig) -> Any:
-    """Build the Agent: OUR fixed instructions + the tenant persona as framed DATA in chat_ctx.
+    """Build the Agent: OUR fixed instructions + the tenant persona as framed DATA in chat_ctx +
+    the fixed, platform-owned tool set (ADR-013 deferred pass, scope decided ADR-029).
 
     The untrusted `cfg.prompt` is put in a separate ChatContext system message, never interpolated
-    into `SYSTEM_INSTRUCTIONS`. See module docstring / 31-GUIDE §4.
+    into `SYSTEM_INSTRUCTIONS`, and never near a tool definition/description/argument — the tools
+    themselves are fixed Python callables imported from worker/tools.py, never derived from or
+    influenced by tenant-supplied text. See module docstring / 31-GUIDE §4.
     """
     from livekit.agents import Agent
     from livekit.agents.llm import ChatContext
 
     persona_ctx = ChatContext.empty()
     persona_ctx.add_message(role="system", content=_PERSONA_FRAME + cfg.prompt)
-    return Agent(instructions=SYSTEM_INSTRUCTIONS, chat_ctx=persona_ctx)
+    return Agent(
+        instructions=SYSTEM_INSTRUCTIONS, chat_ctx=persona_ctx, tools=FIXED_TOOLS
+    )
 
 
-async def build_session(md: dict[str, str]) -> tuple[Any, AgentConfig]:
+async def build_session(md: dict[str, str], room_name: str) -> tuple[Any, AgentConfig]:
     """Load config and construct the session pipeline (stt/llm/tts/vad). Does not start it."""
     cfg = await asyncio.to_thread(load_agent_config, md["agent_id"], md["tenant_id"])
 
@@ -61,6 +67,11 @@ async def build_session(md: dict[str, str]) -> tuple[Any, AgentConfig]:
         llm=make_llm(cfg.llm_model),
         tts=make_tts(cfg.voice_id),
         vad=_load_vad(),
+        # Per-session context for the fixed tools (worker/tools.py) via RunContext.userdata --
+        # populated from RLS-verified AgentConfig fields, never from tenant prompt text.
+        userdata=AgentUserdata(
+            tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
+        ),
         # Force "adaptive" rather than relying on LiveKit's dev/prod auto-detect. Verified
         # against installed source (livekit/agents/voice/agent_activity.py
         # ::_resolve_interruption_detection, L4183-4228): with no explicit mode, adaptive
@@ -112,7 +123,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     await ctx.connect()
     participant = await ctx.wait_for_participant()
     md = json.loads(participant.metadata or "{}")
-    session, cfg = await build_session(md)
+    session, cfg = await build_session(md, ctx.room.name)
     agent = build_agent(cfg)
 
     # Dev free-tier ledger instrumentation (ADR-016): livekit_agent_min was a perpetual,
