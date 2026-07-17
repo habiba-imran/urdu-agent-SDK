@@ -63,9 +63,37 @@ and left a stale `.git/index.lock`. Repo verified INTACT (`git log` + `git fsck 
 clean); removed the lock, commit succeeded (f0df147). `E:\Finova-Internal` may be cloud-synced / AV-
 scanned — if fsync errors recur, just retry the git op (not corruption).
 
-### Exact next action — STOPPED (safe work exhausted)
-All Phase-3 NON-LIVE work + all safe Priority-2 forward prep are DONE and committed; working tree
-clean. Everything remaining is LIVE-gated (see `MORNING_QUEUE.md`) or needs Phase-3 Gate-3 / a human
-decision. Per the mandate I am **stopping rather than drifting** into disallowed Phase-4 wiring.
-Human: start with MORNING_QUEUE.md **Q1** (Gemini TPM — lowest risk). There is nothing further an
-autonomous agent can safely do without you.
+### Current status (updated after Q1 fired + Q2 staged — 2026-07-17)
+- **Q1 DONE:** Gemini TPM measured + recorded in `docs/40-ADR.md` (commit bbfad23): 6 rapid calls OK
+  (1.9–3.5s each), turn 7 → `429 RESOURCE_EXHAUSTED` (free-tier RPM cap). Ledger untouched (17/600).
+- **Q2 STAGED (NOT run):** demo tenant `demo-gate3` seeded in dev DB — tenant_id
+  `ca72956b-8f55-4374-8332-a659ba9ec5fc`, agent_id `71f87c75-1150-489e-8b1d-bbf4e0488bf0`, voice
+  v_meklc281, gemini-2.5-flash, persona 3606 chars. **Secret BURNED** (pasted in chat) — re-provision
+  fresh for future tests (see PROGRESS Traps). Worker NOT run; `UPLIFT_MODE` untouched (=fixture).
+
+### Gate-3 human-listen — STAGED, the HUMAN runs it (agent: do NOT run the worker/mint/live session)
+Recommendation: `UPLIFT_MODE=live` (fixture can't synth the LLM's dynamic replies — every TTS call
+cache-misses; even the greeting text ≠ the one recorded fixture). Budget ~20–40s of 600.
+**Item-2 risk (metadata fix is UNVERIFIED by any test):** if `participant.metadata` comes through
+empty, `build_session(md)` throws `KeyError: 'agent_id'` / `AgentNotFound` in the WORKER LOG and the
+agent never greets — this fails BEFORE any TTS, so ZERO Uplift is spent. Success = agent greets in
+Urdu ("…TechZone Laptops…مہ نور…").
+Human steps (own terminals): (1) .env.local `UPLIFT_MODE=live` (revert after); (2)
+`python -m worker.main dev`; (3) `python scripts/mint_demo_token.py --tenant <tid> --agent <aid>
+--secret <secret>`; (4) join room at https://agents-playground.livekit.io (manual connect: paste
+wsUrl + token). First-live unknowns: Playground manual connect + worker auto-dispatch to the room.
+
+### Exact next action for a RESUMING agent
+1. Read CLAUDE.md, docs/00-INDEX.md, this file, state/PROGRESS.md, state/MORNING_QUEUE.md,
+   docs/23-PHASE-3-WORKER.md, docs/40-ADR.md (P3-T06 + P3-T01). Brief the human.
+2. Ask the human the **Gate-3 outcome** (did the agent greet in Urdu? was it good?).
+   - PASS → record in PROGRESS + ADR; Phase-3 human gate met. Remaining Phase-3: P3-T08 5-concurrent
+     (live, MORNING_QUEUE Q3), P3-T07 usage-on-session-end wiring, full Gate-3 checklist. Do NOT start
+     Phase 4 without explicit "begin Phase 4".
+   - FAIL (config didn't load / KeyError) → item-2 metadata fix needs iteration: inspect the worker
+     log, re-verify the participant-metadata read (or dispatch/room-metadata) against livekit.agents
+     source — DO NOT guess. Re-provision a fresh demo tenant (secret is burned).
+3. Standing rules (unchanged): NO live/paid call (Uplift/Gladia/Gemini/LiveKit/UPLIFT_MODE=record)
+   without explicit human approval on the exact command; no Gate-3 call or P3-T08 live run started by
+   the agent; no phase-gate merge/tag; no Phase 4 real tasks. Full LITERAL output, no summaries.
+   3-strike rule. Verify APIs against installed source/Context7, never guess.
