@@ -1,7 +1,8 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 5 (Voice Picker) — P5-T02 recording done, 81/82 voices (washroom-singer
-still exceeds even a raised 10s cap at a real measured 10.07s — human decision pending, ADR-019) |
-Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 5 (Voice Picker) — **GATE 5 CLOSED**, every line real evidence (P5-T01
+through T05 all done: catalogue, live recording incident + fix (ADR-019), CDN + signed URLs,
+picker UI, DB enable-check). washroom-singer disabled (not deleted) per human decision. Stopped
+hard, awaiting "begin Phase 6." | Branch: phase/3-worker
 
 ## Now (Session 8 continued — P5-T02 live recording crash: washroom-singer, lost partial spend,
 script fixed, NOT re-run)
@@ -46,8 +47,28 @@ script fixed, NOT re-run)
 - **`voice-picker/previews/` added to `.gitignore` explicitly** (with a comment: CDN-bound via
   P5-T03, not committed) — formalizes the decision instead of leaving 13MB of WAVs as an implicit
   untracked omission. 81/82 preview files now on disk (all except washroom-singer).
-- Full account of the whole incident (crash → ledger correction → root cause → fix → re-run
-  result): `docs/40-ADR.md` ADR-019.
+- **washroom-singer disabled (human decision), not deleted.** `voices.enabled=false` — verified
+  live: `enabled` flips to `False`, zero `agents` rows referenced it before disabling, the real
+  anon-key RLS query returns zero rows for it and 82 voices total. Reasoning: novelty/character
+  voice (melismatic devotional-singing style per its own catalogue description), unlikely to be a
+  real tenant's pick, and further cap raises are speculative — it hadn't finished even past 10s.
+- **P5-T03 done — Supabase Storage as the CDN** (`scripts/upload_voice_previews.py`, new). Private
+  bucket `voice-previews`, avoids introducing a new third-party vendor (reuses free-tier Supabase
+  credentials already held). Run live against the real dev project: **81/81 uploaded, signed
+  (7-day TTL), and `voices.preview_url` populated**, committed.
+- **GATE 5 CLOSED — every line with real evidence:** 82/82 cards render (real Playwright/Chromium
+  load, real RLS query); preview plays (direct signed-URL fetch: 200, real WAV bytes, RIFF/WAVE
+  header; + 3 real play-button clicks in headless Chromium each fired a real audio GET); zero
+  network calls to any Uplift domain during a full browse (6 requests total, all
+  Supabase/jsdelivr); signed URLs genuinely expire (real test: 2s-TTL URL → 200 immediately → 400
+  InvalidJWT after 4s, not assumed); H9 #5 already answered (ADR-017). One honest caveat noted, not
+  hidden: the `Cache-Control` file-option isn't echoed as that literal header on GET — Supabase
+  sets `Expires` instead (matching the signed URL's 7-day window) and Cloudflare confirmed actually
+  caching it (`cf-cache-status: HIT`) — "long cache" achieved, just via a different header name.
+- **Phase 5 is now fully closed**, live pipeline included (not just ADR-018's non-live prep).
+  `uplift_tts_sec` moved 305 → 327 across the whole washroom-singer episode — every step measured
+  or explicitly reasoned, no invented numbers. Full account: `docs/40-ADR.md` ADR-019.
+- **🔴 STOPPED HARD at GATE 5's closure — awaiting explicit "begin Phase 6."**
 
 ## Now (Session 8 continued — Phase 4 HUMAN GATE signed off, Phase 5 begun and non-live work done)
 - **GATE 4 human line signed off by the human** — dist/index.js and index.d.ts personally reviewed:

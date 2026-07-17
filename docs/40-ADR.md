@@ -1099,6 +1099,76 @@ updated to explicitly exclude `voice-picker/previews/` (CDN-bound via P5-T03, fo
 previously an implicit omission) rather than leaving 13MB of WAVs as an undecided untracked
 directory.
 
+**Disposition (human decision, 2026-07-17): drop `washroom-singer` from the active picker
+catalogue.** Rather than raising the cap further (speculative — it hadn't finished even past 10s,
+so there's no principled next number) or shipping a truncated/off-purpose clip, the human decided
+to disable it: it's a novelty/character voice (melismatic devotional-singing style, per its own
+Uplift catalogue description), unlikely to be a real tenant's pick for a business agent, and every
+further cap raise would be a guess with no evidence it converges. **Not deleted** — `voices.enabled`
+set to `false` (verified: `select id, enabled from voices where id='washroom-singer'` → `False`
+after the update; `select count(*) from agents where voice_id='washroom-singer'` → `0`, confirmed
+before disabling that nothing referenced it), so it can get a proper purpose-built short line later
+if revisited, and the `agents.voice_id` enable-check trigger (ADR-018, `0006_*`) now also protects
+against any future agent being assigned this voice while disabled. Verified end-to-end via the real
+anon-key RLS query (`voices_read_all USING (enabled)`): `washroom-singer` returns zero rows, 82
+voices visible — matching the picker UI's own later render test below. 82 voices remain enabled (83
+total rows − 1 disabled); `wholesale-trader` stays enabled with its real 3.80s preview.
+
+**P5-T03 done — Supabase Storage as the CDN, not a new vendor.** `scripts/upload_voice_previews.py`
+uploads all 81 recorded previews to a **private** Supabase Storage bucket (`voice-previews`) and
+populates `voices.preview_url` with a signed URL (7-day `expires_in`, matching a `public,
+max-age=604800` cache-control hint set at upload time). Chose Supabase Storage over a new CDN
+vendor because it's already a free-tier resource this project holds credentials for
+(`SUPABASE_SERVICE_ROLE`) — introducing a new third-party account wasn't necessary and would have
+needed its own human sign-off/H-task. Private bucket is the actual point of "CDN → signed URLs":
+a public bucket would make signing pointless security theatre since the raw path would work
+forever. Run live against the real dev project (not a paid provider — our own free Supabase
+project, same trust category as every other DB write this session): **81/81 uploaded and signed,
+81/81 `voices.preview_url` rows updated**, committed. (`v_meklc281`, the separate legacy demo
+voice, correctly has no `preview_url` — it was never in scope for P5-T02/T03, ADR-018.)
+
+**GATE 5 — closed, every line with real evidence, not assumed:**
+```
+[x] all voices render          -- 82/82 cards, real Chromium/Playwright load against index.local.html
+                                   (real anon-key query, real dev DB, RLS-filtered)
+[x] preview plays               -- direct httpx fetch of a real signed URL: 200, content-type
+                                   audio/wav, bytes match the local file exactly, RIFF/WAVE header
+                                   confirmed; ALSO clicking 3 real play buttons in headless Chromium
+                                   fired 3 real signed-URL audio GETs, all 200
+[x] network log ZERO calls to Uplift -- 6 total network requests captured during a full page load +
+                                   3 play-button clicks: the local HTML, the jsdelivr supabase-js
+                                   bundle, one voices-table REST query, three storage signed-URL
+                                   fetches. Zero requests to any upliftai.org/uplift.ai host.
+[x] signed URLs expire          -- real test, not assumed: created a 2-second-TTL signed URL,
+                                   fetched immediately (200), waited 4s, fetched again -> 400
+                                   InvalidJWT "exp claim timestamp check failed". Genuine expiry,
+                                   not a documentation claim taken on faith.
+[x] H9 #5 answered + recorded in ADR before art ships  -- ADR-017 (owned artwork, not Uplift's
+                                   licensed character art), already accepted.
+```
+`washroom-singer`'s card correctly does not render at all (disabled, RLS-filtered) — confirmed
+in the same Playwright run (`washroom-singer` absent from `.name` text of all 82 rendered cards).
+One caveat, stated plainly not hidden: the `cache-control` file-option set at upload time is not
+echoed back as a literal `Cache-Control` response header on GET — Supabase's signed-URL endpoint
+instead sets `Expires` matching the URL's 7-day validity, and Cloudflare (Supabase Storage's own
+CDN edge) confirmed actually caching it (`cf-cache-status: HIT`, `x-smart-cdn: true` observed on a
+real fetch) — functionally the "long cache" goal is met, just via a different header than the one
+requested, and that gap is noted rather than silently claimed as an exact match.
+
+**Consequences.** Phase 5 (Voice Picker) is now **fully closed**, live pipeline included — not
+just the non-live prep ADR-018 closed. Uplift spend this incident, net: `uplift_tts_sec` moved
+305 → 327 across the whole washroom-singer episode (the +8s reasoned correction, +10s and +4s from
+the real re-run) — every step measured or explicitly reasoned, no invented numbers. `pytest
+tests/test_worker.py` unaffected (Phase-5 changes don't touch the worker) — not re-run this entry
+since nothing in `worker/` changed.
+
+**Evidence.** `state/usage_ledger.json` (327 final, verified); live DB queries (`voices.enabled`,
+`agents.voice_id` reference check, anon-key RLS query); `scripts/upload_voice_previews.py` run
+output (81/81 uploaded+signed+DB-updated); direct `httpx` fetch of a real signed URL (headers +
+body dumped); real short-TTL expiry test (200 → 400 InvalidJWT); real headless-Chromium Playwright
+run against `voice-picker/index.local.html` with real signed URLs and real play-button clicks
+(network log captured, 6 requests, 0 Uplift, 3 real audio fetches).
+
 ---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
