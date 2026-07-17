@@ -71,8 +71,16 @@ def _load_vad() -> Any:
 
 
 async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
-    """LiveKit job entrypoint. Reads {tenant_id, agent_id} from room metadata and runs the session."""
-    md = json.loads(ctx.room.metadata or "{}")
+    """LiveKit job entrypoint.
+
+    {tenant_id, agent_id} is read from the JOINING PARTICIPANT's metadata — that is where the Phase-2
+    mint puts it (the participant JWT `metadata` claim, via AccessToken.with_metadata), NOT room
+    metadata. (Earlier this read ctx.room.metadata, which the mint never sets — the room would have
+    been empty. Verified against the mint + livekit.agents JobContext API.)
+    """
+    await ctx.connect()
+    participant = await ctx.wait_for_participant()
+    md = json.loads(participant.metadata or "{}")
     session, cfg = await build_session(md)
     agent = build_agent(cfg)
     await session.start(agent, room=ctx.room)
