@@ -1542,6 +1542,79 @@ without H9's answer; GATE 8 itself does not close today, and this entry says so 
 than rounding up.**
 
 ---
+## ADR-027 json-repair 0.59.10 CVE (GHSA-xf7x-x43h-rpqh) — ACCEPTED RISK, not an open question   [ACCEPTED]
+Date: 2026-07-18 | requirements.txt (transitive via livekit-agents), pip-audit, GATE 8 DEPS line
+
+**The vulnerability.** `json-repair` < 0.60.1 has a CWE-835 unbounded-loop denial-of-service:
+`SchemaRepairer.resolve_schema()` infinite-loops on a circular JSON Schema `$ref` when
+`json_repair.loads(..., schema=<attacker-controlled>)` is called with a malicious `schema`
+argument. GHSA-xf7x-x43h-rpqh, CVSS 3.1 **7.5 High** (`AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H`).
+Fixed in 0.60.1.
+
+**Why it's in this project at all.** Not a direct dependency — `pip show json-repair` confirms
+`Required-by: livekit-agents`. `livekit-agents==1.6.5` pins it as an **exact** requirement,
+`json-repair==0.59.10` (confirmed via `importlib.metadata.requires("livekit-agents")` —
+`json-repair==0.59.10`, not a floor or range), not something this project chose or can casually
+override with a version bump.
+
+**Reachability — verified twice, independently, same conclusion both times.**
+1. This session (2026-07-17/18, Phase 7 DEPS checklist + the P8 security-subagent pass):
+   grepped the installed `livekit-agents` package for every call site. There is exactly one:
+   `livekit/agents/llm/utils.py:430`, `json_repair.loads(json_arguments)` — **no `schema=`
+   argument is ever passed.** The vulnerable code path (`SchemaRepairer.resolve_schema()`) is
+   only reachable when `schema=` is supplied; it categorically cannot fire through this call.
+2. The independently-dispatched security subagent (P8's GATE 8 line, isolated worktree, no
+   access to this session's own notes beyond the repo's own files) performed the identical grep
+   and reached the identical conclusion, unprompted, on its own re-read of the installed package.
+Two independent passes, same code, same finding: **the specific vulnerable code path is not
+reachable through this codebase's actual usage.**
+
+**Why the "obvious" fix doesn't work — tested, not assumed.** `pip install "json-repair==0.60.1"`
+succeeds on its own, but breaks the dependency graph: `pip check` immediately reports
+`livekit-agents 1.6.5 has requirement json-repair==0.59.10, but you have json-repair 0.60.1`. This
+is a **confirmed, real conflict**, not a hypothetical one raised out of caution — reverting to
+0.59.10 makes `pip check` clean again. Forcing the bump means running with an explicitly
+unsupported version of a hard dependency `livekit-agents` (the actual LiveKit voice-agent
+framework this entire worker is built on) declares it needs exactly — an unknown-behavior risk
+substituted for a known, unreachable one. Not a good trade.
+
+**Decision: accept the risk, do not force the version bump.** The CVE is real and stays flagged
+(this ADR, `pip-audit` will keep reporting it every run — that's correct, not a false positive to
+suppress), but is assessed as posing no practical exploitability risk to this codebase given (a)
+the sole call site never supplies the vulnerable parameter, verified twice independently, and (b)
+even in principle, `json_repair.loads()` here operates on `json_arguments` — a tool-call-argument
+string the LLM itself produced, already inside our own trust boundary at that point, not
+attacker-supplied JSON Schema from an external caller. The lethal-trifecta framing this whole
+security pass is built around (`31-GUIDE-SECURITY.md`): this finding has none of the three
+legs — no untrusted external input reaches the vulnerable parameter, because nothing reaches
+the vulnerable parameter at all.
+
+**What would change this decision.** Any of: (a) `livekit-agents` itself bumping its
+`json-repair` pin in a future release (revisit then — the conflict this ADR is built around would
+simply disappear); (b) this codebase (or a future `tools.py` rework, ADR-013) ever calling
+`json_repair.loads()` or `.repair_json()` directly with a `schema=` argument sourced from
+anything outside our own trust boundary — grep for `json_repair` before any such change lands;
+(c) `pip-audit` reporting a NEW finding for this package that isn't the same GHSA and isn't
+scoped to the `schema=` parameter — re-verify reachability fresh, don't assume it's the same
+non-issue.
+
+**Consequences for GATE 8.** This closes GATE 8's DEPS line as **accepted, not blocking** — the
+checklist's literal "`pip-audit` → 0 high/critical" bar is not met by the tool's raw count, but
+the project's own standard (verify real exploitability, don't treat every red number as
+equally urgent) is satisfied and documented. The security subagent's BLOCK verdict (ADR-026) is
+superseded for this specific finding by this ADR's acceptance — its other conclusions
+(everything else PASS) stand unchanged.
+
+**Evidence.** `pip-audit -r requirements.txt` (re-run fresh 2026-07-18: still exactly 1 High,
+same package/version/GHSA); `pip check` (clean at 0.59.10, broken at 0.60.1 — both states
+directly observed, not inferred); `python -c "import importlib.metadata as m; print([r for r in
+m.requires('livekit-agents') if 'json-repair' in r])"` → `['json-repair==0.59.10']`; grep of the
+installed `livekit/agents/llm/utils.py` (one call site, no `schema=` kwarg); the independent
+security-subagent report (same grep, same conclusion, GATE 8 dispatch, 2026-07-18).
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
