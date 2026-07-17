@@ -78,3 +78,15 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     await session.start(agent, room=ctx.room)
     # NOTE (P3-T07 follow-up): emit usage_events (stt_sec/tts_sec/agent_sec) on session end via
     # worker/usage.record_usage — wire to the session's close/metrics events once measured live.
+
+
+if __name__ == "__main__":
+    # Launch as a LiveKit agent worker. Running this connects LIVE to LiveKit Cloud — human-only.
+    #   python -m worker.main dev     (dev mode)   |   python -m worker.main start   (prod)
+    # Loads .env.local so LIVEKIT_*, GOOGLE_API_KEY, UPLIFTAI_API_KEY, STT_PROVIDER, UPLIFT_MODE
+    # resolve for the livekit CLI + plugins.
+    from dotenv import load_dotenv
+    from livekit.agents import WorkerOptions, cli
+
+    load_dotenv(".env.local")
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
