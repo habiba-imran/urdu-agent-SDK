@@ -1,7 +1,22 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 3 (Worker) | Task: prior-session verified (Session 6); P3-T06/T08 next | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items queued in MORNING_QUEUE.md | Branch: phase/3-worker
 
-## Now
+## Now (Session 7 — autonomous, human asleep)
+- **Phase 3 NON-LIVE work is complete.** session.start() wired (build_agent injects the untrusted
+  prompt into chat_ctx as DATA, never into instructions — verified livekit.agents API; new security
+  test passes). Worker launchable (`python -m worker.main dev`, cli.run_app). All media plugins
+  installed (gladia STT, silero VAD, upliftai TTS, google LLM). `pytest tests/test_worker.py` → 5/5.
+- **Integration gap found + FIXED (worker-only):** the mint puts {tenant_id, agent_id} in the
+  PARTICIPANT JWT metadata, but the worker read `ctx.room.metadata` (never set → would be empty). Now
+  reads `ctx.wait_for_participant().metadata`. No Phase-2 change. (commit 2f65587)
+- **ALL that remains in Phase 3 is LIVE-gated → queued in `state/MORNING_QUEUE.md`:** (Q1) Gemini TPM
+  measurement `scripts/measure_gemini_tpm.py --confirm-live` [approved but HELD per human's do-not
+  list]; (Q2) Gate-3 human-listen live Urdu call [human runs; helpers provision_demo_tenant.py +
+  mint_demo_token.py prepped]; (Q3) P3-T08 5-concurrent [live LiveKit].
+- CER harness still has 3 pre-existing schema-mismatch failures in full `make gate` (tracked; Phase-3
+  db.py rework). Phase-3 gate = `pytest tests/test_worker.py` (5/5).
+
+## Now (prior — still valid reference)
 - P3-T01 recording HUMAN-APPROVED, DONE. TWO fixtures on disk: **canonical `e2c70ca90ee456cfe0a790af434dec7d`**
   (Latin "TechZone Laptops", 8.6s/380KB, human-listened + approved 2026-07-17) + the earlier
   **superseded `c6228ded...`** (Urdu-script brand, 8.4s — kept on disk, marked superseded in manifest).
@@ -27,6 +42,17 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: prior-session verified (Session 
   psycopg/dbconn, not the ported db.py's supabase-py REST client.
 
 ## Done (newest first)
+- [X] **(S7) worker session.start() wiring + participant-metadata fix** — `worker/main.py`:
+  `build_agent(cfg)` = Agent(instructions=SYSTEM_INSTRUCTIONS, chat_ctx=persona); untrusted prompt →
+  chat_ctx DATA (security test `test_persona_injected_as_data_not_system_instructions` proves it's not
+  in instructions). entrypoint: connect → wait_for_participant → read participant metadata → build →
+  session.start. Launchable via `python -m worker.main dev` (cli.run_app). API verified vs installed
+  livekit.agents source. pytest tests/test_worker.py → 5/5. Commits 6cdebf1, bac00ee, 2f65587.
+- [X] **(S7) P3-T06 prep** — `scripts/measure_gemini_tpm.py` (TPM measurement, --confirm-live guard,
+  dry-run verified); make_llm wiring confirmed; installed livekit-plugins-google + google-genai +
+  gladia + silero. 41-HUMAN-TASKS H3 corrected to UPLIFTAI_API_KEY. Commit 8918c39.
+- [X] **(S7) morning helpers** — `scripts/provision_demo_tenant.py`, `scripts/mint_demo_token.py`,
+  `state/MORNING_QUEUE.md` (all non-live). Commit 2f65587.
 - [X] P3-T03 RLS-scoped agent config load — `worker/config.py` `load_agent_config` (authenticated role
   + tenant JWT claim). Own agent loads; a cross-tenant agent → `AgentNotFound` (RLS/IDOR at the worker
   layer). Sync (psycopg async can't use Windows ProactorEventLoop; the worker calls via to_thread).
