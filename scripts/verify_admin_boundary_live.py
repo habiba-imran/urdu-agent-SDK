@@ -51,7 +51,10 @@ ADMIN_BASE = f"http://127.0.0.1:{ADMIN_PORT}"
 CP_BASE = f"http://127.0.0.1:{CP_PORT}"
 CFG = dotenv_values(ROOT / ".env.local")
 LK_HTTPS = (
-    CFG.get("LIVEKIT_URL", "").replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    CFG.get("LIVEKIT_URL", "")
+    .replace("wss://", "https://")
+    .replace("ws://", "http://")
+    .rstrip("/")
 )
 WRONG_SECRET = "attacker-does-not-have-ADMIN_JWT_SECRET-" + uuid.uuid4().hex
 
@@ -104,21 +107,47 @@ def main() -> int:
         print(f"admin_id={admin_id} tenant_id={tid}")
 
         admin_srv = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "admin.app:app", "--host", "127.0.0.1",
-             "--port", str(ADMIN_PORT), "--log-level", "warning"],
-            cwd=str(ROOT), env=os.environ.copy(),
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "admin.app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(ADMIN_PORT),
+                "--log-level",
+                "warning",
+            ],
+            cwd=str(ROOT),
+            env=os.environ.copy(),
         )
         cp_env = os.environ.copy()
         cp_env["CP_TENANT_SECRETS"] = json.dumps({tid: tenant_secret})
         cp_srv = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "control_plane.app:app", "--host", "127.0.0.1",
-             "--port", str(CP_PORT), "--log-level", "warning"],
-            cwd=str(ROOT), env=cp_env,
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "control_plane.app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(CP_PORT),
+                "--log-level",
+                "warning",
+            ],
+            cwd=str(ROOT),
+            env=cp_env,
         )
-        print(f"admin.app ready: {wait_ready(ADMIN_BASE)} | control_plane.app ready: {wait_ready(CP_BASE)}")
+        print(
+            f"admin.app ready: {wait_ready(ADMIN_BASE)} | control_plane.app ready: {wait_ready(CP_BASE)}"
+        )
 
         real_secret = dotenv_values(ROOT / ".env.local").get("ADMIN_JWT_SECRET")
-        assert real_secret, "ADMIN_JWT_SECRET must already exist in .env.local (Phase 6 set it)"
+        assert real_secret, (
+            "ADMIN_JWT_SECRET must already exist in .env.local (Phase 6 set it)"
+        )
 
         code = totp_now(totp_secret)
         login_r = httpx.post(
@@ -130,7 +159,9 @@ def main() -> int:
         print(f"real admin login: {login_r.status_code}")
 
         # ---- LINE 1: admin JWT used as a tenant/LiveKit token on a control_plane/ endpoint ----
-        hr("LINE 1a — admin JWT presented to control_plane's own endpoint (as a header value)")
+        hr(
+            "LINE 1a — admin JWT presented to control_plane's own endpoint (as a header value)"
+        )
         # control_plane/app.py's ONLY endpoint (POST /v1/session) authenticates via HMAC headers,
         # never a Bearer JWT -- there is no code path that would even try to interpret an admin
         # JWT as tenant auth here. Confirm precisely what happens: the request is missing the
@@ -142,11 +173,19 @@ def main() -> int:
             headers={"Authorization": f"Bearer {genuine_admin_jwt}"},
             timeout=15,
         )
-        print(f"POST /v1/session with admin JWT as Authorization Bearer (no HMAC headers): {r.status_code} | {r.text[:150]}")
+        print(
+            f"POST /v1/session with admin JWT as Authorization Bearer (no HMAC headers): {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code in (401, 422)
-        record("line1a: admin JWT alone (no HMAC headers) rejected by control_plane", ok, f"{r.status_code}")
+        record(
+            "line1a: admin JWT alone (no HMAC headers) rejected by control_plane",
+            ok,
+            f"{r.status_code}",
+        )
 
-        hr("LINE 1b — admin JWT's claims used to forge an HMAC signature (attacker tries anyway)")
+        hr(
+            "LINE 1b — admin JWT's claims used to forge an HMAC signature (attacker tries anyway)"
+        )
         # Even generously assuming an attacker tries to sign a request using the admin JWT's
         # RAW STRING as if it were the tenant's HMAC secret (a category-confusion attempt), the
         # mint computes HMAC against the tenant's REAL stored secret hash -- unrelated to any JWT.
@@ -156,71 +195,156 @@ def main() -> int:
             CP_BASE + "/v1/session",
             json={"agent_id": aid},
             headers={
-                "X-Tenant-Id": tid, "X-Timestamp": ts, "X-Nonce": nonce,
-                "X-Signature": bogus_sig, "Origin": "https://abcheck.example",
+                "X-Tenant-Id": tid,
+                "X-Timestamp": ts,
+                "X-Nonce": nonce,
+                "X-Signature": bogus_sig,
+                "Origin": "https://abcheck.example",
             },
             timeout=15,
         )
-        print(f"POST /v1/session, HMAC computed using the admin JWT as the 'secret': {r.status_code} | {r.text[:150]}")
+        print(
+            f"POST /v1/session, HMAC computed using the admin JWT as the 'secret': {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
-        record("line1b: admin-JWT-as-HMAC-secret forgery rejected", ok, f"{r.status_code}")
+        record(
+            "line1b: admin-JWT-as-HMAC-secret forgery rejected", ok, f"{r.status_code}"
+        )
 
-        hr("LINE 1c — admin JWT presented to LiveKit Cloud's OWN /rtc/validate (the real tenant/room gate)")
-        r = httpx.get(f"{LK_HTTPS}/rtc/validate", params={"access_token": genuine_admin_jwt}, timeout=20)
-        print(f"LiveKit /rtc/validate(admin JWT): {r.status_code} | {r.text.strip()[:150]}")
+        hr(
+            "LINE 1c — admin JWT presented to LiveKit Cloud's OWN /rtc/validate (the real tenant/room gate)"
+        )
+        r = httpx.get(
+            f"{LK_HTTPS}/rtc/validate",
+            params={"access_token": genuine_admin_jwt},
+            timeout=20,
+        )
+        print(
+            f"LiveKit /rtc/validate(admin JWT): {r.status_code} | {r.text.strip()[:150]}"
+        )
         ok = r.status_code != 200
-        record("line1c: admin JWT rejected by LiveKit's own token validator", ok, f"{r.status_code} {r.text.strip()[:100]}")
+        record(
+            "line1c: admin JWT rejected by LiveKit's own token validator",
+            ok,
+            f"{r.status_code} {r.text.strip()[:100]}",
+        )
 
         # ---- LINE 2: tenant/LiveKit token used as an admin JWT ----
         hr("LINE 2 — real tenant/LiveKit AccessToken used as admin bearer token")
         tenant_token = (
-            lk_api.AccessToken(CFG.get("LIVEKIT_API_KEY", "devkey"), CFG.get("LIVEKIT_API_SECRET", "devsecret0123456789012345678901234567"))
+            lk_api.AccessToken(
+                CFG.get("LIVEKIT_API_KEY", "devkey"),
+                CFG.get("LIVEKIT_API_SECRET", "devsecret0123456789012345678901234567"),
+            )
             .with_identity(str(uuid.uuid4()))
             .with_ttl(datetime.timedelta(seconds=120))
             .with_metadata(json.dumps({"tenant_id": tid, "agent_id": aid}))
-            .with_grants(lk_api.VideoGrants(room_join=True, room=str(uuid.uuid4()), can_publish=True))
+            .with_grants(
+                lk_api.VideoGrants(
+                    room_join=True, room=str(uuid.uuid4()), can_publish=True
+                )
+            )
             .to_jwt()
         )
-        r = httpx.get(ADMIN_BASE + "/admin/tenants", headers={"Authorization": f"Bearer {tenant_token}"}, timeout=15)
-        print(f"GET /admin/tenants with real tenant/LiveKit token: {r.status_code} | {r.text[:150]}")
+        r = httpx.get(
+            ADMIN_BASE + "/admin/tenants",
+            headers={"Authorization": f"Bearer {tenant_token}"},
+            timeout=15,
+        )
+        print(
+            f"GET /admin/tenants with real tenant/LiveKit token: {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
-        record("line2: tenant/LiveKit token rejected by admin/ endpoint", ok, f"{r.status_code}")
+        record(
+            "line2: tenant/LiveKit token rejected by admin/ endpoint",
+            ok,
+            f"{r.status_code}",
+        )
 
         # ---- LINE 3: expired admin JWT ----
         hr("LINE 3 — correctly-signed but EXPIRED admin JWT")
         now = datetime.datetime.now(datetime.UTC)
         expired = pyjwt.encode(
-            {"sub": admin_id, "aud": ADMIN_JWT_AUDIENCE, "iss": ADMIN_JWT_ISSUER, "email": email,
-             "iat": now - datetime.timedelta(hours=10), "exp": now - datetime.timedelta(hours=2)},
-            real_secret, algorithm="HS256",
+            {
+                "sub": admin_id,
+                "aud": ADMIN_JWT_AUDIENCE,
+                "iss": ADMIN_JWT_ISSUER,
+                "email": email,
+                "iat": now - datetime.timedelta(hours=10),
+                "exp": now - datetime.timedelta(hours=2),
+            },
+            real_secret,
+            algorithm="HS256",
         )
-        r = httpx.get(ADMIN_BASE + "/admin/tenants", headers={"Authorization": f"Bearer {expired}"}, timeout=15)
-        print(f"GET /admin/tenants with expired admin JWT: {r.status_code} | {r.text[:150]}")
+        r = httpx.get(
+            ADMIN_BASE + "/admin/tenants",
+            headers={"Authorization": f"Bearer {expired}"},
+            timeout=15,
+        )
+        print(
+            f"GET /admin/tenants with expired admin JWT: {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
         record("line3: expired admin JWT rejected", ok, f"{r.status_code}")
 
         # ---- LINE 4a: tampered, re-signed with WRONG secret ----
-        hr("LINE 4a — admin JWT claims tampered, re-signed with a secret the attacker does not have")
-        tampered_wrong_secret = pyjwt.encode(
-            {"sub": str(uuid.uuid4()), "aud": ADMIN_JWT_AUDIENCE, "iss": ADMIN_JWT_ISSUER,
-             "email": "attacker@evil.example", "iat": now, "exp": now + datetime.timedelta(hours=8)},
-            WRONG_SECRET, algorithm="HS256",
+        hr(
+            "LINE 4a — admin JWT claims tampered, re-signed with a secret the attacker does not have"
         )
-        r = httpx.get(ADMIN_BASE + "/admin/tenants", headers={"Authorization": f"Bearer {tampered_wrong_secret}"}, timeout=15)
-        print(f"GET /admin/tenants, tampered claims + wrong secret: {r.status_code} | {r.text[:150]}")
+        tampered_wrong_secret = pyjwt.encode(
+            {
+                "sub": str(uuid.uuid4()),
+                "aud": ADMIN_JWT_AUDIENCE,
+                "iss": ADMIN_JWT_ISSUER,
+                "email": "attacker@evil.example",
+                "iat": now,
+                "exp": now + datetime.timedelta(hours=8),
+            },
+            WRONG_SECRET,
+            algorithm="HS256",
+        )
+        r = httpx.get(
+            ADMIN_BASE + "/admin/tenants",
+            headers={"Authorization": f"Bearer {tampered_wrong_secret}"},
+            timeout=15,
+        )
+        print(
+            f"GET /admin/tenants, tampered claims + wrong secret: {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
-        record("line4a: tampered admin JWT (wrong secret) rejected", ok, f"{r.status_code}")
+        record(
+            "line4a: tampered admin JWT (wrong secret) rejected", ok, f"{r.status_code}"
+        )
 
         # ---- LINE 4b: `video` grafted on, re-signed with the REAL secret (structural check, not just signature) ----
-        hr("LINE 4b — genuine claims + `video` grants GRAFTED ON, re-signed with the REAL admin secret")
-        real_claims = pyjwt.decode(genuine_admin_jwt, real_secret, algorithms=["HS256"], audience=ADMIN_JWT_AUDIENCE)
+        hr(
+            "LINE 4b — genuine claims + `video` grants GRAFTED ON, re-signed with the REAL admin secret"
+        )
+        real_claims = pyjwt.decode(
+            genuine_admin_jwt,
+            real_secret,
+            algorithms=["HS256"],
+            audience=ADMIN_JWT_AUDIENCE,
+        )
         grafted = dict(real_claims)
         grafted["video"] = {"roomJoin": True, "room": "attacker-room"}
-        grafted_jwt = pyjwt.encode(grafted, real_secret, algorithm="HS256")  # attacker CANNOT do this (needs real_secret) -- proves the structural check independent of signature validity
-        r = httpx.get(ADMIN_BASE + "/admin/tenants", headers={"Authorization": f"Bearer {grafted_jwt}"}, timeout=15)
-        print(f"GET /admin/tenants, `video` grafted on + CORRECTLY signed: {r.status_code} | {r.text[:150]}")
+        grafted_jwt = pyjwt.encode(
+            grafted, real_secret, algorithm="HS256"
+        )  # attacker CANNOT do this (needs real_secret) -- proves the structural check independent of signature validity
+        r = httpx.get(
+            ADMIN_BASE + "/admin/tenants",
+            headers={"Authorization": f"Bearer {grafted_jwt}"},
+            timeout=15,
+        )
+        print(
+            f"GET /admin/tenants, `video` grafted on + CORRECTLY signed: {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
-        record("line4b: admin JWT carrying `video` rejected even with a correct signature (structural check)", ok, f"{r.status_code}")
+        record(
+            "line4b: admin JWT carrying `video` rejected even with a correct signature (structural check)",
+            ok,
+            f"{r.status_code}",
+        )
 
         # ---- LINE 5: login without correct TOTP ----
         hr("LINE 5 — real login attempt: correct password, WRONG TOTP code")
@@ -229,19 +353,31 @@ def main() -> int:
             json={"email": email, "password": password, "totp_code": "000000"},
             timeout=15,
         )
-        print(f"POST /admin/login, correct password + wrong TOTP: {r.status_code} | {r.text[:150]}")
+        print(
+            f"POST /admin/login, correct password + wrong TOTP: {r.status_code} | {r.text[:150]}"
+        )
         ok = r.status_code == 401
         record("line5a: correct password + wrong TOTP rejected", ok, f"{r.status_code}")
 
-        hr("LINE 5 (control) — real login: correct password + CORRECT TOTP must still WORK")
+        hr(
+            "LINE 5 (control) — real login: correct password + CORRECT TOTP must still WORK"
+        )
         r = httpx.post(
             ADMIN_BASE + "/admin/login",
-            json={"email": email, "password": password, "totp_code": totp_now(totp_secret)},
+            json={
+                "email": email,
+                "password": password,
+                "totp_code": totp_now(totp_secret),
+            },
             timeout=15,
         )
         print(f"POST /admin/login, correct password + correct TOTP: {r.status_code}")
         ok = r.status_code == 200
-        record("line5b (sanity control): correct password + correct TOTP succeeds", ok, f"{r.status_code}")
+        record(
+            "line5b (sanity control): correct password + correct TOTP succeeds",
+            ok,
+            f"{r.status_code}",
+        )
 
         hr("VERDICT")
         fails = [r for r in results if not r[1]]
@@ -258,7 +394,9 @@ def main() -> int:
         if cp_srv is not None:
             cp_srv.terminate()
         if admin_id is not None:
-            admin_conn.execute("delete from admin_audit_log where admin_id = %s", (admin_id,))
+            admin_conn.execute(
+                "delete from admin_audit_log where admin_id = %s", (admin_id,)
+            )
             admin_conn.execute("delete from admin_users where id = %s", (admin_id,))
         for t in ("used_nonces", "sessions", "quota_state", "agents"):
             admin_conn.execute(f"delete from {t} where tenant_id = %s", (tid,))

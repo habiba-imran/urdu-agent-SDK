@@ -1,10 +1,89 @@
 # PROGRESS
-Updated: 2026-07-18 | Phase: 7 (Security) — **GATE 7 CLOSED**: automated checklist (SECRETS,
-TENANCY, TOKEN MINT, INJECTION, ABUSE, DEPS, ADMIN BOUNDARY/ADR-021) all run with real evidence;
-3-item human gate (cross-tenant read, token widen, admin boundary) confirmed complete by the
-human, real output transcribed in this file's "Now" section below. One open, tracked,
-non-blocking item remains (json-repair CVE, blocked by an upstream exact pin — see ADR entries).
-Branch: phase/7-security (created fresh per the corrected branch-per-phase convention, ADR-020).
+Updated: 2026-07-18 | Phase: 8 (Prod Readiness) — **GATE 8 OPEN, does NOT close today.** All six
+P8-Txx tasks worked with real evidence (ADR-024..026). 3 of 6 GATE 8 lines genuinely blocked:
+(1) full suite green — FAILS on the same 3 pre-existing ADR-013-deferred CER-harness tests every
+earlier phase routed around via its own narrower gate, but GATE 8 has no such carve-out — a real
+structural tension flagged for human decision, not resolved; (2) security subagent — BLOCK, sole
+blocker is the json-repair CVE (already investigated, fix conflicts with livekit-agents' exact
+pin); (3) H9 answered + spec updated — still unanswered, emails staged not sent. Runbook,
+ponytail-debt, and all 8 phase-gate tags (rollback-tested) are genuinely done. Phase 7's GATE 7
+remains closed (unchanged). Branch: phase/8-prod-ready (created fresh, ADR-020 convention).
+
+## Now (Session 11 — Phase 8 Prod Readiness, GATE 8 OPEN)
+- **Branch `phase/8-prod-ready` created fresh** from `phase/7-security`'s tip before any P8-Txx
+  work, per the ADR-020 convention.
+- **P8-T06 first** (tags feed the other tasks' references): identified the real gate-closing
+  commit for every phase 0-7 from `git log`'s own "GATE N CLOSED/closed" messages and checkpoint
+  commits, created 8 annotated tags (`p0-gate-pass`..`p7-gate-pass`). p7's target is the actual
+  tip of `phase/7-security` (not the earlier "GATE 7 CLOSED" commit message) since real fixes
+  (ADR-022's db.py removal) landed after that commit — a rollback target should be the last
+  known-good state, not an earlier one a later fix improved on; flagged as a judgment call.
+  **Rollback procedure actually tested, not just asserted**: checked out `p7-gate-pass`
+  (detached HEAD), confirmed `db.py` had the expected `DBClientRemoved` content and ADR-023 was
+  present, returned cleanly; separately checked out `p3-gate-pass` (a wide jump backward),
+  confirmed `admin/` didn't exist yet there but `worker/main.py` did — both real, both correct.
+  No remote configured, so tags are local-only (nothing to push).
+- **P8-T01**: extended `scripts/concurrency_test.py` (ADR-014's proven live driver) with `--n`
+  and per-connection latency timing. Ran live at n=5 (the documented Build cap) against a real
+  running worker: 5/5 connected at the room-join layer, **p50=7031ms p95=8968ms** (n=5, flagged
+  explicitly as too small a sample for a stable SLO). **Unplanned, significant finding**: the
+  worker log showed Gladia STT hitting real `429 Too Many Requests` on session init at this same
+  n=5 load — only 3/5 sessions got a working Gladia connection inside the test's hold-open
+  window. LiveKit's own room-join layer held fine; Gladia was the actual observed bottleneck.
+  `livekit_agent_min` 7→12 (+5, real, ceil-to-minute), `uplift_tts_sec` unchanged at 327 (zero
+  audio ever published, by design).
+- **P8-T02**: re-confirmed H9 #1-4 still unanswered (searched every tracked file again — nothing
+  new). ADR-024 records this honestly as an INCOMPLETE status, not a decision, and folds in the
+  Gladia finding above as new real evidence layered on top of the still-unknown Uplift number.
+  `docs/10-SPEC.md`'s "Known ceilings" table updated: added a Gladia row citing the measurement,
+  annotated (not silently replaced) the LiveKit Build "5 concurrent" row with ADR-014's 4-for-4
+  non-reproduction record.
+- **P8-T03**: `docs/60-RUNBOOK-CAP-EXHAUSTION.md`, written from the actual code
+  (`control_plane/mint.py`'s 3 cap checks, `sdk/src/index.ts::connect()`'s full error handling).
+  Real finding: no queue/retry/backoff exists at any layer — a cap hit is an immediate, thrown
+  `UvaError`, and all 3 distinct 429 causes (rate limit, concurrent cap, monthly cap) currently
+  collapse to the identical `quota_exceeded` code client-side, indistinguishable to an
+  integrator without server-side log access.
+- **P8-T04**: `/ponytail-debt`'s fallback grep re-run a 3rd time, still empty. ADR-025 records it
+  formally — GATE 8's line is satisfied.
+- **P8-T05**: `docs/61-GUIDE-DEV-TO-PROD.md` — the 4 named switches plus 5 more things found by
+  actually auditing the code (`ADMIN_JWT_SECRET` needs deliberate generation for prod, not the
+  dev auto-generate; `ADMIN_PORTAL_ORIGINS` defaults to a dev localhost placeholder;
+  `RATE_LIMIT_PER_MIN` is a hardcoded constant, not an env var; per-tenant quota defaults used in
+  testing aren't prod-appropriate; `UPLIFT_VOICE_ID`'s demo-voice fallback). **Real bug found and
+  fixed while auditing `.env.example` against `config.py`**: it had `UPLIFT_API_KEY` instead of
+  `UPLIFTAI_API_KEY` — the exact mistake `docs/41-HUMAN-TASKS.md` H3 already warns about, sitting
+  live in the actual template a new deployer would copy from. Also corrected a stale comment
+  (`SUPABASE_SERVICE_ROLE` "never read by the agent" — false since ADR-022/`upload_voice_previews.py`)
+  and flagged `LLM_MODE` as vestigial (confirmed unread by `worker/`/`config.py`, only referenced
+  in the old CER-harness's offline guard).
+- **`make gate` run twice**: first run found 6 files (all written tonight) not `ruff format`-clean
+  — real, fixed mechanically (`ruff format .`), zero behavior change. Second run: lint/rls-check/
+  usage-check all clean; `test` still fails on the same 3 pre-existing CER-harness tests
+  (unchanged character — `test_schema`/`test_e2e` now fail with the new intentional
+  `DBClientRemoved` from ADR-022 instead of the old schema error; `test_tools`' `KeyError`
+  unchanged). `rls_check.py` and `usage_guard.py --report` independently re-verified since
+  `make`'s sequential prerequisites never reached them after `test` failed (10/10 RLS OK; ledger
+  well within every budget).
+- **Independent security-subagent pass dispatched** (GATE 8's own line): `.claude/agents/
+  security.md` isn't a directly-selectable `subagent_type` in this environment, so a
+  general-purpose agent was given that file's exact charter and dispatched in an isolated git
+  worktree — flagged as a methodology substitution, not silently presented as literal. It
+  independently re-verified SECRETS/TENANCY/TOKEN MINT/INJECTION/ABUSE/ADMIN BOUNDARY and all 3
+  human-gate attacks itself, live, from scratch — every one PASS, matching this session's own
+  findings with its own fresh evidence. **Sole verdict: BLOCK**, on the same json-repair CVE
+  already found earlier this session. Its suggested fix is the exact one already attempted and
+  reverted today (real `pip check` conflict with `livekit-agents`' exact `==0.59.10` pin) — noted
+  explicitly as a case of a subagent's suggested remediation needing independent verification
+  before trusting it, not just accepting the recommendation.
+- **GATE 8 status: does NOT close today.** ADR-026 records all 6 lines plainly — 3 PASS
+  (runbook, ponytail-debt, phase tags), 3 blocked (full-suite-green vs. the ADR-013 carve-out
+  question, security-subagent BLOCK on json-repair, H9 unanswered). Human-gate (merge to main)
+  not attempted — nothing to merge toward while 3 lines are red. **Did not touch the ADR-013
+  deferred pile** (tools.py, voice polish) per explicit instruction — that tension is exactly
+  what's flagged in ADR-026's first blocked line, not silently resolved either direction.
+- Zero Uplift calls. Real LiveKit Cloud + Gemini + Supabase-dev calls only (P8-T01's load test,
+  the security subagent's live re-verification), all budget-safe, ledger confirmed after.
 
 ## Now (Session 10 — Phase 7 Security, GATE 7 CLOSED)
 - **Branch discipline corrected first** (ADR-020): `phase/3-worker` (which had silently

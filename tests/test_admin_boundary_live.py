@@ -130,8 +130,10 @@ def main() -> int:
                 time.sleep(0.5)
         print(f"live admin portal ready: {ready} at {BASE}")
 
-        hr("Fetch the real ADMIN_JWT_SECRET the running server generated/loaded (test-only read;"
-           " an attacker does not get this — used here only to forge the WRONG-secret case)")
+        hr(
+            "Fetch the real ADMIN_JWT_SECRET the running server generated/loaded (test-only read;"
+            " an attacker does not get this — used here only to forge the WRONG-secret case)"
+        )
         # The server may have auto-generated ADMIN_JWT_SECRET into .env.local on first import
         # (admin/app.py::_ensure_admin_jwt_secret) — re-read the file fresh, after the server
         # process has started, to get whatever value it actually used.
@@ -157,24 +159,36 @@ def main() -> int:
             .with_ttl(datetime.timedelta(seconds=120))
             .with_metadata(json.dumps({"tenant_id": str(uuid.uuid4())}))
             .with_grants(
-                lk_api.VideoGrants(room_join=True, room=str(uuid.uuid4()), can_publish=True)
+                lk_api.VideoGrants(
+                    room_join=True, room=str(uuid.uuid4()), can_publish=True
+                )
             )
             .to_jwt()
         )
         sc, body = try_get("/admin/tenants", tenant_token)
         print(f"GET /admin/tenants with a tenant/LiveKit AccessToken -> {sc} | {body}")
         ok1 = sc == 401
-        checks.append(("tenant/LiveKit token rejected by admin endpoint", ok1, f"{sc} {body}"))
+        checks.append(
+            ("tenant/LiveKit token rejected by admin endpoint", ok1, f"{sc} {body}")
+        )
         if not ok1:
-            vulns.append(("tenant/LiveKit token accepted by admin endpoint", f"{sc} {body}"))
+            vulns.append(
+                ("tenant/LiveKit token accepted by admin endpoint", f"{sc} {body}")
+            )
 
         hr("ATTACK 2 — same tenant-shaped token against a different admin route")
         sc, body = try_get("/admin/agents", tenant_token)
-        print(f"GET /admin/agents with the same tenant/LiveKit AccessToken -> {sc} | {body}")
+        print(
+            f"GET /admin/agents with the same tenant/LiveKit AccessToken -> {sc} | {body}"
+        )
         ok2 = sc == 401
-        checks.append(("tenant/LiveKit token rejected on /admin/agents too", ok2, f"{sc} {body}"))
+        checks.append(
+            ("tenant/LiveKit token rejected on /admin/agents too", ok2, f"{sc} {body}")
+        )
         if not ok2:
-            vulns.append(("tenant/LiveKit token accepted on /admin/agents", f"{sc} {body}"))
+            vulns.append(
+                ("tenant/LiveKit token accepted on /admin/agents", f"{sc} {body}")
+            )
 
         hr("ATTACK 3 — a real, correctly-signed admin JWT that has EXPIRED")
         if real_secret:
@@ -189,16 +203,24 @@ def main() -> int:
             }
             expired_jwt = pyjwt.encode(expired_claims, real_secret, algorithm="HS256")
             sc, body = try_get("/admin/tenants", expired_jwt)
-            print(f"GET /admin/tenants with an EXPIRED (but correctly-signed) admin JWT -> {sc} | {body}")
+            print(
+                f"GET /admin/tenants with an EXPIRED (but correctly-signed) admin JWT -> {sc} | {body}"
+            )
             ok3 = sc == 401
             checks.append(("expired admin JWT rejected", ok3, f"{sc} {body}"))
             if not ok3:
                 vulns.append(("expired admin JWT accepted", f"{sc} {body}"))
         else:
-            print("SKIPPED: could not read the live server's real ADMIN_JWT_SECRET from .env.local")
-            checks.append(("expired admin JWT rejected", False, "SKIPPED — secret unreadable"))
+            print(
+                "SKIPPED: could not read the live server's real ADMIN_JWT_SECRET from .env.local"
+            )
+            checks.append(
+                ("expired admin JWT rejected", False, "SKIPPED — secret unreadable")
+            )
 
-        hr("ATTACK 4 — genuine admin JWT claims, TAMPERED (aud+sub changed), re-signed with a secret the attacker does not have")
+        hr(
+            "ATTACK 4 — genuine admin JWT claims, TAMPERED (aud+sub changed), re-signed with a secret the attacker does not have"
+        )
         tampered_claims = {
             "sub": str(uuid.uuid4()),  # pretend to be a DIFFERENT admin
             "aud": ADMIN_JWT_AUDIENCE,
@@ -209,32 +231,53 @@ def main() -> int:
         }
         tampered_jwt = pyjwt.encode(tampered_claims, WRONG_SECRET, algorithm="HS256")
         sc, body = try_get("/admin/tenants", tampered_jwt)
-        print(f"GET /admin/tenants with a tampered admin JWT (wrong signing secret) -> {sc} | {body}")
+        print(
+            f"GET /admin/tenants with a tampered admin JWT (wrong signing secret) -> {sc} | {body}"
+        )
         ok4 = sc == 401
         checks.append(("tampered admin JWT rejected", ok4, f"{sc} {body}"))
         if not ok4:
             vulns.append(("tampered admin JWT accepted", f"{sc} {body}"))
 
-        hr("ATTACK 5 — genuine admin's REAL claims, re-signed with the WRONG secret only")
+        hr(
+            "ATTACK 5 — genuine admin's REAL claims, re-signed with the WRONG secret only"
+        )
         if real_secret:
             real_claims = pyjwt.decode(
-                genuine_admin_jwt, real_secret, algorithms=["HS256"], audience=ADMIN_JWT_AUDIENCE
+                genuine_admin_jwt,
+                real_secret,
+                algorithms=["HS256"],
+                audience=ADMIN_JWT_AUDIENCE,
             )
             re_signed = pyjwt.encode(real_claims, WRONG_SECRET, algorithm="HS256")
             sc, body = try_get("/admin/tenants", re_signed)
-            print(f"GET /admin/tenants with real claims re-signed with wrong secret -> {sc} | {body}")
+            print(
+                f"GET /admin/tenants with real claims re-signed with wrong secret -> {sc} | {body}"
+            )
             ok5 = sc == 401
-            checks.append(("wrong-secret-resigned admin JWT rejected", ok5, f"{sc} {body}"))
+            checks.append(
+                ("wrong-secret-resigned admin JWT rejected", ok5, f"{sc} {body}")
+            )
             if not ok5:
-                vulns.append(("wrong-secret-resigned admin JWT accepted", f"{sc} {body}"))
+                vulns.append(
+                    ("wrong-secret-resigned admin JWT accepted", f"{sc} {body}")
+                )
         else:
-            checks.append(("wrong-secret-resigned admin JWT rejected", False, "SKIPPED — secret unreadable"))
+            checks.append(
+                (
+                    "wrong-secret-resigned admin JWT rejected",
+                    False,
+                    "SKIPPED — secret unreadable",
+                )
+            )
 
         hr("SANITY CONTROL — the genuine, freshly-logged-in admin JWT must WORK (200)")
         sc, body = try_get("/admin/tenants", genuine_admin_jwt)
         print(f"GET /admin/tenants with the REAL admin JWT -> {sc} | {body[:150]}")
         ok_sanity = sc == 200
-        checks.append(("genuine admin JWT accepted (sanity control)", ok_sanity, f"{sc}"))
+        checks.append(
+            ("genuine admin JWT accepted (sanity control)", ok_sanity, f"{sc}")
+        )
         if not ok_sanity:
             vulns.append(
                 (
@@ -254,13 +297,17 @@ def main() -> int:
                 print(f"  [VULN] {name} :: {detail}")
             print("\nWritten to state/BLOCKERS.md.")
             return 2
-        print("\nAll 5 attacks were rejected (401) and the sanity control succeeded (200).")
+        print(
+            "\nAll 5 attacks were rejected (401) and the sanity control succeeded (200)."
+        )
         return 0
     finally:
         if server is not None:
             server.terminate()
         if admin_id is not None:
-            admin_conn.execute("delete from admin_audit_log where admin_id = %s", (admin_id,))
+            admin_conn.execute(
+                "delete from admin_audit_log where admin_id = %s", (admin_id,)
+            )
             admin_conn.execute("delete from admin_users where id = %s", (admin_id,))
         admin_conn.close()
 

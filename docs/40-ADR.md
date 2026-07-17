@@ -1461,6 +1461,87 @@ not the second (nothing needed explicit acceptance here).
 **Status: ACCEPTED 2026-07-18.**
 
 ---
+## ADR-026 GATE 8 status, 2026-07-18 — does NOT close today, 3 of 6 lines genuinely blocked   [OPEN — status record]
+Date: 2026-07-18 | docs/28-PHASE-8-PROD-READY.md GATE 8
+
+**This entry does not close Phase 8.** All six P8-Txx tasks were worked (P8-T01/T06 this
+session, T02-T05 the rest of this session — see commits `3e745b6`, `2e681ae`, `1c86a49`,
+`619afa0`, `c4b3b54`, tags `p0-gate-pass`..`p7-gate-pass`), but GATE 8's own checklist has 3
+lines that genuinely do not pass today, none papered over:
+
+```
+[FAIL] full suite green
+       make gate: lint PASS (fixed this session, 6 files reformatted), rls-check PASS,
+       usage-check PASS -- but `test` still fails on the same 3 pre-existing, ADR-013-deferred
+       CER-harness tests every phase since Phase 3 has carried (test_schema/test_tools/test_e2e,
+       now failing with the new intentional DBClientRemoved error post-ADR-022 instead of the
+       old schema-mismatch error -- same 3 tests, different failure text, not a new problem).
+       Every phase 0-7 had its OWN narrower gate command that routed around these three
+       (docs/00-INDEX.md's per-phase table); GATE 8 is the first checklist to literally say
+       "full suite green" with no such carve-out. This is a genuine structural tension with the
+       explicit instruction this session was given not to start the ADR-013 deferred pile
+       (tools.py, voice polish) as part of Phase 8's infra work. NOT resolved here --
+       needs a human decision: either do the ADR-013 pass now (reversing today's scoping), or
+       explicitly redefine GATE 8's "full suite" to exclude the already-known-deferred CER
+       harness (matching every earlier phase's precedent) via its own ADR. Not assumed either
+       way.
+
+[BLOCK] security subagent PASS
+       Dispatched an independent read-only pass (`.claude/agents/security.md`'s own checklist,
+       run via a general-purpose agent in an isolated git worktree, since this environment does
+       not expose "security" as a directly-selectable subagent_type -- flagged as a
+       methodology substitution, not silently presented as the literal named agent). It
+       independently re-verified SECRETS/TENANCY/TOKEN MINT/INJECTION/ABUSE/ADMIN BOUNDARY and
+       all 3 human-gate attacks -- all PASS, with real evidence, matching this session's own
+       findings. Its sole BLOCKER: the same json-repair 0.59.10 CVE (GHSA-xf7x-x43h-rpqh)
+       already found and investigated earlier this session. Its suggested fix ("add
+       json-repair>=0.60.1 to requirements.txt") is the EXACT fix already attempted and
+       reverted earlier today after `pip check` showed a real conflict: `livekit-agents==1.6.5`
+       pins `json-repair==0.59.10` as an EXACT requirement, not a floor -- forcing 0.60.1
+       creates a genuine, confirmed dependency conflict, not a hypothetical one. The subagent's
+       recommendation was not independently verified by installing it and running `pip check`
+       before being suggested -- noted here as a caution, not a criticism: a subagent's
+       suggested fix is a claim to verify, same as any other. Real exploitability remains
+       assessed as unreachable (the only call site, `livekit/agents/llm/utils.py:430`, never
+       passes the vulnerable `schema=` kwarg) -- both this session and the subagent agree on
+       that independently. Genuinely unresolved: waiting on `livekit-agents` to bump its own
+       pin upstream, or a deliberate, human-approved decision to force-override it and accept
+       the conflict, or vendor/patch `json_repair` locally. Not decided here.
+
+[FAIL] H9 answered + spec updated to match reality
+       Confirmed unanswered again (3rd re-check this session). Emails staged
+       (state/H9_EMAIL_DRAFT.md, commit 33b2d8e) -- sending is human-only work. ADR-024 records
+       the honest status plus one new real finding (Gladia STT 429s at n=5, P8-T01). Cannot
+       pass until a real reply exists.
+
+[PASS] runbook exists and covers cap-exhaustion
+       docs/60-RUNBOOK-CAP-EXHAUSTION.md (P8-T03) -- from the actual code, not assumed:
+       no queue at any layer, 3 distinct 429 causes collapse to one SDK error code today.
+
+[PASS] ponytail debt resolved or accepted
+       ADR-025 -- confirmed empty, 3 separate checks this session.
+
+[PASS] every phase tag exists (p0..p7-gate-pass)
+       All 8 tags created at their real gate-closing commits, rollback procedure tested twice
+       live (nearest tag + a wide jump to p3-gate-pass), both confirmed correct file state.
+```
+
+**HUMAN GATE (merge to main) not attempted** — per its own line ("the agent never merges") and
+because the 3 lines above are not all green; there is nothing to merge toward yet.
+
+**What would need to happen for GATE 8 to actually close:** (1) a real reply to the staged H9
+email — the single most consequential unknown in this whole project's capacity model; (2) a
+human decision on the "full suite" scope question (redefine GATE 8's own checklist via ADR, or
+do the ADR-013 deferred pass first — both are legitimate paths, neither decided here); (3)
+either `livekit-agents` moving its own `json-repair` pin, or an explicit, accepted-risk decision
+to override it.
+
+**Status: OPEN. Stopping here per explicit instruction — Phase 8's infra work (P8-T01/T03/T04/
+T05/T06) is done and committed; P8-T02's capacity math is as complete as it can honestly be
+without H9's answer; GATE 8 itself does not close today, and this entry says so plainly rather
+than rounding up.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

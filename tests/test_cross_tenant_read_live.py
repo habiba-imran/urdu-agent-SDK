@@ -55,7 +55,9 @@ def write_blocker() -> None:
     ]
     for name, detail in vulns:
         entry.append(f"- {name} :: {detail}")
-    entry.append("**STATUS: BLOCKED — Phase 7 does not close. Human must review immediately.**")
+    entry.append(
+        "**STATUS: BLOCKED — Phase 7 does not close. Human must review immediately.**"
+    )
     out, inserted = [], False
     for ln in lines:
         out.append(ln)
@@ -73,7 +75,9 @@ def main() -> int:
     ag_a, ag_b = str(uuid.uuid4()), str(uuid.uuid4())
     admin = psycopg.connect(**kw, connect_timeout=30, autocommit=True)
     try:
-        hr("SETUP — seeding two real tenants + one real agent each (table-owner connection)")
+        hr(
+            "SETUP — seeding two real tenants + one real agent each (table-owner connection)"
+        )
         admin.execute(
             "insert into tenants (id, name, hmac_secret_hash) values (%s,'gate-A',%s), (%s,'gate-B',%s)",
             (a, "x", b, "x"),
@@ -83,9 +87,13 @@ def main() -> int:
             "values (%s,%s,'agent-A','p','v_meklc281'), (%s,%s,'agent-B','p','v_meklc281')",
             (ag_a, a, ag_b, b),
         )
-        print(f"tenant A = {a}\ntenant B = {b}\nagent A  = {ag_a} (belongs to A)\nagent B  = {ag_b} (belongs to B)")
+        print(
+            f"tenant A = {a}\ntenant B = {b}\nagent A  = {ag_a} (belongs to A)\nagent B  = {ag_b} (belongs to B)"
+        )
 
-        hr("ATTACK — authenticated as tenant A ONLY, attempt to read tenant B's data 3 ways")
+        hr(
+            "ATTACK — authenticated as tenant A ONLY, attempt to read tenant B's data 3 ways"
+        )
         with psycopg.connect(**kw, connect_timeout=30) as reader:
             cur = reader.cursor()
             cur.execute("set local role authenticated")
@@ -94,14 +102,22 @@ def main() -> int:
                 (json.dumps({"tenant_id": a}),),
             )
 
-            print("\n[1] unscoped `select * from agents` — does RLS silently filter to only A's rows?")
-            all_visible = cur.execute("select id, tenant_id, name from agents").fetchall()
+            print(
+                "\n[1] unscoped `select * from agents` — does RLS silently filter to only A's rows?"
+            )
+            all_visible = cur.execute(
+                "select id, tenant_id, name from agents"
+            ).fetchall()
             leaked_1 = [r for r in all_visible if str(r[1]) == b]
-            print(f"    rows visible total: {len(all_visible)} | rows belonging to B: {len(leaked_1)}")
+            print(
+                f"    rows visible total: {len(all_visible)} | rows belonging to B: {len(leaked_1)}"
+            )
             if leaked_1:
                 vulns.append(("unscoped select leaked tenant B rows", str(leaked_1)))
 
-            print("\n[2] direct `where tenant_id = B` (attacker knows/guesses B's real UUID)")
+            print(
+                "\n[2] direct `where tenant_id = B` (attacker knows/guesses B's real UUID)"
+            )
             direct = cur.execute(
                 "select id, name from agents where tenant_id = %s", (b,)
             ).fetchall()
@@ -109,13 +125,17 @@ def main() -> int:
             if direct:
                 vulns.append(("direct tenant_id=B filter returned rows", str(direct)))
 
-            print("\n[3] `select id, name from agents where id = agent_B` (attacker knows B's agent_id)")
+            print(
+                "\n[3] `select id, name from agents where id = agent_B` (attacker knows B's agent_id)"
+            )
             by_id = cur.execute(
                 "select id, name, tenant_id from agents where id = %s", (ag_b,)
             ).fetchall()
             print(f"    rows returned: {len(by_id)} (must be 0)")
             if by_id:
-                vulns.append(("direct agent_id=B's-agent lookup returned a row", str(by_id)))
+                vulns.append(
+                    ("direct agent_id=B's-agent lookup returned a row", str(by_id))
+                )
 
             print("\n[4] tenants table — can A see B's tenant row at all?")
             tenant_rows = cur.execute(
@@ -123,18 +143,24 @@ def main() -> int:
             ).fetchall()
             print(f"    rows returned: {len(tenant_rows)} (must be 0)")
             if tenant_rows:
-                vulns.append(("tenant A could read tenant B's tenants row", str(tenant_rows)))
+                vulns.append(
+                    ("tenant A could read tenant B's tenants row", str(tenant_rows))
+                )
 
         hr("VERDICT")
         if vulns:
             write_blocker()
-            print("SECURITY-CRITICAL: the following cross-tenant reads SUCCEEDED (must have failed):")
+            print(
+                "SECURITY-CRITICAL: the following cross-tenant reads SUCCEEDED (must have failed):"
+            )
             for name, detail in vulns:
                 print(f"  [VULN] {name} :: {detail}")
             print("\nWritten to state/BLOCKERS.md. Phase 7 does not close.")
             return 2
         print("All 4 cross-tenant read attempts returned zero of tenant B's rows.")
-        print("RLS held using only tenant A's JWT claim, table-owner connection never used to read.")
+        print(
+            "RLS held using only tenant A's JWT claim, table-owner connection never used to read."
+        )
         return 0
     finally:
         for t in ("sessions", "quota_state", "used_nonces", "agents"):

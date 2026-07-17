@@ -181,7 +181,9 @@ def main() -> int:
                     ):
                         results[i] = text
                         if text.startswith("connected"):
-                            connect_latency_s[i] = time.monotonic() - connect_started_at[i]
+                            connect_latency_s[i] = (
+                                time.monotonic() - connect_started_at[i]
+                            )
                         pending.discard(i)
                 if pending:
                     time.sleep(POLL_INTERVAL_S)
@@ -211,7 +213,9 @@ def main() -> int:
             print("\n--- results ---")
             for i, r in enumerate(results):
                 lat = connect_latency_s[i]
-                lat_str = f" ({lat * 1000:.0f}ms to connected)" if lat is not None else ""
+                lat_str = (
+                    f" ({lat * 1000:.0f}ms to connected)" if lat is not None else ""
+                )
                 print(f"  [{i}] room={tokens[i]['roomName']}: {r}{lat_str}")
 
             samples = sorted(v for v in connect_latency_s if v is not None)

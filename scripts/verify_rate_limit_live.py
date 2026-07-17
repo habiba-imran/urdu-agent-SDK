@@ -110,7 +110,10 @@ def main() -> int:
                 "Origin": ORIGIN,
             }
             r = httpx.post(
-                BASE + "/v1/session", json={"agent_id": aid}, headers=headers, timeout=30
+                BASE + "/v1/session",
+                json={"agent_id": aid},
+                headers=headers,
+                timeout=30,
             )
             return (i, r.status_code, r.text[:80])
 
