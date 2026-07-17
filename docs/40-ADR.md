@@ -1363,6 +1363,83 @@ a quota rejection. Matches `RATE_LIMIT_PER_MIN=120` precisely.
 **Status: ACCEPTED 2026-07-18.**
 
 ---
+## ADR-024 P8-T02 capacity math — INCOMPLETE, H9 still unanswered; one new real ceiling found today   [OPEN — not a decision, a status record]
+Date: 2026-07-18 | P8-T02, docs/10-SPEC.md, docs/41-HUMAN-TASKS.md H9, docs/28-PHASE-8-PROD-READY.md
+
+**Status up front, not buried: this entry does NOT close P8-T02.** `docs/28-PHASE-8-PROD-READY.md`
+states plainly: *"If Uplift's concurrency limit is below LiveKit's, IT is our real ceiling and
+10-SPEC.md capacity numbers are wrong. Fix the spec."* That comparison is impossible without
+Uplift's actual answer. Re-confirmed today (searched every tracked file again): **H9 #1-4 have
+never been sent, never been answered.** Draft emails staged this session
+(`state/H9_EMAIL_DRAFT.md`, commit `33b2d8e`) — sending them is the human's action, not
+something this entry can complete on its own. This ADR records the current, honest state of the
+capacity model and what real evidence DOES exist, not a resolution.
+
+**What 10-SPEC.md already says, correctly, and still says.** Its "Known ceilings" table already
+marks Uplift concurrency `⚠️ UNKNOWN — H9 blocks Phase 8 — could invalidate everything` — that
+line was already honest before this entry and remains unchanged; not rewriting a caveat that was
+already correctly hedged.
+
+**What IS newly known, real and measured, layered on top of that unknown — not from Uplift, but
+from Gladia, and not previously documented anywhere in this repo.** P8-T01's live load test today
+(5 real concurrent sessions, real worker, real LiveKit Cloud, zero Uplift spend) hit a real
+**Gladia STT concurrency ceiling** that nothing in this repo had measured before: `Failed to
+initialize Gladia session: 429, message='Too Many Requests'` fired repeatedly at n=5. Of 5
+concurrent sessions, only 3 got a working Gladia connection inside the test's 15s hold-open
+window; the other 2 were still retrying (with backoff) when their sessions closed. **LiveKit's own
+room-join layer held fine at 5/5 — the STT provider, not LiveKit, was the thing that actually
+constrained concurrency in this measurement.** This directly matches the shape of P8-T02's own
+"if X's limit is below Y's, X is the real ceiling" logic — just with Gladia standing in for
+Uplift, since Uplift's real number still isn't known. `docs/41-HUMAN-TASKS.md` H9 already asks
+Gladia questions 1+2 (concurrency, 429 trigger) for exactly this reason — today's test answered
+part of question 2 empirically (429, "Too Many Requests", per-session-init) without needing a
+reply email, though the exact numeric limit (is 5 always too many, or was this a burst-timing
+artifact of 5 near-simultaneous inits specifically) is not established from n=1.
+
+**What this does NOT establish, stated as plainly as the "not enough samples" caveats elsewhere
+in this file.** One test run, n=5, dev/free-tier Gladia account. Not tested: whether this is a
+hard per-account concurrency cap, a burst-rate limit that would clear with staggered connection
+timing, or specific to the free/dev tier vs. whatever Gladia plan production would run on (H9
+question 2, still asked of Gladia in the staged draft). Not re-tested at smaller N to find where
+it stops happening, nor at a slower connection-establishment pace to rule out a burst-only
+trigger. This is a real, measured data point, not a characterized limit.
+
+**10-SPEC.md updated to record this, not silently left for a future reader to rediscover** — see
+the "Known ceilings" table diff alongside this entry: added a Gladia concurrency row citing this
+measurement, and annotated (not replaced — the true number is still unknown) the LiveKit Build
+"5 concurrent" row with a pointer to ADR-014's finding that 5, and even 6, has never actually
+caused a LiveKit-side rejection in three separate live tests.
+
+**What capacity math CAN be stated today, conservatively, without inventing anything:**
+- LiveKit Build's documented "5 concurrent, hard cap" has been tested 4 times now (ADR-014's three
+  runs + today's P8-T01 run) and never once produced a LiveKit-side rejection, up to n=6. Treat
+  the "5 concurrent" figure as unverified-by-us, not as a true ceiling, per ADR-014.
+- Gladia (free/dev tier) shows real request failures at n=5 concurrent STT session inits. Until
+  characterized further or confirmed by Gladia directly, **treat 5 concurrent as already inside
+  the danger zone for the current Gladia tier**, not a safe operating point.
+- Uplift's real concurrency limit remains completely unknown. `10-SPEC.md`'s unit-economics numbers
+  (`$0.0044/min` marginal, the Growth-tier 200h/month ceiling, the Pro-tier cost-cliff at 3,571
+  conv-min) are all MINUTE/COST figures, not concurrency figures — those numbers are NOT
+  invalidated by an unknown concurrency limit, but the PRODUCT's actual usable capacity (how many
+  simultaneous live calls it can serve) cannot be stated with any confidence until H9 #1 is
+  answered. This is the literal risk P8-T02/H9 were written to catch, and it is still open.
+
+**Consequences.** GATE 8's "H9 answered + spec updated to match reality" line **cannot pass
+today** — recorded here as an explicit, known-incomplete gate line, not silently marked done. The
+staged email drafts are the concrete next action; once a real reply exists, this ADR should be
+superseded by one that actually closes P8-T02, comparing Uplift's real number against both
+LiveKit's (still unverified) and Gladia's (now partially measured) numbers.
+
+**Evidence.** `state/H9_EMAIL_DRAFT.md` (staged, unsent, commit `33b2d8e`); this session's search
+across every tracked file confirming zero H9 reply exists anywhere; P8-T01's worker log (Gladia
+429s, timestamps, 3/5 connected within the window — commit `3e745b6`); ADR-014 (LiveKit's
+undisputed 4-for-4 non-reproduction of "5 concurrent, hard cap"); `docs/10-SPEC.md` "Known
+ceilings" table (diff alongside this entry).
+
+**Status: OPEN. This is a status record, not an accepted decision — nothing here is a design
+choice to revisit, just an honest snapshot of what is and isn't known as of 2026-07-18.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

@@ -34,13 +34,14 @@ A **super-admin portal** gives US full visibility: every tenant, agent, session,
 - ❌ Uplift Realtime Assistants API. Their beta IS our product; building on it = zero margin control.
 - ❌ Custom voice cloning, multi-language beyond ur+en, mobile native SDKs.
 
-## Known ceilings (published, verified)
+## Known ceilings (published, verified — except where flagged otherwise)
 | Limit | Value | Binds at |
 |---|---|---|
 | Uplift Growth ($300/200h) | ~28,570 conv-min/mo @42% talk | 🔴 **hardest ceiling. No published price above it.** |
 | LiveKit Ship | 20 concurrent | production |
-| LiveKit Build | 5 concurrent, 1,000 min | **development** |
-| Uplift concurrency | ⚠️ **UNKNOWN — H9 blocks Phase 8** | could invalidate everything |
+| LiveKit Build | 5 concurrent, 1,000 min | **development — but NOT REPRODUCED.** 4 separate live tests (ADR-014 ×3, P8-T01 ×1), up to n=6, never once triggered a LiveKit-side rejection. Treat "5" as unverified-by-us, not confirmed. |
+| Uplift concurrency | ⚠️ **UNKNOWN — H9 blocks Phase 8** | could invalidate everything — email staged (`state/H9_EMAIL_DRAFT.md`), not yet sent as of 2026-07-18 |
+| Gladia concurrency (free/dev tier) | ⚠️ **NEW FINDING, 2026-07-18, real not published:** hit real 429 "Too Many Requests" on STT session init at just n=5 concurrent (P8-T01 load test) — only 3/5 sessions got a working connection inside a 15s window. Not yet characterized (burst vs. hard cap, dev-tier-only?). | already inside the danger zone at n=5 on this tier — see ADR-024 |
 
 ## Unit economics (for context; do not optimise for this yet)
 Marginal ≈ **$0.0044/min** inside plan allowances; **$0.025–0.032/min** all-in at volume.
