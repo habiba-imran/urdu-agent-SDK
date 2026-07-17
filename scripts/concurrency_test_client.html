@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>concurrency probe</title></head>
+<body>
+<div id="status">idle</div>
+<script src="/sdk/node_modules/livekit-client/dist/livekit-client.umd.js"></script>
+<script>
+  // Minimal room-join probe for P3-T08 (5-concurrent test). Joins with no media tracks —
+  // the LiveKit Build free-tier concurrency cap is enforced at the participant/session
+  // level, not at track-publish time, so no getUserMedia/audio device is needed.
+  // API verified against installed livekit-client 2.x source (esm bundle):
+  //   Room.connect(url, token, opts) — L16405-16408
+  //   RoomEvent.Connected = "connected" — L12103
+  //   RoomEvent.Disconnected = "disconnected" — L12130
+  const params = new URLSearchParams(window.location.search);
+  const wsUrl = params.get("wsUrl");
+  const token = params.get("token");
+  const label = params.get("label") || "?";
+  const statusEl = document.getElementById("status");
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+    document.title = "probe-" + label + ": " + text;
+  }
+
+  (async () => {
+    const room = new LivekitClient.Room();
+    room.on(LivekitClient.RoomEvent.Disconnected, (reason) => {
+      setStatus("disconnected:" + reason);
+    });
+    try {
+      setStatus("connecting");
+      await room.connect(wsUrl, token);
+      setStatus("connected");
+    } catch (err) {
+      // Real error shape observed, not guessed — surface name/message/code if present.
+      const parts = [err && err.name, err && err.message, err && err.code]
+        .filter((x) => x !== undefined && x !== null);
+      setStatus("failed:" + parts.join("|"));
+    }
+  })();
+</script>
+</body>
+</html>

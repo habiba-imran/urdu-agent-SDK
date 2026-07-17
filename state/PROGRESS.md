@@ -1,6 +1,31 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 3 (Worker) | Task: Gate-3 PASSED (pipeline works end-to-end); post-call
-quality pass (6 items) done and gated, awaiting human review + next live-listen | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 3 (Worker) — **GATE 3 CLOSED**, moving into Phase 4 | Branch: phase/3-worker
+
+## Now (Session 8 continued — GATE 3 closed, P3-T09 + voice polish explicitly deferred)
+- **New standing operating pattern (human instruction, 2026-07-17):** work a full phase's tasks in
+  one long uninterrupted haul, no stopping for permission between individual tasks. Stop HARD only
+  at: the phase's actual machine gate, a human-gate item (docs/41-HUMAN-TASKS.md), any live/paid
+  API call, or the 3-strike rule. Post full gate output + every human-gate line batched at the end,
+  then wait for explicit "begin Phase N+1." Applies to every remaining phase.
+- **ADR-013:** P3-T09 (tool-calling wiring) and all remaining voice/persona/prosody polish (the 8
+  unconfirmed phrase-replacement entries, further prompt iteration) are DEFERRED to a dedicated pass
+  at the END of the build — not this session, not "next session." tools.py's eventual rework is
+  decided (fixed platform-owned tools, real schema, per-tenant RLS, not the old demo tables) but not
+  started. Do not implement any part of this until that pass begins.
+- **P3-T08 run live, real result differs from the documented expectation** — see ADR-014. All 6
+  concurrent connections succeeded; the LiveKit Build "5 concurrent, hard cap" figure in
+  docs/30-GUIDE-FREE-TIER.md was not reproduced. Not explained/guessed why — flagged as
+  unverified-by-us going forward. New reusable driver: `scripts/concurrency_test.py` +
+  `concurrency_test_client.html` (Playwright + real Chromium + livekit-client, since a headless
+  Python `livekit.rtc` client was already proven to hang on this Windows env, HANDOFF Session 5).
+- **GATE 3 formally compiled and closed** — full checklist with real evidence per line in
+  `docs/23-PHASE-3-WORKER.md`. Six of seven lines genuinely green; `STT_PROVIDER=soniox -> 402` is
+  architecturally-verified-only (no live call made, per this session's "no more live calls beyond
+  P3-T08" instruction) — flagged honestly, not checked off as if observed.
+- **Moving directly into Phase 4** (client SDK) per instruction, non-live wherever possible, in one
+  long haul. Will stop hard at Phase 4's actual gate (`make bundle-check` + the dist/ secret grep)
+  and wait for explicit go-ahead — inspecting dist/ for secrets is the human's own job per
+  docs/24-PHASE-4-CLIENT-SDK.md, not skipped just because of the long-haul instruction.
 
 ## Now (Session 8 — Gate-3 human-listen PASSED, post-call quality pass)
 - **Gate-3 human-listen: PASSED.** Two live attempts tonight (first crashed on the plugin

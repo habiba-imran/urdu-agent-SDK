@@ -609,6 +609,69 @@ intent per `AGENT_SYSTEM.md`'s "state in files, never conversation" rule. Cross-
 `state/PROGRESS.md`'s tool-calling trap and `docs/23-PHASE-3-WORKER.md` P3-T09.
 
 ---
+## ADR-014 P3-T08: 6 concurrent connections all succeeded — the documented "5 concurrent, hard
+## cap" was NOT observed   [ACCEPTED — recorded as-measured, not explained]
+Date: 2026-07-17 | P3-T08, live test, human pre-approved | Real result, not the expected one —
+reported honestly rather than forced to match `docs/30-GUIDE-FREE-TIER.md`'s assumption.
+
+**Context.** `docs/30-GUIDE-FREE-TIER.md` §4 and `docs/23-PHASE-3-WORKER.md` GATE 3 both state
+LiveKit Build free tier caps at **5 concurrent**, with calls FAILING past it, and P3-T08's done-when
+is explicitly "5 succeed, 6th fails cleanly with a typed error." A prior session (`state/HANDOFF.md`,
+Session 5) found a headless `livekit.rtc` (Python) client HANGS on this Windows environment, so a
+new driver was needed: `scripts/concurrency_test.py` + `scripts/concurrency_test_client.html` use
+Playwright + real Chromium + the actual `livekit-client` 2.x JS SDK (already a declared Phase-4
+dependency, `sdk/package.json`) to make 6 real WebRTC room connections, no media tracks published
+(the concurrency cap is documented as enforced at the participant/session level, not at
+track-publish time). A dedicated tenant was provisioned per run with `max_concurrent=20` so the
+control plane's OWN per-tenant quota (`quota_state.concurrent_now`, `control_plane/mint.py`
+L121-128) — already elevated from earlier tonight's undecremented Gate-3 test mints — could not
+confound the result; only LiveKit's own cap was being exercised.
+
+**What was actually observed, live, 2026-07-17 14:49-14:50 UTC+5.** All 6 connections reported
+`connected` (none reported `failed`). The worker log independently confirms this: 6 real job
+requests dispatched, 6 job runners initialized, Gladia STT sessions connected for at least 4 of the
+6, adaptive interruption sessions created for all visible ones. No `429`, no rejection, no
+LiveKit-side cap of any kind fired. The sessions then tore down naturally ~30s later when the test
+browser pages closed (no audio was ever published, so the worker's `wait_for_participant()`-based
+entrypoint raised `RuntimeError: room disconnected while waiting for participant` on room close —
+expected given the test's design, not a new bug).
+
+**What this does NOT prove.** The test connections were short-lived (~30s) and did not publish
+audio; it's possible LiveKit Build's cap is measured differently (sustained duration, published
+tracks, agent-minutes burn rate, or a threshold above 6) than "raw simultaneous room joins," and a
+longer or larger test might still find a real ceiling. The test also only checked each page's FIRST
+terminal status — a delayed rejection a few seconds after "connected" would not have been caught by
+this run's polling loop (a real methodology gap, noted rather than hidden). This entry does NOT
+claim "there is no cap" — it claims "the specific claim in our docs (5 concurrent, hard fail) was
+not reproduced at n=6 under this test's conditions," which is a narrower, honest statement.
+
+**Decision — do not guess why, record the discrepancy and stop.** Per CLAUDE.md's anti-hallucination
+rule ("never invent a number... cannot verify it, write it in BLOCKERS.md, do not invent it"), no
+explanation is asserted here for WHY the documented cap didn't trigger — that would be guessing.
+GATE 3's "5 concurrent OK, 6th fails cleanly" checklist item is marked with the REAL result (all 6
+succeeded) rather than force-fit to the expected one. Whether to re-test at a larger N, check the
+LiveKit Cloud dashboard/plan details directly, or accept the documented "5 concurrent" figure as
+stale is a decision for the human, not assumed here.
+
+**Consequences.** `docs/30-GUIDE-FREE-TIER.md`'s "5 concurrent" LiveKit Build figure should be
+treated as UNVERIFIED-BY-US going forward until re-checked, not as ground truth. `livekit_agent_min`
+in `usage_ledger.json` was NOT updated by this test — it stayed at 0, the same instrumentation gap
+already flagged (nothing in `worker/main.py` increments it on session end). Actual LiveKit
+agent-minute spend for this test is an ESTIMATE, not measured: 6 sessions × ~30s wall-clock ≈
+3 agent-minutes if billed continuously, or up to 6 agent-minutes if LiveKit rounds each session up
+to a whole minute — reported as a bounded estimate, not a ledger fact, per the same anti-hallucination
+rule. `scripts/concurrency_test.py` and `scripts/concurrency_test_client.html` are committed and
+reusable for a future, larger-N or longer-duration re-test if the human wants one.
+
+**Evidence.** Live worker log, 2026-07-17 14:49:43–14:50:18 (job dispatch, job runner init, Gladia
+connections, adaptive interruption sessions, clean teardown — full transcript in the session
+record); `scripts/concurrency_test.py` output (`connected=6 failed=0 other=0`); `control_plane/
+mint.py` L121-128 (the control-plane's own quota check, deliberately avoided via
+`max_concurrent=20`); `docs/30-GUIDE-FREE-TIER.md` §4 (the documented, unreproduced claim);
+`state/HANDOFF.md` Session 5 (the prior headless-`livekit.rtc`-hangs finding that motivated the
+Playwright-based driver).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
