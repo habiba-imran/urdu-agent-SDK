@@ -158,6 +158,11 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items q
 - **`../urdu-voice-agent/tests/helpers_pipeline.py` not ported** — uses Pipecat Pipeline/Task infrastructure directly. Tests that depend on it (`test_interruption.py`, `test_latency.py`) are marked `@pytest.mark.skip` in `test_harness.py` until Phase 3.
 
 ## Traps (things that already bit us — read this first when stuck)
+- 🔴 **BURNED SECRET:** the `demo-gate3` tenant secret provisioned 2026-07-17 (tenant
+  `ca72956b-8f55-4374-8332-a659ba9ec5fc`) was pasted into chat history — treat it as COMPROMISED. Do
+  NOT reuse it. For any future test, re-provision a fresh demo tenant (`scripts/provision_demo_tenant.py
+  --commit`). After tonight's Gate-3 call (pass or fail), delete demo-gate3:
+  `delete from tenants where id = 'ca72956b-8f55-4374-8332-a659ba9ec5fc';` (cascades agents/sessions).
 - Uplift free tier is 10 MINUTES TOTAL. Fixture cache before any TTS call. docs/30-GUIDE-FREE-TIER.md
 - LiveKit Build: 10-20s cold starts. Expected. Do not debug. Do not optimise.
 - Supabase free projects PAUSE after 7 days idle. `make db-reset` must always work.
