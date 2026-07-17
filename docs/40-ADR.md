@@ -567,6 +567,48 @@ this stack at any dev-tier budget, and treating it as a bug to keep chasing woul
 error, not a quality gap.
 
 ---
+## ADR-013 Tool-calling rework (P3-T09) and remaining voice polish DEFERRED to end-of-build   [ACCEPTED]
+Date: 2026-07-17 | Decided by: the human (recorded here per that instruction)
+
+**Decision — scope and sequencing, not a technical design.** P3-T09 (wiring `tools.py` onto
+LiveKit's function-calling API — see `docs/23-PHASE-3-WORKER.md` P3-T09) and all remaining
+voice/persona/prosody polish (the 8 unconfirmed Uplift phrase-replacement transliterations from
+tonight, any further persona/prompt iteration) are **explicitly deferred to a dedicated pass at the
+END of the build**, after the SDK and remaining phases (4 onward) are done. This supersedes the
+"top priority, fix before further polish" framing recorded earlier the same night in
+`state/PROGRESS.md` and `docs/23-PHASE-3-WORKER.md` — that framing was reasonable when written
+(right after the bug was found live) but is now stale; both files have been corrected in place to
+point here rather than silently left contradicting this entry.
+
+**Why (as given).** Not stated as a technical reason — this is a sequencing/priority call by the
+human. Recorded plainly so a future session doesn't silently re-litigate or re-derive a different
+priority order from the code alone.
+
+**tools.py's eventual rework — the shape, decided now so it isn't assumed differently later when
+the deferred pass starts.** The tool suite will be **fixed, platform-owned tool functions — NOT
+tenant-configurable custom tools** (i.e., not "each tenant defines their own tools/catalog," which
+`docs/23-PHASE-3-WORKER.md`'s P3-T09 draft had left as an open option). It will query **this
+project's real schema** (`tenants`, `agents`, `sessions`, `quota_state`, `usage_events`, `voices` —
+see `supabase/SCHEMA.md`) **with proper per-tenant RLS**, replacing the old demo's
+`shop_info`/`products`/`customers`/`reservations`/`support_tickets`/`callbacks` tables entirely —
+those were the single-tenant TechZone Pipecat demo's tables and do not belong in the multi-tenant
+product. This is a real schema-migration task (new tables/migrations, RLS policies, `tools.py`
+rewritten against them), not a quick wiring fix — scoped for the deferred pass, per the sequencing
+decision above.
+
+**Consequences.** No code changes from this entry — it is a scope/sequencing record only.
+`docs/23-PHASE-3-WORKER.md` P3-T09 stands as the technical prep (verified against installed
+`livekit.agents` source: `Agent(tools=[...])`, `@function_tool(raw_schema=...)`, return-based
+results, `RunContext`) for whenever the deferred pass begins, now with the schema/ownership
+question closed rather than left as "ask." Do NOT start building any part of this — not the
+function-calling wiring, not the schema migration, not further persona/phrase-replacement
+iteration — until the deferred pass is explicitly begun.
+
+**Evidence.** This ADR entry is the evidence — a direct human instruction, recorded verbatim in
+intent per `AGENT_SYSTEM.md`'s "state in files, never conversation" rule. Cross-referenced in
+`state/PROGRESS.md`'s tool-calling trap and `docs/23-PHASE-3-WORKER.md` P3-T09.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

@@ -45,8 +45,12 @@ Done: `UPLIFT_MODE=fixture` + cache miss → **LookupError**, and **zero** netwo
 5 simultaneous calls (LiveKit Build cap). Done: 5 succeed, 6th fails **cleanly** with a typed error.
 *Finding a concurrency flaw in week 8 is a rewrite. In week 3 it's an afternoon.*
 
-### P3-T09 🔴 Wire `tools.py` onto LiveKit's function-calling API — found live 2026-07-17, TOP PRIORITY
-**Not started. Do this before any further quality polish.** Gate-3's successful live call showed
+### P3-T09 Wire `tools.py` onto LiveKit's function-calling API — found live 2026-07-17
+**DEFERRED to a dedicated pass at the END of the build (human decision, 2026-07-17, ADR-013) —
+not this session, not "next session." Do NOT implement or attempt any part of this until that
+pass.** The task breakdown below stands as prep for when that pass starts; the framing "before any
+further quality polish" that a prior draft of this entry used is superseded by ADR-013 — the SDK
+and remaining phases proceed first. Gate-3's successful live call showed
 the LLM speaking literal `tool_code\nprint(search_products(...))\n` pseudocode aloud, then
 hallucinating a plausible product answer on a later turn — no tool ever actually ran. Every
 price/stock/policy claim the agent makes right now is unverified, directly violating the persona's
@@ -86,25 +90,23 @@ Pipecat-shaped — `pipecat.adapters.schemas.FunctionSchema`/`ToolsSchema` for t
     `tools.py` L349-359), though a similar closure approach may still work if tools are built
     per-session inside `build_agent()`/`build_session()` rather than at module scope.
 
-**Bigger open question — NOT a coding detail, needs a human decision before implementation
-starts:** `tools.py`'s handlers (`search_products`, `create_reservation`, etc.) query Supabase
-tables (`products`, `customers`, `reservations`, `support_tickets`, `callbacks`, `shop_info`) that
-**do not exist in this repo's actual schema** — `state/PROGRESS.md`'s own CER-harness note already
-flags this: *"the ported tests query old Pipecat-era TechZone tables... that don't exist in this
-repo's schema (`tenants`, `agents`, `sessions`, `quota_state`, `usage_events`, `voices`). The CER
-harness was written against a completely different database."* So even a correctly-wired
-function-calling layer would still hit a missing-table error the moment a tool actually tries to
-query. **This raises a scoping question the next session should answer explicitly, not assume:**
-is `tools.py`'s hardcoded TechZone-laptop-shop tool suite meant to be (a) a permanent demo/test
-fixture for Gate-3-style human-listen calls only, needing its own small demo schema/seed data, or
-(b) something that needs to become tenant-configurable (each tenant defines their own tools/catalog)
-as part of the real multi-tenant product — a much larger design question, closer to Phase 4/5/6
-territory than a Phase-3 bugfix. **Do not silently pick one; ask.**
+**Scoping question — DECIDED by the human, 2026-07-17 (ADR-013), not open anymore.** `tools.py`'s
+handlers (`search_products`, `create_reservation`, etc.) query Supabase tables (`products`,
+`customers`, `reservations`, `support_tickets`, `callbacks`, `shop_info`) that **do not exist in
+this repo's actual schema** — `state/PROGRESS.md`'s own CER-harness note already flags this: *"the
+ported tests query old Pipecat-era TechZone tables... that don't exist in this repo's schema
+(`tenants`, `agents`, `sessions`, `quota_state`, `usage_events`, `voices`). The CER harness was
+written against a completely different database."* So even correctly-wired function-calling would
+still hit a missing-table error the moment a tool actually queries. Decision (see ADR-013 for the
+full record): the tool suite is **fixed, platform-owned tool functions — NOT tenant-configurable
+custom tools** — reworked to query this project's real schema with proper per-tenant RLS, replacing
+the old demo's `shop_info`/`products`/`customers` tables entirely. This is a real schema-migration
+task. **Scoped for the deferred end-of-build pass — do not start building it now.**
 
-**Done when (draft, to be refined by whoever picks this up):** `pytest` gate proving `search_products`
-is invoked as a real LiveKit tool (not text) and returns real data from a schema that actually
-exists; a live call where a price/stock claim is traceably grounded in a tool result, not
-LLM-invented text.
+**Done when (draft, to be refined when the deferred pass starts):** `pytest` gate proving
+`search_products` is invoked as a real LiveKit tool (not text) and returns real data from this
+project's actual RLS-scoped schema; a live call where a price/stock claim is traceably grounded in
+a tool result, not LLM-invented text.
 
 ## GATE 3
 ```

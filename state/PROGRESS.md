@@ -275,6 +275,9 @@ quality pass (6 items) done and gated, awaiting human review + next live-listen 
   CER-harness note above) — so even correct wiring hits a missing-table error, and whether the
   TechZone tool suite is a permanent demo fixture or needs to become tenant-configurable is a real
   design decision, not something to silently assume. See docs/40-ADR.md ADR-011 (blocks the
-  filler-on-tool-call evaluation) and ADR-012 (flagged as the top-priority next fix). 🔴 **Next
-  session: fix this before further quality polish** — a well-paced agent that invents inventory data
-  is worse than a plain one that doesn't.
+  filler-on-tool-call evaluation), ADR-012, and **ADR-013 (2026-07-17): the human has explicitly
+  DEFERRED P3-T09 and all remaining voice/persona/prosody polish to a dedicated pass at the END of
+  the build**, after the SDK and remaining phases are done — superseding the "fix this before
+  further quality polish" framing below, which was correct at the time it was written but is now
+  stale. Do not implement or attempt any part of this until that dedicated pass. Not forgotten —
+  tracked here and in ADR-013/P3-T09.
