@@ -28,10 +28,20 @@ ABUSE
 DEPS
 [ ] pip-audit && npm audit --audit-level=high -> 0 high/critical
 [ ] all deps pinned (requirements.txt ==, package-lock.json committed)
+ADMIN BOUNDARY   (added by ADR-021, 2026-07-18 — Phase 6 postdates the rest of this checklist)
+[ ] admin JWT cannot be used as a tenant/LiveKit token on any control_plane/ endpoint -> rejected
+[ ] tenant/LiveKit token cannot be used as an admin JWT on any admin/ endpoint -> 401
+[ ] expired admin JWT -> 401
+[ ] tampered admin JWT (re-signed with a wrong secret, or with `video` grafted on) -> 401
+[ ] admin login without correct TOTP code -> 401 (password alone insufficient)
 ```
 
-## HUMAN GATE — you personally attempt these. Both must fail.
+## HUMAN GATE — you personally attempt these. All three must fail.
 1. Read tenant B's agents using tenant A's credentials.
 2. Take a minted token and join a different room.
+3. (ADR-021, 2026-07-18) Attempt to reach an admin-only endpoint (e.g. GET /admin/tenants) using
+   a tenant-scoped LiveKit AccessToken, and separately using a real minted-session token. Both
+   must fail. Then attempt the same endpoint with an expired admin JWT, and with a tampered admin
+   JWT (claims edited, re-signed with a secret you do not have). All four attempts must fail.
 
-If either succeeds, Phase 7 fails. No exceptions, no "it's unlikely in practice."
+If any succeeds, Phase 7 fails. No exceptions, no "it's unlikely in practice."

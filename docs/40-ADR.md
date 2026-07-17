@@ -1214,6 +1214,69 @@ renamed to `phase/3-through-6-combined`, confirmed via `git branch -a` post-rena
 clean, no commit SHAs altered).
 
 ---
+## ADR-021 Phase 7's checklist predates Phase 6; admin auth boundary untested   [ACCEPTED]
+Date: proposed 2026-07-17, accepted 2026-07-18 as written, no edits | docs/27-PHASE-7-SECURITY.md,
+docs/26-PHASE-6-ADMIN.md, admin/auth.py, admin/app.py
+
+**What's missing.** `docs/27-PHASE-7-SECURITY.md`'s SECRETS/TENANCY/TOKEN MINT checklist and its
+2-item human gate were both written before Phase 6 (Admin Portal) existed. Neither the automated
+checklist nor the human gate exercises the admin-auth boundary at all: not MFA, not the admin
+JWT's cryptographic/structural distinctness from a tenant/LiveKit token (GATE 6 line 2, already
+proven once at Phase 6 close by `tests/test_admin.py`), and not admin's deliberate RLS-bypass
+scope (`docs/26-PHASE-6-ADMIN.md`: "Admin bypasses RLS by design... highest-value target").
+GATE 6 tested this boundary once, at build time, with the agent constructing both sides of the
+attack in a unit test. Phase 7 is supposed to be the pass where a human, live, tries to break
+things the agent already believes are safe — and right now nothing in Phase 7 revisits this
+specific boundary at all. Given admin holds broader access than any tenant-scoped credential in
+the system (RLS bypass by design, not RLS-governed like every other authenticated-role path),
+leaving it untouched by the adversarial pass is a real gap, not a formality.
+
+**Addition 1 — automated, ADMIN BOUNDARY section of 27-PHASE-7-SECURITY.md:**
+```
+ADMIN BOUNDARY
+[ ] admin JWT cannot be used as a tenant/LiveKit token on any control_plane/ endpoint -> rejected
+[ ] tenant/LiveKit token cannot be used as an admin JWT on any admin/ endpoint -> 401
+[ ] expired admin JWT -> 401
+[ ] tampered admin JWT (re-signed with a wrong secret, or with `video` grafted on) -> 401
+[ ] admin login without correct TOTP code -> 401 (password alone insufficient)
+```
+This is mechanically the same shape as the existing TOKEN MINT section, just pointed at the
+admin/tenant boundary instead of the tenant/room boundary. Everything in it is re-runnable by a
+script the same way `test_token_widen_live.py` already re-runs the token-widen checks.
+
+**Addition 2 — third HUMAN GATE item:**
+```
+3. Attempt to reach an admin-only endpoint (e.g. GET /admin/tenants) using a tenant-scoped
+   LiveKit AccessToken, and separately using a real minted-session token. Both must fail.
+   Then attempt the same endpoint with an expired admin JWT, and with a tampered admin JWT
+   (claims edited, re-signed with a secret you do not have). All four attempts must fail.
+```
+Rationale for making this a HUMAN gate, not leaving it purely automated: every other credential
+boundary in this system (tenant-vs-tenant, token-vs-room) already gets a human personally
+attempting the live break, specifically because the agent's own test of its own code is not
+independent verification. Admin's RLS-bypass scope makes it the single highest-value target in
+the system per Phase 6's own design doc — it should get the same standard, not a lower one just
+because it was built one phase later than the checklist that predates it.
+
+**What this does NOT propose.** Not relitigating GATE 6 (already closed, already has real
+evidence) or blocking Phase 7 on this addition — it is added to Phase 7's own scope, since Phase 7
+is precisely "the human personally attacks things," and this boundary had never been
+human-attacked before this ADR.
+
+**Evidence.** `admin/auth.py::verify_admin_jwt` (rejects any token carrying `video`, missing
+`aud=="admin-portal"`, or wrong signature); `admin/app.py::_require_admin` (every route but
+`/admin/login` requires it); `control_plane/mint.py` (tenant token issuance has no knowledge of
+`ADMIN_JWT_SECRET` at all — different module, different secret, never imported by each other).
+
+**Consequences.** One new automated checklist section (ADMIN BOUNDARY, run for real 2026-07-18 —
+see the entry logged this same day) + one new human-gate script
+(`tests/test_admin_boundary_live.py`, built and dry-run by the agent, run for real by the human),
+both additive — no existing Phase 7 gate line changed. `docs/27-PHASE-7-SECURITY.md` updated to
+match. **Phase 7 does not close until all three human-gate attempts (not two) fail.**
+
+**Status: ACCEPTED 2026-07-18, as written, no edits.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
