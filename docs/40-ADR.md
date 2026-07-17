@@ -1170,6 +1170,50 @@ run against `voice-picker/index.local.html` with real signed URLs and real play-
 (network log captured, 6 requests, 0 Uplift, 3 real audio fetches).
 
 ---
+## ADR-020 Branch-per-phase convention lapsed Phase 3-6; renamed and corrected   [ACCEPTED]
+Date: 2026-07-17 | git branch history, `AGENT_SYSTEM.md` branching convention
+
+**What happened.** `AGENT_SYSTEM.md` states a branch-per-phase convention. It held for Phases
+0-2 (`phase/0-harness`, `phase/1-supabase`, `phase/2-control-plane` all exist as real branches).
+Starting Phase 3 it silently lapsed: `phase/3-worker` was never replaced or supplemented by
+`phase/4-client-sdk`, `phase/5-voice-picker`, or `phase/6-admin` branches. Every commit for
+Phases 3, 4, 5, and 6 — including all of tonight's Phase 6 admin-portal work — landed as linear
+commits directly on `phase/3-worker`. This was first noticed and reported accurately by the
+human from `git log --all --oneline --graph`, not caught by the agent in the moment it happened
+back in Phase 4, nor flagged proactively before continuing to commit Phase 6 work onto the same
+branch tonight. In the prior session's handoff report this was characterized as "matching
+established practice" — which described what happened but understated it: the per-phase
+branches for 4, 5, and 6 were never created at all, not merely renamed or consolidated under a
+new convention.
+
+**Why it wasn't flagged in time.** The agent noticed the pattern (continuing on `phase/3-worker`
+into Phase 4 and beyond) but treated it as an implicit, already-decided convention rather than a
+live deviation from a written rule (`AGENT_SYSTEM.md`'s explicit branch-per-phase statement).
+Observing a pattern and silently conforming to it is not the same as verifying it against what's
+actually written down. No human sign-off was ever sought for the deviation.
+
+**Corrective action.** No history rewrite — splitting `phase/3-worker` into four retroactive
+per-phase branches now would require rebasing or cherry-picking already-reviewed, already-gated
+commits, for no real benefit (every phase's gate evidence lives in `state/PROGRESS.md` and this
+ADR file regardless of which branch a commit sits on) and real risk (rewriting shared history,
+possible SHA drift from what's already documented in PROGRESS.md/HANDOFF.md by commit hash).
+Instead: the branch was renamed in place to honestly describe its contents —
+`git branch -m phase/3-worker phase/3-through-6-combined` — so the name no longer implies
+single-phase scope it doesn't have. All commit SHAs are unchanged by a rename.
+
+**Going forward.** Branch-per-phase resumes strictly starting Phase 7: `phase/7-security` is to
+be created from `phase/3-through-6-combined`'s HEAD *before* any P7-Txx task work begins — the
+first item on the Phase 7 checklist, not something to remember partway through. More generally:
+noticing an established-but-undocumented pattern that contradicts an explicit written convention
+is itself a flag-it-immediately moment, to be raised for human decision, not silently continued.
+
+**Evidence.** `git log --all --oneline --graph -30` (full linear history, Phases 3-6 all on one
+branch, reviewed directly with the human); `git branch -a` (before: only `phase/0-harness`,
+`phase/1-supabase`, `phase/2-control-plane`, `phase/3-worker` exist; after: `phase/3-worker`
+renamed to `phase/3-through-6-combined`, confirmed via `git branch -a` post-rename, `git status`
+clean, no commit SHAs altered).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

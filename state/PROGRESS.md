@@ -360,6 +360,16 @@ re-test, a real bug found and fixed by the test itself)
   psycopg/dbconn, not the ported db.py's supabase-py REST client.
 
 ## Done (newest first)
+- [X] **(S9) ADR-020: branch-per-phase convention lapsed Phase 3-6, corrected.** Human caught
+  via `git log --all --oneline --graph` that Phases 3-6 all landed on `phase/3-worker` instead of
+  getting their own branches (`AGENT_SYSTEM.md` says branch-per-phase; held through Phase 2, then
+  silently lapsed, never flagged). No history rewrite — renamed in place:
+  `phase/3-worker` → `phase/3-through-6-combined` (all SHAs unchanged). Branch-per-phase resumes
+  strictly at Phase 7: `phase/7-security` must be created before any P7-Txx work starts, first
+  checklist item, not something to remember partway through. See docs/40-ADR.md ADR-020 for full
+  writeup, including the standing rule this creates: noticing an established-but-undocumented
+  pattern that contradicts a written convention is a flag-it-immediately moment, not a
+  note-it-and-continue one.
 - [X] **(S9, overnight/autonomous) Phase 6 — GATE 6 CLOSED.** Admin auth separate from tenant auth
   (MFA-mandatory, distinct JWT), all 6 dashboard views as real SQL, audit log, mint-rejection
   logging (new — Phase 2 never persisted a 401/403/429 anywhere before this), CORS isolation from
