@@ -663,6 +663,54 @@ to a whole minute — reported as a bounded estimate, not a ledger fact, per the
 rule. `scripts/concurrency_test.py` and `scripts/concurrency_test_client.html` are committed and
 reusable for a future, larger-N or longer-duration re-test if the human wants one.
 
+**Addendum 2026-07-17 (human review) — Uplift spend, real hypothesis, and interruption-latency
+comparison, none of which were in the original entry.**
+
+**(a) Uplift spend was genuinely ZERO, not "unmeasured" — verified, not estimated.**
+`.env.local` had `UPLIFT_MODE=live` active for the entire test (never reverted after the Gate-3
+call). But `worker/main.py`'s entrypoint (`ctx.connect()` → `wait_for_participant()` →
+`build_session()` → `session.start(agent, room=...)`) never calls `session.generate_reply()` or any
+other auto-greet — the agent only speaks in response to a real STT transcript. None of the 6 test
+clients published any audio track (deliberate, to avoid fake-mic-device setup in headless
+Chromium), so Gladia STT received zero audio frames and never produced a transcript; the LLM/TTS
+path was never entered. **Uplift TTS spend for this test was 0 seconds — confirmed by tracing the
+code path, not inferred from the unchanged ledger value.** `livekit_agent_min`'s 3-6 minute figure
+above remains an estimate (a different, far less constrained resource — 1000/mo budget, not
+Uplift's 600s-total-forever). **Consequence, stated plainly:** this test exercised ONLY room-join/
+job-dispatch concurrency — it did not exercise STT, LLM, TTS, or adaptive-interruption inference
+load, so it does not fully validate the free-tier concurrency concern for a real, speaking call.
+
+**(b) Working hypothesis for why all 6 succeeded (previously left unstated on purpose — now
+answered).** Reconstructed precise timing from the worker log: first job dispatched 14:49:43.818;
+the other 5 arrived in a 7ms burst at 14:49:45.068-14:49:45.075; all 6 job runners initialized by
+14:49:45.366; teardown did not begin until ~14:50:15. **All 6 sessions were simultaneously live for
+a sustained ~30-second window — this rules out "peak load never actually hit 6."** The overlap was
+real. Leading hypothesis, given (a): LiveKit Build's concurrency accounting is likely gated on
+**active media flow (published/subscribed audio), not raw room presence** — none of the 6 sessions
+ever exchanged a single audio frame in either direction, and it's plausible that only
+actively-streaming sessions count against the "5 concurrent" limit. Secondary, non-exclusive
+possibility: the documented figure is stale for the current Build tier; not independently checked.
+**Cheapest next test (not built, not run — flagged as the concrete next step):** modify
+`concurrency_test_client.html` to publish a synthetic tone via `MediaStreamAudioDestinationNode`
+(Web Audio API, no real mic/permissions needed) instead of zero tracks. This exercises genuine
+published/subscribed media at zero Uplift risk (a tone won't transcribe as speech, so the agent
+still won't be triggered to reply) and would directly test the media-flow-gating hypothesis.
+
+**(c) detection_delay=1.103s checked against LiveKit's own published numbers, not the unverified
+"86% precision / 100% recall" figures from earlier pasted research.** Fetched
+`livekit.com/blog/adaptive-interruption-handling` directly: LiveKit states a **median of ~216ms of
+audio** needed before the model decides, with inference completing in **≤30ms** — a published
+typical total of roughly **~250ms**. Our one measured sample: `prediction_duration=38ms` (closely
+matches their ≤30ms inference claim), but `detection_delay=1103ms` — **roughly 4-5x their published
+median.** Reads as slow on this single sample, not within normal range. Partial, grounded (not
+complete) explanation: `livekit/agents/inference/interruption.py`'s own source sets
+`AUDIO_PREFIX_DURATION = 1.0` (a full second of pre-roll context included in the detector's default
+analysis window) — if LiveKit's 216ms figure is measured post-overlap-onset only (excluding
+prefix), that config difference could account for part of the gap. **n=1 — not enough samples to
+know if 1.1s is typical for this setup or a one-off (cold-start, network RTT to the "India West"
+inference region from this dev machine, etc.).** Needs several more real interruption events,
+captured live, before treating 1.1s as a stable number rather than a fluke.
+
 **Evidence.** Live worker log, 2026-07-17 14:49:43–14:50:18 (job dispatch, job runner init, Gladia
 connections, adaptive interruption sessions, clean teardown — full transcript in the session
 record); `scripts/concurrency_test.py` output (`connected=6 failed=0 other=0`); `control_plane/

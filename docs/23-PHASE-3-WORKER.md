@@ -192,7 +192,10 @@ test) because session-end usage recording was never wired to real metrics (`work
 `record_usage` exists but nothing calls it with real duration yet — tracked, non-blocking, same gap
 noted since HANDOFF). P3-T08's actual LiveKit agent-minute spend is therefore an ESTIMATE, not a
 ledger fact: 6 sessions × ~30s wall-clock ≈ 3-6 agent-minutes (ADR-014), well within the 1000/mo cap
-regardless of which estimate is closer to true.
+regardless of which estimate is closer to true. **`uplift_tts_sec` is different — VERIFIED zero
+spend from P3-T08, not estimated** (ADR-014 addendum): traced the entrypoint code path and
+confirmed no audio was ever published by the test clients, so STT never produced a transcript and
+the TTS path was never entered, despite `UPLIFT_MODE=live` being active throughout.
 
 **Overall: GATE 3 is closed.** Six of seven lines are genuinely green with real evidence. One
 (`STT_PROVIDER=soniox -> 402`) is architecturally-verified-but-not-live-observed, and one
