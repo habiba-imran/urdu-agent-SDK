@@ -1,5 +1,53 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items queued in MORNING_QUEUE.md | Branch: phase/3-worker
+Updated: 2026-07-17 | Phase: 3 (Worker) | Task: Gate-3 PASSED (pipeline works end-to-end); post-call
+quality pass (6 items) done and gated, awaiting human review + next live-listen | Branch: phase/3-worker
+
+## Now (Session 8 — Gate-3 human-listen PASSED, post-call quality pass)
+- **Gate-3 human-listen: PASSED.** Two live attempts tonight (first crashed on the plugin
+  main-thread bug, see ADR-007's corrected account); the third, on the corrected worker, ran
+  end-to-end: greeting, STT, LLM, TTS, interruption, session teardown all worked. Full session
+  transcript (log lines) is the record; no separate write-up beyond this file + the ADRs below.
+- **Real finding from the live call, NOT one of the six planned items: tool-calling is NOT wired.**
+  `tools.py`'s functions are not registered as real LiveKit function-calling tools on the
+  `AgentSession`. Observed live: the LLM emitted literal `tool_code\nprint(search_products(
+  price_range_min=45000, price_range_max=55000))\n` as spoken assistant text (worker's own
+  `conversation_item_added` log), which went straight to TTS. A later turn produced a fluent
+  "used Dell" answer with no tool call having actually run in between — looks like hallucinated
+  results, not real `search_products` data. **NOT fixed this session** (out of the six items'
+  scope — needs its own investigation into LiveKit's function-calling API). See ADR-011 (where
+  this blocks the filler-on-tool-call evaluation) and ADR-012 (flagged as the top-priority next
+  fix, ahead of further quality polish). 🔴 **Next session: fix this before anything else.**
+- **Post-Gate-3 quality pass — 6 items, all gated (`pytest tests/test_worker.py` 5/5 green after
+  each), none live-validated yet (explicitly deferred — human reviews diffs, then one more
+  live-listen together):**
+  1. Adaptive interruption forced explicit (`turn_handling={"interruption": {"mode": "adaptive"}}`
+     in `worker/main.py::build_session`) — was silently dev-mode-only by accident of the CLI
+     subcommand; verified against installed source, not assumed. ADR-008.
+  2. STT `code_switching=False` now explicit in `worker/factories.py::make_stt()` (was
+     implicit-and-moot). D19 re-checked against Gladia's current docs/changelog — no material
+     change found for Urdu specifically. ADR-009.
+  3. Uplift phrase-replacement config (ADR-006 Layer 2) — `scripts/update_phrase_config.py`
+     written (16 entries reused verbatim from the old repo's human-verified D42 config, 8 new
+     entries proposed with my own transliteration, flagged for human confirmation — "Bluetooth"
+     is the lowest-confidence one). **NOT YET RUN** — it's a real write to the live Uplift API
+     (zero TTS budget per ADR-006, but still a live third-party call) — awaiting explicit
+     sign-off before executing, consistent with the standing live/paid-call rule.
+  4. `persona.py` rewritten (v7): worked code-switching-ratio examples for everyday words (not
+     just brand names), bounded disfluency allowance, emotional-register stability guardrail —
+     cited against LiveKit's prompting guide + a code-mixing-generation research playbook, not
+     guessed. `SYSTEM_PROMPT_V1` untouched. ADR-010.
+  5. Endpointing: confirmed effective values (0.3s/2.5s, LiveKit's own streaming-turn-detector
+     defaults) already match documented guidance — no change applied. Filler-on-tool-call
+     evaluated (D35 precedent vs. a cited Ultravox-specific 47.9%-interruption-rate downside,
+     arXiv 2604.04847v1) and correctly NOT built — blocked by the tool-calling wiring bug above,
+     not by the evaluation itself. ADR-011 (proposal only).
+  6. Honest capability-ceiling note — ADR-012. Uplift Orator has NO SSML/rate/pitch control at
+     any tier (API ceiling, not a quota one); Gladia's STT lag is a vendor latency floor;
+     LiveKit's Adaptive Interruption Detector is a Cloud-hosted call with untracked cost (open
+     item). The tool-calling bug is explicitly called out as NOT a free-tier ceiling — a real,
+     fixable bug that should be the next session's first priority.
+- **Standing rules honored:** no live call attempted this pass, `UPLIFT_MODE` untouched, no token
+  minted, worker not restarted. Item 3's script is prepared but not executed pending sign-off.
 
 ## Now (Session 7 — autonomous, human asleep)
 - **Phase 3 NON-LIVE work is complete.** session.start() wired (build_agent injects the untrusted
@@ -201,3 +249,27 @@ Updated: 2026-07-17 | Phase: 3 (Worker) | Task: non-live work DONE; live items q
   the same way the first time a live job actually uses it on Windows — no test catches this; the
   whole failure mode is invisible to `pytest`, which never invokes the `__main__` block or spawns a
   real job thread/process.
+- 🔴 **Tool-calling is not actually wired — `search_products`/`get_store_policy` do not run; the LLM
+  hallucinates instead.** Found live during Gate-3's successful (third) attempt, 2026-07-17 — NOT
+  one of the six planned post-call quality items, and NOT fixed this session. This was already a
+  KNOWN pending item (see the "Pipecat stubs" trap above and the ported-DECISIONS.md note: "In
+  Phase 3, `tools.py` must be adapted to LiveKit Agents' function-calling API... different schema
+  format, different callback model") — tonight is the first LIVE evidence of the actual consequence.
+  Observed: `worker`'s own `conversation_item_added` log recorded the assistant turn as literal text
+  `tool_code\nprint(search_products(price_range_min=45000, price_range_max=55000))\n` — Gemini's
+  code-execution-style pseudocode for a tool call, not a real LiveKit function invocation — and this
+  text was sent straight to Uplift TTS and (per the worker log) spoken. The same pattern repeated for
+  `get_store_policy(policy_type="warranty")`. A subsequent turn produced a fluent, on-topic Urdu
+  answer about a "used Dell" laptop with no tool call in between — almost certainly a HALLUCINATED
+  product answer, not real `search_products` data, since no tool actually ran. **Impact:** every
+  price/stock/policy claim Mahnoor makes right now is unverified against the DB, directly violating
+  the persona's own HARD RULE ("Any price, stock, spec or policy MUST come from a tool result...
+  never invent") — the rule is stated but not currently enforced, because the enforcement mechanism
+  (real tool execution) isn't wired. **Not fixed tonight** — needs its own investigation into how
+  `tools.py`'s (ported, Pipecat-shaped) function schemas map onto `livekit.agents`' function-calling
+  API (`Agent`/`AgentSession` tool registration — likely a `FunctionTool`/`@function_tool`-style
+  decorator or a `tools=[...]` kwarg; NOT verified yet, do not guess the fix, verify against
+  installed source same as every other Phase-3 finding). See docs/40-ADR.md ADR-011 (blocks the
+  filler-on-tool-call evaluation) and ADR-012 (flagged as the top-priority next fix). 🔴 **Next
+  session: fix this before further quality polish** — a well-paced agent that invents inventory data
+  is worse than a plain one that doesn't.

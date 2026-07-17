@@ -298,6 +298,269 @@ re-registration log, including the `sys.modules` evidence line, are in the Gate-
 transcript, 2026-07-17. Trap logged in `state/PROGRESS.md` Traps section.
 
 ---
+## ADR-008 Adaptive interruption forced explicit — was silently dev-mode-only   [ACCEPTED]
+Date: 2026-07-17 | Post-Gate-3 quality pass, item 1 | Verified against installed `livekit.agents`
+source, not assumed.
+
+**Context.** Gate-3's live call surfaced an interruption-handling complaint. The worker never set
+`turn_handling`, so whether "adaptive" (ML-based, LiveKit-hosted) or plain VAD-based interruption
+detection was active depended entirely on undocumented auto-detection.
+
+**What was verified (`livekit/agents/voice/agent_activity.py::_resolve_interruption_detection`,
+L4183-4228).** Adaptive interruption requires ALL of: STT `capabilities.streaming` and
+`capabilities.aligned_transcript` both truthy, a VAD instance present, `turn_detection` not
+`"manual"`/`"realtime_llm"`, and the LLM not an `llm.RealtimeModel`. Our gladia/silero/google config
+satisfies every one of these (gladia sets `streaming=True, aligned_transcript="word"` —
+`livekit/plugins/gladia/stt.py` L279; `google.LLM` subclasses plain `llm.LLM`, not `RealtimeModel`
+— `livekit/plugins/google/llm.py` L100). **But** even when all of that holds, if no mode is
+explicitly requested, adaptive interruption is auto-enabled ONLY when `LIVEKIT_DEV_MODE=1` or
+`utils.is_hosted()` is true (`agent_activity.py` L4218-4225). `LIVEKIT_DEV_MODE=1` is set
+automatically by the CLI's `dev`/`console` subcommands only (`cli/_legacy.py` L1611-1616) — **not**
+by `start` (production). So tonight's Gate-3 call (`python -m worker.main dev`) had adaptive
+interruption active by accident of which CLI subcommand launches the worker, and it would have
+silently fallen back to plain VAD-based interruption in production, logging only a single INFO line
+("adaptive interruption is disabled by default in production mode") — easy to miss.
+
+**Decision.** `worker/main.py::build_session()` now passes
+`turn_handling={"interruption": {"mode": "adaptive"}}` explicitly to `AgentSession(...)`, making dev
+and prod behave identically, and logs the configured value (`session.interruption_detection`) at
+session start. Also noted: the `AdaptiveInterruptionDetector` (`livekit/agents/inference/
+interruption.py`) is a **LiveKit Cloud-hosted inference call** over websocket
+(`LIVEKIT_INFERENCE_URL`/`{base_url}/bargein`, authenticated with `LIVEKIT_API_KEY`/
+`LIVEKIT_API_SECRET`) — not a local/free component. It was firing live during tonight's call
+("adaptive interruption detector initialized", "adaptive interruption session created" in the
+worker log) with no cost tracked anywhere in `usage_ledger.json`. **Open item, not resolved here:**
+confirm with LiveKit whether/how this is metered and whether it needs a ledger line — flagged in
+ADR-012 (capability-ceiling note), not investigated further tonight (out of this pass's scope).
+
+**How to confirm which mode is actually active in any future log.** LiveKit's own
+`"adaptive interruption detector initialized"` INFO line (`inference/interruption.py` L336-347)
+fires only when construction succeeds; a WARNING (`"interruption_detection is provided, but it's
+not compatible with the current configuration and will be disabled"`, `agent_activity.py`
+L4199-4201) means it silently fell back to VAD. These are the ground truth, not an assumption.
+
+**Consequences.** Explicit config removes the dev/prod discrepancy. Residual risk: if
+`STT_PROVIDER` ever changes to a plugin without `aligned_transcript`/`streaming` support, this
+falls back to VAD-based interruption with a WARNING log, not a crash — `soniox` was checked and
+also sets `aligned_transcript="chunk"` (`livekit/plugins/soniox/stt.py` L178), so the existing
+`STT_PROVIDER=soniox` seam stays compatible; `deepgram` was NOT checked (plugin not installed in
+this environment) — flagged, not verified.
+
+**Evidence.** `livekit/agents/voice/agent_activity.py` L4183-4228; `livekit/agents/voice/
+agent_session.py` L466 (`interruption_detection` derivation), L1841-1843 (property); `livekit/
+agents/voice/turn.py` L150-165 (`InterruptionOptions` TypedDict, `mode` key); `livekit/agents/
+utils/misc.py` L49-60 (`is_dev_mode`/`is_hosted`); `livekit/agents/cli/_legacy.py` L1611-1616
+(`LIVEKIT_DEV_MODE` set only for `dev`/`console`); `livekit/plugins/gladia/stt.py` L279; `livekit/
+plugins/google/llm.py` L100; `livekit/agents/inference/interruption.py` (whole file, hosted
+inference call). `pytest tests/test_worker.py` reconfirmed 5/5 green.
+
+---
+## ADR-009 STT `code_switching` — explicit False, D19 re-checked, no material change found   [ACCEPTED]
+Date: 2026-07-17 | Post-Gate-3 quality pass, item 2 | INPUT-side (how STT interprets the customer's
+mixed speech) — distinct from ADR-010 (OUTPUT-side, how the LLM generates its own mixed speech).
+
+**Context.** D19 (ported `DECISIONS.md`, old Pipecat repo, raw-Gladia-WebSocket integration)
+measured `languages=["ur"], code_switching=False` at CER 0.14 vs `["ur","en"], code_switching=True`
+at CER 0.43 — Gladia produced English TRANSLATIONS of pure-Urdu speech for half the test set. Task
+instruction: do not enable `code_switching` without addressing D19 head-on; check whether Gladia's
+model has materially changed since; if unchanged, leave off and say so explicitly; if there's a case
+to revisit, propose a separate flagged test, don't bundle it in.
+
+**What was checked (not guessed).** `livekit-plugins-gladia` 1.6.5 installed source
+(`gladia/stt.py` L205-211): the constructor's default `model` is **already `"solaria-1"`**
+(`GladiaModels = Literal["solaria-1"]` — `gladia/models.py` L3; this plugin version does not expose
+any other model), and the default `code_switching` is **`True`** — our `factories.py` call did not
+override either, so it was running Solaria-1 with the Python-level default `code_switching=True`.
+This did not regress live tonight only because we pass a single-element `languages=["ur"]`, and
+Gladia's own docs state: *"If one language is set, this option will be ignored"*
+(docs.gladia.io/api-reference/v2/live/init, confirmed via fetch). Checked Gladia's changelog
+(gladia.io/changelog) and code-switching docs (docs.gladia.io/chapters/language/code-switching) for
+a material accuracy change since D19: the only recent model-accuracy entries are Solaria-3 (June 10,
+2026 — English/European languages) and a Hebrew accuracy upgrade (March 16, 2026) — **neither
+mentions Urdu or code-switching accuracy**. The code-switching docs page itself still warns that
+broad language sets cause *"frequent misdetections—especially between similar-sounding
+languages"* — consistent with, not contradicting, D19's finding. A general Gladia blog post claimed
+Solaria-1 has "native code-switching support" reducing WER "by up to 55% at language boundaries",
+but this is marketing copy, not a changelog/benchmark entry, and was not treated as evidence.
+
+**Decision.** `worker/factories.py::make_stt()` now passes `code_switching=False` EXPLICITLY
+(previously implicit-and-moot via the single-language override) — defensive: if a second language
+is ever added to `languages`, the plugin's `True` default won't silently re-enable it unnoticed.
+D19's conclusion stands, unchanged, as of 2026-07-17.
+
+**Proposed (not applied) future test, flagged separately per the task instruction.** Gladia is
+actively shipping per-language accuracy upgrades (the Hebrew entry is the precedent — before/after
+WER improvement, single language). If Gladia ever ships a comparable dedicated Urdu upgrade,
+re-measure `code_switching=True` CER against the current D19 baseline before considering it. Not
+scheduled; no date; not this pass.
+
+**Evidence.** `livekit/plugins/gladia/stt.py` L205-211 (constructor defaults); `livekit/plugins/
+gladia/models.py` L3 (`GladiaModels` literal); docs.gladia.io/api-reference/v2/live/init
+(single-language overrides `code_switching`); gladia.io/changelog (Solaria-3, Hebrew entries, dated);
+docs.gladia.io/chapters/language/code-switching (current guidance); ported `DECISIONS.md` D19.
+`pytest tests/test_worker.py` reconfirmed 5/5 green.
+
+---
+## ADR-010 Persona rewritten for calibrated code-switching + disfluency (OUTPUT-side)   [ACCEPTED]
+Date: 2026-07-17 | Post-Gate-3 quality pass, item 4 | OUTPUT-side (how the LLM generates its own
+mixed Urdu/English speech) — distinct from ADR-009 (INPUT-side STT code-switching).
+
+**Context.** The prior persona (`persona.py` v6) instructed "Natural Pakistani Urdu with everyday
+English tech words" — a vague style instruction with worked examples ONLY for brand/tech-term
+Latin-script formatting (ADR-006 Layer 1), none for the natural code-switching RATIO of ordinary
+words. Task instruction: give the system prompt specific worked examples of the target
+code-switching ratio/style (not just brand names), and explicit personality/disfluency instructions
+per LiveKit's own prompting guidance, since under-specified prompts are known to mis-produce
+code-switching.
+
+**Research checked (not guessed).** LiveKit's prompting guide (docs.livekit.io/agents/start/
+prompting/) recommends: state formatting rules for TTS explicitly (plain text, no markdown, brief
+replies); be SPECIFIC about disfluencies — pair "um" with a pause and a recovery word, since filler
+words don't appear in LLM output without explicit prompting; treat emotion controls as guardrails —
+an agent that swings between emotional registers within one turn "will sound very unstable"; and
+reinforce rules from multiple angles (state the rule, show examples, restate with more examples).
+Separately, "Code-Mixing and Code-Switching for Text in the LLM Era: A Playbook" (arXiv 2602.11181v2,
+§3.2 "Prompting Strategies for Controlled Code-Mixed Generation") states plainly: *"Vague
+instructions like 'act as a bilingual speaker' are often insufficient for maintaining a mixed
+output"* and recommends explicit constraint/rule-based prompting over persona-only instructions —
+directly on point for what our prior STYLE paragraph was doing.
+
+**Decision.** `persona.py` `SYSTEM_PROMPT` (v7): STYLE now shows two full worked-example utterances
+demonstrating the target code-switching ratio for everyday words («دیکھیں، ہمارے پاس ایک اچھا
+option ہے، آپ کے بجٹ میں fit بھی ہو جائے گا۔» / «بالکل، میں ابھی check کر لیتی ہوں، one second
+دیجیے۔»), with an explicit rule (grammar/verbs/structure stay Urdu; don't switch every noun; never
+produce a mostly-English sentence) stated alongside the examples per the "state + show + restate"
+pattern. Added a tightly-bounded disfluency allowance (at most once per reply, never stacked, never
+on a firm answer, paired with a pause+recovery word) and an emotional-register stability guardrail
+(stay warm and stable across a call; don't swing registers within one reply) — both cited LiveKit
+guidance, not invented. PACING was reworded to state explicitly that Uplift has NO SSML/rate/pitch
+control **at all** — a hard product constraint, not a tunable — so a future session doesn't spend
+time looking for a config fix that cannot exist (reinforced in ADR-012).
+
+**Consequences.** `SYSTEM_PROMPT_V1` (the original, kept for reference/A-B testing) is untouched.
+This is a prompt-only change; nothing here is machine-verifiable by `pytest tests/test_worker.py`
+(reconfirmed 5/5 green — unaffected, as expected) — quality can only be judged by a human listening
+to the next live call. Not applied: no live call was made to validate this rewrite tonight, per the
+task's explicit "no live call" instruction.
+
+**Evidence.** docs.livekit.io/agents/start/prompting/ (fetched 2026-07-17); arXiv 2602.11181v2 §3.2
+(fetched 2026-07-17); ADR-006 (Layer 1 precedent this extends, not replaces).
+
+---
+## ADR-011 Endpointing: no change proposed; filler-on-tool-call blocked by a deeper bug   [PROPOSED — not applied]
+Date: 2026-07-17 | Post-Gate-3 quality pass, item 5 | Propose only, per task instruction — nothing
+in this entry has been applied to code.
+
+**Endpointing.** Verified (not assumed) that the worker uses LiveKit's own ML turn detector
+("turn-detector-v1", confirmed live in tonight's log: `"audio turn detector initialized"`), which is
+a `_StreamingTurnDetector` — so the EFFECTIVE current values, since `worker/main.py` never overrides
+`turn_handling["endpointing"]`, are LiveKit's OWN streaming defaults: `min_delay=0.3s,
+max_delay=2.5s, alpha=0.9, mode="fixed"` (`livekit/agents/voice/turn.py` L142-147), confirmed live
+in the eot-prediction log lines (`"endpointing_delay": 0.3"` appeared repeatedly). Per LiveKit's
+turn-handling docs (docs.livekit.io/reference/agents/turn-handling-options/): with the audio turn
+detector, unset `min_delay`/`max_delay` already default to 0.3/2.5 instead of the older 0.5/3.0,
+"since the model provides a confident end-of-turn signal, so the agent can commit sooner"; in STT
+mode the delay is applied ON TOP OF the STT provider's own end-of-speech signal, and D21 (ported
+DECISIONS.md) measured Gladia's finalization lag at ~550-650ms after VAD stop — so real perceived
+latency is closer to (Gladia's own lag) + 0.3s, not 0.3s alone.
+
+**Proposal: no change right now.** Current values already match LiveKit's own documented defaults
+for the exact turn-detector configuration in use; there is no live-measured complaint from tonight's
+call specifically about response latency (the "interruption complaint" that motivated ADR-008 was
+about the agent not reacting to being talked over, not about how long it waits before replying) to
+justify deviating from documented guidance. **If** a future live-listen judges response timing too
+slow, the first lever to try is lowering `min_delay` toward ~0.15-0.2s (trading some false-turn-
+boundary risk on noisy audio, per LiveKit's own stated tradeoff — LiveKit's docs: "lower it from the
+default to push response time down at the cost of more false turn boundaries"), not touching
+`max_delay`. This must be validated against a real live-listen, not applied blind.
+
+**Filler-on-tool-call: evaluated, correctly NOT built — blocked by a bug found live tonight, not by
+this evaluation's downside citation alone.** D35 (ported DECISIONS.md) precedent: the old repo's
+cached filler fired from the FIRST STREAMED TOOL-CALL DELTA — i.e., triggered by the model's actual
+structured function-call output beginning to form, not by the model verbally announcing an
+intention. Cited downside, checked precisely (not the vague "~48%" the task description
+approximated): "Full-Duplex-Bench-v3: Benchmarking Tool Use for Full-Duplex Voice Agents Under
+Real-World Disfluency" (arXiv 2604.04847v1) measured **Ultravox v0.7** specifically — a DIFFERENT
+architecture where the model speaks a filler sentence BEFORE deciding to call the tool — at a
+**47.9% interruption rate** ("interrupts users... nearly half of all turns") and inflated
+task-completion latency to **8.40s** ("the model speaks before it calls any tool... deferring tool
+execution until after the filler inflates task-completion latency to 8.40s"). This is evidence
+against Ultravox's specific speak-then-decide pattern, not proof D35's event-triggered pattern has
+the same flaw — but it is the real, cited caution the task asked for, and it argues for the
+tool-call-EVENT trigger (D35's design), never a model-verbalized one.
+
+**The actual blocker, found live during tonight's Gate-3 call, not by this evaluation.** `tools.py`'s
+functions are **not currently wired as real LiveKit function-calling tools** on the `AgentSession` —
+observed live: the LLM emitted literal `tool_code\nprint(search_products(price_range_min=45000,
+price_range_max=55000))\n` as spoken assistant TEXT (confirmed via the worker's own
+`conversation_item_added` log), which Uplift then synthesized and (per the worker log) sent to
+speech. There is no real "first streamed tool-call delta" event happening right now for a filler to
+trigger on — `search_products`/`get_store_policy` do not actually execute; the LLM appears to
+hallucinate plausible-sounding results afterward (a second turn produced a fluent but unverifiable
+"used Dell" answer with no tool call in between). **This is a separate, more fundamental bug than
+filler timing** — logged as its own trap in `state/PROGRESS.md`, NOT fixed in this pass (out of the
+six items' scope; fixing it requires understanding LiveKit's function-calling API wiring, a
+distinct investigation). Filler-on-tool-call cannot be meaningfully evaluated or built until this is
+fixed first.
+
+**Evidence.** docs.livekit.io/reference/agents/turn-handling-options/ (fetched 2026-07-17);
+`livekit/agents/voice/turn.py` L142-147; live worker log, Gate-3 session, 2026-07-17 (eot-prediction
+lines, `conversation_item_added` lines); arXiv 2604.04847v1 (fetched 2026-07-17); ported
+`DECISIONS.md` D21, D35.
+
+---
+## ADR-012 Honest capability ceiling — what's fixed tonight, what's structurally capped   [ACCEPTED]
+Date: 2026-07-17 | Post-Gate-3 quality pass, item 6 | Written so nobody chases an unfalsifiable
+"Retell-parity" target, or reports something "fixed" that can't be verified without spending
+unapproved budget.
+
+**Fixed/addressed tonight (ADR-008 through ADR-011, all `pytest tests/test_worker.py` 5/5 green,
+none live-validated yet — that's the next session):**
+- Adaptive interruption now explicit and platform-independent (was accidentally dev-mode-only).
+- STT `code_switching` explicit `False` (was implicit-and-moot; now defensive against future
+  language-list growth); D19 re-confirmed current, no Gladia change found for Urdu.
+- Persona rewritten with worked code-switching-ratio examples, bounded disfluency, emotional
+  stability guardrail — cited against LiveKit's prompting guide and code-switching-generation
+  research, not guessed.
+- Endpointing confirmed already correct per LiveKit's own guidance for our turn-detector; no blind
+  change applied. Filler-on-tool-call correctly identified as blocked by a real tool-calling wiring
+  bug (see ADR-011 and the PROGRESS.md trap), not built.
+- Uplift phrase-replacement config: 16 entries reused verbatim from the old repo's human-verified
+  D42 config, 8 new entries proposed and flagged for human confirmation before going live (item 3;
+  see PROGRESS.md — NOT yet executed, pending sign-off, since it's a real write to a live Uplift
+  API even though ADR-006 established it's zero-TTS-budget).
+
+**Structurally capped by the current free-tier stack — no prompt or persona change can fix these:**
+- **Uplift Orator has NO SSML, rate, pitch, or emotion parameter at all** (D42, reconfirmed
+  tonight). Pacing is 100% punctuation-based. This is an API/architecture ceiling, not a quota
+  ceiling — per H9 (docs/41-HUMAN-TASKS.md), even Uplift's Enterprise tier should NOT be assumed to
+  add this; it needs to be asked about explicitly, not assumed away by paying more.
+- Gladia STT finalization lag (~550-650ms, D21) is a vendor-side latency floor on the tier we use.
+  Soniox is measured ~400ms faster AND 6x cheaper (ADR-002) but is blocked on a 402 (unfunded).
+- The LiveKit Adaptive Interruption Detector (ADR-008) is a LiveKit Cloud-hosted inference call,
+  not a local/free component — it fired live tonight with zero cost tracking in
+  `usage_ledger.json`. Whether/how this is metered is UNVERIFIED — open item, not investigated
+  further this pass.
+
+**Not a free-tier ceiling — a real bug, fixable without money, not fixed tonight:** the tool-calling
+wiring gap (ADR-011, PROGRESS.md trap) means `search_products`/`get_store_policy` do not actually
+run; the LLM emits pseudocode and/or hallucinates results instead. This is the single most
+functionally important finding from tonight's call and should be the FIRST thing addressed in the
+next work session, ahead of any further quality polish — a beautifully-paced agent that invents
+inventory data is a worse product than a plainly-paced one that doesn't.
+
+**What would need a paid tier to close further:** Soniox STT (funding unblocks an already-written
+integration, ADR-002); Gemini paid tier or the cerebras→groq→gemini failover chain (P3-T06 finding,
+free-tier RPM caps after ~6 rapid calls); a TTS vendor other than Uplift, if true prosody/emotion
+control is ever required — this is an ADR-001-level vendor decision, not a Phase-3 quality-pass
+scope, and Uplift's own Enterprise tier should not be assumed to solve it without asking (H9).
+
+**The line to hold:** "sounds as good as it can within these constraints" is falsifiable and
+achievable. "Sounds like a paid competitor with prosody control we don't have" is not achievable on
+this stack at any dev-tier budget, and treating it as a bug to keep chasing would be a category
+error, not a quality gap.
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

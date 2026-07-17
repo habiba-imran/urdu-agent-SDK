@@ -54,12 +54,43 @@ async def build_session(md: dict[str, str]) -> tuple[Any, AgentConfig]:
     cfg = await asyncio.to_thread(load_agent_config, md["agent_id"], md["tenant_id"])
 
     from livekit.agents import AgentSession  # lazy: needs the livekit runtime
+    from livekit.agents.log import logger
 
     session = AgentSession(
         stt=make_stt(),
         llm=make_llm(cfg.llm_model),
         tts=make_tts(cfg.voice_id),
         vad=_load_vad(),
+        # Force "adaptive" rather than relying on LiveKit's dev/prod auto-detect. Verified
+        # against installed source (livekit/agents/voice/agent_activity.py
+        # ::_resolve_interruption_detection, L4183-4228): with no explicit mode, adaptive
+        # interruption is enabled automatically ONLY when LIVEKIT_DEV_MODE=1 (set by the
+        # `dev`/`console` CLI subcommands — cli/_legacy.py L1615-1616) or utils.is_hosted()
+        # is True; otherwise it silently falls back to plain VAD-based interruption in
+        # production (`python -m worker.main start`), logging only a single INFO line
+        # ("adaptive interruption is disabled by default in production mode") — easy to
+        # miss. Setting mode="adaptive" explicitly makes dev and prod behave identically.
+        # Compatibility conditions (all verified true for the current gladia/silero/google
+        # config — same function, L4184-4190): STT capabilities.streaming +
+        # capabilities.aligned_transcript both truthy (gladia sets both — livekit/plugins/
+        # gladia/stt.py L279: `streaming=True, ..., aligned_transcript="word"`), a VAD
+        # instance present, turn_detection not "manual"/"realtime_llm", and the LLM not an
+        # `llm.RealtimeModel` (google.LLM subclasses plain `llm.LLM` — livekit/plugins/
+        # google/llm.py L100). If STT_PROVIDER ever changes to a plugin without
+        # aligned_transcript, this falls back to VAD-based interruption with a WARNING log,
+        # not a crash. See docs/40-ADR.md ADR-008 for the full account and how to confirm
+        # which mode is actually active in a live log.
+        turn_handling={"interruption": {"mode": "adaptive"}},
+    )
+    # Direct evidence of the configured value, not an assumption — the actual RUNTIME
+    # confirmation is LiveKit's own "adaptive interruption detector initialized" INFO log
+    # (livekit/agents/inference/interruption.py L336-347), which only fires if the
+    # compatibility conditions above hold; a WARNING instead means it fell back to VAD.
+    logger.info(
+        "interruption_detection configured=%s (check startup log for LiveKit's own "
+        "'adaptive interruption detector initialized' INFO line to confirm it's actually "
+        "active, or a WARNING line if it fell back to VAD)",
+        session.interruption_detection,
     )
     return session, cfg
 
