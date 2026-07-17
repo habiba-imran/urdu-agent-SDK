@@ -45,7 +45,20 @@ from usage_guard import increment, load as load_ledger  # noqa: E402
 
 OUT_DIR = ROOT / "voice-picker" / "previews"
 CHARS_PER_SEC = 20  # same generous upper bound as record_fixture.py, for the pre-call estimate
-PER_VOICE_MAX_SECONDS = 6.0  # hard cap per line -- these are short greetings, not paragraphs
+DEFAULT_MAX_SECONDS = 6.0  # hard cap per line -- these are short greetings, not paragraphs
+
+# Per-voice overrides. ADR-019: washroom-singer's file codename (ai_naat_p4_m_za) indicates a
+# naat-style (melismatic, sung) voice model -- genuinely slower than ordinary speech on the same
+# short line, not a bug. Raised to 10.0s for this voice specifically rather than raising the
+# global default or trimming its line. If it still exceeds 10.0s, the run reports the real number
+# reached and moves on -- the cap does not get raised again blind.
+MAX_SECONDS_OVERRIDES = {
+    "washroom-singer": 10.0,
+}
+
+
+def cap_for(voice_id: str) -> float:
+    return MAX_SECONDS_OVERRIDES.get(voice_id, DEFAULT_MAX_SECONDS)
 
 LINE_MASCULINE = "السلام علیکم، میں آپ کی کیا مدد کر سکتا ہوں؟"
 LINE_FEMININE = "السلام علیکم، میں آپ کی کیا مدد کر سکتی ہوں؟"
@@ -153,7 +166,7 @@ def main() -> int:
         phrase_config_id = cfg_path.read_text(encoding="utf-8").strip() or None
 
     class CapExceeded(Exception):
-        """Raised when a voice's per-line synthesis crosses PER_VOICE_MAX_SECONDS.
+        """Raised when a voice's per-line synthesis crosses its per-voice cap (cap_for()).
 
         Carries the partial pcm/sample-rate that was actually streamed (and billed by Uplift)
         before the abort, so the caller can log real spend instead of losing it -- see the
@@ -161,11 +174,12 @@ def main() -> int:
         design discarded this data and killed the whole run instead of just this one voice.
         """
 
-        def __init__(self, pcm: bytes, sr: int):
+        def __init__(self, pcm: bytes, sr: int, cap: float):
             self.pcm = pcm
             self.sr = sr
+            self.cap = cap
 
-    async def synth_one(voice_id: str, text: str) -> tuple[bytes, int]:
+    async def synth_one(voice_id: str, text: str, max_seconds: float) -> tuple[bytes, int]:
         tts = upliftai.TTS(
             voice_id=voice_id,
             output_format="WAV_22050_16",
@@ -178,8 +192,8 @@ def main() -> int:
             async for ev in tts.synthesize(text):
                 sr = ev.frame.sample_rate
                 pcm += bytes(ev.frame.data)
-                if len(pcm) / (2 * sr) > PER_VOICE_MAX_SECONDS:
-                    raise CapExceeded(bytes(pcm), sr)
+                if len(pcm) / (2 * sr) > max_seconds:
+                    raise CapExceeded(bytes(pcm), sr, max_seconds)
         finally:
             await tts.aclose()
         return bytes(pcm), sr
@@ -193,14 +207,15 @@ def main() -> int:
             print(f"\nSTOPPING before {p['id']}: not enough budget remaining. Partial run saved.")
             break
 
+        cap = cap_for(p["id"])
         try:
-            pcm, sr = asyncio.run(synth_one(p["id"], p["text"]))
+            pcm, sr = asyncio.run(synth_one(p["id"], p["text"], cap))
         except CapExceeded as e:
             partial_duration = len(e.pcm) / (2 * e.sr)
             increment("uplift_tts_sec", round(partial_duration))
             skipped += 1
             print(
-                f"  [{p['id']}] SKIPPED: exceeded the {PER_VOICE_MAX_SECONDS}s per-line cap at "
+                f"  [{p['id']}] SKIPPED: exceeded its {e.cap}s per-line cap at "
                 f"{partial_duration:.2f}s (logged to ledger, no preview file written). "
                 "Continuing with the next voice."
             )

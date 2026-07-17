@@ -1078,6 +1078,27 @@ undecided here, not silently bumped, per direct instruction.
 `WebSocketClient._on_message`/`synthesize`); `docs.upliftai.org/orator_voices` (re-fetched
 2026-07-17, `washroom-singer` and `khateeb` entries).
 
+**Addendum — human-approved re-run, real result confirms the root cause.** Human approved a
+re-run scoped to the 2 remaining voices, with a per-voice cap override
+(`MAX_SECONDS_OVERRIDES = {"washroom-singer": 10.0}`, default stays 6.0 for everyone else) instead
+of raising the global cap or trimming the line, plus an explicit instruction: if washroom-singer
+still exceeds 10s, stop and report the real number rather than raising the cap again blind. Ran
+`UPLIFT_MODE=record python scripts/record_voice_previews.py` (2026-07-17): **`wholesale-trader`
+recorded cleanly in 3.80s** — squarely in the normal 2.6-5.1s range, confirming it was never
+actually slow; its earlier absence was purely collateral damage from the old crash-the-whole-run
+bug. **`washroom-singer` still exceeded even the raised 10.0s cap**, reaching **10.07s** before the
+(now-fixed) abort — logged to the ledger this time (no data lost), no preview file written, script
+correctly continued rather than auto-raising the cap again. Ledger: 313 -> **327**
+(round(10.07)=10 + round(3.80)=4), verified. This result strengthens the root-cause conclusion
+considerably: washroom-singer's true full-utterance length is confirmed to be *at least* 10.07s for
+a line every other voice renders in 2.6-5.1s (>2x, and it still wasn't finished) — consistent with
+a genuinely melismatic/sung rendering (the `ai_naat_p4_m_za` codename), not a borderline timing
+fluke. **Left open, not decided here:** whether to raise the cap further, accept a longer preview
+for this one voice, trim its line, or drop/replace it in the picker — human's call. `.gitignore`
+updated to explicitly exclude `voice-picker/previews/` (CDN-bound via P5-T03, formalizing what was
+previously an implicit omission) rather than leaving 13MB of WAVs as an undecided untracked
+directory.
+
 ---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the

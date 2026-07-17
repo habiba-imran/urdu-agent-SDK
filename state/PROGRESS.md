@@ -1,8 +1,7 @@
 # PROGRESS
-Updated: 2026-07-17 | Phase: 5 (Voice Picker) — non-live work done (P5-T01/T04/T05), P5-T02
-partially run live by the human (80/82 voices recorded), **STOPPED HARD again** after a crash +
-ledger-loss incident (ADR-019) — script fixed, NOT re-run yet, awaiting human review | Branch:
-phase/3-worker
+Updated: 2026-07-17 | Phase: 5 (Voice Picker) — P5-T02 recording done, 81/82 voices (washroom-singer
+still exceeds even a raised 10s cap at a real measured 10.07s — human decision pending, ADR-019) |
+Branch: phase/3-worker
 
 ## Now (Session 8 continued — P5-T02 live recording crash: washroom-singer, lost partial spend,
 script fixed, NOT re-run)
@@ -32,11 +31,23 @@ script fixed, NOT re-run)
   partial audio is never silently lost again. The per-voice loop logs the actual partial duration
   to the ledger on a cap breach and `continue`s to the next voice instead of letting the exception
   kill the whole script. No preview file is written for a capped voice.
-- **NOT re-run.** Per standing process (any live-pipeline step needs explicit sign-off) and this
-  incident's own explicit instruction, the 2 remaining voices are queued for a human-approved
-  re-run; `washroom-singer` additionally needs an explicit human decision on its per-voice cap
-  (raise it, trim its line, or accept/replace the voice) — not decided or bumped here. Full account:
-  `docs/40-ADR.md` ADR-019.
+- **Human-approved re-run done (2026-07-17).** Added a per-voice cap override
+  (`MAX_SECONDS_OVERRIDES = {"washroom-singer": 10.0}`, default 6.0 unchanged for everyone else)
+  rather than raising the global cap or trimming the line. Ran
+  `UPLIFT_MODE=record python scripts/record_voice_previews.py` for just the 2 remaining voices:
+  **`wholesale-trader` recorded cleanly, 3.80s** (normal range — confirms it was only ever
+  collateral damage from the old crash-the-whole-run bug, never itself slow). **`washroom-singer`
+  still exceeded even the raised 10.0s cap, reaching a real measured 10.07s** — logged to the
+  ledger this time (no data lost), no preview file written, correctly skipped rather than
+  auto-raising the cap again. Ledger: 313 -> **327**, verified. Strengthens the ADR-019 root cause:
+  >2x every other voice's full render time, still not finished at 10s. **Open, human's call:**
+  raise the cap further, accept a longer preview, trim the line, or drop/replace the voice in the
+  picker — not decided here.
+- **`voice-picker/previews/` added to `.gitignore` explicitly** (with a comment: CDN-bound via
+  P5-T03, not committed) — formalizes the decision instead of leaving 13MB of WAVs as an implicit
+  untracked omission. 81/82 preview files now on disk (all except washroom-singer).
+- Full account of the whole incident (crash → ledger correction → root cause → fix → re-run
+  result): `docs/40-ADR.md` ADR-019.
 
 ## Now (Session 8 continued — Phase 4 HUMAN GATE signed off, Phase 5 begun and non-live work done)
 - **GATE 4 human line signed off by the human** — dist/index.js and index.d.ts personally reviewed:

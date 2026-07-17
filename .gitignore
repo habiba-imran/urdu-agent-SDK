@@ -9,3 +9,6 @@ dist/
 *.log
 urdu-voice-agent/
 voice-picker/index.local.html
+# Recorded voice preview audio (P5-T02) is CDN-bound via P5-T03 (voices.preview_url), not
+# committed to git -- formalized decision, not an implicit omission.
+voice-picker/previews/
