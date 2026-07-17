@@ -12,7 +12,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(os.path.join(ROOT, ".env.local"))
 
@@ -51,26 +51,35 @@ async def main():
             ex = e
             while ex is not None:
                 chain.append(str(ex))
-                nxt = getattr(ex, '__cause__', None) or getattr(ex, '__context__', None)
+                nxt = getattr(ex, "__cause__", None) or getattr(ex, "__context__", None)
                 if nxt is ex:
                     break
                 ex = nxt
             combined = " ".join(chain)
 
-            is_402 = ("402" in combined or "402 -" in combined or
-                      "organization_balance_exhausted" in combined.lower())
+            is_402 = (
+                "402" in combined
+                or "402 -" in combined
+                or "organization_balance_exhausted" in combined.lower()
+            )
             is_401 = "401" in combined or "unauthorized" in combined.lower()
             is_key_issue = is_402 or is_401
 
             if is_key_issue:
                 print(f"RESULT: {type(e).__name__}: {str(e)[:200]}")
-                print("Underlying: 402 Organization balance exhausted (confirmed in retry chain)")
+                print(
+                    "Underlying: 402 Organization balance exhausted (confirmed in retry chain)"
+                )
                 print("\nPASS: STT_PROVIDER=soniox fails with account-level 402 error")
-                print("The seam is real — the integration is wired, only the account is unfunded.")
+                print(
+                    "The seam is real — the integration is wired, only the account is unfunded."
+                )
                 print("No ImportError, no AttributeError, no NotImplementedError.")
                 return 0
             else:
-                print(f"\nUNEXPECTED: Error was not a 402/401. Type: {type(e).__name__}")
+                print(
+                    f"\nUNEXPECTED: Error was not a 402/401. Type: {type(e).__name__}"
+                )
                 return 1
 
 

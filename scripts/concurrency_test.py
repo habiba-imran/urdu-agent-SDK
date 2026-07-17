@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import functools
 import http.server
-import json
 import secrets as secrets_mod
 import sys
 import threading
@@ -42,7 +41,9 @@ N_CONCURRENT = 6  # LiveKit Build free-tier cap is 5; the 6th must fail cleanly.
 HTTP_PORT = 8934
 POLL_TIMEOUT_S = 25
 POLL_INTERVAL_S = 0.5
-HOLD_OPEN_S = 15  # let worker.main's entrypoint fully complete before disconnecting; see below.
+HOLD_OPEN_S = (
+    15  # let worker.main's entrypoint fully complete before disconnecting; see below.
+)
 
 
 def provision_fresh_tenant(conn) -> tuple[str, str, str]:
@@ -140,12 +141,16 @@ def main() -> int:
             pages = [browser.new_page() for _ in range(N_CONCURRENT)]
 
             tone_qs = "&publishTone=1" if args.tone else ""
-            mode = "WITH synthetic-tone published media" if args.tone else "no media (zero tracks)"
-            print(f"opening {N_CONCURRENT} room connections roughly simultaneously — {mode}...")
+            mode = (
+                "WITH synthetic-tone published media"
+                if args.tone
+                else "no media (zero tracks)"
+            )
+            print(
+                f"opening {N_CONCURRENT} room connections roughly simultaneously — {mode}..."
+            )
             for i, (page, tok) in enumerate(zip(pages, tokens)):
-                url = (
-                    f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
-                )
+                url = f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
                 page.goto(url)
 
             deadline = time.monotonic() + POLL_TIMEOUT_S
@@ -156,14 +161,20 @@ def main() -> int:
                         text = pages[i].locator("#status").text_content(timeout=1000)
                     except Exception:
                         continue
-                    if text and (text.startswith("connected") or text.startswith("failed") or text.startswith("disconnected")):
+                    if text and (
+                        text.startswith("connected")
+                        or text.startswith("failed")
+                        or text.startswith("disconnected")
+                    ):
                         results[i] = text
                         pending.discard(i)
                 if pending:
                     time.sleep(POLL_INTERVAL_S)
 
             for i in pending:
-                results[i] = f"TIMEOUT after {POLL_TIMEOUT_S}s (never reached a terminal state)"
+                results[i] = (
+                    f"TIMEOUT after {POLL_TIMEOUT_S}s (never reached a terminal state)"
+                )
 
             # HOLD_OPEN_S: closing right after "connected" races worker.main's
             # ctx.wait_for_participant() — a fast disconnect can cancel that await before it
@@ -198,8 +209,12 @@ def main() -> int:
 
     n_connected = sum(1 for r in results if r and r.startswith("connected"))
     n_failed = sum(1 for r in results if r and r.startswith("failed"))
-    print(f"\nsummary: connected={n_connected} failed={n_failed} other={N_CONCURRENT - n_connected - n_failed}")
-    print(f"\ncleanup: delete from tenants where id = '{tenant_id}';  -- cascades agents/sessions")
+    print(
+        f"\nsummary: connected={n_connected} failed={n_failed} other={N_CONCURRENT - n_connected - n_failed}"
+    )
+    print(
+        f"\ncleanup: delete from tenants where id = '{tenant_id}';  -- cascades agents/sessions"
+    )
     return 0
 
 

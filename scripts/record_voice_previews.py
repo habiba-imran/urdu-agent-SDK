@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import datetime
-import json
 import os
 import sys
 from pathlib import Path
@@ -44,8 +42,12 @@ from dbconn import conn_kwargs  # noqa: E402
 from usage_guard import increment, load as load_ledger  # noqa: E402
 
 OUT_DIR = ROOT / "voice-picker" / "previews"
-CHARS_PER_SEC = 20  # same generous upper bound as record_fixture.py, for the pre-call estimate
-DEFAULT_MAX_SECONDS = 6.0  # hard cap per line -- these are short greetings, not paragraphs
+CHARS_PER_SEC = (
+    20  # same generous upper bound as record_fixture.py, for the pre-call estimate
+)
+DEFAULT_MAX_SECONDS = (
+    6.0  # hard cap per line -- these are short greetings, not paragraphs
+)
 
 # Per-voice overrides. ADR-019: washroom-singer's file codename (ai_naat_p4_m_za) indicates a
 # naat-style (melismatic, sung) voice model -- genuinely slower than ordinary speech on the same
@@ -60,9 +62,12 @@ MAX_SECONDS_OVERRIDES = {
 def cap_for(voice_id: str) -> float:
     return MAX_SECONDS_OVERRIDES.get(voice_id, DEFAULT_MAX_SECONDS)
 
+
 LINE_MASCULINE = "السلام علیکم، میں آپ کی کیا مدد کر سکتا ہوں؟"
 LINE_FEMININE = "السلام علیکم، میں آپ کی کیا مدد کر سکتی ہوں؟"
-LINE_NEUTRAL = "السلام علیکم، خوش آمدید"  # gender-unspecified voices (currently: khwajasara only)
+LINE_NEUTRAL = (
+    "السلام علیکم، خوش آمدید"  # gender-unspecified voices (currently: khwajasara only)
+)
 
 
 def line_for(gender: str | None) -> str:
@@ -98,7 +103,9 @@ def fetch_voices() -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--dry-run", action="store_true", help="show the full plan; no network, no budget"
+        "--dry-run",
+        action="store_true",
+        help="show the full plan; no network, no budget",
     )
     ap.add_argument(
         "--skip-existing",
@@ -131,7 +138,9 @@ def main() -> int:
     print(f"estimated remaining after: ~{remaining - total_est:.1f}s\n")
 
     for p in plan[:5]:
-        print(f"  [{p['id']}] gender={p['gender']} text={p['text']!r} est~{p['est_sec']:.1f}s")
+        print(
+            f"  [{p['id']}] gender={p['gender']} text={p['text']!r} est~{p['est_sec']:.1f}s"
+        )
     if len(plan) > 5:
         print(f"  ... and {len(plan) - 5} more (same 3 possible lines, by gender)")
 
@@ -179,7 +188,9 @@ def main() -> int:
             self.sr = sr
             self.cap = cap
 
-    async def synth_one(voice_id: str, text: str, max_seconds: float) -> tuple[bytes, int]:
+    async def synth_one(
+        voice_id: str, text: str, max_seconds: float
+    ) -> tuple[bytes, int]:
         tts = upliftai.TTS(
             voice_id=voice_id,
             output_format="WAV_22050_16",
@@ -204,7 +215,9 @@ def main() -> int:
     for p in plan:
         current_used = load_ledger().get("uplift_tts_sec", 0)
         if 600 - current_used < p["est_sec"]:
-            print(f"\nSTOPPING before {p['id']}: not enough budget remaining. Partial run saved.")
+            print(
+                f"\nSTOPPING before {p['id']}: not enough budget remaining. Partial run saved."
+            )
             break
 
         cap = cap_for(p["id"])

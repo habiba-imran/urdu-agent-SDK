@@ -33,13 +33,17 @@ from dbconn import conn_kwargs  # noqa: E402
 
 PREVIEWS_DIR = ROOT / "voice-picker" / "previews"
 BUCKET_ID = "voice-previews"
-SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days -- matches the Cache-Control max-age below
+SIGNED_URL_TTL_SECONDS = (
+    7 * 24 * 60 * 60
+)  # 7 days -- matches the Cache-Control max-age below
 CACHE_CONTROL = f"public, max-age={SIGNED_URL_TTL_SECONDS}"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true", help="show the plan; no upload, no DB write")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="show the plan; no upload, no DB write"
+    )
     args = ap.parse_args()
 
     wavs = sorted(PREVIEWS_DIR.glob("*.wav"))
@@ -53,9 +57,11 @@ def main() -> int:
         print(f"  ... and {len(wavs) - 5} more")
 
     if args.dry_run:
-        print(f"\nDRY RUN -- would create/verify bucket {BUCKET_ID!r} (private), upload "
-              f"{len(wavs)} files, sign for {SIGNED_URL_TTL_SECONDS}s, and update "
-              f"voices.preview_url for each. No network, no writes.")
+        print(
+            f"\nDRY RUN -- would create/verify bucket {BUCKET_ID!r} (private), upload "
+            f"{len(wavs)} files, sign for {SIGNED_URL_TTL_SECONDS}s, and update "
+            f"voices.preview_url for each. No network, no writes."
+        )
         return 0
 
     env = dotenv_values(ROOT / ".env.local")
@@ -88,7 +94,11 @@ def main() -> int:
             bucket.upload(
                 path,
                 data,
-                file_options={"content-type": "audio/wav", "cache-control": CACHE_CONTROL, "upsert": "true"},
+                file_options={
+                    "content-type": "audio/wav",
+                    "cache-control": CACHE_CONTROL,
+                    "upsert": "true",
+                },
             )
         except Exception as e:
             print(f"  [{voice_id}] UPLOAD FAILED: {e}")
@@ -112,7 +122,8 @@ def main() -> int:
     with psycopg.connect(**conn_kwargs()) as conn:
         for voice_id, signed_url in signed_urls.items():
             conn.execute(
-                "update voices set preview_url = %s where id = %s", (signed_url, voice_id)
+                "update voices set preview_url = %s where id = %s",
+                (signed_url, voice_id),
             )
             updated += 1
         conn.commit()

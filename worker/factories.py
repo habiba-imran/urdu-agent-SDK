@@ -7,7 +7,6 @@ session or against fixtures — never here.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -33,14 +32,14 @@ def make_tts(voice_id: str):
     phrase_id = _phrase_config_id()
     if mode == "fixture":
         import sys
+
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from services.tts_cache import require as _require, key as _tts_key  # noqa: E402
+        from services.tts_cache import require as _require  # noqa: E402
 
         # register_fixture_tts – we define the adapter inline so the LiveKit import
         # stays lazy (only loaded inside the FixtureTTS class body).
-        from livekit.agents.tts import TTS, ChunkedStream, SynthesizedAudio, TTSCapabilities  # noqa: E402
+        from livekit.agents.tts import TTS, ChunkedStream, TTSCapabilities  # noqa: E402
         from livekit.agents import APIConnectOptions  # noqa: E402
-        from livekit import rtc  # noqa: E402
 
         _default_conn = APIConnectOptions(max_retry=0)
 
@@ -54,15 +53,17 @@ def make_tts(voice_id: str):
 
             def synthesize(self, text, *, conn_options=None):
                 return _FixtureChunkedStream(
-                    tts=self, input_text=text,
+                    tts=self,
+                    input_text=text,
                     conn_options=conn_options or _default_conn,
                     voice_id=voice_id,
                 )
 
         class _FixtureChunkedStream(ChunkedStream):
             def __init__(self, *, tts, input_text, conn_options, voice_id):
-                super().__init__(tts=tts, input_text=input_text,
-                                 conn_options=conn_options)
+                super().__init__(
+                    tts=tts, input_text=input_text, conn_options=conn_options
+                )
                 self._voice_id = voice_id
 
             async def _run(self, output_emitter):
@@ -70,11 +71,11 @@ def make_tts(voice_id: str):
                 sample_rate = 22050
                 num_channels = 1
                 pcm = wav[44:]
-                samples_per_channel = len(pcm) // (num_channels * 2)
                 request_id = str(uuid.uuid4())
                 output_emitter.initialize(
                     request_id=request_id,
-                    sample_rate=sample_rate, num_channels=num_channels,
+                    sample_rate=sample_rate,
+                    num_channels=num_channels,
                     mime_type="audio/pcm",
                 )
                 output_emitter.push(pcm)
