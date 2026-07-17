@@ -9,6 +9,16 @@ pin); (3) H9 answered + spec updated — still unanswered, emails staged not sen
 ponytail-debt, and all 8 phase-gate tags (rollback-tested) are genuinely done. Phase 7's GATE 7
 remains closed (unchanged). Branch: phase/8-prod-ready (created fresh, ADR-020 convention).
 
+## Now (Session 12 — reconcile Gladia contradiction, begin ADR-013 pile)
+- **Gladia contradiction investigation (justified test-file edit).** The test-guard override
+  token was added only to add a `--stagger-ms` flag to
+  `scripts/concurrency_test.py`, spreading `page.goto()` calls apart instead of firing them in a
+  tight loop, to test whether P8-T01's Gladia 429s were a burst-rate limit (many session-inits in
+  a very short window) vs. a true concurrent-session cap — the concrete, testable hypothesis for
+  reconciling ADR-014(f)'s "6/6 Gladia connected" claim against tonight's "3/5 connected, 2/5
+  still retrying on 429" at a LOWER n. Default behavior (no `--stagger-ms`) unchanged. Token
+  removed immediately after.
+
 ## Now (Session 11 — Phase 8 Prod Readiness, GATE 8 OPEN)
 - **Branch `phase/8-prod-ready` created fresh** from `phase/7-security`'s tip before any P8-Txx
   work, per the ADR-020 convention.

@@ -127,6 +127,13 @@ def main() -> int:
         default=N_CONCURRENT,
         help=f"number of concurrent connections (default {N_CONCURRENT})",
     )
+    ap.add_argument(
+        "--stagger-ms",
+        type=int,
+        default=0,
+        help="delay (ms) between each page.goto() instead of firing all at once -- tests "
+        "whether a provider-side 429 is a burst-rate limit vs. a true concurrent cap",
+    )
     args = ap.parse_args()
     n = args.n
 
@@ -160,11 +167,16 @@ def main() -> int:
                 if args.tone
                 else "no media (zero tracks)"
             )
-            print(f"opening {n} room connections roughly simultaneously — {mode}...")
+            stagger_desc = (
+                f", staggered {args.stagger_ms}ms apart" if args.stagger_ms else ""
+            )
+            print(f"opening {n} room connections roughly simultaneously — {mode}{stagger_desc}...")
             for i, (page, tok) in enumerate(zip(pages, tokens)):
                 url = f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
                 connect_started_at[i] = time.monotonic()
                 page.goto(url)
+                if args.stagger_ms and i < n - 1:
+                    time.sleep(args.stagger_ms / 1000)
 
             deadline = time.monotonic() + POLL_TIMEOUT_S
             pending = set(range(n))

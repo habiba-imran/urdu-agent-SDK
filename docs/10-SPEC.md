@@ -41,7 +41,7 @@ A **super-admin portal** gives US full visibility: every tenant, agent, session,
 | LiveKit Ship | 20 concurrent | production |
 | LiveKit Build | 5 concurrent, 1,000 min | **development — but NOT REPRODUCED.** 4 separate live tests (ADR-014 ×3, P8-T01 ×1), up to n=6, never once triggered a LiveKit-side rejection. Treat "5" as unverified-by-us, not confirmed. |
 | Uplift concurrency | ⚠️ **UNKNOWN — H9 blocks Phase 8** | could invalidate everything — email staged (`state/H9_EMAIL_DRAFT.md`), not yet sent as of 2026-07-18 |
-| Gladia concurrency (free/dev tier) | ⚠️ **NEW FINDING, 2026-07-18, real not published:** hit real 429 "Too Many Requests" on STT session init at just n=5 concurrent (P8-T01 load test) — only 3/5 sessions got a working connection inside a 15s window. Not yet characterized (burst vs. hard cap, dev-tier-only?). | already inside the danger zone at n=5 on this tier — see ADR-024 |
+| Gladia concurrency (free/dev tier) | ⚠️ **Real, reproduced 3× (2026-07-18), still not published:** 429 "Too Many Requests" on STT session init at n=5, reproducible under tight-burst, 2000ms-staggered, AND after a ~75s cooldown — ruling out pure join-timing as the cause. True nature (rate-per-window vs. concurrent-stream cap) still unknown — Gladia's own answer (H9) is the only way to get a real number. | already inside the danger zone at n=5 on this tier — see ADR-024/ADR-028 |
 
 ## Unit economics (for context; do not optimise for this yet)
 Marginal ≈ **$0.0044/min** inside plan allowances; **$0.025–0.032/min** all-in at volume.

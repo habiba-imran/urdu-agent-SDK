@@ -795,6 +795,25 @@ connection, clean `session closed`/`job exiting` ×6); `scripts/concurrency_test
 `concurrency_test_client.html` (current versions, committed); `state/usage_ledger.json` (`7`,
 verified not estimated); ADR-016 addendum (the race-condition fix and its own verification).
 
+**🔴 CORRECTION, 2026-07-18 — Addendum (f)'s "Gladia STT connected... for all 6" claim was an
+overclaim, identified and corrected, not left standing.** P8-T01 (2026-07-18, ADR-024) found
+Gladia STT throwing real `429 Too Many Requests` on session init at just n=5 concurrent joins,
+apparently contradicting this entry's "Gladia STT connected... session.start() ran" language for
+n=6. Investigated properly rather than left as two facts sitting side by side — see ADR-028 for
+the full account. Short version: (a) this entry's own Evidence line above already shows the tell
+— `interruption_detection configured=adaptive ×6` is explicitly counted, but "Gladia connection"
+is NOT counted the same way, just asserted in prose; the per-session Gladia count was likely
+never actually verified as 6-for-6 at the time, only that Gladia connection succeeded at all
+(true, but weaker than the prose implied); (b) three fresh live re-tests tonight (tight burst,
+2000ms-staggered, and after a ~75s cooldown) all reproduced SOME degree of Gladia 429 at n=5,
+including the staggered run, which rules out "just simultaneous timing" as the sole cause. The
+corrected, honest statement of this entry's own claim: **Gladia STT connection success at n=5-6
+concurrent joins is NOT reliable on the current dev/free-tier account** — true then and true now,
+most likely under-verified in the original write-up rather than genuinely different across the
+two nights. The **room-join concurrency conclusion this ADR is actually about (LiveKit's own
+"5 concurrent" cap never reproduced) is unaffected** — that finding was about LiveKit, not
+Gladia, and remains solid.
+
 ---
 ## ADR-015 Phase 4 client SDK: real implementation, GATE 4 machine lines closed   [ACCEPTED]
 Date: 2026-07-17 | P4-T01 through P4-T05, non-live | `sdk/src/index.ts`
@@ -1611,6 +1630,78 @@ directly observed, not inferred); `python -c "import importlib.metadata as m; pr
 m.requires('livekit-agents') if 'json-repair' in r])"` → `['json-repair==0.59.10']`; grep of the
 installed `livekit/agents/llm/utils.py` (one call site, no `schema=` kwarg); the independent
 security-subagent report (same grep, same conclusion, GATE 8 dispatch, 2026-07-18).
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
+## ADR-028 Gladia 6/6-success (ADR-014) vs. 429-at-5 (P8-T01, ADR-024) — reconciled with real evidence   [ACCEPTED]
+Date: 2026-07-18 | ADR-014 addendum (f), ADR-024, `scripts/concurrency_test.py`
+
+**The apparent contradiction.** ADR-014 addendum (f) (2026-07-17) claimed a corrected 6-way
+concurrency re-test had "Gladia STT connected... session.start() ran... all 6 sessions closed
+CLEANLY" — read as 6-for-6 Gladia success. P8-T01 (2026-07-18, one day later) measured real
+`429 Too Many Requests` from Gladia at n=5 — a LOWER n than the earlier "success." These cannot
+both describe the same true, stable limit. Investigated properly rather than left as two facts
+side by side, per direct instruction.
+
+**Step 1 — re-read ADR-014(f)'s own evidence line for a tell.** Its Evidence paragraph explicitly
+counts `interruption_detection configured=adaptive ×6` — a real per-session count — but only says
+"Gladia connection" for the STT claim, with no `×6` or count of any kind. The prose text
+("Gladia STT connected... for all 6") is not matched by an equally rigorous evidence citation the
+way the interruption-detection claim is. This is a real, identifiable gap: the original claim was
+likely a generalization from "Gladia connected" (true, for at least some sessions) rather than a
+verified 6-for-6 count. No raw log from that night was preserved on disk to check directly
+(searched — none found), so this can't be proven definitively, only inferred from the write-up's
+own internal evidence pattern.
+
+**Step 2 — three fresh live tests tonight, not speculation.** Ran `scripts/concurrency_test.py`
+(worker running, real LiveKit Cloud, zero Uplift risk — zero media published, same as every prior
+concurrency test) three times at n=5:
+1. **Tight burst** (default timing, matching P8-T01's exact conditions): 3/5 Gladia connections
+   succeeded cleanly within the log window in P8-T01 itself; re-run tonight, 4/5 succeeded, 1
+   still retrying at test teardown. **Reproducible, not a one-off.**
+2. **2000ms-staggered** (`--stagger-ms 2000`, new flag added this session): if the cause were
+   purely "too many session-inits arriving in the same instant," spreading them 2s apart should
+   have fixed it. **It did not — this run showed multiple sessions hitting hard, unrecoverable
+   STT errors** (`AgentSession is closing due to unrecoverable error`, `recoverable=False`), a
+   worse outcome than the tight-burst runs. **This rules out simultaneous-arrival timing as the
+   sole or primary cause.**
+3. **After a ~75s cooldown**, tight burst again: still produced Gladia 429s (2/5 connected
+   cleanly this time; the rest hit repeated 429 warnings with backoff retries). **75s of quiet was
+   not enough to see clean recovery.**
+
+**Conclusion, stated at the confidence level the evidence actually supports.** Gladia's free/dev
+tier shows a real, repeatedly-reproduced constraint on new STT session inits under a load as
+light as 5 near-simultaneous (or even 2s-apart) joins — this is not a timing artifact of one bad
+test run. What it precisely IS (a low absolute rate-per-short-window limiter, a low true
+concurrent-stream cap, or something else) is **not** determined by these tests — that would need
+Gladia's own documentation or account dashboard, which is exactly H9's still-unanswered question
+1+2 to Gladia. The most likely explanation for why ADR-014(f) reported clean 6/6 success while
+tonight's tests (including a staggered variant specifically designed to be gentler) did not: the
+original claim was under-verified for the Gladia-specific count (Step 1), not that Gladia's real
+behavior was genuinely different that night. Real time-of-day/account-load variance cannot be
+ruled out either, but is not needed to explain the discrepancy given Step 1's finding.
+
+**What does NOT change.** ADR-014's actual subject — LiveKit Build's own "5 concurrent, hard cap"
+claim — is unaffected. Every test (then and now) shows LiveKit's room-join layer accepting all
+connections cleanly; Gladia, not LiveKit, is and was the thing that struggled. ADR-014's headline
+finding (LiveKit's documented cap not reproduced) stands.
+
+**Consequences.** `docs/10-SPEC.md`'s Gladia concurrency row (added in ADR-024) is now backed by
+3 reproductions, not 1 — upgrade its confidence framing slightly (it was already flagged as a
+real, if uncharacterized, finding; now also flagged as reproducible under multiple timing
+conditions, ruling out pure burst-timing as an explanation). ADR-014 addendum (f) corrected in
+place (see the correction note appended to it) rather than silently left contradicting this
+entry — a wrong or overclaimed statement, once identified, does not get to stand uncorrected in
+the permanent record.
+
+**Evidence.** `scripts/concurrency_test.py --n 5` (tight, live, 2026-07-18 03:16): 4/5 Gladia
+clean, 1 still retrying at teardown. `--n 5 --stagger-ms 2000` (2026-07-18 03:17): multiple
+unrecoverable STT errors, worse than tight burst. `--n 5` after ~75s cooldown (2026-07-18
+03:19): 2/5 clean, rest 429-with-retry. All three: LiveKit room-join 5/5 clean throughout.
+`state/usage_ledger.json` (`livekit_agent_min` 12→27, +15 real measured minutes across the 3
+tests; `uplift_tts_sec` unchanged at 327). ADR-014's own Evidence paragraph (the `×6` vs.
+uncounted-"Gladia connection" asymmetry, Step 1).
 
 **Status: ACCEPTED 2026-07-18.**
 
