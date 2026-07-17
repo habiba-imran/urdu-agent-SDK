@@ -1277,6 +1277,92 @@ match. **Phase 7 does not close until all three human-gate attempts (not two) fa
 **Status: ACCEPTED 2026-07-18, as written, no edits.**
 
 ---
+## ADR-022 db.py's live service_role client removed — dead, RLS-bypassing, unreachable   [ACCEPTED]
+Date: 2026-07-18 | db.py, tools.py, ADR-005, ADR-013
+
+**What changed.** ADR-005 (2026-07-16) authorized `db.py`'s `get_client()` to build a real
+Supabase client with `SUPABASE_SERVICE_ROLE_KEY` — a credential that bypasses RLS by design — and
+flagged in the same entry that this was ported old-schema code, "Phase-3 rework," tracked but not
+scheduled. ADR-013 later deferred that whole rework to an unscheduled end-of-build pass. Phase 7's
+own SECRETS checklist run (2026-07-17) surfaced the actual current state: `worker/` — the only
+code path a real tenant session ever runs — never imports `db.py` or `tools.py` at all
+(grep-confirmed, zero references). So this was a real, live, RLS-bypassing credential-bearing
+client sitting in the codebase, reachable only through the already-broken (old-schema),
+ADR-013-deferred CER harness, never through anything actually served. Flagged, not fixed, in the
+Phase 7 report. On review, removed outright rather than left "for later": `get_client()`'s body
+now unconditionally raises `DBClientRemoved` with a message pointing at this ADR, instead of
+constructing a live client. `DBTimeout`, `timed_read`, `fire_and_forget`, and every
+`record_*`/`_insert_*`/`_end_*` function's SHAPE is unchanged — `import db` / `from db import
+DBTimeout` (both used by `tools.py` and `tests/helpers*.py`) still succeed at import time — only
+the one function that actually held live credentials was gutted.
+
+**Impact assessed before removal, not after.** `tools.py` imports `db` and calls `db.get_client()`
+from `search_products`, `get_shop_info`, `create_reservation`, `create_support_ticket`,
+`schedule_callback` — all real call sites, but `tools.py` itself is imported only by the
+ADR-013-deferred CER harness (`tests/test_schema.py`, `test_tools.py`, `test_e2e.py`,
+`tests/helpers.py`, `tests/helpers_pipeline.py`) and by nothing in `worker/`. `test_schema`/
+`test_tools`/`test_e2e` were ALREADY failing before this change (old-schema table lookups; 3
+pre-existing, tracked failures — see `state/PROGRESS.md`'s "Live decisions" and prior HANDOFF
+entries). `test_tools`'s specific pre-existing failure (`'NoneType' object has no attribute
+'send'` inside `search_products`) shows its live DB call was already not succeeding in the test
+environment before this change (blocked by `tests/conftest.py`'s offline-network guard) — this
+change replaces an accidental broken-connection error with an intentional, documented one; it does
+not newly break anything that was passing. Verified directly: `tests/test_harness.py`,
+`tests/test_admin.py`, `tests/test_mint.py`, `tests/test_isolation.py`, `tests/test_worker.py`
+re-run after this change — see this session's evidence log for the exact pass/fail counts,
+unchanged from before the removal except where already-tracked.
+
+**What this does NOT do.** Does not touch `config.py`'s `SUPABASE_SERVICE_ROLE_KEY` loader
+constant (a harmless `os.environ.get` call, not itself a live credential) — it's now unused by
+`db.py` but left in place; the ADR-013 pass can decide whether it's still needed. Does not touch
+`scripts/upload_voice_previews.py`'s separate, independent `SUPABASE_SERVICE_ROLE` read (a
+legitimate, human-approved, one-off Storage-management script, unrelated to this removal). Does
+not resolve ADR-013 — the tools.py rework is still deferred; this just ensures nothing dangerous
+sits unused in the meantime.
+
+**Reintroduction path.** When the ADR-013 end-of-build pass actually rebuilds `tools.py`'s
+DB-backed tools against the CURRENT schema, it gets a properly-scoped client at that time —
+`authenticated`-role + tenant JWT wherever RLS should govern it (matching the worker's existing
+`worker/config.py::load_agent_config` pattern), service_role only if a specific, narrow,
+documented reason requires crossing the tenant boundary the way the mint does. Not a default
+carried forward from this removed version.
+
+**Evidence.** `db.py` (new `get_client()` body raises `DBClientRemoved`, verified live: `python -c
+"import asyncio, db; asyncio.run(db.get_client())"` raises as expected); `tools.py` imports
+cleanly under the real test path (`pipecat_stubs` on `PYTHONPATH`, matching `pytest.ini`); grep
+confirming zero `worker/` references to `tools`/`db` before and after; full relevant test suite
+re-run after the change.
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
+## ADR-023 RATE_LIMIT_PER_MIN=120 confirmed as the deliberate control-plane rate limit   [ACCEPTED]
+Date: 2026-07-18 | control_plane/app.py, docs/22-PHASE-2-CONTROL-PLANE.md, docs/27-PHASE-7-SECURITY.md
+
+**What was missing.** `docs/22-PHASE-2-CONTROL-PLANE.md` requires "Rate limit per tenant per
+minute" but never specifies a number. `control_plane/app.py::RATE_LIMIT_PER_MIN = 120` has held
+that value since it was written (P2-T06), but no ADR ever recorded 120 specifically as the
+intended figure — it was an undocumented implementation constant. Phase 7's ABUSE checklist line
+("rate limit per tenant") proved the CONFIGURED value is genuinely enforced, which is a different
+claim from "120 is the intended value" — there was nothing written down to check the configured
+value against. Surfaced by the human while reviewing the Phase 7 report, not silently assumed
+correct by the agent.
+
+**Decision.** 120 requests/tenant/minute is confirmed, now explicitly, as the deliberate value —
+not merely whatever the code happened to already say. No change to `control_plane/app.py`; this
+ADR is the missing paper trail for a number that was already live.
+
+**Evidence (the real live test this decision is based on).** `scripts/verify_rate_limit_live.py`,
+run twice: first sequentially (130 requests took 439s — invalidated by the 60s sliding window
+having already evicted early requests, a self-caught test artifact, not a real result, corrected
+before being trusted); then concurrently via a 40-worker thread pool — 130 real HTTP requests to a
+live `control_plane.app` completed in **46.5s** (inside the 60s window), **exactly 120 succeeded**
+with `200`, the next **10 were rejected specifically as `{"error":"rate limited"}`** (`429`), not
+a quota rejection. Matches `RATE_LIMIT_PER_MIN=120` precisely.
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

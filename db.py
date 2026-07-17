@@ -1,6 +1,20 @@
 """Supabase data access layer.
 
-Latency rules (STEP 3):
+🔴 REMOVED IN PHASE 7 (ADR-022, 2026-07-18): ``get_client()`` used to lazily construct a real,
+live Supabase client authenticated with ``SUPABASE_SERVICE_ROLE_KEY`` — a credential that bypasses
+RLS by design (ADR-005). ``worker/`` never imports this module or ``tools.py`` (grep-confirmed,
+docs/40-ADR.md ADR-022), so that client was live-capable, RLS-bypassing, dead code: reachable only
+through the ADR-013-deferred, already-broken (old-schema) CER harness, never through any served
+path. Removed rather than left sitting there "for later" per explicit instruction. The public API
+surface below (``DBTimeout``, ``get_client``, ``timed_read``, ``fire_and_forget``, and the
+``record_*``/``_insert_*``/``_end_*`` functions) is kept so ``import db`` / ``from db import
+DBTimeout`` (tools.py, tests/helpers*.py) still succeed at import time — only ``get_client()``'s
+BODY changed, from "silently connect with a live RLS-bypassing credential" to "raise loudly and
+explain why." A real client, scoped correctly for whatever this module's next form needs, is
+ADR-013's job when that pass actually happens — not something to quietly reintroduce as a
+side-effect of some other change.
+
+Latency rules (STEP 3), unchanged from before removal, apply again once a real client returns:
 - READS inside tools go through ``timed_read`` — 2.5 s asyncio timeout so a slow network
   can never stall the voice loop; callers catch ``DBTimeout`` and speak a graceful fallback.
 - Conversation/metrics WRITES go through ``fire_and_forget`` — scheduled with
@@ -15,28 +29,26 @@ from typing import Any
 
 from loguru import logger
 
-from supabase import AsyncClient, create_async_client  # supabase v2 API
-
-import config
-
-_client: AsyncClient | None = None
-_client_lock = asyncio.Lock()
+import config  # TOOL_READ_TIMEOUT_SECS only — SUPABASE_SERVICE_ROLE_KEY no longer read here
 
 
 class DBTimeout(Exception):
     """A Supabase read exceeded the tool read timeout."""
 
 
-async def get_client() -> AsyncClient:
-    """Lazily create the shared async Supabase client (service role)."""
-    global _client
-    if _client is None:
-        async with _client_lock:
-            if _client is None:
-                _client = await create_async_client(
-                    config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY
-                )
-    return _client
+class DBClientRemoved(Exception):
+    """get_client()'s live, service_role-backed client was removed in Phase 7 (ADR-022) — see
+    this module's docstring. Reintroducing a real client is ADR-013's deferred tools.py pass."""
+
+
+async def get_client():
+    """REMOVED — see module docstring and docs/40-ADR.md ADR-022. Always raises."""
+    raise DBClientRemoved(
+        "db.py's live service_role-backed Supabase client was intentionally removed in "
+        "Phase 7 (ADR-022) — it was unreachable dead code (worker/ never imports this "
+        "module) carrying a live, RLS-bypassing credential. Not reintroduced here; the "
+        "ADR-013-deferred tools.py rework is where a properly-scoped replacement belongs."
+    )
 
 
 async def timed_read(coro: Coroutine, what: str = "read") -> Any:
