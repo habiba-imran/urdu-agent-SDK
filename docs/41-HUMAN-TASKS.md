@@ -17,7 +17,11 @@
 > 2. What triggers a **429**? What is the rate limit?
 > 3. What happens at **minute 1,501** on Pro — hard stop, 429, or auto-upgrade?
 > 4. What is the **Enterprise rate above 200h/month**? (No published price exists above Growth.)
-> 5. May we use your **character artwork** in a commercial voice picker? (Blocks P5.)
+> 5. ~~May we use your **character artwork** in a commercial voice picker? (Blocks P5.)~~
+>    **NO LONGER BLOCKING (confirmed 2026-07-17, per explicit human instruction):** decision made
+>    to use 3-4 owned artworks for the voice picker instead of Uplift's character artwork. This
+>    question no longer gates Phase 5 — see the Phase-5 row below, updated to match. (Still fine to
+>    ask Uplift for informational purposes if useful, just not a blocker.)
 
 Same question 1+2 to **Gladia**. (Soniox advertises "hundreds of thousands of concurrent streams" — not a concern.)
 
@@ -29,7 +33,7 @@ Same question 1+2 to **Gladia**. (Soniox advertises "hundreds of thousands of co
 | 2 | Attempt to widen a minted token yourself. It must fail. |
 | 3 | Listen to a real Urdu call. Is it good? Only a human can answer. |
 | 4 | Inspect `dist/` yourself for secrets. |
-| 5 | Confirm H9 #5 licence answer before shipping any Uplift artwork. |
+| 5 | ~~Confirm H9 #5 licence answer before shipping any Uplift artwork.~~ **NOT NEEDED (2026-07-17):** voice picker uses 3-4 owned artworks instead — no Uplift artwork ships, so no licence confirmation is required. |
 | 7 | Attempt one cross-tenant read + one token-widening attack. Both must fail. |
 | 8 | Merge to main. **The agent never merges.** |
 | all | Approve every `UPLIFT_MODE=record` session. Agent never records unattended. |

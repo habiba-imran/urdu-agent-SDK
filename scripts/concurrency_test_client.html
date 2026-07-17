@@ -5,22 +5,43 @@
 <div id="status">idle</div>
 <script src="/sdk/node_modules/livekit-client/dist/livekit-client.umd.js"></script>
 <script>
-  // Minimal room-join probe for P3-T08 (5-concurrent test). Joins with no media tracks —
-  // the LiveKit Build free-tier concurrency cap is enforced at the participant/session
-  // level, not at track-publish time, so no getUserMedia/audio device is needed.
-  // API verified against installed livekit-client 2.x source (esm bundle):
-  //   Room.connect(url, token, opts) — L16405-16408
-  //   RoomEvent.Connected = "connected" — L12103
-  //   RoomEvent.Disconnected = "disconnected" — L12130
+  // Room-join probe for P3-T08 (5-concurrent test). `publishTone=1` (query param) makes it
+  // publish a real, continuous synthetic audio track (Web Audio API oscillator ->
+  // MediaStreamAudioDestinationNode -> a genuine MediaStreamTrack) instead of joining with zero
+  // media — ADR-014's addendum hypothesized the documented "5 concurrent" cap might be gated on
+  // active media flow, not raw room presence; this exercises real published media to test that,
+  // with ZERO Uplift risk (a synthesized tone is not speech; Gladia STT will not transcribe it,
+  // so the agent is never triggered to reply — same reasoning verified in ADR-014(a)).
+  // API verified against installed livekit-client 2.x source:
+  //   Room.connect(url, token, opts)                         — esm bundle L16405-16408
+  //   RoomEvent.Connected = "connected"                       — L12103
+  //   RoomEvent.Disconnected = "disconnected"                 — L12130
+  //   LocalParticipant.publishTrack(track: MediaStreamTrack)  — dist/src/room/participant/
+  //     LocalParticipant.d.ts L136
   const params = new URLSearchParams(window.location.search);
   const wsUrl = params.get("wsUrl");
   const token = params.get("token");
   const label = params.get("label") || "?";
+  const publishTone = params.get("publishTone") === "1";
   const statusEl = document.getElementById("status");
 
   function setStatus(text) {
     statusEl.textContent = text;
     document.title = "probe-" + label + ": " + text;
+  }
+
+  function makeToneTrack() {
+    // 220Hz sine, near-silent (gain 0.01) — a real, continuous audio track with no risk of
+    // being mistaken for speech by any STT, and quiet enough to be inaudible if ever monitored.
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const dest = ctx.createMediaStreamDestination();
+    osc.frequency.value = 220;
+    gain.gain.value = 0.01;
+    osc.connect(gain).connect(dest);
+    osc.start();
+    return dest.stream.getAudioTracks()[0];
   }
 
   (async () => {
@@ -31,7 +52,10 @@
     try {
       setStatus("connecting");
       await room.connect(wsUrl, token);
-      setStatus("connected");
+      if (publishTone) {
+        await room.localParticipant.publishTrack(makeToneTrack());
+      }
+      setStatus("connected" + (publishTone ? ":toned" : ""));
     } catch (err) {
       // Real error shape observed, not guessed — surface name/message/code if present.
       const parts = [err && err.name, err && err.message, err && err.code]

@@ -114,6 +114,33 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     md = json.loads(participant.metadata or "{}")
     session, cfg = await build_session(md)
     agent = build_agent(cfg)
+
+    # Dev free-tier ledger instrumentation (ADR-016): livekit_agent_min was a perpetual,
+    # unmeasured 0 (flagged in ADR-014) because nothing recorded real session duration. Uses
+    # JobContext.add_shutdown_callback (livekit/agents/job.py L525-535), which fires when the
+    # job is actually shutting down — the accurate end-of-session signal, not entrypoint() return
+    # (session.start() does not block until the conversation ends). Rounding to whole minutes,
+    # rounded UP, is an ASSUMED billing convention (common cloud-metering pattern), NOT verified
+    # against LiveKit's actual billing rules — flagged as an assumption, not fact.
+    import time as _time
+
+    _session_started_at = _time.monotonic()
+
+    async def _record_agent_minutes(reason: str = "") -> None:
+        import math
+
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+        from usage_guard import increment  # noqa: E402
+
+        elapsed_sec = _time.monotonic() - _session_started_at
+        minutes = max(1, math.ceil(elapsed_sec / 60))
+        increment("livekit_agent_min", minutes)
+
+    ctx.add_shutdown_callback(_record_agent_minutes)
+
     await session.start(agent, room=ctx.room)
     # NOTE (P3-T07 follow-up): emit usage_events (stt_sec/tts_sec/agent_sec) on session end via
     # worker/usage.record_usage — wire to the session's close/metrics events once measured live.

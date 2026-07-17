@@ -4,8 +4,10 @@
 import json
 import sys
 import pathlib
+import threading
 
 LEDGER = pathlib.Path("state/usage_ledger.json")
+_INCREMENT_LOCK = threading.Lock()
 BUDGETS = {  # docs/30-GUIDE-FREE-TIER.md §3-4. HARD limits from vendor free tiers.
     "uplift_tts_sec": {"limit": 600, "note": "Uplift free = 10 MINUTES TOTAL, forever"},
     "livekit_agent_min": {
@@ -41,6 +43,27 @@ def load():
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         LEDGER.write_text(json.dumps({k: 0 for k in BUDGETS}, indent=2))
     return json.loads(LEDGER.read_text())
+
+
+def increment(key: str, amount: float) -> None:
+    """Add `amount` to `key` in the ledger and persist it. Used by worker/main.py on real
+    session end (ADR-016) so livekit_agent_min stops being a perpetual, unmeasured 0.
+
+    ADR-016 addendum: the first live concurrency test caught this function racing itself for
+    real. On Windows, LiveKit's default JobExecutorType.THREAD (ADR-007) runs each job's shutdown
+    callback on its own OS thread WITHIN THE SAME PROCESS — a 6-way concurrent session test had
+    all 6 shutdown callbacks fire within ~3 seconds of each other, and the original
+    read-modify-write (no lock) lost writes: 6 confirmed job exits in the log, but only +3 was
+    recorded. A `threading.Lock` fixes the actual observed failure mode (concurrent threads in
+    one process); it does NOT make this safe across separate OS processes (e.g., a worker process
+    and a concurrently-run `usage_guard.py --report` both writing) — that would need a real file
+    lock (unavailable cross-platform without `msvcrt`/`fcntl` branching), not implemented since
+    the observed bug was in-process, not cross-process. Flagged, not silently assumed fixed for
+    every possible scenario."""
+    with _INCREMENT_LOCK:
+        u = load()
+        u[key] = u.get(key, 0) + amount
+        LEDGER.write_text(json.dumps(u, indent=2))
 
 
 def main():

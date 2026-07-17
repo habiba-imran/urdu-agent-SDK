@@ -2,6 +2,40 @@
 Updated: 2026-07-17 | Phase: 4 (Client SDK) — machine gate lines closed, **HUMAN GATE pending**
 (dist/ secret inspection is the human's own step) | Branch: phase/3-worker
 
+## Now (Session 8 continued — GATE 3 follow-up: real usage instrumentation, corrected concurrency
+re-test, a real bug found and fixed by the test itself)
+- **`livekit_agent_min` instrumentation gap CLOSED (ADR-016).** `worker/main.py::entrypoint()` now
+  registers `ctx.add_shutdown_callback(...)` and records real session duration
+  (`max(1, ceil(elapsed_sec/60))` minutes, an assumed-not-verified billing convention, flagged as
+  such) into `state/usage_ledger.json` via a new `scripts/usage_guard.py::increment()`.
+- **Synthetic-tone concurrency re-test run live, twice — the second run corrected a real
+  methodology gap (ADR-014 addenda 1 & 2).** First tone-published run: 6/6 connected with real
+  media, falsifying the "media-flow-gating" hypothesis — but then investigating why the ledger
+  stayed flat surfaced that ALL prior concurrency runs (original + first tone run) actually crashed
+  at `wait_for_participant()` on every session (fast page-close raced the worker's own
+  participant-wait), meaning they only ever proved room-join concurrency, not full-agent-session
+  concurrency. Fixed by holding connections open 15s (`concurrency_test.py`'s new `HOLD_OPEN_S`)
+  before disconnecting. Corrected re-test: **6/6 fully completed the real pipeline** (STT connected,
+  adaptive interruption running) for a sustained ~15s window, all closed cleanly, zero rejections.
+  `docs/30-GUIDE-FREE-TIER.md`'s "5 concurrent" LiveKit Build claim has now been tested 3 ways and
+  never reproduced — doc updated to say so plainly, not left as a stale assumption.
+- **A real race condition, found by the concurrency test itself, fixed same night.** The corrected
+  6-way run's 6 confirmed job-exits should have added 6 minutes to the ledger; only +3 landed, because
+  `increment()`'s unsynchronized read-modify-write raced itself across 6 concurrent job-shutdown
+  threads (Windows `JobExecutorType.THREAD`, ADR-007). Fixed with a `threading.Lock`; verified
+  non-live via a 300-call concurrent-thread stress test (`before=4 after=304 expected=304
+  MATCH=True`); ledger manually corrected to the true value. `livekit_agent_min` now reads a real,
+  race-corrected **7** — a measured fact, not an estimate.
+- **H9 #5 (Uplift artwork licensing) confirmed no longer blocking Phase 5 (ADR-017).** Voice picker
+  will use 3-4 owned artworks instead. `docs/41-HUMAN-TASKS.md` updated (struck through, not
+  deleted, reasoning kept in place). H9's other 4 questions are untouched and still block Phase 8.
+- **detection_delay=1103ms finding stays explicitly OPEN, formally folded into ADR-013's deferred
+  end-of-build voice-quality pass** — not attempted or re-tested now; needs several real
+  Uplift-spending samples to resolve properly.
+- Live LiveKit spend tonight (all pre-approved, P3-T08 scope): 7 measured agent-minutes
+  (`livekit_agent_min=7/1000`). Uplift spend: still genuinely 0 (`uplift_tts_sec=17/600`, unchanged
+  — none of tonight's sessions ever triggered TTS, verified by code-path tracing, not assumed).
+
 ## Now (Session 8 continued — Phase 4 implemented, stopped hard at its human gate)
 - **Phase 4 done, non-live, one long haul, per the new standing operating pattern.**
   `sdk/src/index.ts` is a real implementation now (not the earlier stub): P4-T01/T02 transport +

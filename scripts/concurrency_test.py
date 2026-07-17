@@ -42,6 +42,7 @@ N_CONCURRENT = 6  # LiveKit Build free-tier cap is 5; the 6th must fail cleanly.
 HTTP_PORT = 8934
 POLL_TIMEOUT_S = 25
 POLL_INTERVAL_S = 0.5
+HOLD_OPEN_S = 15  # let worker.main's entrypoint fully complete before disconnecting; see below.
 
 
 def provision_fresh_tenant(conn) -> tuple[str, str, str]:
@@ -106,7 +107,18 @@ def start_http_server() -> tuple[http.server.HTTPServer, threading.Thread]:
 
 
 def main() -> int:
+    import argparse
+
     from playwright.sync_api import sync_playwright
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--tone",
+        action="store_true",
+        help="publish a real synthetic audio track per session (ADR-014 addendum (b) re-test) "
+        "instead of joining with zero media",
+    )
+    args = ap.parse_args()
 
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
         tenant_id, agent_id, secret = provision_fresh_tenant(conn)
@@ -127,10 +139,12 @@ def main() -> int:
             browser = p.chromium.launch(headless=True)
             pages = [browser.new_page() for _ in range(N_CONCURRENT)]
 
-            print(f"opening {N_CONCURRENT} room connections roughly simultaneously...")
+            tone_qs = "&publishTone=1" if args.tone else ""
+            mode = "WITH synthetic-tone published media" if args.tone else "no media (zero tracks)"
+            print(f"opening {N_CONCURRENT} room connections roughly simultaneously — {mode}...")
             for i, (page, tok) in enumerate(zip(pages, tokens)):
                 url = (
-                    f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}"
+                    f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
                 )
                 page.goto(url)
 
@@ -150,6 +164,23 @@ def main() -> int:
 
             for i in pending:
                 results[i] = f"TIMEOUT after {POLL_TIMEOUT_S}s (never reached a terminal state)"
+
+            # HOLD_OPEN_S: closing right after "connected" races worker.main's
+            # ctx.wait_for_participant() — a fast disconnect can cancel that await before it
+            # resolves (RuntimeError: room disconnected while waiting for participant), so the
+            # entrypoint never reaches session.start(). Verified live: holding a connection open
+            # ~15s lets the full pipeline (wait_for_participant -> build_session -> session.start
+            # -> STT connect -> adaptive interruption init) complete normally. Without this, a
+            # concurrency test only proves room-join concurrency, not full-agent-session
+            # concurrency, which is the thing the free-tier doc is actually worried about.
+            connected_count = sum(1 for r in results if r and r.startswith("connected"))
+            if connected_count:
+                print(
+                    f"\nholding {connected_count} connected session(s) open {HOLD_OPEN_S}s so the "
+                    "worker's full entrypoint (wait_for_participant -> session.start -> STT/"
+                    "adaptive-interruption init) can actually complete, not just the room join..."
+                )
+                time.sleep(HOLD_OPEN_S)
 
             print("\n--- results ---")
             for i, r in enumerate(results):

@@ -574,7 +574,10 @@ Date: 2026-07-17 | Decided by: the human (recorded here per that instruction)
 LiveKit's function-calling API — see `docs/23-PHASE-3-WORKER.md` P3-T09) and all remaining
 voice/persona/prosody polish (the 8 unconfirmed Uplift phrase-replacement transliterations from
 tonight, any further persona/prompt iteration) are **explicitly deferred to a dedicated pass at the
-END of the build**, after the SDK and remaining phases (4 onward) are done. This supersedes the
+END of the build**, after the SDK and remaining phases (4 onward) are done. **Added to this deferred
+scope the same night, after being found:** the `detection_delay=1103ms` interruption-latency finding
+(ADR-014 addendum 1(c)) — resolving it needs several real Uplift-spending conversation samples, so
+it's bundled here rather than chased in isolation. This supersedes the
 "top priority, fix before further polish" framing recorded earlier the same night in
 `state/PROGRESS.md` and `docs/23-PHASE-3-WORKER.md` — that framing was reasonable when written
 (right after the bug was found live) but is now stale; both files have been corrected in place to
@@ -711,6 +714,14 @@ know if 1.1s is typical for this setup or a one-off (cold-start, network RTT to 
 inference region from this dev machine, etc.).** Needs several more real interruption events,
 captured live, before treating 1.1s as a stable number rather than a fluke.
 
+**Status: OPEN, explicitly carried into the deferred end-of-build voice-quality pass (ADR-013) —
+not attempted or re-tested before then.** Resolving this needs several real Uplift-spending
+samples (genuine two-way conversation turns, not the zero-audio/synthetic-tone probes used for
+P3-T08), so it is deliberately bundled with the rest of the deferred voice-quality work (P3-T09,
+the 8 unconfirmed phrase-replacement entries, further prompt iteration) rather than chased in
+isolation now. Recorded here so the deferred pass starts with this already scoped in, not
+re-discovered from scratch.
+
 **Evidence.** Live worker log, 2026-07-17 14:49:43–14:50:18 (job dispatch, job runner init, Gladia
 connections, adaptive interruption sessions, clean teardown — full transcript in the session
 record); `scripts/concurrency_test.py` output (`connected=6 failed=0 other=0`); `control_plane/
@@ -718,6 +729,71 @@ mint.py` L121-128 (the control-plane's own quota check, deliberately avoided via
 `max_concurrent=20`); `docs/30-GUIDE-FREE-TIER.md` §4 (the documented, unreproduced claim);
 `state/HANDOFF.md` Session 5 (the prior headless-`livekit.rtc`-hangs finding that motivated the
 Playwright-based driver).
+
+**Addendum 2 2026-07-17 (same day) — synthetic-tone re-test, a real methodology gap found and
+fixed, and a corrected full-pipeline result.**
+
+**(d) The synthetic-tone re-test proposed in Addendum 1(b) was run — and initially FALSIFIED the
+media-flow-gating hypothesis, before a deeper methodology gap was found underneath.**
+`concurrency_test_client.html` now supports `publishTone=1`: a real, continuous audio track
+published via Web Audio API (`MediaStreamAudioDestinationNode`, a 220Hz near-silent sine — no mic,
+no permissions, zero transcription/Uplift risk per Addendum 1(a)'s reasoning). First run at n=6:
+**all 6 connected AND published real media — still `connected=6 failed=0`.** This falsifies the
+leading hypothesis from Addendum 1(b): real published/subscribed media alone does not trigger the
+documented cap either.
+
+**(e) But that first tone run — and both original runs — likely never exercised a genuinely ACTIVE
+agent session at all.** Investigating why the ledger showed 0 after that run (see ADR-016 addendum)
+surfaced the real issue: `worker/main.py`'s entrypoint calls `ctx.wait_for_participant()` **before**
+`session.start()`, and the test script closed each page almost immediately after observing
+`"connected"` client-side. The worker log showed the SAME crash on every affected session:
+`RuntimeError: room disconnected while waiting for participant` — `wait_for_participant()` was
+still pending when the room's disconnect (from the fast page-close) cancelled it, so the entrypoint
+never reached `build_session()`, `session.start()`, or (for the ADR-016 fix) the shutdown-callback
+registration. **This means every prior concurrency result in this ADR (original 6-way, and the
+first tone-published 6-way) most likely measured ONLY room-join concurrency — the LiveKit signaling
+layer accepting a connection — not full-agent-session concurrency (STT connected, adaptive
+interruption running, an actual dispatched `AgentSession`).** That is a materially weaker claim
+than "5 concurrent agent sessions," and is flagged here explicitly rather than left implied by the
+earlier "connected=6" framing.
+
+**(f) Corrected re-test: sessions held open long enough for the full pipeline to complete.** Added
+`HOLD_OPEN_S = 15` to `concurrency_test.py` — after all pages report `"connected"`, the script now
+waits 15s before closing any of them. Verified live this DOES fix it: `wait_for_participant()`
+resolved, `build_session()` completed (confirmed via this project's own
+`"interruption_detection configured=adaptive"` log line — ADR-008 — firing for all 6),
+`session.start()` ran, Gladia STT connected, the adaptive interruption detector initialized, and all
+6 sessions closed CLEANLY on disconnect (`"session closed", "reason": "participant_disconnected",
+"error": null`) — no crashes, unlike every prior run. **Real, corrected result: still `connected=6
+failed=0`, this time under a genuinely full-pipeline, sustained (~15s), 6-way concurrent load. No
+cap fired.** This is the most faithful test run tonight of what `docs/30-GUIDE-FREE-TIER.md`'s "5
+concurrent" claim is actually about, and it still did not reproduce the claim.
+
+**(g) Real measured usage delta, corrected for a race condition found in the same test (full
+account: ADR-016 addendum).** The corrected 6-way run's 6 confirmed job-exits should have added 6
+minutes to `livekit_agent_min`; the ledger only recorded +3 due to an unsynchronized
+`increment()` racing itself under genuine concurrent-thread load (Windows `JobExecutorType.THREAD`
+runs each job's shutdown callback on its own thread in the same process). Fixed with a
+`threading.Lock`, verified non-live with a 300-call concurrent-thread stress test, and the ledger
+was manually corrected (+3) to the true value. **Combined with the earlier single-session
+verification (+1), the real, measured, race-corrected total from tonight's instrumentation testing
+is `livekit_agent_min = 7`** — a real ledger fact, not an estimate, replacing every wall-clock
+guess in this ADR's original body and Addendum 1.
+
+**Updated consequence.** `docs/30-GUIDE-FREE-TIER.md`'s "5 concurrent" LiveKit Build claim has now
+been tested THREE ways tonight (no media, synthetic media, and full-pipeline sustained load with
+real media) and never reproduced once. It should be treated as actively contradicted by evidence
+under these test conditions, not merely "unverified" — `docs/30-GUIDE-FREE-TIER.md` updated
+accordingly (see the diff alongside this entry). Whether the true LiveKit Build cap is higher than
+6, scoped differently (e.g., per-org billing tier upgrade, not a hard technical limit), or the
+figure was simply wrong when originally written is still not determined — that would need either a
+much larger-N test or checking the LiveKit Cloud dashboard/account plan directly, neither done here.
+
+**Evidence.** Live worker logs, both re-test runs, 2026-07-17 15:52-16:00 (job dispatch, the
+`wait_for_participant()` crash traceback, `interruption_detection configured=adaptive` ×6, Gladia
+connection, clean `session closed`/`job exiting` ×6); `scripts/concurrency_test.py` /
+`concurrency_test_client.html` (current versions, committed); `state/usage_ledger.json` (`7`,
+verified not estimated); ADR-016 addendum (the race-condition fix and its own verification).
 
 ---
 ## ADR-015 Phase 4 client SDK: real implementation, GATE 4 machine lines closed   [ACCEPTED]
@@ -784,6 +860,93 @@ L95-100 (`setMicrophoneEnabled`); `livekit-client.esm.mjs` L12103, L12130, L1223
 L12360-12364, L30465-30467 (the `RoomEvent` definitions cited above); `control_plane/app.py` and
 `control_plane/mint.py` (the response shape this SDK's contract mirrors); literal `make
 bundle-check`, secret-grep, and `npm ls` output pasted to the human alongside this gate.
+
+---
+## ADR-016 `livekit_agent_min` instrumentation gap closed — real session duration now recorded   [ACCEPTED]
+Date: 2026-07-17 | Closes the "estimate, not measured" caveat from ADR-014 going forward.
+
+**Context.** ADR-014 flagged that `livekit_agent_min` in `state/usage_ledger.json` stayed at 0
+despite real LiveKit usage across the whole session, because nothing in `worker/main.py` recorded
+real session duration — every reported figure was a wall-clock estimate, not a ledger fact. On the
+one resource this project treats as effectively unrecoverable in spirit (LiveKit Build's 1000
+agent-min/mo hard cap — less severe than Uplift's 10-minutes-forever, but still a real budget), an
+estimate is not good enough going forward.
+
+**Decision.** `worker/main.py::entrypoint()` now records `_session_started_at = time.monotonic()`
+right before `session.start()`, and registers `ctx.add_shutdown_callback(_record_agent_minutes)` —
+verified against installed source (`livekit/agents/job.py` L525-535: `JobContext.
+add_shutdown_callback`, "called when the job is shutting down," accepting an optional `reason: str`
+argument) — the accurate end-of-session signal, since `session.start()` does not block until the
+conversation actually ends (confirmed live all session: job teardown happens on room disconnect,
+independent of when `entrypoint()`'s own function body returns). On shutdown, elapsed wall-clock
+time is converted to whole minutes, **rounded up** (`max(1, math.ceil(elapsed_sec / 60))`), and
+added to `livekit_agent_min` via a new `scripts/usage_guard.py::increment(key, amount)` helper
+(simple read-modify-write against `state/usage_ledger.json`; not safe against concurrent writers —
+acceptable since only one worker process runs against this file in dev, not a production
+data-integrity mechanism).
+
+**The rounding convention is an ASSUMPTION, stated plainly, not a verified LiveKit billing rule.**
+Whole-minute-rounded-up is a common cloud-metering pattern (and matches the framing already used in
+ADR-014's estimate), but LiveKit's actual billing granularity for Build-tier agent-minutes was never
+independently confirmed against their docs. If it turns out to differ (e.g., per-second billing),
+this instrumentation will over- or under-count relative to LiveKit's real invoice — flagged now so
+that gap doesn't get silently assumed away later.
+
+**Consequences.** Every future live worker session — Gate-3-style human-listen calls, concurrency
+re-tests, anything — now writes a real, measured delta to `livekit_agent_min`, not an estimate.
+`pytest tests/test_worker.py` reconfirmed 5/5 green (this code path is only exercised by a real
+`JobContext`, which the test suite doesn't construct — the same class of gap noted for `prewarm` in
+ADR-007: correctness here is verified by source-reading + live exercise, not by the unit gate).
+
+**Evidence.** `livekit/agents/job.py` L525-535 (`add_shutdown_callback`); live exercise via the
+synthetic-tone concurrency re-test that follows this entry (first real measured delta, not
+estimated — see the next ADR entry for the actual recorded number).
+
+**Addendum 2026-07-17 (same day) — a real race condition, caught by the concurrency test itself,
+found and fixed.** First live exercise: a single held-open session correctly recorded `+1`.
+Second live exercise: the corrected 6-way concurrency re-test (see ADR-014 addendum 2) confirmed
+**6** clean job-exits in the worker log, but the ledger only recorded **+3**. Root cause:
+`increment()`'s read-modify-write (`u = load(); u[key] += amount; write`) was not synchronized.
+LiveKit's default `JobExecutorType.THREAD` on Windows (ADR-007) runs each job's shutdown callback
+on its own OS thread **within the same worker process** — 6 callbacks fired within ~3 seconds of
+each other, and unsynchronized concurrent writes lost updates (a classic lost-update race, textbook
+case, not a novel bug). **Fixed:** wrapped `increment()`'s critical section in a module-level
+`threading.Lock()` — this fixes the actual observed failure mode (concurrent threads in one
+process) but does NOT make the file safe against separate OS processes writing concurrently (e.g.,
+a worker process and a simultaneously-run `usage_guard.py --report`) — that would need a real file
+lock, not implemented, since the observed bug was in-process. **Verified the fix, non-live:** a
+local stress test (6 Python threads × 50 concurrent `increment()` calls each = 300 total,
+snapshotting and restoring the real ledger around the test) landed exactly on the expected total
+every time — `before=4 after=304 expected=304 MATCH=True`. **Ledger manually corrected** for the
+3 minutes lost to the pre-fix race (6 confirmed job-exits, all real, all should count): `+3` applied
+directly, bringing the ledger to the true value (1 + 6 = 7), rather than leaving a known-wrong
+number on record. This is the kind of bug free-tier budget tracking exists to catch — logged
+plainly, not smoothed over, per the same discipline as every other finding tonight.
+
+---
+## ADR-017 Voice picker uses 3-4 owned artworks, not Uplift character artwork — H9 #5 no longer blocks Phase 5   [ACCEPTED]
+Date: 2026-07-17 | Decided by: the human (recorded here per that instruction, per the same
+"state in files, never conversation" discipline as every other decision tonight)
+
+**Decision.** The Phase-5 voice picker will use **3-4 owned artworks** rather than Uplift's
+character artwork. `docs/41-HUMAN-TASKS.md` H9 #5 ("May we use your character artwork in a
+commercial voice picker? (Blocks P5.)") and the Phase-5 human-gate row ("Confirm H9 #5 licence
+answer before shipping any Uplift artwork") are both updated to reflect this — struck through, not
+silently deleted, with the reasoning left in place so a future reader sees what changed and why,
+not just a blank space.
+
+**Why (as given).** Not stated as a technical or legal reason — a product/asset decision by the
+human. Recorded plainly, same as ADR-013's sequencing decision, so it isn't re-derived or
+re-litigated differently later by an agent working from the code alone.
+
+**Consequences.** H9's other four questions (concurrency limit, 429 trigger, minute-1,501 behavior
+Pro tier, Enterprise rate above 200h/month) remain live and still block Phase 8 — unaffected by
+this decision, not touched here. Phase 5, when it starts, should source/prepare the 3-4 owned
+artworks as part of its own scope — not specified further here, since that's Phase-5 implementation
+work, not a decision to make now.
+
+**Evidence.** This ADR entry and the corresponding edits to `docs/41-HUMAN-TASKS.md` are the
+record — a direct human instruction in this session.
 
 ---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)

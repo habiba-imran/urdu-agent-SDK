@@ -11,7 +11,7 @@ The plan is free tiers, rotate when exhausted. Here is what that actually buys:
 | Service | Free tier | Rotation verdict |
 |---|---|---|
 | **Uplift TTS** | **10 minutes of audio. Total. Forever.** | ❌ **Unworkable.** 10 min ≈ 40 short agent replies. You'd rotate **daily**. |
-| LiveKit Build | 1,000 agent-min/mo · 5 concurrent · **hard cap, calls FAIL past it** | ⚠️ Adequate *if* budgeted. Rotation loses your URL + keys + project. |
+| LiveKit Build | 1,000 agent-min/mo hard cap (calls FAIL past it) · "5 concurrent" is UNCONFIRMED — tested 3 ways live 2026-07-17 (P3-T08, no media / synthetic media / full-pipeline sustained load) and never reproduced once at n=6, see `docs/40-ADR.md` ADR-014 | ⚠️ 1,000 min/mo budget is real and adequate if budgeted. Rotation loses your URL + keys + project. |
 | Gladia | limited free hours | 🟡 Workable |
 | Gemini | generous TPM/RPD free tier | ✅ Fine, no rotation needed |
 | Supabase | **Pro plan (PAID, 2026-07-16)** — no 7-day pause, no free-tier cap | ✅ No rotation, no pause. Tracked in usage_ledger as `supabase_db_mb` (informational, not capped). |
@@ -112,12 +112,23 @@ Hard cap. At 1,001 minutes **calls fail**. There is no overage.
 | P3 worker dev (~60 calls × 3 min) | 180 |
 | P4 SDK integration (~40 × 3 min) | 120 |
 | P5–P6 (~40 × 3 min) | 120 |
-| **P8 concurrency test — 5 concurrent × 5 min × 6 runs** | **150** |
-| Reserve | 430 |
+| ~~P8 concurrency test — 5 concurrent × 5 min × 6 runs~~ — ran early, in Phase 3 (see below) | ~~150~~ |
+| Reserve | 430 (+150 freed from the line above) |
 
 Also: Build has **10–20s cold starts** (prevention is Ship+). **Expect it. Do not debug it. Do not "optimise" it.** It disappears the day you pay $50.
 
-**⚠️ Test the 5-concurrent cap in Phase 3, not Phase 8** (audit gap #16). Discovering your architecture can't handle concurrency in week eight is a rewrite; in week three it's an afternoon.
+**✅ Tested in Phase 3, not Phase 8, as planned (audit gap #16) — result differs from the "5
+concurrent" assumption above.** `P3-T08` ran live 2026-07-17, three ways: (1) 6 rooms, no media,
+(2) 6 rooms with real published synthetic audio, (3) 6 rooms with real published audio held open
+long enough for the FULL agent pipeline to complete (STT connected, adaptive interruption running)
+— every run showed **6 succeeding, 0 rejected**. The documented "5 concurrent, hard cap" was never
+reproduced under any of these conditions. Full account, including the methodology gap found and
+fixed along the way (early runs only proved room-join concurrency, not full-agent-session
+concurrency) and the real measured LiveKit-minute cost of these tests:
+`docs/40-ADR.md` ADR-014 (original + two addenda). **Do not assume 5-concurrent is a real ceiling
+for this project's LiveKit Build account** until it's actually re-verified (e.g., a larger-N test,
+or checking the LiveKit Cloud dashboard/plan directly) — treat the true ceiling, if any, as unknown
+rather than reverting to the original unverified figure.
 
 ---
 
