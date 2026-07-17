@@ -265,11 +265,16 @@ quality pass (6 items) done and gated, awaiting human review + next live-listen 
   price/stock/policy claim Mahnoor makes right now is unverified against the DB, directly violating
   the persona's own HARD RULE ("Any price, stock, spec or policy MUST come from a tool result...
   never invent") — the rule is stated but not currently enforced, because the enforcement mechanism
-  (real tool execution) isn't wired. **Not fixed tonight** — needs its own investigation into how
-  `tools.py`'s (ported, Pipecat-shaped) function schemas map onto `livekit.agents`' function-calling
-  API (`Agent`/`AgentSession` tool registration — likely a `FunctionTool`/`@function_tool`-style
-  decorator or a `tools=[...]` kwarg; NOT verified yet, do not guess the fix, verify against
-  installed source same as every other Phase-3 finding). See docs/40-ADR.md ADR-011 (blocks the
+  (real tool execution) isn't wired. **Not fixed tonight. Task breakdown now written:
+  `docs/23-PHASE-3-WORKER.md` P3-T09** (verified against installed `livekit.agents` 1.6.5 source —
+  `Agent(tools=[...])`, the `@function_tool` decorator with `raw_schema=` being the closest match
+  to our existing `FunctionSchema` shapes, return-based results instead of `result_callback`,
+  `RunContext` for session access). That breakdown also surfaces a BIGGER open question that isn't
+  a coding detail: `tools.py`'s handlers query Supabase tables (`products`, `customers`,
+  `reservations`, ...) that don't exist in this repo's actual schema (already flagged in the
+  CER-harness note above) — so even correct wiring hits a missing-table error, and whether the
+  TechZone tool suite is a permanent demo fixture or needs to become tenant-configurable is a real
+  design decision, not something to silently assume. See docs/40-ADR.md ADR-011 (blocks the
   filler-on-tool-call evaluation) and ADR-012 (flagged as the top-priority next fix). 🔴 **Next
   session: fix this before further quality polish** — a well-paced agent that invents inventory data
   is worse than a plain one that doesn't.

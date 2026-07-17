@@ -329,9 +329,15 @@ interruption.py`) is a **LiveKit Cloud-hosted inference call** over websocket
 (`LIVEKIT_INFERENCE_URL`/`{base_url}/bargein`, authenticated with `LIVEKIT_API_KEY`/
 `LIVEKIT_API_SECRET`) — not a local/free component. It was firing live during tonight's call
 ("adaptive interruption detector initialized", "adaptive interruption session created" in the
-worker log) with no cost tracked anywhere in `usage_ledger.json`. **Open item, not resolved here:**
-confirm with LiveKit whether/how this is metered and whether it needs a ledger line — flagged in
-ADR-012 (capability-ceiling note), not investigated further tonight (out of this pass's scope).
+worker log) with no cost tracked anywhere in `usage_ledger.json`. **Addendum, same day:** the quota
+is now on record — LiveKit's docs (docs.livekit.io/agents/logic/turns/adaptive-interruption-
+handling/, fetched live) state plainly: *"For local development and testing, every plan includes
+40,000 free inference requests per month"* (unlimited/free instead for agents deployed to LiveKit
+Cloud). Added as `livekit_adaptive_interruption_req` in `scripts/usage_guard.py` /
+`state/usage_ledger.json`, `limit: None` (informational, never fails the gate) — because `used` is
+NOT instrumented (nothing increments a real per-call count yet), not because the quota is uncapped.
+**Still open:** what happens past 40,000/mo (hard block vs overage billing) is not stated on that
+page — unverified. Real per-call instrumentation is future work, not done here.
 
 **How to confirm which mode is actually active in any future log.** LiveKit's own
 `"adaptive interruption detector initialized"` INFO line (`inference/interruption.py` L336-347)

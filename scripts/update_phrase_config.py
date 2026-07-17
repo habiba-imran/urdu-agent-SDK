@@ -68,9 +68,6 @@ _NEW_PROPOSED = [
     {"phrase": "M2", "replacement": "ایم ٹو"},
 ]
 
-REPLACEMENTS = _NEW_PROPOSED + _REUSED_FROM_D42
-
-
 def api(method: str, url: str, body: dict | None = None):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body else None
     req = urllib.request.Request(
@@ -88,6 +85,17 @@ def api(method: str, url: str, body: dict | None = None):
 
 
 def main():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--reused-only",
+        action="store_true",
+        help="write only the 16 D42-verified entries; skip the 8 new unconfirmed ones",
+    )
+    args = ap.parse_args()
+    replacements = _REUSED_FROM_D42 if args.reused_only else _NEW_PROPOSED + _REUSED_FROM_D42
+
     # Remove the stale empty config (ADR-006: 38949e76-... currently has 0 entries) and any
     # others, same cleanup pattern as the old repo's script.
     for cfg in api("GET", BASE) or []:
@@ -98,7 +106,7 @@ def main():
         except Exception as e:
             print(f"could not delete {cid}: {e}")
 
-    created = api("POST", BASE, {"name": "uva-persona-terms", "phraseReplacements": REPLACEMENTS})
+    created = api("POST", BASE, {"name": "uva-persona-terms", "phraseReplacements": replacements})
     config_id = created["configId"]
 
     # Verify round-trip encoding (same assertion as the old repo's script).
@@ -112,7 +120,7 @@ def main():
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(config_id)
     ok_sample = sample.encode("ascii", "backslashreplace").decode()
-    print(f"OK configId={config_id} replacements={len(REPLACEMENTS)} sample={ok_sample}")
+    print(f"OK configId={config_id} replacements={len(replacements)} sample={ok_sample}")
 
 
 if __name__ == "__main__":

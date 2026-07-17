@@ -18,6 +18,21 @@ BUDGETS = {  # docs/30-GUIDE-FREE-TIER.md §3-4. HARD limits from vendor free ti
         "limit": None,
         "note": "Supabase Pro (PAID) — tracked, no free-tier cap",
     },
+    # NOT instrumented (limit None): the real quota is on record, but "used" is not a real
+    # per-call count — nothing in worker/main.py increments it yet. Tracked here so this stops
+    # being an unquantified flag, per ADR-008's open item, not because it's paid/uncapped.
+    "livekit_adaptive_interruption_req": {
+        "limit": None,
+        "note": (
+            "LiveKit Adaptive Interruption Detector, LOCAL DEV mode only: 40,000 free inference "
+            "req/month per plan (docs.livekit.io/agents/logic/turns/adaptive-interruption-"
+            "handling/, verified live 2026-07-17 — exact quote: 'For local development and "
+            "testing, every plan includes 40,000 free inference requests per month.'). Free AND "
+            "UNLIMITED instead for agents deployed to LiveKit Cloud — this quota is specific to "
+            "`python -m worker.main dev`/`console` runs (ADR-008). What happens past 40,000/mo "
+            "(hard block vs overage billing) is NOT stated on that page — unverified, flagged."
+        ),
+    },
 }
 
 
