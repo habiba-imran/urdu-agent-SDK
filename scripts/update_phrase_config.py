@@ -17,55 +17,27 @@ KEY = os.environ["UPLIFTAI_API_KEY"]
 BASE = "https://api.upliftai.org/v1/synthesis/phrase-replacement-config"
 OUT = os.path.join(os.path.dirname(__file__), "..", ".uplift_phrase_config")
 
-# Every Latin-script term persona.py's OUTPUT rule explicitly calls out (brand names,
-# technical terms, product names, units). Multi-word phrases listed before their sub-tokens
-# so they win the match (same convention as the old repo's D42 config).
+# ADR-006's actual rule (quoted, not paraphrased): "Mappings from the old repo's D42 list were
+# removed — they were ported on assumption, not measured. Layer 1 (Latin-script convention) may
+# be sufficient on its own. When a real mispronunciation is heard in a recording, the specific
+# problem phrase goes here as a tested correction, not a guessed one."
 #
-# REUSED verbatim from the old repo's scripts/create_phrase_config.py (D42; human-verified —
-# the script round-trip-asserts the stored replacement is real Urdu script, and D42 recorded
-# it as heard-correct in a recording). Not re-guessed.
-_REUSED_FROM_D42 = [
-    {"phrase": "TechZone", "replacement": "ٹیک زون"},
-    {"phrase": "MacBook", "replacement": "میک بُک"},
-    {"phrase": "ThinkPad", "replacement": "تھنک پیڈ"},
-    {"phrase": "Lenovo", "replacement": "لینووو"},
-    {"phrase": "Dell", "replacement": "ڈیل"},
-    {"phrase": "XPS", "replacement": "ایکس پی ایس"},
-    {"phrase": "Air", "replacement": "ایئر"},
-    {"phrase": "Pro", "replacement": "پرو"},
-    {"phrase": "SSD", "replacement": "ایس ایس ڈی"},
-    {"phrase": "RAM", "replacement": "ریم"},
-    {"phrase": "GB", "replacement": "جی بی"},
-    {"phrase": "TB", "replacement": "ٹی بی"},
-    {"phrase": "USB", "replacement": "یو ایس بی"},
-    {"phrase": "warranty", "replacement": "وارنٹی"},
-    {"phrase": "battery", "replacement": "بیٹری"},
-    {"phrase": "laptop", "replacement": "لیپ ٹاپ"},
-]
-
-# NEW — not in the old config, needed because persona.py's current term list adds them.
-# My transliteration, following the SAME letter-by-letter-acronym / phonetic convention as
-# the reused entries above, but NOT human-verified by ear. FLAGGED for human confirmation
-# before this is committed live, per the task instructions:
-#   - "Bluetooth" -> "بلوٹوتھ": lowest confidence of this batch: multiple plausible Urdu
-#     spellings exist for this loanword and I have no prior human-verified reference for it.
-#   - "M2" -> "ایم ٹو": high confidence — exact same pattern as the old config's verified
-#     M1/M3/M4 entries ("ایم ون"/"ایم تھری"/"ایم فور"), just the missing number in the series.
-#   - "battery health" -> "بیٹری ہیلتھ": compound phrase, listed before the bare "battery"
-#     entry above so it wins the match on the full phrase; "بیٹری" half is reused/verified,
-#     "ہیلتھ" half is new.
-#   - "WiFi" -> "وائی فائی", "HDMI" -> "ایچ ڈی ایم آئی", "charger" -> "چارجر",
-#     "processor" -> "پروسیسر", "display" -> "ڈسپلے": moderate confidence, common
-#     transliterations, but not human-verified in this product's own recordings.
-_NEW_PROPOSED = [
-    {"phrase": "battery health", "replacement": "بیٹری ہیلتھ"},
-    {"phrase": "WiFi", "replacement": "وائی فائی"},
-    {"phrase": "Bluetooth", "replacement": "بلوٹوتھ"},
-    {"phrase": "HDMI", "replacement": "ایچ ڈی ایم آئی"},
-    {"phrase": "charger", "replacement": "چارجر"},
-    {"phrase": "processor", "replacement": "پروسیسر"},
-    {"phrase": "display", "replacement": "ڈسپلے"},
-    {"phrase": "M2", "replacement": "ایم ٹو"},
+# CORRECTION (2026-07-18): an earlier version of this file had a comment here claiming the old
+# D42 list (16 entries) was "human-verified... heard-correct in a recording." That was wrong —
+# ADR-006 says the opposite: those entries were removed specifically because they were ported on
+# assumption, never measured against this product's own recordings. Do not trust that old
+# comment's framing if you find it referenced elsewhere (e.g. state/PROGRESS.md's Phase-3
+# history) — ADR-006's own text is the authority, and it is quoted above, not summarized.
+#
+# Only ONE entry has real listening evidence behind it as of 2026-07-18: RAM, confirmed
+# mispronounced by ear in a real recording. Every other candidate term (from the old D42 list,
+# and every new term persona.py's OUTPUT rule names) is HELD — not written here, not reused,
+# not assumed correct just because it sounds plausible — until it is independently heard
+# mispronounced in a real recording and the specific fix is confirmed, per ADR-006's rule. Add
+# entries to this list ONE AT A TIME, each with a one-line note of which recording it was heard
+# in, as that evidence actually accumulates. Do not batch-add speculative entries again.
+PHRASE_REPLACEMENTS = [
+    {"phrase": "RAM", "replacement": "ریم"},  # heard mispronounced, confirmed by ear
 ]
 
 
@@ -86,18 +58,7 @@ def api(method: str, url: str, body: dict | None = None):
 
 
 def main():
-    import argparse
-
-    ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--reused-only",
-        action="store_true",
-        help="write only the 16 D42-verified entries; skip the 8 new unconfirmed ones",
-    )
-    args = ap.parse_args()
-    replacements = (
-        _REUSED_FROM_D42 if args.reused_only else _NEW_PROPOSED + _REUSED_FROM_D42
-    )
+    replacements = PHRASE_REPLACEMENTS
 
     # Remove the stale empty config (ADR-006: 38949e76-... currently has 0 entries) and any
     # others, same cleanup pattern as the old repo's script.

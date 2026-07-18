@@ -1889,6 +1889,50 @@ ADR-029 (the scope decision this recommendation is downstream of).
 **Status: PROPOSED — recommendation only, awaiting human decision, not acted on unilaterally.**
 
 ---
+## ADR-031 Phrase-replacement config corrected — misleading comment fixed, only RAM written (real evidence)   [ACCEPTED]
+Date: 2026-07-18 | `scripts/update_phrase_config.py`, ADR-006's own standard, `.uplift_phrase_config`
+
+**A stale comment misrepresented ADR-006's own rule — caught by the human, not self-caught.**
+`scripts/update_phrase_config.py` previously claimed its 16 "reused from D42" entries were
+"human-verified — ... heard-correct in a recording." ADR-006's own text says the opposite,
+verbatim: *"Mappings from the old repo's D42 list were removed — they were ported on assumption,
+not measured... When a real mispronunciation is heard in a recording, the specific problem phrase
+goes here as a tested correction, not a guessed one."* The script's comment and the ADR it cited
+directly contradicted each other. Fixed: the comment now quotes ADR-006 directly instead of
+paraphrasing it, and states the correction plainly so a future reader doesn't inherit the wrong
+framing from either this file or `state/PROGRESS.md`'s Phase-3 history (which also repeated the
+"D42; human-verified" framing without checking it against ADR-006's own text).
+
+**Correct treatment, applied.** Only **RAM** has real listening evidence — confirmed
+mispronounced by ear in an actual recording. The other 23 candidates (15 remaining "reused" D42
+entries + all 8 newly-proposed entries from the earlier session) are **held**, not written, not
+kept as a batch anywhere in the live config — each needs its own independent by-ear confirmation
+before it's added, one at a time, per ADR-006's rule. This is not about transliteration
+confidence (several of the held entries were rated "high confidence") — it's that confidence in a
+guess is not the same as evidence, and ADR-006 never allowed writing a plausible guess to a live
+config regardless of how confident it looks.
+
+**Run live — config CRUD only, zero TTS budget, confirmed not estimated.** `python
+scripts/update_phrase_config.py`: deleted the prior (empty) config, created a new one with
+exactly 1 entry (`RAM → ریم`), round-trip-verified as real Urdu script. `.uplift_phrase_config`
+updated to the new `configId` (`a0e46f6e-1679-4443-9464-223bd7e21bf9`) so `worker/factories.py`
+picks it up on the next session. `state/usage_ledger.json`'s `uplift_tts_sec` read directly
+before and after: **327, unchanged** — confirms config CRUD consumed zero TTS budget, exactly as
+ADR-006's original budget-safety analysis predicted (a REST config endpoint, not synthesis).
+
+**Going forward.** The phrase-replacement list builds incrementally from real listening sessions,
+never from a batch carried across repos or sessions. The next entry only gets written after it is
+independently heard mispronounced in a real recording — the script's own top-of-file comment now
+says this explicitly, so this rule survives a context reset even if this ADR isn't re-read.
+
+**Evidence.** `docs/40-ADR.md` ADR-006 (quoted verbatim above); `scripts/update_phrase_config.py`
+live run output (`configId=a0e46f6e-1679-4443-9464-223bd7e21bf9 replacements=1
+sample=ریم` — decodes to «ریم»); `.uplift_phrase_config` (updated);
+`state/usage_ledger.json` (`uplift_tts_sec` 327 before and after, both read directly).
+
+**Status: ACCEPTED 2026-07-18.**
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
