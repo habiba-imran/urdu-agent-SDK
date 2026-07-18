@@ -1,13 +1,16 @@
 # PROGRESS
-Updated: 2026-07-18 | Phase: 8 (Prod Readiness) — **GATE 8 OPEN, does NOT close today.** All six
-P8-Txx tasks worked with real evidence (ADR-024..026). 3 of 6 GATE 8 lines genuinely blocked:
-(1) full suite green — FAILS on the same 3 pre-existing ADR-013-deferred CER-harness tests every
-earlier phase routed around via its own narrower gate, but GATE 8 has no such carve-out — a real
-structural tension flagged for human decision, not resolved; (2) security subagent — BLOCK, sole
-blocker is the json-repair CVE (already investigated, fix conflicts with livekit-agents' exact
-pin); (3) H9 answered + spec updated — still unanswered, emails staged not sent. Runbook,
-ponytail-debt, and all 8 phase-gate tags (rollback-tested) are genuinely done. Phase 7's GATE 7
-remains closed (unchanged). Branch: phase/8-prod-ready (created fresh, ADR-020 convention).
+Updated: 2026-07-18 | Phase: 8 (Prod Readiness) — **GATE 8 OPEN, 5/6 lines green (ADR-032
+supersedes ADR-026).** json-repair CVE formally accepted as risk (ADR-027, not left open).
+P3-T09 tools.py rework done (ADR-029): minimal platform-lifecycle tools (`worker/tools.py`),
+real LiveKit function-calling, live DB writes, RLS on new `escalations` table. Mandatory
+injection re-run done TWICE fresh — real findings both times (`forced_real_tool_call` 2/2,
+`fake_tool_call` 1/2, the other two 0/2), not test-bug artifacts. CER-harness's 3 old failures
+re-confirmed unchanged 4 times now — ADR-030 recommends retirement, awaiting human sign-off,
+not decided unilaterally. `make gate` re-run fresh twice (1 real lint fix found+fixed): lint/
+rls-check(11/11)/usage-check all clean, only the same 3 known tests red. **Only remaining red
+line: "full suite green" — a known, understood, already-flagged item, not a mystery.** H9 sent
+by the human, awaiting reply (external, explicitly not actionable further). Branch:
+phase/8-prod-ready.
 
 ## Now (Session 12 — reconcile Gladia contradiction, begin ADR-013 pile)
 - **P3-T09 injection-gate mandatory re-run (justified test-file edit).** The
