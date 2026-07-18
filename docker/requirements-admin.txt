@@ -1,0 +1,9 @@
+# Minimal deps for admin/app.py -- NOT the full top-level requirements.txt (see
+# requirements-control-plane.txt's header for why). Verified by grepping admin/*.py's actual
+# `import`/`from` lines (2026-07-18). Pins copied verbatim from the top-level requirements.txt.
+fastapi==0.139.0
+uvicorn==0.51.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+python-dotenv==1.2.2
+PyJWT==2.13.0

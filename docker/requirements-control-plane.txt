@@ -1,0 +1,11 @@
+# Minimal deps for control_plane/app.py -- NOT the full top-level requirements.txt, which also
+# pulls in worker-only packages (livekit-agents + all its provider plugins, numpy, openai,
+# python-socketio) that this service never imports. Verified by grepping control_plane/*.py's
+# actual `import`/`from` lines (2026-07-18), not guessed from the monolithic requirements.txt.
+# Pins copied verbatim from the top-level requirements.txt -- same versions, not re-chosen.
+fastapi==0.139.0
+uvicorn==0.51.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+python-dotenv==1.2.2
+livekit-api==1.2.0
