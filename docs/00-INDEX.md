@@ -36,6 +36,8 @@
 | `11-ARCHITECTURE.md` | System design, data flow, the multi-tenant model. |
 | `60-RUNBOOK-CAP-EXHAUSTION.md` | P8-T03. What happens (server + SDK) when a tenant hits a cap — fails, does not queue. Read before building any host-platform integration UX. |
 | `61-GUIDE-DEV-TO-PROD.md` | P8-T05. Every env-var/config/account change needed to flip dev → prod, and what does NOT change. Read before any prod deploy. |
+| `62-GUIDE-PROD-ENV-VARS.md` | P9. Literal, exhaustive per-service env-var inventory for control_plane/admin, verified against real code reads. Read before setting platform secrets. |
+| `63-GUIDE-WORKER-DEPLOYMENT-DEFERRAL.md` | P9. Why the worker gets no Dockerfile yet — persistent-process host vs. request-triggered services — deferred to Phase 12. |
 
 ## Live state (never in docs/ — always current)
 
