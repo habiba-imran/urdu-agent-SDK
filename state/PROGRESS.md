@@ -1,16 +1,33 @@
 # PROGRESS
-Updated: 2026-07-18 | Phase: 8 (Prod Readiness) — **GATE 8 OPEN, 5/6 lines green (ADR-032
-supersedes ADR-026).** json-repair CVE formally accepted as risk (ADR-027, not left open).
-P3-T09 tools.py rework done (ADR-029): minimal platform-lifecycle tools (`worker/tools.py`),
-real LiveKit function-calling, live DB writes, RLS on new `escalations` table. Mandatory
-injection re-run done TWICE fresh — real findings both times (`forced_real_tool_call` 2/2,
-`fake_tool_call` 1/2, the other two 0/2), not test-bug artifacts. CER-harness's 3 old failures
-re-confirmed unchanged 4 times now — ADR-030 recommends retirement, awaiting human sign-off,
-not decided unilaterally. `make gate` re-run fresh twice (1 real lint fix found+fixed): lint/
-rls-check(11/11)/usage-check all clean, only the same 3 known tests red. **Only remaining red
-line: "full suite green" — a known, understood, already-flagged item, not a mystery.** H9 sent
-by the human, awaiting reply (external, explicitly not actionable further). Branch:
-phase/8-prod-ready.
+Updated: 2026-07-18 | Phase: 8/9/10 worked in one haul, per explicit instruction — **GATE 8 still
+OPEN, 5/6 lines green (ADR-032), 6th needs a human decision (ADR-030), not new work.** Phase 9
+(deployment readiness, config/artifacts only) DONE: Dockerfiles for control_plane/admin built and
+verified without live Docker (venv/import/serve test — Docker not installed in this environment),
+a systemic prod-readiness bug found and fixed (`dbconn.py`/`control_plane/app.py` read secrets
+from `.env.local` ONLY, never `os.environ` — silently broken in any real deploy), full env-var
+inventory written (`docs/62`), worker deployment explicitly deferred to Phase 12 with a real
+reason documented (`docs/63` — persistent-process host vs. request-triggered services),
+`sessionEndpoint` confirmed genuinely configurable (grep, no hardcoding). Phase 10 (testing prep,
+no live call made) DONE as far as possible without the human: structured listening checklist +
+staged (not run) provision/mint/start commands written (`docs/64`) — **demo tenant currently has
+ZERO agent rows, confirmed by direct query, so step 1 of that doc (re-provision) is mandatory, not
+optional, before any listening session**; deferred-pile swept for non-live work, one genuinely
+resolvable item found and closed (ADR-033 — corrects ADR-012's stale "interruption-detector
+billing UNVERIFIED" framing; the real answer was already in ADR-008's own addendum and
+`usage_guard.py`, self-caught before commit). json-repair CVE formally accepted as risk (ADR-027).
+P3-T09 tools.py rework done (ADR-029): minimal platform-lifecycle tools (`worker/tools.py`), real
+LiveKit function-calling, live DB writes, RLS on new `escalations` table. Mandatory injection
+re-run done TWICE fresh — real findings both times (`forced_real_tool_call` 2/2, `fake_tool_call`
+1/2, the other two 0/2), not test-bug artifacts. CER-harness's 3 old failures re-confirmed
+unchanged a 5th time this session (identical: 51 passed, 5 skipped, 3 failed) — ADR-030
+recommends retirement, awaiting human sign-off. `make gate` re-run fresh: lint/rls-check(11/11)/
+usage-check all clean, only the same 3 known tests red. H9 sent by the human, awaiting reply
+(external, not actionable further). Branch: phase/8-prod-ready.
+
+**Stopping point — this is genuinely as far as this session goes without the human.** Everything
+from here needs either a live LiveKit/Uplift call (the listening session itself), phonetic
+judgment only a human can make, or a decision already staged and waiting (ADR-030's CER-harness
+retirement call, H9's vendor replies). Nothing further is being guessed at or built ahead of that.
 
 ## Now (Session 12 — reconcile Gladia contradiction, begin ADR-013 pile)
 - **P3-T09 injection-gate mandatory re-run (justified test-file edit).** The
