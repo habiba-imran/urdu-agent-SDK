@@ -38,6 +38,7 @@
 | `61-GUIDE-DEV-TO-PROD.md` | P8-T05. Every env-var/config/account change needed to flip dev → prod, and what does NOT change. Read before any prod deploy. |
 | `62-GUIDE-PROD-ENV-VARS.md` | P9. Literal, exhaustive per-service env-var inventory for control_plane/admin, verified against real code reads. Read before setting platform secrets. |
 | `63-GUIDE-WORKER-DEPLOYMENT-DEFERRAL.md` | P9. Why the worker gets no Dockerfile yet — persistent-process host vs. request-triggered services — deferred to Phase 12. |
+| `64-GUIDE-LIVE-LISTEN-CHECKLIST.md` | P10. Structured listening checklist + staged (not run) commands for the next live-listen session. Read before that session starts. |
 
 ## Live state (never in docs/ — always current)
 

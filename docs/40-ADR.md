@@ -2006,6 +2006,59 @@ ADR-031 (each independently re-confirmed present and unmodified this pass).
 queued (ADR-030), not new work. Not rounding up to CLOSED.**
 
 ---
+## ADR-033 Correction: ADR-012's "interruption-detector billing UNVERIFIED" was already stale;
+## real new finding is the SEPARATE turn-detector-v1 model's cost status   [ACCEPTED]
+Date: 2026-07-18 | P10 deferred-pile sweep | Self-caught error — first draft of this entry
+duplicated/conflated an already-answered question before being checked against `usage_guard.py`.
+
+**What actually happened, in order, so this isn't miscited later.** Went looking for a
+genuinely-resolvable item in the deferred pile and picked ADR-012's line: "The LiveKit Adaptive
+Interruption Detector (ADR-008) is a LiveKit Cloud-hosted inference call... Whether/how this is
+metered is UNVERIFIED — open item, not investigated further this pass." Fetched LiveKit's docs,
+drafted an entry answering it — then, before finalizing, ran `make gate` for an unrelated
+end-of-phase check and saw `usage_guard.py --report` print a `livekit_adaptive_interruption_req`
+line with an exact citation already on record. Checking the source: **ADR-008 itself already has
+an "Addendum, same day" (2026-07-17) that answers this exact question** — *"For local development
+and testing, every plan includes 40,000 free inference requests per month"* (free/unlimited for
+agents deployed to LiveKit Cloud), sourced from `docs.livekit.io/agents/logic/turns/adaptive-
+interruption-handling/, fetched live 2026-07-17, and already wired into
+`scripts/usage_guard.py`/`state/usage_ledger.json` as an informational (`limit: None`, since
+per-call `used` isn't instrumented) tracked line. **ADR-012's "UNVERIFIED... not investigated
+further" framing was already stale the moment ADR-012 was written** — the addendum answering it
+sits in the very ADR-012 cites (ADR-008), just not cross-referenced forward. Nothing to fix in
+`usage_guard.py`; it was already correct. This entry exists to correct ADR-012's framing, not to
+re-answer an already-answered question.
+
+**The one genuinely new thing found in the process.** `AdaptiveInterruptionDetector`
+(`livekit/agents/inference/interruption.py`, the bargein/talk-over-detection call ADR-008
+covers) and the **audio turn detector** (`turn-detector-v1`, the END-OF-TURN prediction model
+ADR-011 confirms is actually in use — `_StreamingTurnDetector`) are two DIFFERENT LiveKit
+inference features, priced/documented separately — conflating them was this draft's own first
+mistake, caught before commit, not by the user this time. `docs.livekit.io/agents/build/turns/
+turn-detector/` (fetched 2026-07-18) states the **v1 (full) turn-detector model is "available at
+no cost to agents deployed to LiveKit Cloud,"** with "a free monthly allowance of the full model
+on every plan" for local dev (this project's current mode — worker runs locally per
+`docs/63-GUIDE-WORKER-DEPLOYMENT-DEFERRAL.md`), after which sessions "automatically fall back" to
+**v1-mini**, documented as "free to use in any context at no additional cost." No exact monthly
+number is published for this one (unlike the interruption detector's stated 40,000/mo) — flagged
+as a real, remaining gap, not filled in by assumption.
+
+**Conclusion.** No usage_ledger fix needed for the interruption detector (already correct, already
+cited). Added nothing new there. For the turn-detector-v1 model specifically: same shape of
+answer (free on LiveKit Cloud, an unspecified monthly allowance locally, then a free no-cost
+fallback, not a billing event) — worth a `usage_guard.py` informational line for completeness,
+but genuinely lower priority than the interruption detector's entry since worse-case behavior
+here is "silently downgrades to a lighter model," not "starts costing money" or "hard-fails" —
+not added in this pass to avoid scope creep on a P10 sweep; flagged here so it isn't re-derived
+from scratch if picked up later.
+
+**Evidence.** `scripts/usage_guard.py` L26-37 / `state/usage_ledger.json` (pre-existing,
+2026-07-17); ADR-008's addendum (the entry that actually answers this); `docs.livekit.io/agents/
+build/turns/turn-detector/` (fetched 2026-07-18, the one genuinely new fact this entry adds);
+ADR-011 (confirms `turn-detector-v1` is the model this worker actually runs); ADR-012 (the entry
+whose framing this corrects).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.
