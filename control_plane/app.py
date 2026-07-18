@@ -10,6 +10,7 @@ this keeps blocking DB work off the event loop without an async driver.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections import defaultdict
@@ -30,10 +31,14 @@ from .secrets import EnvSecretProvider  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from admin.audit import record_mint_rejection  # noqa: E402
 
+# P9 FIX (2026-07-18): previously read LIVEKIT_* ONLY from a physical .env.local file --
+# correct for local dev, silently empty in any deployed environment with no such file
+# (dotenv_values() on a missing file returns {}, no error). Checks os.environ first now,
+# matching control_plane/secrets.py::EnvSecretProvider's already-established pattern.
 _ENV = dotenv_values(Path(__file__).resolve().parent.parent / ".env.local")
-_LK_URL = _ENV.get("LIVEKIT_URL", "")
-_LK_KEY = _ENV.get("LIVEKIT_API_KEY", "")
-_LK_SECRET = _ENV.get("LIVEKIT_API_SECRET", "")
+_LK_URL = os.environ.get("LIVEKIT_URL") or _ENV.get("LIVEKIT_URL", "")
+_LK_KEY = os.environ.get("LIVEKIT_API_KEY") or _ENV.get("LIVEKIT_API_KEY", "")
+_LK_SECRET = os.environ.get("LIVEKIT_API_SECRET") or _ENV.get("LIVEKIT_API_SECRET", "")
 RATE_LIMIT_PER_MIN = 120
 
 app = FastAPI(title="UVA control plane")
