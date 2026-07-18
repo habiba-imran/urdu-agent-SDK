@@ -170,7 +170,9 @@ def main() -> int:
             stagger_desc = (
                 f", staggered {args.stagger_ms}ms apart" if args.stagger_ms else ""
             )
-            print(f"opening {n} room connections roughly simultaneously — {mode}{stagger_desc}...")
+            print(
+                f"opening {n} room connections roughly simultaneously — {mode}{stagger_desc}..."
+            )
             for i, (page, tok) in enumerate(zip(pages, tokens)):
                 url = f"{base_url}?wsUrl={tok['wsUrl']}&token={tok['token']}&label={i}{tone_qs}"
                 connect_started_at[i] = time.monotonic()
