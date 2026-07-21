@@ -21,6 +21,8 @@ export interface ConnectOptions {
   agentId: string;
 }
 
+export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
+
 export type UvaEvent =
   | 'transcript'
   | 'speaking'
@@ -32,6 +34,16 @@ export type UvaEvent =
   | 'metrics_updated';
 
 export type UvaErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+
+export interface TranscriptEvent {
+  text: string;
+  final: boolean;
+}
+
+export interface MetricsEvent {
+  type: 'metrics_updated' | 'turn_latency';
+  [key: string]: unknown;
+}
 
 export class UvaError extends Error {
   constructor(
@@ -51,20 +63,52 @@ interface SessionResponse {
   expiresIn?: number;
 }
 
-type Listener = (...args: unknown[]) => void;
+export interface UvaEventMap {
+  transcript: [TranscriptEvent];
+  speaking: [boolean];
+  error: [UvaError];
+  ended: [unknown];
+  connected: [];
+  disconnected: [unknown];
+  agent_speaking: [boolean];
+  metrics_updated: [MetricsEvent];
+}
+
+type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
 export class UrduVoiceAgent {
   private room: Room | null = null;
   private readonly listeners = new Map<UvaEvent, Set<Listener>>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
+  private state: ConnectionState = 'idle';
 
-  constructor(private readonly options: UrduVoiceAgentOptions) {}
+  constructor(private readonly options: UrduVoiceAgentOptions) {
+    if (!options.publishableKey.trim()) {
+      throw new UvaError('session_failed', 'publishableKey is required');
+    }
+    if (!options.sessionEndpoint.trim()) {
+      throw new UvaError('session_failed', 'sessionEndpoint is required');
+    }
+  }
+
+  get connectionState(): ConnectionState {
+    return this.state;
+  }
+
+  get isConnected(): boolean {
+    return this.state === 'connected';
+  }
 
   async connect(opts: ConnectOptions): Promise<void> {
     if (this.room) {
       throw new UvaError('session_failed', 'already connected - call disconnect() first');
     }
+    if (!opts.agentId.trim()) {
+      throw new UvaError('session_failed', 'agentId is required');
+    }
+
+    this.state = 'connecting';
 
     let body: SessionResponse;
     try {
@@ -91,6 +135,7 @@ export class UrduVoiceAgent {
       }
       body = parsed as SessionResponse;
     } catch (err) {
+      this.state = 'idle';
       if (err instanceof UvaError) throw err;
       throw new UvaError('session_failed', 'could not reach sessionEndpoint');
     }
@@ -101,6 +146,7 @@ export class UrduVoiceAgent {
     try {
       await room.connect(body.wsUrl, body.token);
     } catch {
+      this.state = 'idle';
       throw new UvaError('session_failed', 'LiveKit connection failed');
     }
 
@@ -108,6 +154,7 @@ export class UrduVoiceAgent {
       await room.localParticipant.setMicrophoneEnabled(true);
     } catch {
       await room.disconnect();
+      this.state = 'idle';
       throw new UvaError('session_failed', 'microphone permission denied or unavailable');
     }
 
@@ -116,30 +163,38 @@ export class UrduVoiceAgent {
     this.scheduleTokenRefresh(body);
   }
 
-  on(event: UvaEvent, cb: Listener): this {
+  on<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(cb);
+    this.listeners.get(event)!.add(cb as Listener);
+    return this;
+  }
+
+  off<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+    this.listeners.get(event)?.delete(cb as Listener);
     return this;
   }
 
   async disconnect(): Promise<void> {
     this.clearRefreshTimer();
     if (!this.room) return;
+    this.state = 'disconnecting';
     await this.room.disconnect();
     this.room = null;
     this.session = null;
+    this.state = 'idle';
   }
 
-  private emit(event: UvaEvent, ...args: unknown[]): void {
+  private emit<K extends UvaEvent>(event: K, ...args: UvaEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      cb(...args);
+      (cb as Listener<UvaEventMap[K]>)(...args);
     }
   }
 
   private wireRoomEvents(room: Room): void {
     room.on(RoomEvent.Connected, () => {
+      this.state = 'connected';
       this.emit('connected');
     });
 
@@ -147,6 +202,7 @@ export class UrduVoiceAgent {
       this.clearRefreshTimer();
       this.room = null;
       this.session = null;
+      this.state = 'idle';
       this.emit('disconnected', reason);
       this.emit('ended', reason);
     });
@@ -246,12 +302,12 @@ export class UrduVoiceAgent {
     }
   }
 
-  private tryParseMetrics(text?: string): unknown | null {
+  private tryParseMetrics(text?: string): MetricsEvent | null {
     if (!text) return null;
     try {
       const parsed = JSON.parse(text) as { type?: string };
       if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
-        return parsed;
+        return parsed as MetricsEvent;
       }
       return null;
     } catch {
