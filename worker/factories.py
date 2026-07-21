@@ -11,6 +11,11 @@ import os
 import uuid
 from pathlib import Path
 
+_DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-3.1-flash-lite")
+_DEPRECATED_GEMINI_MODELS = {
+    "gemini-2.5-flash": _DEFAULT_GEMINI_MODEL,
+}
+
 
 def _phrase_config_id() -> str | None:
     """Read the committed phrase replacement configId, if any."""
@@ -131,4 +136,5 @@ def make_llm(model: str):
     agent-session cap and would become the real ceiling (docs/23-PHASE-3-WORKER.md)."""
     from livekit.plugins import google
 
-    return google.LLM(model=model)
+    resolved_model = _DEPRECATED_GEMINI_MODELS.get(model, model or _DEFAULT_GEMINI_MODEL)
+    return google.LLM(model=resolved_model)

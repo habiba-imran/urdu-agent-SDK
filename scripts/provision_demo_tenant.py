@@ -67,7 +67,7 @@ def main() -> int:
         )
         c.execute(
             "insert into agents (id, tenant_id, name, prompt, voice_id, llm_model) "
-            "values (%s, %s, 'Mahnoor demo', %s, 'v_meklc281', 'gemini-2.5-flash')",
+            "values (%s, %s, 'Mahnoor demo', %s, 'v_meklc281', 'gemini-3.1-flash-lite')",
             (aid, tid, prompt),
         )
     print(

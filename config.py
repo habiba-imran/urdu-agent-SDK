@@ -32,7 +32,7 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "cerebras").lower()
 # proper Urdu script, 0 reasoning tokens, clean streamed tool calls (D28).
 CEREBRAS_LLM_MODEL = os.environ.get("CEREBRAS_LLM_MODEL", "gemma-4-31b")
 GROQ_LLM_MODEL = os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile")
-GEMINI_LLM_MODEL = os.environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash")
+GEMINI_LLM_MODEL = os.environ.get("GEMINI_LLM_MODEL", "gemini-3.1-flash-lite")
 GROQ_STT_MODEL = "whisper-large-v3"  # fallback STT (STT_PROVIDER=groq)
 # Cerebras free tier caps context at 8,192 tokens; hard-trim any request that
 # would approach this (estimator: urdu chars ≈ 1 tok, other chars ≈ 1/4 tok)
