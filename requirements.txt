@@ -23,3 +23,5 @@ ruff==0.15.21
 supabase==2.31.0
 uvicorn==0.51.0
 websockets==15.0.1
+sentry-sdk==2.22.0
+
