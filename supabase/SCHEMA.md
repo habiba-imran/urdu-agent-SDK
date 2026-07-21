@@ -48,8 +48,6 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | contact_info | text | YES |  |
 | requested_at | timestamp with time zone | NO | now() |
 | status | text | NO | 'pending'::text |
-- FK: session_id -> sessions(id)
-- FK: tenant_id -> tenants(id)
 - index: escalations_pkey
 
 ## table: mint_rejections

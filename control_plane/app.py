@@ -72,7 +72,18 @@ def _require_env() -> None:
 
 _require_env()
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="UVA control plane")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 _secrets = EnvSecretProvider()
 _hits: dict[str, list[float]] = defaultdict(list)
 

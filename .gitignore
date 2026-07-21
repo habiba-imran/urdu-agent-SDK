@@ -17,3 +17,4 @@ voice-picker/previews/
 # human, never committed and never pasted into any tracked file (BLOCKERS.md's demo-gate3 burned-
 # secret lesson: a secret that lands in tracked/logged text is compromised).
 state/admin_bootstrap.local.md
+/hamza docs
