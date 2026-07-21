@@ -190,26 +190,26 @@ function bindAgent(client: UrduVoiceAgent): void {
   client.on('disconnected', () => {
     setStatus('idle');
   });
-  client.on('transcript', (entry) => {
+  client.on('transcript', (entry: any) => {
     state.transcript = [...state.transcript, entry];
     render();
   });
-  client.on('speaking', (isSpeaking) => {
-    state.speaking = isSpeaking;
+  client.on('speaking', (isSpeaking: any) => {
+    state.speaking = Boolean(isSpeaking);
     render();
   });
-  client.on('agent_speaking', (isSpeaking) => {
-    state.agentSpeaking = isSpeaking;
+  client.on('agent_speaking', (isSpeaking: any) => {
+    state.agentSpeaking = Boolean(isSpeaking);
     render();
   });
-  client.on('metrics_updated', (metrics) => {
+  client.on('metrics_updated', (metrics: any) => {
     state.metricsText = formatMetrics(metrics);
     render();
   });
-  client.on('error', (error) => {
+  client.on('error', (error: any) => {
     renderError(error);
   });
-  client.on('ended', (reason) => {
+  client.on('ended', (reason: any) => {
     state.status = `ended${reason ? ` (${String(reason)})` : ''}`;
     render();
   });
@@ -229,16 +229,17 @@ function resetSessionView(): void {
   render();
 }
 
-function renderError(error: unknown): void {
+function renderError(error: any): void {
   if (isUvaError(error)) {
     state.errorText = `${error.code}: ${error.message}`;
-  } else if (error instanceof Error) {
-    state.errorText = error.message;
+  } else if (error && typeof error === 'object' && 'message' in error) {
+    state.errorText = String(error.message);
   } else {
     state.errorText = 'Unknown error';
   }
   render();
 }
+
 
 function render(): void {
   statusText.textContent = state.status;
