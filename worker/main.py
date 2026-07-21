@@ -175,6 +175,10 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             from livekit.agents.log import logger
 
             logger.warning("failed to release quota slot for room %s: %s", room_name, e)
+        finally:
+            import gc
+            gc.collect()
+
 
     async def _record_agent_minutes(reason: str = "") -> None:
         import math
@@ -280,6 +284,9 @@ if __name__ == "__main__":
     # guaranteed real main thread, before cli.run_app() ever spawns a job thread/process.
     # See prewarm()'s docstring above for why this is required on Windows.
     _prewarmed = prewarm(None)
+    import gc
+    gc.collect()
+
 
     # Direct evidence, not inference: confirm each plugin module prewarm() imported is
     # actually in sys.modules before any job thread/process exists. If one is missing, the
