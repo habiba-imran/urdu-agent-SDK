@@ -10,12 +10,12 @@ this keeps blocking DB work off the event loop without an async driver.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import os
 import sys
 import time
-import asyncio
 from collections import defaultdict
 from pathlib import Path
 
@@ -26,6 +26,14 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from pydantic import BaseModel
+
+try:
+    import sentry_sdk  # type: ignore
+except ImportError:
+    sentry_sdk = None
+
+
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 try:
@@ -87,9 +95,8 @@ _CORS_ORIGINS_RAW = (
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 
 _SENTRY_DSN = os.environ.get("SENTRY_DSN") or _ENV.get("SENTRY_DSN", "")
-if _SENTRY_DSN:
+if _SENTRY_DSN and sentry_sdk is not None:
     try:
-        import sentry_sdk
         sentry_sdk.init(
             dsn=_SENTRY_DSN,
             traces_sample_rate=0.1,
@@ -97,6 +104,7 @@ if _SENTRY_DSN:
         )
     except Exception:
         pass
+
 
 app = FastAPI(
 

@@ -18,11 +18,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 try:
-    from dbconn import conn_kwargs
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
     import psycopg
 except ImportError:
-    conn_kwargs = None  # type: ignore
-    psycopg = None  # type: ignore
+    conn_kwargs = None
+    psycopg = None
+
 
 
 async def simulate_session(
@@ -115,7 +116,7 @@ async def run_load_test(
 
 def get_db_concurrency(tenant_id: str) -> int:
     """Queries live quota_state.concurrent_now for a tenant from PostgreSQL."""
-    if not psycopg or not conn_kwargs:
+    if conn_kwargs is None or psycopg is None:
         return 0
     try:
         with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
@@ -126,6 +127,7 @@ def get_db_concurrency(tenant_id: str) -> int:
             return row[0] if row else 0
     except Exception:
         return 0
+
 
 
 def main():
