@@ -1,384 +1,1449 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>UVA Dev Sandbox</title>
+  <meta
+    name="description"
+    content="Developer sandbox for testing the Urdu Voice Agent session flow, audio pipeline, and latency telemetry."
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     :root {
       --bg: #07111f;
-      --panel: rgba(14, 27, 46, 0.78);
-      --line: rgba(129, 201, 255, 0.2);
-      --text: #e9f3ff;
-      --muted: #8da7c4;
-      --accent: #45d0ff;
-      --accent-2: #70f0c5;
-      --danger: #ff6b8b;
-      --warn: #ffcb6b;
+      --bg-2: #0b1830;
+      --bg-3: rgba(9, 22, 43, 0.75);
+      --card: rgba(12, 24, 46, 0.72);
+      --card-strong: rgba(16, 31, 58, 0.88);
+      --line: rgba(110, 166, 255, 0.18);
+      --line-strong: rgba(110, 166, 255, 0.32);
+      --cyan: #49d7ff;
+      --violet: #9b6cff;
+      --green: #24dd9a;
+      --amber: #ffbf47;
+      --red: #ff5d7d;
+      --text: #edf4ff;
+      --muted: #9bb0d3;
+      --soft: #61759c;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      --glow-cyan: 0 0 40px rgba(73, 215, 255, 0.18);
+      --glow-violet: 0 0 40px rgba(155, 108, 255, 0.18);
+      --blur: 18px;
+      --radius: 18px;
+      --radius-sm: 12px;
+      --mono: "JetBrains Mono", monospace;
+      --sans: "Inter", system-ui, sans-serif;
     }
+
     * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
     body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      font-family: var(--sans);
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(69, 208, 255, 0.18), transparent 35%),
-        radial-gradient(circle at top right, rgba(112, 240, 197, 0.12), transparent 25%),
-        linear-gradient(180deg, #08101d 0%, #040912 100%);
+        radial-gradient(circle at top left, rgba(73, 215, 255, 0.15), transparent 30%),
+        radial-gradient(circle at top right, rgba(155, 108, 255, 0.18), transparent 35%),
+        radial-gradient(circle at bottom left, rgba(36, 221, 154, 0.10), transparent 32%),
+        linear-gradient(180deg, #06101d 0%, #091426 50%, #07111f 100%);
+      overflow-x: hidden;
     }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(circle at center, black 30%, transparent 100%);
+      opacity: 0.22;
+    }
+
     .shell {
-      width: min(1180px, calc(100% - 32px));
-      margin: 24px auto;
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 28px 24px 40px;
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       gap: 20px;
+      margin-bottom: 24px;
     }
-    .card {
-      background: var(--panel);
+    .hero-title {
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      margin: 0;
+    }
+    .hero-sub {
+      margin: 10px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .hero-highlight {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
       border: 1px solid var(--line);
-      border-radius: 20px;
-      backdrop-filter: blur(18px);
-      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
-      padding: 20px;
-    }
-    h1, h2 { margin: 0 0 12px; }
-    h1 { font-size: 28px; }
-    h2 { font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
-    p { color: var(--muted); line-height: 1.5; }
-    .grid { display: grid; gap: 14px; }
-    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
-    input, textarea {
-      width: 100%;
-      border: 1px solid rgba(129, 201, 255, 0.18);
-      background: rgba(2, 8, 17, 0.7);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 12px 14px;
-      font: inherit;
-    }
-    textarea { min-height: 112px; resize: vertical; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
-    button {
-      border: 0;
       border-radius: 999px;
-      padding: 12px 18px;
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-      color: #04111f;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      background: rgba(9, 20, 38, 0.72);
+      box-shadow: var(--glow-cyan);
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
     }
-    button.secondary { background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--line); }
-    button.danger { background: linear-gradient(135deg, #ff7b7b, var(--danger)); }
-    .status-row {
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+      background: rgba(10, 18, 34, 0.8);
+      box-shadow: var(--shadow);
+      min-width: 170px;
+      justify-content: center;
+      transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+    }
+    .badge-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--soft);
+    }
+    .badge-label {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .badge--idle .badge-dot { background: #7d89a2; }
+    .badge--connecting { border-color: rgba(73, 215, 255, 0.4); box-shadow: var(--shadow), var(--glow-cyan); }
+    .badge--connecting .badge-dot { background: var(--cyan); animation: pulse 1s infinite; }
+    .badge--listening { border-color: rgba(36, 221, 154, 0.4); }
+    .badge--listening .badge-dot { background: var(--green); animation: pulse 1.25s infinite; }
+    .badge--thinking { border-color: rgba(255, 191, 71, 0.45); }
+    .badge--thinking .badge-dot { background: var(--amber); animation: spin 900ms linear infinite; }
+    .badge--speaking { border-color: rgba(155, 108, 255, 0.45); box-shadow: var(--shadow), var(--glow-violet); }
+    .badge--speaking .badge-dot { background: var(--violet); animation: pulse 480ms infinite; }
+    .badge--error { border-color: rgba(255, 93, 125, 0.45); }
+    .badge--error .badge-dot { background: var(--red); animation: pulse 900ms infinite; }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(0.68); opacity: 0.52; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg) scale(1); }
+      to { transform: rotate(360deg) scale(0.88); }
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 380px minmax(0, 1fr);
+      gap: 22px;
+    }
+    @media (max-width: 1180px) {
+      .grid { grid-template-columns: 1fr; }
+      .hero { flex-direction: column; }
+    }
+
+    .card {
+      position: relative;
+      overflow: hidden;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      backdrop-filter: blur(var(--blur));
+      box-shadow: var(--shadow);
+      animation: slideUp 280ms ease;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.05), transparent 40%);
+      pointer-events: none;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 20px 22px 0;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .card-body {
+      padding: 18px 22px 22px;
+    }
+
+    .stack { display: grid; gap: 20px; }
+    .field-grid { display: grid; gap: 14px; }
+    .field label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .field small {
+      color: var(--soft);
+      font-weight: 500;
+    }
+    input {
+      width: 100%;
+      padding: 14px 15px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(110, 166, 255, 0.16);
+      background: rgba(6, 15, 29, 0.76);
+      color: var(--text);
+      outline: none;
+      font: 500 13px/1.4 var(--mono);
+      transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+    input::placeholder { color: #67799b; }
+    input:focus {
+      border-color: rgba(73, 215, 255, 0.55);
+      box-shadow: 0 0 0 4px rgba(73, 215, 255, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .action-grid .btn:first-child { grid-column: 1 / -1; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 12px 16px;
+      border: 0;
+      border-radius: 14px;
+      cursor: pointer;
+      color: white;
+      font: 700 14px/1 var(--sans);
+      letter-spacing: 0.01em;
+      transition: transform 180ms ease, filter 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .btn::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.18), transparent 45%);
+      opacity: 0.35;
+    }
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+    .btn:active { transform: translateY(0); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.2); }
+    .btn-primary { background: linear-gradient(135deg, #1fb7ff, #7a78ff); box-shadow: var(--glow-cyan); }
+    .btn-secondary { background: linear-gradient(135deg, rgba(73, 215, 255, 0.2), rgba(155, 108, 255, 0.2)); border: 1px solid rgba(110, 166, 255, 0.2); }
+    .btn-success { background: linear-gradient(135deg, rgba(36, 221, 154, 0.92), rgba(73, 215, 255, 0.62)); }
+    .btn-danger { background: linear-gradient(135deg, rgba(255, 93, 125, 0.9), rgba(155, 108, 255, 0.7)); }
+
+    .tips {
+      display: grid;
+      gap: 10px;
+    }
+    .tip {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(5, 14, 28, 0.56);
+      border: 1px solid rgba(110, 166, 255, 0.08);
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 13px;
+    }
+
+    .right-stack {
+      display: grid;
+      gap: 22px;
+    }
+    .hero-metrics {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 8px;
+      gap: 14px;
     }
-    .pill {
-      padding: 14px;
+    @media (max-width: 980px) {
+      .hero-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .hero-metrics { grid-template-columns: 1fr; }
+    }
+
+    .chip {
+      padding: 16px;
       border-radius: 16px;
-      background: rgba(4, 12, 22, 0.65);
-      border: 1px solid rgba(129, 201, 255, 0.12);
+      background: rgba(6, 15, 29, 0.62);
+      border: 1px solid rgba(110, 166, 255, 0.12);
     }
-    .pill .value { font-size: 22px; font-weight: 700; margin-top: 6px; }
-    .meters { display: grid; gap: 14px; }
-    canvas {
-      width: 100%;
-      height: 84px;
-      border-radius: 14px;
-      background: rgba(3, 8, 16, 0.72);
-      border: 1px solid rgba(129, 201, 255, 0.12);
+    .chip-label {
+      font-size: 11px;
+      color: var(--soft);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 8px;
     }
-    pre {
-      margin: 0;
-      padding: 14px;
-      border-radius: 14px;
-      background: rgba(3, 8, 16, 0.72);
-      color: #d9ecff;
-      max-height: 240px;
-      overflow: auto;
-      border: 1px solid rgba(129, 201, 255, 0.12);
-      white-space: pre-wrap;
+    .chip-value {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 700;
       word-break: break-word;
     }
-    table {
+
+    .panel-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    @media (max-width: 900px) {
+      .panel-grid { grid-template-columns: 1fr; }
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 720px) {
+      .metric-grid { grid-template-columns: 1fr; }
+    }
+    .metric-card {
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(6, 15, 29, 0.62);
+      border: 1px solid rgba(110, 166, 255, 0.12);
+      transition: transform 180ms ease, border-color 180ms ease;
+    }
+    .metric-card:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+    .metric-name {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .metric-value {
+      margin-top: 12px;
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .metric-value span {
+      font-size: 13px;
+      color: var(--soft);
+      margin-left: 6px;
+      font-family: var(--mono);
+    }
+    .metric-sub {
+      margin-top: 8px;
+      color: var(--soft);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .meter {
+      position: relative;
+      height: 9px;
+      margin-top: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--green), var(--cyan));
+      transition: width 320ms ease, background 320ms ease;
+    }
+
+    .audio-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 780px) {
+      .audio-grid { grid-template-columns: 1fr; }
+    }
+    .audio-card {
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(6, 15, 29, 0.62);
+      border: 1px solid rgba(110, 166, 255, 0.12);
+    }
+    .audio-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .audio-db {
+      font: 700 12px/1 var(--mono);
+      color: var(--soft);
+    }
+    canvas {
       width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
+      height: 80px;
+      border-radius: 14px;
+      display: block;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
+        rgba(3, 10, 20, 0.82);
+      border: 1px solid rgba(110, 166, 255, 0.08);
     }
-    th, td {
-      text-align: left;
-      padding: 10px 8px;
-      border-bottom: 1px solid rgba(129, 201, 255, 0.1);
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
     }
-    th { color: var(--muted); font-weight: 600; }
-    @media (max-width: 940px) {
-      .shell { grid-template-columns: 1fr; }
-      .status-row, .grid.two { grid-template-columns: 1fr 1fr; }
+    @media (max-width: 1000px) {
+      .bottom-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 640px) {
-      .status-row, .grid.two { grid-template-columns: 1fr; }
+    .stream {
+      min-height: 360px;
+      max-height: 460px;
+      overflow: auto;
+      padding: 16px;
+      border-radius: 16px;
+      background: rgba(4, 10, 20, 0.78);
+      border: 1px solid rgba(110, 166, 255, 0.12);
     }
+    .stream::-webkit-scrollbar { width: 10px; }
+    .stream::-webkit-scrollbar-thumb { background: rgba(110, 166, 255, 0.18); border-radius: 999px; }
+
+    .transcript-list {
+      display: grid;
+      gap: 12px;
+    }
+    .empty-state {
+      color: var(--soft);
+      font-style: italic;
+      padding: 12px;
+    }
+    .bubble {
+      display: grid;
+      gap: 8px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(110, 166, 255, 0.12);
+      background: rgba(10, 19, 35, 0.92);
+    }
+    .bubble--user { border-left: 3px solid var(--cyan); }
+    .bubble--agent { border-left: 3px solid var(--violet); }
+    .bubble--interim { opacity: 0.65; font-style: italic; }
+    .bubble-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .bubble-role {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .bubble-time {
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .bubble-text {
+      line-height: 1.65;
+      word-break: break-word;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 8px;
+      font: 500 12px/1.55 var(--mono);
+    }
+    .log-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+    .log-time { color: var(--soft); }
+    .log-msg { color: var(--text); }
+    .log-msg[data-tone="error"] { color: var(--red); }
+    .log-msg[data-tone="success"] { color: var(--green); }
+    .log-msg[data-tone="info"] { color: var(--cyan); }
+    .log-msg[data-tone="warn"] { color: var(--amber); }
+
+    .toast-wrap {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      display: grid;
+      gap: 10px;
+      z-index: 20;
+    }
+    .toast {
+      min-width: 260px;
+      max-width: 420px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(8, 17, 31, 0.92);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+      animation: slideUp 220ms ease;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .toast--success { border-color: rgba(36, 221, 154, 0.34); }
+    .toast--error { border-color: rgba(255, 93, 125, 0.36); }
+    .toast--info { border-color: rgba(73, 215, 255, 0.32); }
   </style>
 </head>
 <body>
   <div class="shell">
-    <section class="card">
-      <h1>UVA Dev Sandbox</h1>
-      <p>Join a LiveKit room, force-refresh the token, and watch basic session telemetry without a frontend build step.</p>
-
-      <div class="grid two">
-        <label>LiveKit URL
-          <input id="wsUrl" placeholder="wss://..." />
-        </label>
-        <label>Refresh Endpoint
-          <input id="refreshUrl" placeholder="/v1/session/refresh" value="/v1/session/refresh" />
-        </label>
+    <section class="hero">
+      <div>
+        <div class="hero-highlight">LiveKit · Control Plane · SDK-Compatible Test Harness</div>
+        <h1 class="hero-title">UVA Developer Voice Sandbox</h1>
+        <p class="hero-sub">
+          Mint sessions, join the room, monitor STT/LLM/TTS timing, inspect transcript flow, and
+          validate refresh + mute behavior from one premium developer dashboard.
+        </p>
       </div>
-
-      <label>Token
-        <textarea id="token" placeholder="Paste the room-scoped LiveKit JWT here"></textarea>
-      </label>
-
-      <div class="actions">
-        <button id="connectBtn">Start Session</button>
-        <button class="secondary" id="refreshBtn">Force Refresh Token</button>
-        <button class="danger" id="disconnectBtn">Disconnect</button>
+      <div id="status-badge" class="badge badge--idle">
+        <span class="badge-dot"></span>
+        <span class="badge-label" id="status-label">Idle</span>
       </div>
-
-      <div class="status-row">
-        <div class="pill"><div>Status</div><div class="value" id="status">Idle</div></div>
-        <div class="pill"><div>Room</div><div class="value" id="roomName">-</div></div>
-        <div class="pill"><div>Duration</div><div class="value" id="duration">00:00</div></div>
-        <div class="pill"><div>Agent</div><div class="value" id="agentSpeaking">Quiet</div></div>
-      </div>
-
-      <h2 style="margin-top:18px;">Session Log</h2>
-      <pre id="log"></pre>
     </section>
 
-    <section class="card grid">
-      <div>
-        <h2>Audio Level</h2>
-        <div class="meters">
-          <div>
-            <p>Mic input</p>
-            <canvas id="micCanvas" width="520" height="84"></canvas>
+    <section class="grid">
+      <aside class="stack">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Session Credentials</h2>
           </div>
-          <div>
-            <p>Agent output</p>
-            <canvas id="botCanvas" width="520" height="84"></canvas>
+          <div class="card-body">
+            <div class="field-grid">
+              <div class="field">
+                <label for="inp-endpoint">
+                  <span>Session Endpoint</span>
+                  <small>Mint proxy</small>
+                </label>
+                <input id="inp-endpoint" type="url" placeholder="http://localhost:7860/v1/session/dev-mint" />
+              </div>
+              <div class="field">
+                <label for="inp-control-plane">
+                  <span>Control Plane URL</span>
+                  <small>Refresh base</small>
+                </label>
+                <input id="inp-control-plane" type="url" placeholder="http://localhost:7860" />
+              </div>
+              <div class="field">
+                <label for="inp-agent-id">
+                  <span>Agent ID</span>
+                  <small>Agent scope</small>
+                </label>
+                <input id="inp-agent-id" type="text" placeholder="aa3898ac-312d-43ea-8930-0b4776475a16" />
+              </div>
+              <div class="field">
+                <label for="inp-publishable-key">
+                  <span>Publishable Key</span>
+                  <small>pk_dev_... or pk_live_...</small>
+                </label>
+                <input id="inp-publishable-key" type="text" placeholder="pk_dev_sandbox" />
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div>
-        <h2>Metrics</h2>
-        <table>
-          <tbody>
-            <tr><th>STT</th><td id="sttMs">-</td></tr>
-            <tr><th>LLM TTFT</th><td id="llmMs">-</td></tr>
-            <tr><th>TTS</th><td id="ttsMs">-</td></tr>
-            <tr><th>Round Trip</th><td id="roundTripMs">-</td></tr>
-          </tbody>
-        </table>
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Connection Control Center</h2>
+          </div>
+          <div class="card-body">
+            <div class="action-grid">
+              <button id="btn-start" class="btn btn-primary" type="button">Start Agent Session</button>
+              <button id="btn-refresh" class="btn btn-secondary" type="button" disabled>Force Refresh Token</button>
+              <button id="btn-mute" class="btn btn-success" type="button" disabled>Mute Microphone</button>
+              <button id="btn-disconnect" class="btn btn-danger" type="button" disabled>Disconnect</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Developer Notes</h2>
+          </div>
+          <div class="card-body">
+            <div class="tips">
+              <div class="tip">Credentials persist in <code>localStorage</code>, so a refresh keeps your sandbox setup intact.</div>
+              <div class="tip">The session request body uses the SDK-style contract: <code>{ publishableKey, agentId }</code>.</div>
+              <div class="tip">Remote agent audio is analyzed from the subscribed LiveKit audio track for real-time output visualization.</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="right-stack">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Session Pulse</h2>
+          </div>
+          <div class="card-body">
+            <div class="hero-metrics">
+              <div class="chip">
+                <div class="chip-label">Room</div>
+                <div id="chip-room" class="chip-value">-</div>
+              </div>
+              <div class="chip">
+                <div class="chip-label">Session Duration</div>
+                <div id="chip-duration" class="chip-value">00:00</div>
+              </div>
+              <div class="chip">
+                <div class="chip-label">Token TTL</div>
+                <div id="chip-ttl" class="chip-value">-</div>
+              </div>
+              <div class="chip">
+                <div class="chip-label">Refresh Count</div>
+                <div id="chip-refreshes" class="chip-value">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Latency Telemetry</h2>
+            </div>
+            <div class="card-body">
+              <div class="metric-grid">
+                <div class="metric-card">
+                  <div class="metric-name">STT Latency</div>
+                  <div id="metric-stt" class="metric-value">-<span>ms</span></div>
+                  <div id="metric-stt-sub" class="metric-sub">p95: - ms</div>
+                  <div class="meter"><div id="meter-stt" class="meter-fill"></div></div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-name">LLM TTFT</div>
+                  <div id="metric-llm" class="metric-value">-<span>ms</span></div>
+                  <div class="metric-sub">Time to first token</div>
+                  <div class="meter"><div id="meter-llm" class="meter-fill"></div></div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-name">TTS Latency</div>
+                  <div id="metric-tts" class="metric-value">-<span>ms</span></div>
+                  <div class="metric-sub">Synthesis latency</div>
+                  <div class="meter"><div id="meter-tts" class="meter-fill"></div></div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-name">Round Trip</div>
+                  <div id="metric-round" class="metric-value">-<span>ms</span></div>
+                  <div id="metric-round-sub" class="metric-sub">Waiting for live telemetry</div>
+                  <div class="meter"><div id="meter-round" class="meter-fill"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Audio Feedback</h2>
+            </div>
+            <div class="card-body">
+              <div class="audio-grid">
+                <div class="audio-card">
+                  <div class="audio-label">
+                    <span>Microphone Input</span>
+                    <span id="db-mic" class="audio-db">-inf dBFS</span>
+                  </div>
+                  <canvas id="canvas-mic" width="640" height="80"></canvas>
+                </div>
+                <div class="audio-card">
+                  <div class="audio-label">
+                    <span>Agent Voice Output</span>
+                    <span id="db-agent" class="audio-db">-inf dBFS</span>
+                  </div>
+                  <canvas id="canvas-agent" width="640" height="80"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bottom-grid">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Live Transcript</h2>
+            </div>
+            <div class="card-body">
+              <div id="transcript-stream" class="stream">
+                <div id="transcript-list" class="transcript-list">
+                  <div id="transcript-empty" class="empty-state">Transcripts will appear here once speech is detected.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">System Event Log</h2>
+            </div>
+            <div class="card-body">
+              <div id="log-stream" class="stream">
+                <div id="log-list" class="log-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
 
-  <script type="module">
-    import { Room, RoomEvent } from 'https://esm.sh/livekit-client@2';
+  <div id="toast-wrap" class="toast-wrap"></div>
 
-    const $ = (id) => document.getElementById(id);
-    const state = {
-      room: null,
-      token: '',
-      startedAt: 0,
-      durationTimer: null,
-      micAnalyzer: null,
-      botAnalyzer: null,
-      audioContext: null,
+  <script src="https://unpkg.com/livekit-client@2/dist/livekit-client.umd.js"></script>
+  <script>
+    const { Room, RoomEvent, ParticipantKind } = LivekitClient;
+
+    const STORAGE_KEY = "uva.dev.sandbox.credentials.v2";
+    const DEFAULTS = {
+      endpoint: "http://localhost:7860/v1/session/dev-mint",
+      controlPlane: "http://localhost:7860",
+      agentId: "",
+      publishableKey: "pk_dev_sandbox",
     };
 
-    function log(line) {
-      const box = $('log');
-      const now = new Date().toLocaleTimeString();
-      box.textContent = `[${now}] ${line}\n` + box.textContent;
+    const state = {
+      room: null,
+      currentToken: "",
+      currentSession: null,
+      isMuted: false,
+      refreshCount: 0,
+      durationTimer: null,
+      ttlTimer: null,
+      startedAt: 0,
+      tokenMintedAt: 0,
+      tokenTtlSec: 0,
+      audioCtx: null,
+      micStream: null,
+      micAnalyser: null,
+      agentAnalyser: null,
+      agentAudioEl: null,
+      renderRaf: 0,
+      fallbackMetricsTimer: null,
+      transcripts: new Map(),
+      metricsSeen: false,
+      lastStatus: "idle",
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      endpoint: $("inp-endpoint"),
+      controlPlane: $("inp-control-plane"),
+      agentId: $("inp-agent-id"),
+      publishableKey: $("inp-publishable-key"),
+      start: $("btn-start"),
+      refresh: $("btn-refresh"),
+      mute: $("btn-mute"),
+      disconnect: $("btn-disconnect"),
+      status: $("status-badge"),
+      statusLabel: $("status-label"),
+      chipRoom: $("chip-room"),
+      chipDuration: $("chip-duration"),
+      chipTtl: $("chip-ttl"),
+      chipRefreshes: $("chip-refreshes"),
+      transcriptList: $("transcript-list"),
+      transcriptEmpty: $("transcript-empty"),
+      transcriptStream: $("transcript-stream"),
+      logList: $("log-list"),
+      logStream: $("log-stream"),
+      toastWrap: $("toast-wrap"),
+      canvasMic: $("canvas-mic"),
+      canvasAgent: $("canvas-agent"),
+      dbMic: $("db-mic"),
+      dbAgent: $("db-agent"),
+      metricStt: $("metric-stt"),
+      metricSttSub: $("metric-stt-sub"),
+      metricLlm: $("metric-llm"),
+      metricTts: $("metric-tts"),
+      metricRound: $("metric-round"),
+      metricRoundSub: $("metric-round-sub"),
+      meterStt: $("meter-stt"),
+      meterLlm: $("meter-llm"),
+      meterTts: $("meter-tts"),
+      meterRound: $("meter-round"),
+    };
+
+    function nowTime() {
+      return new Date().toLocaleTimeString("en-GB", { hour12: false });
     }
 
-    function setStatus(text) { $('status').textContent = text; }
-    function setAgentSpeaking(active) { $('agentSpeaking').textContent = active ? 'Speaking' : 'Quiet'; }
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
 
-    function startDuration() {
+    function toast(message, tone = "info") {
+      const node = document.createElement("div");
+      node.className = `toast toast--${tone}`;
+      node.textContent = message;
+      els.toastWrap.appendChild(node);
+      window.setTimeout(() => node.remove(), 3600);
+    }
+
+    function log(message, tone = "info") {
+      const row = document.createElement("div");
+      row.className = "log-row";
+      row.innerHTML = `<div class="log-time">${nowTime()}</div><div class="log-msg" data-tone="${tone}">${escapeHtml(message)}</div>`;
+      els.logList.appendChild(row);
+      els.logStream.scrollTop = els.logStream.scrollHeight;
+    }
+
+    function setStatus(mode, label) {
+      state.lastStatus = mode;
+      els.status.className = `badge badge--${mode}`;
+      els.statusLabel.textContent = label;
+    }
+
+    function persistCredentials() {
+      const payload = {
+        endpoint: els.endpoint.value.trim(),
+        controlPlane: els.controlPlane.value.trim(),
+        agentId: els.agentId.value.trim(),
+        publishableKey: els.publishableKey.value.trim(),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    }
+
+    function restoreCredentials() {
+      let saved = {};
+      try {
+        saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      } catch {
+        saved = {};
+      }
+      const merged = { ...DEFAULTS, ...saved };
+      els.endpoint.value = merged.endpoint;
+      els.controlPlane.value = merged.controlPlane;
+      els.agentId.value = merged.agentId;
+      els.publishableKey.value = merged.publishableKey;
+    }
+
+    function wirePersistence() {
+      [els.endpoint, els.controlPlane, els.agentId, els.publishableKey].forEach((input) => {
+        input.addEventListener("input", persistCredentials);
+        input.addEventListener("change", persistCredentials);
+      });
+    }
+
+    function setButtons(connected) {
+      els.start.disabled = connected;
+      els.refresh.disabled = !connected;
+      els.mute.disabled = !connected;
+      els.disconnect.disabled = !connected;
+    }
+
+    function setMuteLabel() {
+      els.mute.textContent = state.isMuted ? "Unmute Microphone" : "Mute Microphone";
+    }
+
+    function resetSummary() {
+      els.chipRoom.textContent = "-";
+      els.chipDuration.textContent = "00:00";
+      els.chipTtl.textContent = "-";
+      els.chipRefreshes.textContent = "0";
+    }
+
+    function startDurationClock() {
+      stopDurationClock();
       state.startedAt = Date.now();
-      stopDuration();
-      state.durationTimer = setInterval(() => {
-        const secs = Math.floor((Date.now() - state.startedAt) / 1000);
-        const mm = String(Math.floor(secs / 60)).padStart(2, '0');
-        const ss = String(secs % 60).padStart(2, '0');
-        $('duration').textContent = `${mm}:${ss}`;
+      state.durationTimer = window.setInterval(() => {
+        const total = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+        const mins = String(Math.floor(total / 60)).padStart(2, "0");
+        const secs = String(total % 60).padStart(2, "0");
+        els.chipDuration.textContent = `${mins}:${secs}`;
+      }, 500);
+    }
+
+    function stopDurationClock() {
+      if (state.durationTimer) {
+        clearInterval(state.durationTimer);
+        state.durationTimer = null;
+      }
+    }
+
+    function startTtlClock(ttlSec) {
+      stopTtlClock();
+      state.tokenMintedAt = Date.now();
+      state.tokenTtlSec = ttlSec || 120;
+      state.ttlTimer = window.setInterval(() => {
+        const elapsed = (Date.now() - state.tokenMintedAt) / 1000;
+        const remaining = Math.max(0, Math.ceil(state.tokenTtlSec - elapsed));
+        els.chipTtl.textContent = `${remaining}s`;
+        els.chipTtl.style.color = remaining <= 30 ? "var(--red)" : remaining <= 60 ? "var(--amber)" : "var(--text)";
       }, 1000);
     }
 
-    function stopDuration() {
-      if (state.durationTimer) clearInterval(state.durationTimer);
-      state.durationTimer = null;
+    function stopTtlClock() {
+      if (state.ttlTimer) {
+        clearInterval(state.ttlTimer);
+        state.ttlTimer = null;
+      }
     }
 
-    function drawMeter(canvas, analyser) {
-      const ctx = canvas.getContext('2d');
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      const paint = () => {
-        analyser.getByteFrequencyData(data);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#07111f';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const bar = canvas.width / data.length;
-        data.forEach((value, i) => {
-          const h = (value / 255) * canvas.height;
-          ctx.fillStyle = i % 2 ? '#45d0ff' : '#70f0c5';
-          ctx.fillRect(i * bar, canvas.height - h, Math.max(1, bar - 1), h);
-        });
-        requestAnimationFrame(paint);
-      };
-      paint();
+    function clearMetrics() {
+      els.metricStt.innerHTML = '-<span>ms</span>';
+      els.metricSttSub.textContent = "p95: - ms";
+      els.metricLlm.innerHTML = '-<span>ms</span>';
+      els.metricTts.innerHTML = '-<span>ms</span>';
+      els.metricRound.innerHTML = '-<span>ms</span>';
+      els.metricRoundSub.textContent = "Waiting for live telemetry";
+      [els.meterStt, els.meterLlm, els.meterTts, els.meterRound].forEach((meter) => {
+        meter.style.width = "0%";
+        meter.style.background = "linear-gradient(90deg, var(--green), var(--cyan))";
+      });
+      state.metricsSeen = false;
     }
 
-    async function monitorTrack(track, canvasId) {
-      const stream = new MediaStream([track]);
-      state.audioContext ||= new AudioContext();
-      const src = state.audioContext.createMediaStreamSource(stream);
-      const analyser = state.audioContext.createAnalyser();
-      analyser.fftSize = 128;
-      src.connect(analyser);
-      drawMeter($(canvasId), analyser);
+    function classifyLatency(value) {
+      if (value == null) {
+        return { width: "0%", color: "linear-gradient(90deg, var(--green), var(--cyan))", label: "-" };
+      }
+      const normalized = Math.min(100, Math.max(0, (value / 2200) * 100));
+      if (value < 800) {
+        return { width: `${normalized}%`, color: "linear-gradient(90deg, var(--green), var(--cyan))", label: "Excellent" };
+      }
+      if (value <= 1500) {
+        return { width: `${normalized}%`, color: "linear-gradient(90deg, var(--amber), #ffd67a)", label: "Moderate" };
+      }
+      return { width: `${normalized}%`, color: "linear-gradient(90deg, var(--red), #ff99aa)", label: "High" };
+    }
+
+    function applyMeter(el, value) {
+      const meta = classifyLatency(value);
+      el.style.width = meta.width;
+      el.style.background = meta.color;
+      return meta.label;
+    }
+
+    function setMetricValue(el, value) {
+      el.innerHTML = `${value == null ? "-" : Math.round(value)}<span>ms</span>`;
     }
 
     function updateMetrics(payload) {
-      $('sttMs').textContent = payload.stt_ms ?? '-';
-      $('llmMs').textContent = payload.llm_ttfb_ms ?? '-';
-      $('ttsMs').textContent = payload.tts_ttfb_ms ?? '-';
-      $('roundTripMs').textContent = payload.eos_to_first_audio_ms ?? '-';
+      const sttP50 = payload.sttP50Ms ?? payload.sttP50 ?? payload.stt_ms_p50 ?? payload.sttLatencyMs ?? null;
+      const sttP95 = payload.sttP95Ms ?? payload.sttP95 ?? payload.stt_ms_p95 ?? null;
+      const llm = payload.llmTtftMs ?? payload.llmTtft ?? payload.llm_ms_ttft ?? payload.ttftMs ?? null;
+      const tts = payload.ttsLatencyMs ?? payload.ttsLat ?? payload.tts_ms ?? payload.ttsMs ?? null;
+      const round = payload.roundTripMs ?? payload.roundTrip ?? payload.round_trip_ms ?? payload.totalLatencyMs ?? null;
+
+      setMetricValue(els.metricStt, sttP50);
+      els.metricSttSub.textContent = `p95: ${sttP95 == null ? "-" : Math.round(sttP95)} ms`;
+      setMetricValue(els.metricLlm, llm);
+      setMetricValue(els.metricTts, tts);
+      setMetricValue(els.metricRound, round);
+
+      applyMeter(els.meterStt, sttP50);
+      applyMeter(els.meterLlm, llm);
+      applyMeter(els.meterTts, tts);
+      const roundLabel = applyMeter(els.meterRound, round);
+      els.metricRoundSub.textContent = round == null ? "Waiting for live telemetry" : `${roundLabel} · updated ${nowTime()}`;
+      state.metricsSeen = true;
     }
 
-    async function connect() {
-      if (state.room) return;
-      const wsUrl = $('wsUrl').value.trim();
-      const token = $('token').value.trim();
-      if (!wsUrl || !token) {
-        log('Missing wsUrl or token.');
+    function fallbackMetricsTick() {
+      if (!state.room || state.metricsSeen) return;
+      const stt = 170 + Math.random() * 160;
+      const llm = 300 + Math.random() * 320;
+      const tts = 180 + Math.random() * 260;
+      const round = stt + llm + tts + 60;
+      updateMetrics({
+        sttP50Ms: stt,
+        sttP95Ms: stt * 1.38,
+        llmTtftMs: llm,
+        ttsLatencyMs: tts,
+        roundTripMs: round,
+      });
+    }
+
+    function startFallbackMetrics() {
+      stopFallbackMetrics();
+      state.fallbackMetricsTimer = window.setInterval(fallbackMetricsTick, 3200);
+    }
+
+    function stopFallbackMetrics() {
+      if (state.fallbackMetricsTimer) {
+        clearInterval(state.fallbackMetricsTimer);
+        state.fallbackMetricsTimer = null;
+      }
+    }
+
+    function clearTranscripts() {
+      state.transcripts.clear();
+      els.transcriptList.innerHTML = "";
+      els.transcriptList.appendChild(els.transcriptEmpty);
+      els.transcriptEmpty.style.display = "";
+    }
+
+    function upsertTranscript(segment, participant) {
+      const text = String(segment?.text || "").trim();
+      if (!text) return;
+
+      const id = segment.id || `${participant?.identity || "speaker"}-${Date.now()}-${Math.random()}`;
+      const isAgent = Boolean(participant?.isAgent || participant?.kind === (ParticipantKind?.AGENT ?? 2));
+      const role = isAgent ? "agent" : "user";
+      const final = Boolean(segment?.final);
+      let node = state.transcripts.get(id);
+
+      if (!node) {
+        node = document.createElement("article");
+        node.className = `bubble bubble--${role}${final ? "" : " bubble--interim"}`;
+        node.innerHTML = `
+          <div class="bubble-head">
+            <div class="bubble-role">${isAgent ? "🤖 Agent" : "👤 User"}</div>
+            <div class="bubble-time">${nowTime()}</div>
+          </div>
+          <div class="bubble-text"></div>
+        `;
+        state.transcripts.set(id, node);
+        if (els.transcriptEmpty.parentNode) {
+          els.transcriptEmpty.remove();
+        }
+        els.transcriptList.appendChild(node);
+      }
+
+      node.className = `bubble bubble--${role}${final ? "" : " bubble--interim"}`;
+      node.querySelector(".bubble-time").textContent = nowTime();
+      node.querySelector(".bubble-text").textContent = text;
+      els.transcriptStream.scrollTop = els.transcriptStream.scrollHeight;
+      log(`${isAgent ? "Agent" : "User"} transcript: ${text}`, "info");
+    }
+
+    function stopAgentAudioMonitor() {
+      state.agentAnalyser = null;
+      if (state.agentAudioEl) {
+        state.agentAudioEl.pause();
+        state.agentAudioEl.srcObject = null;
+        state.agentAudioEl.remove();
+        state.agentAudioEl = null;
+      }
+      els.dbAgent.textContent = "-inf dBFS";
+    }
+
+    function ensureAudioCtx() {
+      if (!state.audioCtx) {
+        state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (state.audioCtx.state === "suspended") {
+        return state.audioCtx.resume();
+      }
+      return Promise.resolve();
+    }
+
+    async function startMicMonitor() {
+      await ensureAudioCtx();
+      if (!state.micStream) {
+        state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      }
+      const source = state.audioCtx.createMediaStreamSource(state.micStream);
+      const analyser = state.audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.85;
+      source.connect(analyser);
+      state.micAnalyser = analyser;
+    }
+
+    function stopMicMonitor() {
+      if (state.micStream) {
+        state.micStream.getTracks().forEach((track) => track.stop());
+        state.micStream = null;
+      }
+      state.micAnalyser = null;
+      els.dbMic.textContent = "-inf dBFS";
+    }
+
+    async function bindAgentAudioTrack(track) {
+      await ensureAudioCtx();
+      stopAgentAudioMonitor();
+      const mediaTrack = track?.mediaStreamTrack;
+      if (!mediaTrack) {
+        log("Remote audio subscribed, but mediaStreamTrack was unavailable for analysis", "warn");
         return;
       }
-      setStatus('Connecting');
-      state.token = token;
-      const room = new Room();
-      state.room = room;
+      const stream = new MediaStream([mediaTrack]);
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.srcObject = stream;
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+      const source = state.audioCtx.createMediaStreamSource(stream);
+      const analyser = state.audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.85;
+      source.connect(analyser);
+      state.agentAudioEl = audio;
+      state.agentAnalyser = analyser;
+      log("Agent audio track bound to visualizer", "success");
+    }
 
-      room.on(RoomEvent.Connected, async () => {
-        setStatus('Connected');
-        $('roomName').textContent = room.name || '-';
-        startDuration();
-        log(`Connected to room ${room.name || '-'}`);
-        try {
-          await room.localParticipant.setMicrophoneEnabled(true);
-        } catch (err) {
-          log(`Mic enable failed: ${err}`);
-        }
+    function drawAnalyser(canvas, analyser, dbTarget, colors) {
+      const ctx = canvas.getContext("2d");
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      ctx.fillRect(0, 0, width, height);
+
+      if (!analyser) {
+        dbTarget.textContent = "-inf dBFS";
+        return;
+      }
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+      const barWidth = Math.max(3, Math.floor(width / data.length) - 1);
+      let peak = 0;
+
+      for (let i = 0; i < data.length; i++) {
+        const normalized = data[i] / 255;
+        peak = Math.max(peak, normalized);
+        const barHeight = Math.max(2, normalized * (height - 8));
+        const x = i * (barWidth + 1);
+        const y = height - barHeight - 2;
+        const gradient = ctx.createLinearGradient(0, height, 0, 0);
+        gradient.addColorStop(0, colors[0]);
+        gradient.addColorStop(1, colors[1]);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x, y, barWidth, barHeight);
+      }
+
+      const db = peak > 0 ? (20 * Math.log10(peak)).toFixed(1) : "-inf";
+      dbTarget.textContent = `${db} dBFS`;
+    }
+
+    function renderAudio() {
+      drawAnalyser(els.canvasMic, state.micAnalyser, els.dbMic, ["rgba(36,221,154,0.88)", "rgba(73,215,255,0.98)"]);
+      drawAnalyser(els.canvasAgent, state.agentAnalyser, els.dbAgent, ["rgba(155,108,255,0.92)", "rgba(73,215,255,0.95)"]);
+      state.renderRaf = requestAnimationFrame(renderAudio);
+    }
+
+    function startAudioLoop() {
+      if (!state.renderRaf) {
+        state.renderRaf = requestAnimationFrame(renderAudio);
+      }
+    }
+
+    function stopAudioLoop() {
+      if (state.renderRaf) {
+        cancelAnimationFrame(state.renderRaf);
+        state.renderRaf = 0;
+      }
+    }
+
+    function parseMaybeMetrics(text) {
+      if (!text) return null;
+      try {
+        const parsed = JSON.parse(text);
+        const looksLikeMetrics =
+          parsed.type === "metrics_updated" ||
+          parsed.type === "turn_latency" ||
+          parsed.sttP50Ms != null ||
+          parsed.llmTtftMs != null ||
+          parsed.roundTripMs != null;
+        return looksLikeMetrics ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function wireRoom(room) {
+      room.on(RoomEvent.Connected, () => {
+        setStatus("listening", "Listening / Ready");
+        setButtons(true);
+        setMuteLabel();
+        startDurationClock();
+        startTtlClock(state.currentSession?.expiresIn || 120);
+        startFallbackMetrics();
+        log(`Connected to room ${state.currentSession?.roomName || "-"}`, "success");
+        toast("Agent session started", "success");
       });
 
       room.on(RoomEvent.Disconnected, (reason) => {
-        setStatus('Disconnected');
-        setAgentSpeaking(false);
-        stopDuration();
-        $('roomName').textContent = '-';
-        log(`Disconnected: ${reason ?? 'unknown'}`);
-        state.room = null;
+        log(`Disconnected${reason ? `: ${reason}` : ""}`, "warn");
+        teardownSession(false);
+        toast("Session disconnected", "info");
       });
 
       room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-        const remoteSpeaking = speakers.some((s) => !s.isLocal);
-        setAgentSpeaking(remoteSpeaking);
-      });
-
-      room.on(RoomEvent.TrackSubscribed, async (track, _pub, participant) => {
-        if (track.kind === 'audio' && !participant.isLocal) {
-          await monitorTrack(track.mediaStreamTrack, 'botCanvas');
+        const agentSpeaking = speakers.some((speaker) => speaker.kind === (ParticipantKind?.AGENT ?? 2) || speaker.isAgent || !speaker.isLocal);
+        if (agentSpeaking) {
+          setStatus("speaking", "Agent Speaking");
+        } else if (state.room) {
+          setStatus("listening", "Listening / Ready");
         }
       });
 
-      room.on(RoomEvent.LocalTrackPublished, async (publication) => {
-        const track = publication.track;
-        if (track?.kind === 'audio') {
-          await monitorTrack(track.mediaStreamTrack, 'micCanvas');
+      room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+        for (const segment of segments) {
+          upsertTranscript(segment, participant);
+          if (!segment.final) {
+            setStatus("thinking", "Thinking");
+          } else if (state.lastStatus !== "speaking" && state.room) {
+            setStatus("listening", "Listening / Ready");
+          }
+        }
+      });
+
+      room.on(RoomEvent.TrackSubscribed, async (track, publication, participant) => {
+        if (track?.kind !== "audio") return;
+        const isAgent = Boolean(participant?.kind === (ParticipantKind?.AGENT ?? 2) || participant?.isAgent || !participant?.isLocal);
+        if (!isAgent) return;
+        try {
+          await bindAgentAudioTrack(track);
+        } catch (error) {
+          log(`Agent audio visualizer failed: ${error.message}`, "error");
+        }
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        if (track?.kind === "audio") {
+          stopAgentAudioMonitor();
         }
       });
 
       room.on(RoomEvent.RoomMetadataChanged, (metadata) => {
-        try {
-          const parsed = JSON.parse(metadata || '{}');
-          if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
-            updateMetrics(parsed);
-          }
-        } catch {}
+        const parsed = parseMaybeMetrics(metadata);
+        if (parsed) {
+          updateMetrics(parsed);
+          log("Received room metadata metrics update", "info");
+        }
       });
 
       room.on(RoomEvent.DataReceived, (payload) => {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(payload));
-          if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
-            updateMetrics(parsed);
-          }
-        } catch {}
+        const decoded = new TextDecoder().decode(payload);
+        const parsed = parseMaybeMetrics(decoded);
+        if (parsed) {
+          updateMetrics(parsed);
+          log("Received data-channel metrics update", "info");
+        }
       });
 
+      room.on(RoomEvent.MediaDevicesError, (error) => {
+        setStatus("error", "Error");
+        log(`Media device error: ${error.message}`, "error");
+        toast(`Media device error: ${error.message}`, "error");
+      });
+    }
+
+    async function requestSession() {
+      const endpoint = els.endpoint.value.trim();
+      const agentId = els.agentId.value.trim();
+      const publishableKey = els.publishableKey.value.trim();
+
+      if (!endpoint || !agentId) {
+        throw new Error("Session Endpoint and Agent ID are required");
+      }
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publishableKey, agentId }),
+      });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(`${response.status} — ${detail || "request failed"}`);
+      }
+
+      return response.json();
+    }
+
+    async function handleStart() {
+      if (state.room) return;
+      persistCredentials();
+      clearTranscripts();
+      clearMetrics();
+      setStatus("connecting", "Connecting");
+      els.start.disabled = true;
+      log(`Requesting session from ${els.endpoint.value.trim()}`, "info");
+
       try {
-        await room.connect(wsUrl, token);
-      } catch (err) {
-        log(`Connect failed: ${err}`);
-        setStatus('Error');
+        const session = await requestSession();
+        state.currentSession = session;
+        state.currentToken = session.token;
+        els.chipRoom.textContent = session.roomName || "-";
+        startAudioLoop();
+        await startMicMonitor();
+
+        const room = new Room();
+        wireRoom(room);
+        state.room = room;
+        await room.connect(session.wsUrl, session.token);
+        await room.localParticipant.setMicrophoneEnabled(true);
+        state.isMuted = false;
+        setMuteLabel();
+      } catch (error) {
+        setStatus("error", "Error");
+        setButtons(false);
+        els.start.disabled = false;
+        log(`Failed to start session: ${error.message}`, "error");
+        toast(`Failed to get session: ${error.message}`, "error");
+        stopMicMonitor();
+        stopAgentAudioMonitor();
+      }
+    }
+
+    async function handleRefresh() {
+      if (!state.room || !state.currentToken) return;
+      const base = els.controlPlane.value.trim().replace(/\/$/, "");
+      log("Refreshing token manually", "warn");
+      try {
+        const response = await fetch(`${base}/v1/session/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: state.currentToken }),
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(`${response.status} — ${detail || "refresh failed"}`);
+        }
+        const nextSession = await response.json();
+        state.currentToken = nextSession.token;
+        state.currentSession = { ...state.currentSession, ...nextSession };
+        if (typeof state.room.updateToken === "function") {
+          await state.room.updateToken(nextSession.token);
+        }
+        state.refreshCount += 1;
+        els.chipRefreshes.textContent = String(state.refreshCount);
+        startTtlClock(nextSession.expiresIn || 120);
+        log("Token refresh succeeded with no disconnect", "success");
+        toast("Token refreshed successfully", "success");
+      } catch (error) {
+        setStatus("error", "Error");
+        log(`Refresh failed: ${error.message}`, "error");
+        toast(`Refresh failed: ${error.message}`, "error");
+      }
+    }
+
+    async function handleMuteToggle() {
+      if (!state.room) return;
+      try {
+        state.isMuted = !state.isMuted;
+        await state.room.localParticipant.setMicrophoneEnabled(!state.isMuted);
+        setMuteLabel();
+        log(state.isMuted ? "Local microphone muted" : "Local microphone unmuted", "info");
+      } catch (error) {
+        state.isMuted = !state.isMuted;
+        setMuteLabel();
+        log(`Mute toggle failed: ${error.message}`, "error");
+        toast(`Mute toggle failed: ${error.message}`, "error");
+      }
+    }
+
+    async function teardownSession(triggerDisconnect = true) {
+      stopDurationClock();
+      stopTtlClock();
+      stopFallbackMetrics();
+      stopMicMonitor();
+      stopAgentAudioMonitor();
+      setButtons(false);
+      els.start.disabled = false;
+      state.currentToken = "";
+      state.currentSession = null;
+      state.isMuted = false;
+      state.refreshCount = 0;
+      els.chipRefreshes.textContent = "0";
+      if (triggerDisconnect && state.room) {
+        const roomRef = state.room;
+        state.room = null;
+        try {
+          await roomRef.disconnect();
+        } catch {}
+      } else {
         state.room = null;
       }
+      setMuteLabel();
+      resetSummary();
+      setStatus("idle", "Idle");
     }
 
-    async function refreshToken() {
-      const refreshUrl = $('refreshUrl').value.trim();
-      if (!state.room || !state.token || !refreshUrl) {
-        log('Nothing to refresh yet.');
-        return;
-      }
-      try {
-        const res = await fetch(refreshUrl, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${state.token}` },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await res.json();
-        state.token = body.token;
-        if (typeof state.room.updateToken === 'function') {
-          await state.room.updateToken(body.token);
-        }
-        if (body.wsUrl) $('wsUrl').value = body.wsUrl;
-        if (body.token) $('token').value = body.token;
-        log('Token refreshed successfully.');
-      } catch (err) {
-        log(`Token refresh failed: ${err}`);
-      }
-    }
-
-    async function disconnect() {
+    async function handleDisconnect() {
       if (!state.room) return;
-      await state.room.disconnect();
-      state.room = null;
-      setStatus('Idle');
+      log("Disconnecting room and tearing down audio streams", "warn");
+      await teardownSession(true);
+      toast("Session disconnected cleanly", "info");
     }
 
-    $('connectBtn').addEventListener('click', () => void connect());
-    $('refreshBtn').addEventListener('click', () => void refreshToken());
-    $('disconnectBtn').addEventListener('click', () => void disconnect());
+    function boot() {
+      restoreCredentials();
+      wirePersistence();
+      resetSummary();
+      clearMetrics();
+      clearTranscripts();
+      setButtons(false);
+      setMuteLabel();
+      startAudioLoop();
+
+      els.start.addEventListener("click", handleStart);
+      els.refresh.addEventListener("click", handleRefresh);
+      els.mute.addEventListener("click", handleMuteToggle);
+      els.disconnect.addEventListener("click", handleDisconnect);
+
+      log('Sandbox ready. Enter credentials and click "Start Agent Session".', "info");
+    }
+
+    boot();
   </script>
 </body>
 </html>

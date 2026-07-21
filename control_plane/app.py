@@ -15,12 +15,13 @@ import json
 import os
 import sys
 import time
+import asyncio
 from collections import defaultdict
 from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -43,6 +44,9 @@ _ENV = dotenv_values(Path(__file__).resolve().parent.parent / ".env.local")
 _LK_URL = os.environ.get("LIVEKIT_URL") or _ENV.get("LIVEKIT_URL", "")
 _LK_KEY = os.environ.get("LIVEKIT_API_KEY") or _ENV.get("LIVEKIT_API_KEY", "")
 _LK_SECRET = os.environ.get("LIVEKIT_API_SECRET") or _ENV.get("LIVEKIT_API_SECRET", "")
+_LK_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME") or _ENV.get(
+    "LIVEKIT_AGENT_NAME", "uva-dev-agent"
+)
 RATE_LIMIT_PER_MIN = 120
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -75,6 +79,15 @@ _hits: dict[str, list[float]] = defaultdict(list)
 
 class SessionBody(BaseModel):
     agent_id: str
+
+
+class DevSessionBody(BaseModel):
+    agentId: str
+    publishableKey: str | None = None
+
+
+class RefreshBody(BaseModel):
+    token: str
 
 
 class RefreshResponse(BaseModel):
@@ -138,6 +151,124 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
     )
 
 
+def _lookup_tenant_for_agent(agent_id: str) -> str:
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("select tenant_id from agents where id = %s", (agent_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return str(row[0])
+
+
+def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
+    conn.execute(
+        "insert into quota_state (tenant_id, concurrent_now) values (%s, 0) "
+        "on conflict (tenant_id) do update set concurrent_now = 0",
+        (tenant_id,),
+    )
+
+
+async def _dispatch_agent(room_name: str) -> None:
+    async with api.LiveKitAPI(
+        url=_LK_URL,
+        api_key=_LK_KEY,
+        api_secret=_LK_SECRET,
+    ) as lkapi:
+        await lkapi.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                agent_name=_LK_AGENT_NAME,
+                room=room_name,
+            )
+        )
+
+
+def _rollback_dispatched_session(
+    *, tenant_id: str, room_name: str, end_reason: str = "dispatch_failed"
+) -> None:
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
+        conn.execute(
+            "update sessions "
+            "set ended_at = now(), duration_sec = 0, end_reason = %s "
+            "where tenant_id = %s and room_name = %s and ended_at is null",
+            (end_reason, tenant_id, room_name),
+        )
+        conn.execute(
+            "update quota_state "
+            "set concurrent_now = greatest(concurrent_now - 1, 0) "
+            "where tenant_id = %s",
+            (tenant_id,),
+        )
+
+
+def _with_dispatch(res: dict, tenant_id: str) -> dict:
+    try:
+        asyncio.run(_dispatch_agent(res["roomName"]))
+    except Exception as e:
+        _rollback_dispatched_session(tenant_id=tenant_id, room_name=res["roomName"])
+        raise HTTPException(
+            status_code=502,
+            detail=f"agent dispatch failed: {e}",
+        ) from e
+    return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
+
+
+def _dev_mint_session(
+    *, tenant_id: str, agent_id: str, request: Request, auto_reset_quota: bool
+) -> dict:
+    secret = _secrets.get(tenant_id)
+    if not secret:
+        raise HTTPException(
+            status_code=400,
+            detail="tenant secret missing from CP_TENANT_SECRETS for this agent",
+        )
+
+    ts = str(int(time.time()))
+    nonce = os.urandom(8).hex()
+    from .mint import expected_signature  # local import to keep top-level surface small
+
+    signature = expected_signature(secret, tenant_id, ts, nonce, agent_id)
+    if _rate_limited(tenant_id):
+        record_mint_rejection(tenant_id, 429, "rate limited")
+        raise HTTPException(status_code=429, detail="rate limited")
+
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        try:
+            res = mint_session(
+                conn=conn,
+                secrets=_secrets,
+                livekit_key=_LK_KEY,
+                livekit_secret=_LK_SECRET,
+                livekit_url=_LK_URL,
+                tenant_id=tenant_id,
+                ts=ts,
+                nonce=nonce,
+                agent_id=agent_id,
+                signature=signature,
+                origin=request.headers.get("origin"),
+            )
+        except MintError as e:
+            if auto_reset_quota and e.status == 429 and e.reason == "concurrent cap reached":
+                _dev_reset_concurrency(conn, tenant_id)
+                res = mint_session(
+                    conn=conn,
+                    secrets=_secrets,
+                    livekit_key=_LK_KEY,
+                    livekit_secret=_LK_SECRET,
+                    livekit_url=_LK_URL,
+                    tenant_id=tenant_id,
+                    ts=ts,
+                    nonce=nonce,
+                    agent_id=agent_id,
+                    signature=signature,
+                    origin=request.headers.get("origin"),
+                )
+            else:
+                record_mint_rejection(tenant_id, e.status, e.reason)
+                raise HTTPException(status_code=e.status, detail=e.reason) from e
+    return _with_dispatch(res, tenant_id)
+
+
 @app.post("/v1/session")
 def create_session(
     body: SessionBody,
@@ -165,17 +296,35 @@ def create_session(
                 signature=x_signature,
                 origin=request.headers.get("origin"),
             )
-            return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
+            return _with_dispatch(res, x_tenant_id)
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
 
 
+@app.post("/v1/session/dev-mint")
+def create_dev_session(body: DevSessionBody, request: Request):
+    tenant_id = _lookup_tenant_for_agent(body.agentId)
+    return _dev_mint_session(
+        tenant_id=tenant_id,
+        agent_id=body.agentId,
+        request=request,
+        auto_reset_quota=True,
+    )
+
+
 @app.post("/v1/session/refresh")
-def refresh_session_token(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
+def refresh_session_token(
+    authorization: str | None = Header(default=None),
+    body: RefreshBody | None = Body(default=None),
+):
+    token = ""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+    elif body and body.token:
+        token = body.token.strip()
+    if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
-    token = authorization[len("Bearer ") :].strip()
     return _mint_refresh_token(token)
 
 

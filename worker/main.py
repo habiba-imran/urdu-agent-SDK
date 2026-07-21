@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from .config import AgentConfig, load_agent_config
@@ -229,6 +230,7 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
 
     load_dotenv(".env.local")
+    _agent_name = os.getenv("LIVEKIT_AGENT_NAME", "uva-dev-agent")
 
     # Run prewarm() HERE, directly, at true __main__ top-level scope — this process's
     # guaranteed real main thread, before cli.run_app() ever spawns a job thread/process.
@@ -249,4 +251,10 @@ if __name__ == "__main__":
 
     from livekit.agents import WorkerOptions, cli
 
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            agent_name=_agent_name,
+        )
+    )
