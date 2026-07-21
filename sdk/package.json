@@ -1,11 +1,21 @@
 {
-  "name": "@uva/client",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Urdu Voice Agent client SDK — public bundle, zero secrets (Phase 4 scaffold).",
+  "name": "@uva/voice",
+  "version": "0.1.0",
+  "description": "Urdu Voice Agent client SDK - public bundle, zero secrets (Phase 4 scaffold).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit"

@@ -10,6 +10,8 @@ this keeps blocking DB work off the event loop without an async driver.
 
 from __future__ import annotations
 
+import datetime
+import json
 import os
 import sys
 import time
@@ -18,14 +20,16 @@ from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from livekit import api
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from dbconn import conn_kwargs  # noqa: E402
 
-from .mint import MintError, mint_session  # noqa: E402
+from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -40,6 +44,29 @@ _LK_URL = os.environ.get("LIVEKIT_URL") or _ENV.get("LIVEKIT_URL", "")
 _LK_KEY = os.environ.get("LIVEKIT_API_KEY") or _ENV.get("LIVEKIT_API_KEY", "")
 _LK_SECRET = os.environ.get("LIVEKIT_API_SECRET") or _ENV.get("LIVEKIT_API_SECRET", "")
 RATE_LIMIT_PER_MIN = 120
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _require_env() -> None:
+    missing = [
+        key
+        for key, value in {
+            "LIVEKIT_URL": _LK_URL,
+            "LIVEKIT_API_KEY": _LK_KEY,
+            "LIVEKIT_API_SECRET": _LK_SECRET,
+            "SUPABASE_DB_URL": os.environ.get("SUPABASE_DB_URL")
+            or _ENV.get("SUPABASE_DB_URL", ""),
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "control_plane startup blocked: missing required env var(s): "
+            + ", ".join(missing)
+        )
+
+
+_require_env()
 
 app = FastAPI(title="UVA control plane")
 _secrets = EnvSecretProvider()
@@ -50,6 +77,14 @@ class SessionBody(BaseModel):
     agent_id: str
 
 
+class RefreshResponse(BaseModel):
+    token: str
+    wsUrl: str
+    roomName: str
+    refreshUrl: str
+    expiresIn: int
+
+
 def _rate_limited(tenant_id: str) -> bool:
     now = time.time()
     window = _hits[tenant_id]
@@ -58,6 +93,49 @@ def _rate_limited(tenant_id: str) -> bool:
         return True
     window.append(now)
     return False
+
+
+def _mint_refresh_token(token: str) -> RefreshResponse:
+    try:
+        claims = api.TokenVerifier(_LK_KEY, _LK_SECRET).verify(token)
+    except Exception as e:  # library raises PyJWT errors and ValueErrors
+        raise HTTPException(status_code=401, detail="invalid or expired token") from e
+
+    room = claims.video.room if claims.video else ""
+    if not room or not claims.identity:
+        raise HTTPException(status_code=401, detail="token missing room or identity")
+    try:
+        metadata = json.loads(claims.metadata or "{}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=401, detail="token metadata is invalid") from e
+    tenant_id = metadata.get("tenant_id")
+    agent_id = metadata.get("agent_id")
+    if not tenant_id or not agent_id:
+        raise HTTPException(status_code=401, detail="token metadata missing tenant or agent")
+
+    refreshed = (
+        api.AccessToken(_LK_KEY, _LK_SECRET)
+        .with_identity(claims.identity)
+        .with_ttl(datetime.timedelta(seconds=TTL_SEC))
+        .with_metadata(json.dumps({"tenant_id": tenant_id, "agent_id": agent_id}))
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room,
+                can_publish=claims.video.can_publish if claims.video else True,
+                can_subscribe=claims.video.can_subscribe if claims.video else True,
+                can_publish_data=claims.video.can_publish_data if claims.video else True,
+            )
+        )
+        .to_jwt()
+    )
+    return RefreshResponse(
+        token=refreshed,
+        wsUrl=_LK_URL,
+        roomName=room,
+        refreshUrl="/v1/session/refresh",
+        expiresIn=TTL_SEC,
+    )
 
 
 @app.post("/v1/session")
@@ -74,7 +152,7 @@ def create_session(
         return JSONResponse({"error": "rate limited"}, status_code=429)
     try:
         with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
-            return mint_session(
+            res = mint_session(
                 conn=conn,
                 secrets=_secrets,
                 livekit_key=_LK_KEY,
@@ -87,6 +165,19 @@ def create_session(
                 signature=x_signature,
                 origin=request.headers.get("origin"),
             )
+            return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
+
+
+@app.post("/v1/session/refresh")
+def refresh_session_token(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization[len("Bearer ") :].strip()
+    return _mint_refresh_token(token)
+
+
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UVA Dev Sandbox</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(14, 27, 46, 0.78);
+      --line: rgba(129, 201, 255, 0.2);
+      --text: #e9f3ff;
+      --muted: #8da7c4;
+      --accent: #45d0ff;
+      --accent-2: #70f0c5;
+      --danger: #ff6b8b;
+      --warn: #ffcb6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(69, 208, 255, 0.18), transparent 35%),
+        radial-gradient(circle at top right, rgba(112, 240, 197, 0.12), transparent 25%),
+        linear-gradient(180deg, #08101d 0%, #040912 100%);
+    }
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      padding: 20px;
+    }
+    h1, h2 { margin: 0 0 12px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+    p { color: var(--muted); line-height: 1.5; }
+    .grid { display: grid; gap: 14px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+    input, textarea {
+      width: 100%;
+      border: 1px solid rgba(129, 201, 255, 0.18);
+      background: rgba(2, 8, 17, 0.7);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+    }
+    textarea { min-height: 112px; resize: vertical; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      color: #04111f;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    }
+    button.secondary { background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--line); }
+    button.danger { background: linear-gradient(135deg, #ff7b7b, var(--danger)); }
+    .status-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .pill {
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(4, 12, 22, 0.65);
+      border: 1px solid rgba(129, 201, 255, 0.12);
+    }
+    .pill .value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+    .meters { display: grid; gap: 14px; }
+    canvas {
+      width: 100%;
+      height: 84px;
+      border-radius: 14px;
+      background: rgba(3, 8, 16, 0.72);
+      border: 1px solid rgba(129, 201, 255, 0.12);
+    }
+    pre {
+      margin: 0;
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(3, 8, 16, 0.72);
+      color: #d9ecff;
+      max-height: 240px;
+      overflow: auto;
+      border: 1px solid rgba(129, 201, 255, 0.12);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(129, 201, 255, 0.1);
+    }
+    th { color: var(--muted); font-weight: 600; }
+    @media (max-width: 940px) {
+      .shell { grid-template-columns: 1fr; }
+      .status-row, .grid.two { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 640px) {
+      .status-row, .grid.two { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="card">
+      <h1>UVA Dev Sandbox</h1>
+      <p>Join a LiveKit room, force-refresh the token, and watch basic session telemetry without a frontend build step.</p>
+
+      <div class="grid two">
+        <label>LiveKit URL
+          <input id="wsUrl" placeholder="wss://..." />
+        </label>
+        <label>Refresh Endpoint
+          <input id="refreshUrl" placeholder="/v1/session/refresh" value="/v1/session/refresh" />
+        </label>
+      </div>
+
+      <label>Token
+        <textarea id="token" placeholder="Paste the room-scoped LiveKit JWT here"></textarea>
+      </label>
+
+      <div class="actions">
+        <button id="connectBtn">Start Session</button>
+        <button class="secondary" id="refreshBtn">Force Refresh Token</button>
+        <button class="danger" id="disconnectBtn">Disconnect</button>
+      </div>
+
+      <div class="status-row">
+        <div class="pill"><div>Status</div><div class="value" id="status">Idle</div></div>
+        <div class="pill"><div>Room</div><div class="value" id="roomName">-</div></div>
+        <div class="pill"><div>Duration</div><div class="value" id="duration">00:00</div></div>
+        <div class="pill"><div>Agent</div><div class="value" id="agentSpeaking">Quiet</div></div>
+      </div>
+
+      <h2 style="margin-top:18px;">Session Log</h2>
+      <pre id="log"></pre>
+    </section>
+
+    <section class="card grid">
+      <div>
+        <h2>Audio Level</h2>
+        <div class="meters">
+          <div>
+            <p>Mic input</p>
+            <canvas id="micCanvas" width="520" height="84"></canvas>
+          </div>
+          <div>
+            <p>Agent output</p>
+            <canvas id="botCanvas" width="520" height="84"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Metrics</h2>
+        <table>
+          <tbody>
+            <tr><th>STT</th><td id="sttMs">-</td></tr>
+            <tr><th>LLM TTFT</th><td id="llmMs">-</td></tr>
+            <tr><th>TTS</th><td id="ttsMs">-</td></tr>
+            <tr><th>Round Trip</th><td id="roundTripMs">-</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { Room, RoomEvent } from 'https://esm.sh/livekit-client@2';
+
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      room: null,
+      token: '',
+      startedAt: 0,
+      durationTimer: null,
+      micAnalyzer: null,
+      botAnalyzer: null,
+      audioContext: null,
+    };
+
+    function log(line) {
+      const box = $('log');
+      const now = new Date().toLocaleTimeString();
+      box.textContent = `[${now}] ${line}\n` + box.textContent;
+    }
+
+    function setStatus(text) { $('status').textContent = text; }
+    function setAgentSpeaking(active) { $('agentSpeaking').textContent = active ? 'Speaking' : 'Quiet'; }
+
+    function startDuration() {
+      state.startedAt = Date.now();
+      stopDuration();
+      state.durationTimer = setInterval(() => {
+        const secs = Math.floor((Date.now() - state.startedAt) / 1000);
+        const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+        const ss = String(secs % 60).padStart(2, '0');
+        $('duration').textContent = `${mm}:${ss}`;
+      }, 1000);
+    }
+
+    function stopDuration() {
+      if (state.durationTimer) clearInterval(state.durationTimer);
+      state.durationTimer = null;
+    }
+
+    function drawMeter(canvas, analyser) {
+      const ctx = canvas.getContext('2d');
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const paint = () => {
+        analyser.getByteFrequencyData(data);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#07111f';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const bar = canvas.width / data.length;
+        data.forEach((value, i) => {
+          const h = (value / 255) * canvas.height;
+          ctx.fillStyle = i % 2 ? '#45d0ff' : '#70f0c5';
+          ctx.fillRect(i * bar, canvas.height - h, Math.max(1, bar - 1), h);
+        });
+        requestAnimationFrame(paint);
+      };
+      paint();
+    }
+
+    async function monitorTrack(track, canvasId) {
+      const stream = new MediaStream([track]);
+      state.audioContext ||= new AudioContext();
+      const src = state.audioContext.createMediaStreamSource(stream);
+      const analyser = state.audioContext.createAnalyser();
+      analyser.fftSize = 128;
+      src.connect(analyser);
+      drawMeter($(canvasId), analyser);
+    }
+
+    function updateMetrics(payload) {
+      $('sttMs').textContent = payload.stt_ms ?? '-';
+      $('llmMs').textContent = payload.llm_ttfb_ms ?? '-';
+      $('ttsMs').textContent = payload.tts_ttfb_ms ?? '-';
+      $('roundTripMs').textContent = payload.eos_to_first_audio_ms ?? '-';
+    }
+
+    async function connect() {
+      if (state.room) return;
+      const wsUrl = $('wsUrl').value.trim();
+      const token = $('token').value.trim();
+      if (!wsUrl || !token) {
+        log('Missing wsUrl or token.');
+        return;
+      }
+      setStatus('Connecting');
+      state.token = token;
+      const room = new Room();
+      state.room = room;
+
+      room.on(RoomEvent.Connected, async () => {
+        setStatus('Connected');
+        $('roomName').textContent = room.name || '-';
+        startDuration();
+        log(`Connected to room ${room.name || '-'}`);
+        try {
+          await room.localParticipant.setMicrophoneEnabled(true);
+        } catch (err) {
+          log(`Mic enable failed: ${err}`);
+        }
+      });
+
+      room.on(RoomEvent.Disconnected, (reason) => {
+        setStatus('Disconnected');
+        setAgentSpeaking(false);
+        stopDuration();
+        $('roomName').textContent = '-';
+        log(`Disconnected: ${reason ?? 'unknown'}`);
+        state.room = null;
+      });
+
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const remoteSpeaking = speakers.some((s) => !s.isLocal);
+        setAgentSpeaking(remoteSpeaking);
+      });
+
+      room.on(RoomEvent.TrackSubscribed, async (track, _pub, participant) => {
+        if (track.kind === 'audio' && !participant.isLocal) {
+          await monitorTrack(track.mediaStreamTrack, 'botCanvas');
+        }
+      });
+
+      room.on(RoomEvent.LocalTrackPublished, async (publication) => {
+        const track = publication.track;
+        if (track?.kind === 'audio') {
+          await monitorTrack(track.mediaStreamTrack, 'micCanvas');
+        }
+      });
+
+      room.on(RoomEvent.RoomMetadataChanged, (metadata) => {
+        try {
+          const parsed = JSON.parse(metadata || '{}');
+          if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
+            updateMetrics(parsed);
+          }
+        } catch {}
+      });
+
+      room.on(RoomEvent.DataReceived, (payload) => {
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(payload));
+          if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
+            updateMetrics(parsed);
+          }
+        } catch {}
+      });
+
+      try {
+        await room.connect(wsUrl, token);
+      } catch (err) {
+        log(`Connect failed: ${err}`);
+        setStatus('Error');
+        state.room = null;
+      }
+    }
+
+    async function refreshToken() {
+      const refreshUrl = $('refreshUrl').value.trim();
+      if (!state.room || !state.token || !refreshUrl) {
+        log('Nothing to refresh yet.');
+        return;
+      }
+      try {
+        const res = await fetch(refreshUrl, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${state.token}` },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        state.token = body.token;
+        if (typeof state.room.updateToken === 'function') {
+          await state.room.updateToken(body.token);
+        }
+        if (body.wsUrl) $('wsUrl').value = body.wsUrl;
+        if (body.token) $('token').value = body.token;
+        log('Token refreshed successfully.');
+      } catch (err) {
+        log(`Token refresh failed: ${err}`);
+      }
+    }
+
+    async function disconnect() {
+      if (!state.room) return;
+      await state.room.disconnect();
+      state.room = null;
+      setStatus('Idle');
+    }
+
+    $('connectBtn').addEventListener('click', () => void connect());
+    $('refreshBtn').addEventListener('click', () => void refreshToken());
+    $('disconnectBtn').addEventListener('click', () => void disconnect());
+  </script>
+</body>
+</html>
