@@ -30,14 +30,14 @@ jobs:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL || 'wss://test.livekit.cloud' }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY || 'test-key' }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL || 'postgresql://test:test@localhost:5432/test' }}
           CP_TENANT_SECRETS: "{}"
         run: |
-          if [ -n "$SUPABASE_DB_URL" ]; then
-            echo "Running full test suite against provided SUPABASE_DB_URL..."
+          if [ -n "${{ secrets.SUPABASE_DB_URL }}" ]; then
+            echo "SUPABASE_DB_URL secret provided. Running full live test suite..."
             python -m pytest tests/ -v --tb=short
           else
-            echo "SUPABASE_DB_URL secret not set in repo secrets. Running standalone unit test suite..."
+            echo "SUPABASE_DB_URL secret not set. Running unit test suite..."
             python -m pytest tests/test_phase0.py -v --tb=short
           fi
 
