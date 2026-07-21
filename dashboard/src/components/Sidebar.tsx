@@ -2,10 +2,13 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+
+import { clearStoredTenantToken } from '@/lib/portalAuth';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const navItems = [
     {
@@ -46,6 +49,11 @@ export default function Sidebar() {
     },
   ];
 
+  const handleLogout = () => {
+    clearStoredTenantToken();
+    router.replace('/login');
+  };
+
   return (
     <aside className="sidebar">
       <div className="logo-box">
@@ -71,6 +79,14 @@ export default function Sidebar() {
           })}
         </ul>
       </nav>
+
+      <button
+        onClick={handleLogout}
+        className="btn-secondary"
+        style={{ marginTop: 'auto', width: '100%' }}
+      >
+        Log Out
+      </button>
     </aside>
   );
 }

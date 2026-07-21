@@ -1,6 +1,6 @@
 import './globals.css';
 import React from 'react';
-import Sidebar from '@/components/Sidebar';
+import AppShell from '@/components/AppShell';
 
 export const metadata = {
   title: 'Urdu VaaS — Tenant Dashboard',
@@ -15,27 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div className="app-container">
-          {/* Dynamic Active Link Sidebar */}
-          <Sidebar />
-
-          {/* Main Content Area */}
-          <main className="main-content">
-            <header className="header-bar">
-              <div className="header-title">
-                <h1>Tenant Operations Center</h1>
-                <p>Manage your Urdu voice agents, credentials, and real-time usage quotas.</p>
-              </div>
-
-              <div className="status-chip">
-                <span className="pulse-dot"></span>
-                <span>Active Tenant</span>
-              </div>
-            </header>
-
-            {children}
-          </main>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
