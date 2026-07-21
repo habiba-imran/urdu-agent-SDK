@@ -62,10 +62,21 @@ app.innerHTML = `
           Agent ID
           <input id="agent-id" name="agentId" value="${escapeHtml(envDefaults.agentId)}" />
         </label>
+        <label>
+          Urdu Voice
+          <select id="voice-picker" name="voiceId">
+            <option value="v_meklc281">Demo Voice (Default - Female)</option>
+            <option value="helpdesk-agent">Helpdesk Agent (Female)</option>
+            <option value="street-vendor">Street Vendor (Male)</option>
+            <option value="prime-time-anchor">Prime Time Anchor (Male)</option>
+            <option value="nosey-aunty">Nosey Aunty (Female)</option>
+          </select>
+        </label>
         <div class="actions">
           <button id="connect-btn" type="submit">Connect</button>
           <button id="disconnect-btn" type="button">Disconnect</button>
         </div>
+
       </form>
       <p class="hint">
         Pair this app with <code>examples/host-backend-node</code> or another host-owned backend that implements the documented session contract.
@@ -151,6 +162,7 @@ form.addEventListener('submit', async (event) => {
   const sessionEndpoint = String(formData.get('sessionEndpoint') ?? '').trim();
   const refreshEndpoint = String(formData.get('refreshEndpoint') ?? '').trim();
   const agentId = String(formData.get('agentId') ?? '').trim();
+  const voiceId = String(formData.get('voiceId') ?? '').trim();
 
   resetSessionView();
   setStatus('connecting');
@@ -162,7 +174,7 @@ form.addEventListener('submit', async (event) => {
       refreshEndpoint: refreshEndpoint || undefined,
     });
     bindAgent(agent);
-    await agent.connect({ agentId });
+    await agent.connect({ agentId, voiceId: voiceId || undefined });
     setStatus(agent.connectionState);
   } catch (error) {
     renderError(error);
@@ -170,6 +182,25 @@ form.addEventListener('submit', async (event) => {
     agent = null;
   }
 });
+
+const voicePickerElement = document.querySelector<HTMLSelectElement>('#voice-picker');
+if (voicePickerElement) {
+  UrduVoiceAgent.listVoices()
+    .then((voices) => {
+      if (voices && voices.length > 0) {
+        voicePickerElement.innerHTML = voices
+          .map(
+            (v) =>
+              `<option value="${escapeHtml(v.id)}">${escapeHtml(v.displayName)} (${escapeHtml(v.gender)})</option>`
+          )
+          .join('');
+      }
+    })
+    .catch(() => {
+      // Retain static options if fetch fails
+    });
+}
+
 
 disconnectButton.addEventListener('click', async () => {
   if (!agent) {
