@@ -1,6 +1,6 @@
 # Basic Web Client
 
-This is the Phase 0 example consumer app for `@uva/voice`.
+This is the browser-side Phase 3 example consumer app for `@uva/voice`.
 
 ## What it demonstrates
 
@@ -11,11 +11,10 @@ This is the Phase 0 example consumer app for `@uva/voice`.
 - caller and agent speaking state
 - metrics and error output
 
-## Current blocker
+## Pairing backend
 
-This app expects a **host-owned** session endpoint that speaks the SDK contract. That official
-starter backend is planned for Phase 3, so this example is currently a frontend scaffold plus a
-real integration target for that next phase.
+This app is meant to be run with [examples/host-backend-node](../host-backend-node/README.md), the
+reference host-owned backend starter that signs control-plane requests and relays refresh safely.
 
 ## Environment
 
@@ -32,3 +31,9 @@ Copy `.env.example` to `.env` and set:
 npm install
 npm run dev
 ```
+
+For a full local pairing:
+
+1. Start `examples/host-backend-node/`
+2. Point `VITE_UVA_SESSION_ENDPOINT` at `http://localhost:3000/api/voice/session`
+3. Point `VITE_UVA_REFRESH_ENDPOINT` at `http://localhost:3000/api/voice/session/refresh`

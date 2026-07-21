@@ -68,7 +68,7 @@ app.innerHTML = `
         </div>
       </form>
       <p class="hint">
-        Until the official host-backend starter exists, this app needs a compatible session endpoint supplied by the host platform or a temporary local bridge.
+        Pair this app with <code>examples/host-backend-node</code> or another host-owned backend that implements the documented session contract.
       </p>
     </section>
 

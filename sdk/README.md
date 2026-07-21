@@ -2,6 +2,12 @@
 
 Browser SDK for Urdu Voice Agent sessions.
 
+## Install
+
+```bash
+npm install @uva/voice
+```
+
 ## V1 public contract
 
 ```ts
@@ -96,4 +102,5 @@ These are intentionally out of scope for the supported surface right now:
 ## Example app
 
 See [examples/basic-web-client](../examples/basic-web-client/README.md) for the Phase 0 consumer
-scaffold.
+scaffold, and [examples/host-backend-node](../examples/host-backend-node/README.md) for the Phase 3
+reference backend starter that signs control-plane requests safely.

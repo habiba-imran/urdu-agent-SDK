@@ -2,6 +2,21 @@
   "name": "@uva/voice",
   "version": "0.1.0",
   "description": "Urdu Voice Agent client SDK - public bundle, zero secrets (Phase 4 scaffold).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/habiba-imran/urdu-agent-SDK/tree/staging/sdk",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "voice-agent",
+    "livekit",
+    "urdu",
+    "sdk"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,7 +33,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run lint"
   },
   "dependencies": {
     "livekit-client": "^2.0.0"

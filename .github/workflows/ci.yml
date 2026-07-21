@@ -92,6 +92,12 @@ jobs:
           npm ci
           npm run build
 
+      - name: Test Host Backend Starter Example
+        working-directory: examples/host-backend-node
+        run: |
+          npm ci
+          npm test
+
   # --- Job 4: Docker Container Build Smoke Test ---
   docker-smoke:
     name: Docker Container Build Smoke Test
