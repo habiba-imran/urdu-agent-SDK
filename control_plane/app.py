@@ -111,6 +111,45 @@ def health_check():
     return {"status": "ok", "service": "uva-control-plane"}
 
 
+@app.get("/v1/voices")
+def list_voices():
+    """Returns published Urdu voices from the voices catalogue for client/dashboard picker."""
+    try:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, display_name, gender, preview_url, artwork_url, enabled
+                FROM voices
+                WHERE enabled = true
+                ORDER BY display_name ASC
+                """
+            ).fetchall()
+            if rows:
+                return [
+                    {
+                        "id": str(r[0]),
+                        "displayName": r[1],
+                        "gender": r[2] or "unspecified",
+                        "previewUrl": r[3],
+                        "artworkUrl": r[4],
+                        "enabled": bool(r[5]),
+                    }
+                    for r in rows
+                ]
+    except Exception:
+        pass
+
+    # Fallback default catalog if DB query fails or unpopulated
+    return [
+        {"id": "v_meklc281", "displayName": "Demo Voice (Default)", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {"id": "helpdesk-agent", "displayName": "Helpdesk Agent", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {"id": "street-vendor", "displayName": "Street Vendor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {"id": "prime-time-anchor", "displayName": "Prime Time Anchor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {"id": "nosey-aunty", "displayName": "Nosey Aunty", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+    ]
+
+
+
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _hits: dict[str, list[float]] = defaultdict(list)
 

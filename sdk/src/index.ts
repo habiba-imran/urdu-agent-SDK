@@ -19,7 +19,18 @@ export interface UrduVoiceAgentOptions {
 
 export interface ConnectOptions {
   agentId: string;
+  voiceId?: string;
 }
+
+export interface Voice {
+  id: string;
+  displayName: string;
+  gender: 'male' | 'female' | 'unspecified';
+  previewUrl?: string | null;
+  artworkUrl?: string | null;
+  enabled: boolean;
+}
+
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
@@ -83,7 +94,23 @@ export class UrduVoiceAgent {
   private session: SessionResponse | null = null;
   private state: ConnectionState = 'idle';
 
+  static async listVoices(
+    endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices'
+  ): Promise<Voice[]> {
+    try {
+      const res = await fetch(endpointUrl);
+      if (!res.ok) {
+        throw new UvaError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+      }
+      return (await res.json()) as Voice[];
+    } catch (e) {
+      if (e instanceof UvaError) throw e;
+      throw new UvaError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
+    }
+  }
+
   constructor(private readonly options: UrduVoiceAgentOptions) {
+
     if (!options.publishableKey.trim()) {
       throw new UvaError('session_failed', 'publishableKey is required');
     }
