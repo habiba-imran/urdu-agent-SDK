@@ -86,7 +86,20 @@ _CORS_ORIGINS_RAW = (
 )
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 
+_SENTRY_DSN = os.environ.get("SENTRY_DSN") or _ENV.get("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=0.1,
+            environment=os.environ.get("ENVIRONMENT", "production"),
+        )
+    except Exception:
+        pass
+
 app = FastAPI(
+
     title="UVA Control Plane",
     description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
     version="1.0.0",
@@ -109,6 +122,30 @@ app.add_middleware(
 def health_check():
     """Minimal liveness probe — does not verify DB/LK connectivity, just confirms the process is up."""
     return {"status": "ok", "service": "uva-control-plane"}
+
+
+@app.get("/healthz/deep")
+def deep_health_check():
+    """Deep readiness probe — verifies live PostgreSQL DB connectivity and LiveKit credentials configuration."""
+    health = {"status": "healthy", "service": "uva-control-plane", "database": "unknown", "livekit": "configured"}
+
+    # 1. Verify DB
+    try:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
+            conn.execute("SELECT 1").fetchone()
+            health["database"] = "connected"
+    except Exception as e:
+        health["database"] = f"failed: {e}"
+        health["status"] = "unhealthy"
+
+    # 2. Verify LiveKit env configuration
+    if not _LK_URL or not _LK_KEY or not _LK_SECRET:
+        health["livekit"] = "missing_credentials"
+        health["status"] = "unhealthy"
+
+    status_code = 200 if health["status"] == "healthy" else 503
+    return JSONResponse(status_code=status_code, content=health)
+
 
 
 @app.get("/v1/voices")
