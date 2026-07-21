@@ -86,7 +86,14 @@ _CORS_ORIGINS_RAW = (
 )
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 
-app = FastAPI(title="UVA control plane")
+app = FastAPI(
+    title="UVA Control Plane",
+    description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
 
 
 app.add_middleware(
