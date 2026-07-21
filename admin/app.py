@@ -29,7 +29,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from dbconn import conn_kwargs  # noqa: E402
+try:
+    from scripts.dbconn import conn_kwargs
+except ImportError:
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
 
 from .audit import record_admin_action  # noqa: E402
 from .auth import AdminAuthError, login as admin_login, verify_admin_jwt  # noqa: E402
@@ -79,6 +83,13 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.get("/healthz")
+def admin_health():
+    """Minimal liveness probe for super-admin service."""
+    return {"status": "ok", "service": "uva-admin"}
+
 
 
 class LoginBody(BaseModel):

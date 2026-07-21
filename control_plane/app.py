@@ -28,7 +28,11 @@ from livekit import api
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from dbconn import conn_kwargs  # noqa: E402
+try:
+    from scripts.dbconn import conn_kwargs
+except ImportError:
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
@@ -74,15 +78,29 @@ _require_env()
 
 from fastapi.middleware.cors import CORSMiddleware
 
+_CORS_ORIGINS_RAW = (
+    os.environ.get("CP_ALLOWED_ORIGINS")
+    or _ENV.get("CP_ALLOWED_ORIGINS", "")
+)
+_CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
+
 app = FastAPI(title="UVA control plane")
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/healthz")
+def health_check():
+    """Minimal liveness probe — does not verify DB/LK connectivity, just confirms the process is up."""
+    return {"status": "ok", "service": "uva-control-plane"}
+
 
 _secrets = EnvSecretProvider()
 _hits: dict[str, list[float]] = defaultdict(list)

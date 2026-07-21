@@ -81,8 +81,8 @@ def env():
     )
     conn.execute(
         "insert into sessions (id, tenant_id, agent_id, room_name, ended_at, duration_sec, end_reason) "
-        "values (%s,%s,%s,'admin-test-room', now(), 65, 'normal')",
-        (sess, t, ag),
+        "values (%s,%s,%s,%s, now(), 65, 'normal')",
+        (sess, t, ag, f"admin-test-room-{uuid.uuid4()}"),
     )
     conn.execute(
         "insert into usage_events (tenant_id, session_id, kind, qty) values (%s,%s,'agent_sec',65)",
