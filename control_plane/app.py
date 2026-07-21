@@ -36,6 +36,8 @@ except ImportError:
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
+from .secrets_db import DbSecretProvider  # noqa: E402
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from admin.audit import record_mint_rejection  # noqa: E402
@@ -102,8 +104,9 @@ def health_check():
     return {"status": "ok", "service": "uva-control-plane"}
 
 
-_secrets = EnvSecretProvider()
+_secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _hits: dict[str, list[float]] = defaultdict(list)
+
 
 
 class SessionBody(BaseModel):
