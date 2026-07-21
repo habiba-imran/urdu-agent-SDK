@@ -202,3 +202,50 @@ def blockers_route(authorization: str | None = Header(default=None)):
         record_admin_action(conn, admin_id=claims["sub"], action="blockers")
         conn.commit()
         return rows
+
+
+@app.post("/admin/tenants/{tenant_id}/rotate-secret")
+def rotate_secret_route(
+    tenant_id: str, authorization: str | None = Header(default=None)
+):
+    """Admin-only secret rotation: generates a new HMAC secret for tenant_id,
+    stores it in DB, and returns the raw secret ONCE.
+    """
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            new_secret = queries.rotate_tenant_secret(conn, tenant_id)
+            record_admin_action(
+                conn,
+                admin_id=claims["sub"],
+                action=f"rotate_secret:{tenant_id}",
+            )
+            conn.commit()
+            return {
+                "tenant_id": tenant_id,
+                "new_hmac_secret": new_secret,
+                "warning": "Store this secret securely now. It will never be displayed again.",
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/admin/tenants/{tenant_id}/credentials")
+def tenant_credentials_route(
+    tenant_id: str, authorization: str | None = Header(default=None)
+):
+    """Admin-only masked credential view for a tenant."""
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            creds = queries.get_tenant_credentials_masked(conn, tenant_id)
+            record_admin_action(
+                conn,
+                admin_id=claims["sub"],
+                action=f"read_credentials:{tenant_id}",
+            )
+            conn.commit()
+            return creds
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
