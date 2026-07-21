@@ -92,9 +92,11 @@ h1, h2, h3, h4, .brand-font {
   font-weight: 700;
   letter-spacing: -0.02em;
   background: linear-gradient(to right, #ffffff, var(--text-muted));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
 
 .nav-list {
   list-style: none;
