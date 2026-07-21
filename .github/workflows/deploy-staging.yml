@@ -1,0 +1,25 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [staging, dev]
+
+jobs:
+  deploy-staging:
+    name: Trigger Render Staging Deploys
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy Staging Control Plane
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_CONTROL_PLANE_STAGING != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_CONTROL_PLANE_STAGING }}"
+
+      - name: Deploy Staging Voice Worker
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER_STAGING != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_WORKER_STAGING }}"
+
+      - name: Deploy Staging Admin Portal
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_ADMIN_STAGING != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_ADMIN_STAGING }}"

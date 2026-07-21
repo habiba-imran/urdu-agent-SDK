@@ -1,0 +1,25 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-production:
+    name: Trigger Render Production Deploys
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy Production Control Plane
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_CONTROL_PLANE != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_CONTROL_PLANE }}"
+
+      - name: Deploy Production Voice Worker
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}"
+
+      - name: Deploy Production Admin Portal
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_ADMIN != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_ADMIN }}"
