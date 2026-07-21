@@ -16,6 +16,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import psycopg
 from dotenv import dotenv_values
@@ -53,9 +54,15 @@ def main() -> int:
             signature=sig,
             origin=args.origin,
         )
+    join_url = (
+        "https://meet.livekit.io/custom"
+        f"?liveKitUrl={quote(res['wsUrl'], safe='')}"
+        f"&token={quote(res['token'], safe='')}"
+    )
     print("roomName:", res["roomName"])
     print("wsUrl   :", res["wsUrl"])
     print("token   :", res["token"])
+    print("join_url:", join_url)
     print("\nJoin the room above with this token in a LiveKit client")
     print(
         "  (Agents Playground: https://agents-playground.livekit.io -> wsUrl + token)."
