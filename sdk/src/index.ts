@@ -5,7 +5,7 @@
 // platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
 // and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
 
-import { Room, RoomEvent } from 'livekit-client';
+import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
 
 export interface UrduVoiceAgentOptions {
@@ -42,7 +42,8 @@ export type UvaEvent =
   | 'connected'
   | 'disconnected'
   | 'agent_speaking'
-  | 'metrics_updated';
+  | 'metrics_updated'
+  | 'audio_blocked';
 
 export type UvaErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
 
@@ -83,6 +84,12 @@ export interface UvaEventMap {
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
+  /**
+   * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
+   * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
+   * button and call agent.startAudio() inside its click handler.
+   */
+  audio_blocked: [boolean];
 }
 
 type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
@@ -90,6 +97,7 @@ type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 export class UrduVoiceAgent {
   private room: Room | null = null;
   private readonly listeners = new Map<UvaEvent, Set<Listener>>();
+  private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
   private state: ConnectionState = 'idle';
@@ -208,9 +216,22 @@ export class UrduVoiceAgent {
     if (!this.room) return;
     this.state = 'disconnecting';
     await this.room.disconnect();
+    this.detachAllRemoteAudio();
     this.room = null;
     this.session = null;
     this.state = 'idle';
+  }
+
+  /**
+   * Call this inside a user-gesture event handler (e.g. button click) when the
+   * 'audio_blocked' event fires with blocked=true.
+   * Browsers require a user interaction before they allow audio playback, so
+   * the LiveKit Room's internal AudioContext must be resumed explicitly here.
+   */
+  async startAudio(): Promise<void> {
+    if (this.room) {
+      await this.room.startAudio();
+    }
   }
 
   private emit<K extends UvaEvent>(event: K, ...args: UvaEventMap[K]): void {
@@ -227,6 +248,7 @@ export class UrduVoiceAgent {
 
     room.on(RoomEvent.Disconnected, (reason) => {
       this.clearRefreshTimer();
+      this.detachAllRemoteAudio();
       this.room = null;
       this.session = null;
       this.state = 'idle';
@@ -249,6 +271,30 @@ export class UrduVoiceAgent {
       this.emit('agent_speaking', agentSpeaking);
     });
 
+    // --- AUDIO PLAYBACK FIX ---
+    // Explicitly subscribe to remote audio tracks and attach them to audio
+    // elements. Without this, LiveKit's default audio playback relies on the
+    // browser's AudioContext which is suspended until a user gesture.
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind !== Track.Kind.Audio || participant.isLocal) {
+        return;
+      }
+      const trackSid = track.sid ?? publication.trackSid;
+      // track.attach() creates an <audio> element and pipes the MediaStream
+      // into it. We then force .play() inside a try/catch so we always
+      // attempt playback even if autoplay policy fires first.
+      const el = track.attach();
+      this.attachRemoteAudio(trackSid, el);
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+      if (track.kind !== Track.Kind.Audio) {
+        return;
+      }
+      const trackSid = track.sid ?? publication.trackSid;
+      this.detachRemoteAudio(trackSid);
+    });
+
     room.on(RoomEvent.MediaDevicesError, (error: Error) => {
       this.emit('error', new UvaError('session_failed', error.message));
     });
@@ -262,6 +308,50 @@ export class UrduVoiceAgent {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
       if (metrics) this.emit('metrics_updated', metrics);
     });
+
+    // Browsers block audio autoplay without a prior user gesture.
+    // LiveKit signals this via AudioPlaybackStatusChanged when its internal
+    // HTMLAudioElement.play() promise rejects (NotAllowedError).
+    // We forward it as 'audio_blocked' so the host app can show an
+    // "Unlock Audio" button and call agent.startAudio() on click.
+    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      const blocked = !room.canPlaybackAudio;
+      this.emit('audio_blocked', blocked);
+    });
+  }
+
+  private attachRemoteAudio(trackSid: string, element: HTMLMediaElement): void {
+    this.detachRemoteAudio(trackSid); // clean up any previous element for this sid
+    element.autoplay = true;
+    element.setAttribute('playsinline', 'true');
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    this.remoteAudioElements.set(trackSid, element);
+    // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
+    // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
+    void element.play().catch(() => {
+      // Silently ignore — AudioPlaybackStatusChanged will handle the blocked state.
+    });
+  }
+
+  private detachRemoteAudio(trackSid: string): void {
+    const element = this.remoteAudioElements.get(trackSid);
+    if (!element) return;
+    try {
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    } catch {
+      // Best-effort cleanup.
+    }
+    element.remove();
+    this.remoteAudioElements.delete(trackSid);
+  }
+
+  private detachAllRemoteAudio(): void {
+    for (const trackSid of [...this.remoteAudioElements.keys()]) {
+      this.detachRemoteAudio(trackSid);
+    }
   }
 
   private scheduleTokenRefresh(session: SessionResponse): void {

@@ -2,6 +2,9 @@
 
 This guide is the fastest supported path for a client team integrating the Urdu Voice Agent SDK.
 
+For the full client handoff package, including what UVA provides, which values go where, and the
+exact onboarding checklist, see `docs/CLIENT_HANDOFF_GUIDE.md`.
+
 It assumes you are using the reference materials already present in this repo:
 
 - browser app: `examples/basic-web-client/`

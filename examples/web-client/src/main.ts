@@ -8,6 +8,7 @@ type AppState = {
   agentSpeaking: boolean;
   metricsText: string;
   errorText: string;
+  audioBlocked: boolean;
 };
 
 const envDefaults = {
@@ -24,6 +25,7 @@ const state: AppState = {
   agentSpeaking: false,
   metricsText: 'No metrics received yet.',
   errorText: '',
+  audioBlocked: false,
 };
 
 let agent: UrduVoiceAgent | null = null;
@@ -62,24 +64,13 @@ app.innerHTML = `
           Agent ID
           <input id="agent-id" name="agentId" value="${escapeHtml(envDefaults.agentId)}" />
         </label>
-        <label>
-          Urdu Voice
-          <select id="voice-picker" name="voiceId">
-            <option value="v_meklc281">Demo Voice (Default - Female)</option>
-            <option value="helpdesk-agent">Helpdesk Agent (Female)</option>
-            <option value="street-vendor">Street Vendor (Male)</option>
-            <option value="prime-time-anchor">Prime Time Anchor (Male)</option>
-            <option value="nosey-aunty">Nosey Aunty (Female)</option>
-          </select>
-        </label>
         <div class="actions">
           <button id="connect-btn" type="submit">Connect</button>
           <button id="disconnect-btn" type="button">Disconnect</button>
         </div>
-
       </form>
       <p class="hint">
-        Pair this app with <code>examples/host-backend-node</code> or another host-owned backend that implements the documented session contract.
+        Pair this app with <code>examples/host-backend</code> or another host-owned backend that implements the documented session contract.
       </p>
     </section>
 
@@ -113,6 +104,11 @@ app.innerHTML = `
       <h2>Errors</h2>
       <pre id="error-output" class="log-box">No errors.</pre>
     </section>
+
+    <div id="audio-unlock-banner" class="audio-unlock-banner" style="display:none">
+      <p>Audio blocked by browser autoplay policy.</p>
+      <button id="unlock-audio-btn" type="button">Unlock Audio</button>
+    </div>
   </main>
 `;
 
@@ -125,6 +121,8 @@ const metricsOutputElement = document.querySelector<HTMLElement>('#metrics-outpu
 const errorOutputElement = document.querySelector<HTMLElement>('#error-output');
 const connectButtonElement = document.querySelector<HTMLButtonElement>('#connect-btn');
 const disconnectButtonElement = document.querySelector<HTMLButtonElement>('#disconnect-btn');
+const audioUnlockBannerElement = document.querySelector<HTMLDivElement>('#audio-unlock-banner');
+const unlockAudioBtnElement = document.querySelector<HTMLButtonElement>('#unlock-audio-btn');
 
 if (
   !formElement ||
@@ -149,6 +147,8 @@ const metricsOutput = metricsOutputElement;
 const errorOutput = errorOutputElement;
 const connectButton = connectButtonElement;
 const disconnectButton = disconnectButtonElement;
+const audioUnlockBanner = audioUnlockBannerElement;
+const unlockAudioBtn = unlockAudioBtnElement;
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -162,7 +162,6 @@ form.addEventListener('submit', async (event) => {
   const sessionEndpoint = String(formData.get('sessionEndpoint') ?? '').trim();
   const refreshEndpoint = String(formData.get('refreshEndpoint') ?? '').trim();
   const agentId = String(formData.get('agentId') ?? '').trim();
-  const voiceId = String(formData.get('voiceId') ?? '').trim();
 
   resetSessionView();
   setStatus('connecting');
@@ -174,7 +173,7 @@ form.addEventListener('submit', async (event) => {
       refreshEndpoint: refreshEndpoint || undefined,
     });
     bindAgent(agent);
-    await agent.connect({ agentId, voiceId: voiceId || undefined });
+    await agent.connect({ agentId });
     setStatus(agent.connectionState);
   } catch (error) {
     renderError(error);
@@ -182,25 +181,6 @@ form.addEventListener('submit', async (event) => {
     agent = null;
   }
 });
-
-const voicePickerElement = document.querySelector<HTMLSelectElement>('#voice-picker');
-if (voicePickerElement) {
-  UrduVoiceAgent.listVoices()
-    .then((voices) => {
-      if (voices && voices.length > 0) {
-        voicePickerElement.innerHTML = voices
-          .map(
-            (v) =>
-              `<option value="${escapeHtml(v.id)}">${escapeHtml(v.displayName)} (${escapeHtml(v.gender)})</option>`
-          )
-          .join('');
-      }
-    })
-    .catch(() => {
-      // Retain static options if fetch fails
-    });
-}
-
 
 disconnectButton.addEventListener('click', async () => {
   if (!agent) {
@@ -221,28 +201,42 @@ function bindAgent(client: UrduVoiceAgent): void {
   client.on('disconnected', () => {
     setStatus('idle');
   });
-  client.on('transcript', (entry: any) => {
+  client.on('transcript', (entry) => {
     state.transcript = [...state.transcript, entry];
     render();
   });
-  client.on('speaking', (isSpeaking: any) => {
+  client.on('speaking', (isSpeaking) => {
     state.speaking = Boolean(isSpeaking);
     render();
   });
-  client.on('agent_speaking', (isSpeaking: any) => {
+  client.on('agent_speaking', (isSpeaking) => {
     state.agentSpeaking = Boolean(isSpeaking);
     render();
   });
-  client.on('metrics_updated', (metrics: any) => {
+  client.on('metrics_updated', (metrics) => {
     state.metricsText = formatMetrics(metrics);
     render();
   });
-  client.on('error', (error: any) => {
+  client.on('error', (error) => {
     renderError(error);
   });
-  client.on('ended', (reason: any) => {
+  client.on('ended', (reason) => {
     state.status = `ended${reason ? ` (${String(reason)})` : ''}`;
+    state.audioBlocked = false;
     render();
+  });
+  client.on('audio_blocked', (blocked) => {
+    state.audioBlocked = Boolean(blocked);
+    render();
+  });
+}
+
+// This must be a real user click so the browser allows remote audio playback.
+if (unlockAudioBtn) {
+  unlockAudioBtn.addEventListener('click', async () => {
+    if (agent) {
+      await agent.startAudio();
+    }
   });
 }
 
@@ -257,20 +251,20 @@ function resetSessionView(): void {
   state.agentSpeaking = false;
   state.metricsText = 'No metrics received yet.';
   state.errorText = '';
+  state.audioBlocked = false;
   render();
 }
 
-function renderError(error: any): void {
+function renderError(error: unknown): void {
   if (isUvaError(error)) {
     state.errorText = `${error.code}: ${error.message}`;
   } else if (error && typeof error === 'object' && 'message' in error) {
-    state.errorText = String(error.message);
+    state.errorText = String((error as { message: unknown }).message);
   } else {
     state.errorText = 'Unknown error';
   }
   render();
 }
-
 
 function render(): void {
   statusText.textContent = state.status;
@@ -278,6 +272,10 @@ function render(): void {
   agentSpeakingText.textContent = state.agentSpeaking ? 'Yes' : 'No';
   metricsOutput.textContent = state.metricsText;
   errorOutput.textContent = state.errorText || 'No errors.';
+
+  if (audioUnlockBanner) {
+    audioUnlockBanner.style.display = state.audioBlocked ? 'flex' : 'none';
+  }
 
   if (state.transcript.length === 0) {
     transcriptList.innerHTML = '<li class="placeholder">No transcript yet.</li>';

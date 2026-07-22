@@ -13,7 +13,7 @@ This is the browser-side Phase 3 example consumer app for `@uva/voice`.
 
 ## Pairing backend
 
-This app is meant to be run with [examples/host-backend-node](../host-backend-node/README.md), the
+This app is meant to be run with [examples/host-backend](../host-backend/README.md), the
 reference host-owned backend starter that signs control-plane requests and relays refresh safely.
 
 ## Environment
@@ -34,6 +34,6 @@ npm run dev
 
 For a full local pairing:
 
-1. Start `examples/host-backend-node/`
+1. Start `examples/host-backend/`
 2. Point `VITE_UVA_SESSION_ENDPOINT` at `http://localhost:3000/api/voice/session`
 3. Point `VITE_UVA_REFRESH_ENDPOINT` at `http://localhost:3000/api/voice/session/refresh`

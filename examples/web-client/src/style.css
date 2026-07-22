@@ -180,3 +180,47 @@ input {
     font-size: 1.55rem;
   }
 }
+
+/* ── Audio unlock banner ── */
+.audio-unlock-banner {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: #7c3a00;
+  color: #fff8ef;
+  border-radius: 999px;
+  padding: 0.75rem 1.25rem;
+  box-shadow: 0 8px 30px rgba(120, 50, 0, 0.35);
+  animation: banner-pulse 2s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+.audio-unlock-banner p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.audio-unlock-banner button {
+  border: 2px solid rgba(255, 220, 160, 0.7);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.audio-unlock-banner button:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+@keyframes banner-pulse {
+  0%, 100% { box-shadow: 0 8px 30px rgba(120, 50, 0, 0.35); }
+  50%       { box-shadow: 0 8px 40px rgba(200, 100, 0, 0.55); }
+}

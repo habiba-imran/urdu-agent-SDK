@@ -52,4 +52,4 @@ VITE_UVA_REFRESH_ENDPOINT=http://localhost:3000/api/voice/session/refresh
 VITE_UVA_AGENT_ID=<real agent id>
 ```
 
-Then run `examples/basic-web-client/` and the browser example can connect through this starter.
+Then run `examples/web-client/` and the browser example can connect through this starter.
