@@ -1,5 +1,7 @@
 # PROGRESS
-Updated: 2026-07-18 | Phase: 8/9/10 worked in one haul, per explicit instruction — **GATE 8 still
+Updated: 2026-07-23 | Existing-tenant machine-auth agent management built (`/machine/agents` +
+`@uva/agents`), see "Now (Session 13)" below — unrelated to and does not change Phase 8's still-OPEN
+status. Phase 8 status as of 2026-07-18, unchanged: **GATE 8 still
 OPEN, 5/6 lines green (ADR-032), 6th needs a human decision (ADR-030), not new work.** Phase 9
 (deployment readiness, config/artifacts only) DONE: Dockerfiles for control_plane/admin built and
 verified without live Docker (venv/import/serve test — Docker not installed in this environment),
@@ -28,6 +30,56 @@ usage-check all clean, only the same 3 known tests red. H9 sent by the human, aw
 from here needs either a live LiveKit/Uplift call (the listening session itself), phonetic
 judgment only a human can make, or a decision already staged and waiting (ADR-030's CER-harness
 retirement call, H9's vendor replies). Nothing further is being guessed at or built ahead of that.
+
+## Now (Session 13 — existing-tenant machine-auth agent management, planned then implemented)
+- **Scope: existing tenants only**, per explicit instruction — a tenant with `tenant_id`/
+  `hmac_secret` already provisioned should be able to create/manage agents programmatically
+  instead of depending on the dashboard's human-login flow. Tenant bootstrap/onboarding untouched,
+  out of scope. Full design record: `docs/40-ADR.md` ADR-035.
+- **Went through `EnterPlanMode` first** (human-approved plan at
+  `C:\Users\ukash\.claude\plans\wise-booping-honey.md`) before any file was written, per this
+  session's explicit "no code yet" instructions up to that point.
+- **New: `tenant_portal_api/machine_auth.py`** — HMAC verification for a machine-callable
+  agent-management surface, structurally parallel to `control_plane/mint.py` but its own module
+  (reuses the tenant's existing `hmac_secret`, not a new credential). Signed message binds a
+  server-derived `action` (`agent.create`/`agent.list`/`agent.update`) + a payload hash, so a
+  captured signature can't be replayed against a different action or against `/v1/session`. Reuses
+  `control_plane.secrets.DbSecretProvider` and the existing `used_nonces` table; adds its own
+  in-memory per-tenant rate limiter (`MACHINE_RATE_LIMIT_PER_MIN = 30`).
+- **New routes in `tenant_portal_api/app.py`**: `POST/GET /machine/agents`,
+  `PATCH /machine/agents/{agent_id}` — call the exact same `queries.create_agent`/`update_agent`/
+  `list_agents` the JWT-authenticated `/portal/agents` routes already use. No change to
+  `control_plane`, `worker`, or the admin app.
+- **New package `sdk-server/` (`@uva/agents`)** — deliberately separate from `@uva/voice`, not a
+  subpath, zero runtime deps (Node 20 built-in `crypto`/`fetch`). `UvaAgentsClient.
+  {createAgent,listAgents,updateAgent}` sign their own requests. New isolation test
+  `tests/test_admin.py::test_sdk_bundle_never_references_agents_server` (mirrors the existing
+  `test_sdk_bundle_never_references_admin` pattern) — confirmed passing.
+- **Real bug caught before it shipped, not after**: the payload-hash canonicalization must match
+  byte-for-byte between Python (server) and TypeScript (client) or signatures silently fail.
+  Python's `json.dumps` escapes non-ASCII by default; agent prompts are Urdu-script text. Fixed
+  with `ensure_ascii=False` + explicit UTF-8 encoding. **Verified concretely**: ran the Python and
+  Node canonicalization functions standalone against 3 shared bodies including real Urdu text —
+  byte-identical canonical strings and SHA-256 digests across both languages.
+- **New `tests/test_machine_agent_api.py`** (11 cases: happy-path create/list/update, wrong
+  signature, replay window, nonce replay, tampered-payload-after-signing, suspended tenant,
+  cross-tenant IDOR on update, rate limit, missing headers) — mirrors `tests/test_mint.py`'s gate
+  discipline for the analogous HMAC-signed surface.
+- **What's verified vs. still open, stated plainly**: no live Postgres/Supabase was available in
+  this environment (no `.env.local`/`SUPABASE_DB_URL`, no local Docker) — all 11 DB-touching cases
+  skip cleanly via the same pattern `test_mint.py`/`test_phase4_portal_api.py` already use here
+  (confirmed those two also skip identically in this environment — a pre-existing gap, not a new
+  one). What *was* verified for real: clean import + correct route registration
+  (`tenant_portal_api.app`), the cross-language canonicalization match above, `ruff check`/
+  `ruff format --check` clean, `sdk-server`'s `tsc` build + `tsc --noEmit` both clean, and the
+  built package importing/constructing correctly under Node. **Running the full test file green
+  against a live dev DB is still an open step for whoever has `.env.local` access** — not claimed
+  as done here.
+- **New doc `docs/MACHINE_AGENT_API_CONTRACT.md`** — wire contract (headers, signature algorithm,
+  byte-for-byte canonicalization rule, all 3 routes, error mapping), mirrors
+  `docs/HOST_BACKEND_CONTRACT.md`'s shape.
+- Zero live/paid API calls. No change to tenant provisioning, `control_plane`, `worker`, or admin.
+  Formal phase-number assignment in `docs/00-INDEX.md` left to whoever maintains that table.
 
 ## Now (Session 12 — reconcile Gladia contradiction, begin ADR-013 pile)
 - **P3-T09 injection-gate mandatory re-run (justified test-file edit).** The

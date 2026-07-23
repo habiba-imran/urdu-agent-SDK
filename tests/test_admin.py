@@ -514,3 +514,25 @@ def test_sdk_bundle_never_references_admin():
                 if "/admin/" in text or "admin_" in text:
                     hits.append(str(f))
     assert hits == []
+
+
+def test_sdk_bundle_never_references_agents_server():
+    """The browser SDK (@uva/voice) must never reference the server-only @uva/agents package —
+    that package holds the tenant HMAC secret, and importing it into a browser bundle would leak
+    it. Mirrors test_sdk_bundle_never_references_admin's isolation check."""
+    root = Path(__file__).resolve().parent.parent
+    hits = []
+    for sub in ("sdk/src", "sdk/dist"):
+        d = root / sub
+        if not d.exists():
+            continue
+        for f in d.rglob("*"):
+            if f.is_file() and f.suffix in (".ts", ".tsx", ".js", ".d.ts"):
+                text = f.read_text(encoding="utf-8", errors="ignore")
+                if (
+                    "sdk-server" in text
+                    or "@uva/agents" in text
+                    or "UvaAgentsClient" in text
+                ):
+                    hits.append(str(f))
+    assert hits == []

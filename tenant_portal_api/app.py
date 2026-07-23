@@ -27,7 +27,12 @@ except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
+from .machine_auth import MachineAuthError, verify_machine_request
 from . import queries
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from control_plane.secrets import EnvSecretProvider  # noqa: E402
+from control_plane.secrets_db import DbSecretProvider  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _ROOT / ".env.local"
@@ -35,7 +40,9 @@ _ENV_PATH = _ROOT / ".env.local"
 
 def _ensure_portal_jwt_secret() -> str:
     env = dotenv_values(_ENV_PATH)
-    val = os.environ.get("TENANT_PORTAL_JWT_SECRET") or env.get("TENANT_PORTAL_JWT_SECRET")
+    val = os.environ.get("TENANT_PORTAL_JWT_SECRET") or env.get(
+        "TENANT_PORTAL_JWT_SECRET"
+    )
     if val:
         return val
     generated = _pysecrets.token_hex(32)
@@ -58,6 +65,8 @@ TENANT_PORTAL_ORIGINS = [
     ).split(",")
     if o.strip()
 ]
+
+_machine_secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 
 app = FastAPI(title="UVA tenant portal API")
 app.add_middleware(
@@ -99,6 +108,33 @@ def _require_tenant(authorization: str | None) -> dict:
     try:
         return verify_tenant_jwt(token, TENANT_PORTAL_JWT_SECRET)
     except TenantAuthError as e:
+        raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+
+def _require_machine(
+    conn: psycopg.Connection,
+    *,
+    x_tenant_id: str | None,
+    x_timestamp: str | None,
+    x_nonce: str | None,
+    x_signature: str | None,
+    action: str,
+    body: dict,
+) -> None:
+    if not x_tenant_id or not x_timestamp or not x_nonce or not x_signature:
+        raise HTTPException(status_code=401, detail="missing signature headers")
+    try:
+        verify_machine_request(
+            conn,
+            _machine_secrets,
+            tenant_id=x_tenant_id,
+            ts=x_timestamp,
+            nonce=x_nonce,
+            action=action,
+            body=body,
+            signature=x_signature,
+        )
+    except MachineAuthError as e:
         raise HTTPException(status_code=e.status, detail=e.reason) from e
 
 
@@ -181,9 +217,7 @@ def credentials_route(authorization: str | None = Header(default=None)):
 
 
 @app.get("/portal/sessions")
-def sessions_route(
-    limit: int = 50, authorization: str | None = Header(default=None)
-):
+def sessions_route(limit: int = 50, authorization: str | None = Header(default=None)):
     claims = _require_tenant(authorization)
     with _conn() as conn:
         return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
@@ -197,5 +231,97 @@ def usage_summary_route(
     with _conn() as conn:
         try:
             return queries.usage_summary(conn, claims["sub"], days=days)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+# --- Machine-auth agent management (existing tenants, no dashboard/JWT login required) ---
+#
+# Authenticated with the tenant's own HMAC secret (same secret used to sign /v1/session mint
+# requests — see docs/MACHINE_AGENT_API_CONTRACT.md), NOT the tenant-portal JWT above. Intended for
+# a client's own backend calling programmatically; never for a browser.
+
+
+@app.post("/machine/agents")
+def machine_create_agent_route(
+    body: CreateAgentBody,
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="agent.create",
+            body=body.model_dump(),
+        )
+        created = queries.create_agent(
+            conn,
+            x_tenant_id,
+            name=body.name,
+            prompt=body.prompt,
+            voice_id=body.voice_id,
+            llm_model=body.llm_model,
+        )
+        conn.commit()
+        return created
+
+
+@app.get("/machine/agents")
+def machine_list_agents_route(
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="agent.list",
+            body={},
+        )
+        return queries.list_agents(conn, x_tenant_id)
+
+
+@app.patch("/machine/agents/{agent_id}")
+def machine_update_agent_route(
+    agent_id: str,
+    body: UpdateAgentBody,
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="agent.update",
+            body=body.model_dump(exclude_none=True),
+        )
+        try:
+            updated = queries.update_agent(
+                conn,
+                x_tenant_id,
+                agent_id,
+                name=body.name,
+                prompt=body.prompt,
+                voice_id=body.voice_id,
+                llm_model=body.llm_model,
+            )
+            conn.commit()
+            return updated
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
