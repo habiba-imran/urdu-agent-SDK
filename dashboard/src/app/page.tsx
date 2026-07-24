@@ -6,30 +6,50 @@ import Link from 'next/link';
 import {
   type PortalAgent,
   type PortalCredentials,
+  type PortalSession,
   type PortalUsageSummary,
   getAgents,
   getCredentials,
+  getSessions,
   getUsageSummary,
 } from '@/lib/portalApi';
+import { PageHeader } from '@/components/ui/page-header';
+import { StatCard } from '@/components/ui/stat-card';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Progress } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
 
 export default function DashboardPage() {
   const [agents, setAgents] = useState<PortalAgent[]>([]);
   const [credentials, setCredentials] = useState<PortalCredentials | null>(null);
   const [usage, setUsage] = useState<PortalUsageSummary | null>(null);
+  const [sessions, setSessions] = useState<PortalSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const [agentsData, credentialsData, usageData] = await Promise.all([
+        const [agentsData, credentialsData, usageData, sessionsData] = await Promise.all([
           getAgents(),
           getCredentials(),
           getUsageSummary(),
+          getSessions(),
         ]);
         setAgents(agentsData);
         setCredentials(credentialsData);
         setUsage(usageData);
+        setSessions(sessionsData);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
@@ -45,161 +65,133 @@ export default function DashboardPage() {
   const maxConcurrent = usage?.quota.max_concurrent ?? 0;
   const usedMinutes = usage?.quota.minutes_this_month ?? 0;
   const monthlyCap = usage?.quota.max_minutes_month ?? 0;
+  const liveCount = sessions.filter((s) => s.live).length;
 
   return (
     <div>
-      {error && (
-        <div
-          className="glass-card"
-          style={{
-            marginBottom: '1.5rem',
-            border: '1px solid rgba(248, 113, 113, 0.35)',
-            color: '#fca5a5',
-          }}
-        >
+      <PageHeader
+        title="Overview"
+        description="Manage your Urdu voice agents, credentials, and real-time usage quotas."
+      />
+
+      {error ? (
+        <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <strong>Backend connection error:</strong> {error}
         </div>
-      )}
+      ) : null}
 
-      <div className="grid-3">
-        <div className="glass-card">
-          <div className="stat-header">
-            <span>ACTIVE AGENTS</span>
-            <span className="badge badge-green">Live</span>
-          </div>
-          <div className="stat-value">{loading ? '...' : agents.length}</div>
-          <div className="stat-subtext">Configured Urdu Voice Assistants</div>
-        </div>
-
-        <div className="glass-card">
-          <div className="stat-header">
-            <span>CONCURRENT CALLS</span>
-            <span className="badge badge-blue">
-              Quota: {loading ? '...' : maxConcurrent}
-            </span>
-          </div>
-          <div className="stat-value">
-            {loading ? '...' : `${concurrentNow} / ${maxConcurrent}`}
-          </div>
-          <div className="stat-subtext">Active LiveKit WebRTC sessions</div>
-        </div>
-
-        <div className="glass-card">
-          <div className="stat-header">
-            <span>MONTHLY USAGE</span>
-            <span className="badge badge-purple">
-              {loading ? '...' : `${monthlyCap} min cap`}
-            </span>
-          </div>
-          <div className="stat-value">
-            {loading ? '...' : `${usedMinutes.toFixed(1)} min`}
-          </div>
-          <div className="stat-subtext">Agent minutes consumed this period</div>
-        </div>
+      <div className="mb-4 grid gap-4 grid-cols-2">
+        <StatCard label="Active Agents" value={loading ? '…' : agents.length} />
+        <StatCard
+          label="Concurrent Calls"
+          value={loading ? '…' : `${concurrentNow} / ${maxConcurrent}`}
+          chart={!loading ? <Progress value={concurrentNow} max={maxConcurrent} /> : undefined}
+        />
       </div>
 
-      <div className="grid-3" style={{ gridTemplateColumns: '2fr 1fr' }}>
-        <div className="glass-card">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '1.25rem',
-            }}
-          >
-            <h2>Configured Voice Agents</h2>
-            <Link href="/agents" className="btn-primary">
+      <div className="mb-6 grid gap-4 grid-cols-2">
+        <StatCard
+          label="Monthly Usage"
+          value={loading ? '…' : `${usedMinutes.toFixed(1)} min`}
+          subStats={loading ? undefined : [{ label: 'Cap', value: `${monthlyCap} min` }]}
+          chart={!loading ? <Progress value={usedMinutes} max={monthlyCap} /> : undefined}
+          href="/usage"
+          linkLabel="View full usage breakdown"
+        />
+        <StatCard
+          label="Live Calls Now"
+          value={loading ? '…' : liveCount}
+          chart={
+            !loading && liveCount > 0 ? (
+              <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
+                </span>
+                Live now
+              </div>
+            ) : undefined
+          }
+          href="/sessions"
+          linkLabel="View call sessions"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
+            <h2 className="text-lg font-semibold text-foreground">Configured Voice Agents</h2>
+            <Link
+              href="/agents"
+              className={cn(
+                'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                'bg-primary text-primary-foreground hover:bg-primary/90',
+              )}
+            >
               + New Agent
             </Link>
           </div>
+          <CardContent className="pt-6">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading agents...</p>
+            ) : agents.length === 0 ? (
+              <EmptyState
+                title="No agents found for this tenant"
+                description="Create your first agent to get started."
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent Name</TableHead>
+                    <TableHead>Selected Voice</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {agents.map((agent) => (
+                    <TableRow key={agent.id}>
+                      <TableCell className="font-medium">{agent.name}</TableCell>
+                      <TableCell>
+                        <Badge>{agent.voice_id}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">Active</Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Agent Name</th>
-                <th>Selected Voice</th>
-                <th>LLM Engine</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td colSpan={4}>Loading agents...</td>
-                </tr>
-              )}
-              {!loading && agents.length === 0 && (
-                <tr>
-                  <td colSpan={4}>No agents found for this tenant.</td>
-                </tr>
-              )}
-              {!loading &&
-                agents.map((agent) => (
-                  <tr key={agent.id}>
-                    <td style={{ fontWeight: 600 }}>{agent.name}</td>
-                    <td>
-                      <span className="badge badge-green">{agent.voice_id}</span>
-                    </td>
-                    <td>{agent.llm_model}</td>
-                    <td>
-                      <span className="badge badge-green">Active</span>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-6">
+            <h2 className="text-lg font-semibold text-foreground">Integration Specs</h2>
+            <p className="text-sm text-muted-foreground">
+              Your host backend signs HMAC tokens using your assigned secret key before
+              dispatching client WebRTC sessions.
+            </p>
 
-        <div className="glass-card">
-          <h2 style={{ marginBottom: '1rem' }}>Integration Specs</h2>
-          <p
-            style={{
-              color: 'var(--text-muted)',
-              fontSize: '0.9rem',
-              marginBottom: '1rem',
-              lineHeight: '1.5',
-            }}
-          >
-            Your host backend signs HMAC tokens using your assigned secret key
-            before dispatching client WebRTC sessions.
-          </p>
-
-          <div
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              padding: '1rem',
-              borderRadius: 'var(--radius-md)',
-              fontSize: '0.85rem',
-            }}
-          >
-            <div style={{ color: 'var(--text-dim)', marginBottom: '0.4rem' }}>
-              PUBLISHABLE KEY
+            <div className="rounded-md bg-muted p-4">
+              <div className="mb-1 text-xs font-medium text-muted-foreground">PUBLISHABLE KEY</div>
+              <div className="break-all font-mono text-sm text-foreground">
+                {loading ? 'Loading...' : (credentials?.publishable_key ?? 'Unavailable')}
+              </div>
             </div>
-            <div
-              style={{
-                fontFamily: 'monospace',
-                color: 'var(--accent-cyan)',
-                wordBreak: 'break-all',
-              }}
+
+            <Link
+              href="/credentials"
+              className={cn(
+                'inline-flex w-full items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                'bg-muted text-foreground hover:bg-muted/70',
+              )}
             >
-              {loading ? 'Loading...' : credentials?.publishable_key ?? 'Unavailable'}
-            </div>
-          </div>
-
-          <Link
-            href="/credentials"
-            className="btn-secondary"
-            style={{
-              width: '100%',
-              marginTop: '1rem',
-              display: 'block',
-              textAlign: 'center',
-            }}
-          >
-            View Full Credentials
-          </Link>
-        </div>
+              View Full Credentials
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

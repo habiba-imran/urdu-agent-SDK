@@ -3,51 +3,27 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { LayoutDashboard, Bot, KeyRound, PhoneCall, BarChart3, LogOut } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import { clearStoredTenantToken } from '@/lib/portalAuth';
 
-export default function Sidebar() {
+const navItems = [
+  { href: '/', label: 'Overview', icon: LayoutDashboard },
+  { href: '/agents', label: 'Agents & Voices', icon: Bot },
+  { href: '/usage', label: 'Usage', icon: BarChart3 },
+  { href: '/credentials', label: 'Credentials', icon: KeyRound },
+  { href: '/sessions', label: 'Call Sessions', icon: PhoneCall },
+];
+
+/**
+ * Nav content only — no wrapping `<aside>` — so it can be rendered inside the persistent
+ * desktop sidebar AND inside the mobile slide-over overlay without duplicating markup.
+ * `onNavigate` is used by the mobile overlay to close itself when a link is followed.
+ */
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-
-  const navItems = [
-    {
-      href: '/',
-      label: 'Overview',
-      icon: (
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-        </svg>
-      ),
-    },
-    {
-      href: '/agents',
-      label: 'Agents & Voices',
-      icon: (
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/credentials',
-      label: 'Credentials',
-      icon: (
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/sessions',
-      label: 'Call Sessions',
-      icon: (
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-    },
-  ];
 
   const handleLogout = () => {
     clearStoredTenantToken();
@@ -55,38 +31,60 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
-      <div className="logo-box">
-        <div className="logo-badge">U</div>
-        <div>
-          <div className="logo-text">Urdu VaaS</div>
-          <div style={{ fontSize: '0.7rem', color: '#64748b' }}>Tenant Portal</div>
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 items-center border-b border-border px-4">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground">AwaazLabs</p>
+          <p className="truncate text-xs text-muted-foreground">Tenant Portal</p>
         </div>
       </div>
 
-      <nav>
-        <ul className="nav-list">
+      <nav className="flex-1 overflow-y-auto px-2 py-4" aria-label="Main navigation">
+        <div className="flex flex-col gap-0.5">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const active = pathname === item.href;
+            const Icon = item.icon;
             return (
-              <li key={item.href}>
-                <Link href={item.href} className={`nav-link ${isActive ? 'active' : ''}`}>
-                  {item.icon}
-                  {item.label}
-                </Link>
-              </li>
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                onClick={onNavigate}
+                className={cn(
+                  'flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors hover:bg-accent',
+                  active && 'bg-accent font-medium text-accent-foreground',
+                )}
+              >
+                <Icon
+                  className={cn('h-4 w-4 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')}
+                  aria-hidden="true"
+                />
+                <span>{item.label}</span>
+              </Link>
             );
           })}
-        </ul>
+        </div>
       </nav>
 
-      <button
-        onClick={handleLogout}
-        className="btn-secondary"
-        style={{ marginTop: 'auto', width: '100%' }}
-      >
-        Log Out
-      </button>
+      <div className="border-t border-border p-2">
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <LogOut className="h-4 w-4" aria-hidden="true" />
+          Log Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Persistent desktop sidebar — hidden below `md`, where `AppShell`'s mobile overlay takes over. */
+export default function Sidebar() {
+  return (
+    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
+      <SidebarNav />
     </aside>
   );
 }
