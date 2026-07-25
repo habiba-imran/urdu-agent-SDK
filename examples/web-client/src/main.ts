@@ -1,4 +1,9 @@
-import { UrduVoiceAgent, UvaError, type MetricsEvent, type TranscriptEvent } from '@uva/voice';
+import {
+  AwaazLabsUvaVoice,
+  AwaazLabsUvaVoiceError,
+  type MetricsEvent,
+  type TranscriptEvent,
+} from '@awaazlabs-uva/voice';
 import './style.css';
 
 type AppState = {
@@ -28,7 +33,7 @@ const state: AppState = {
   audioBlocked: false,
 };
 
-let agent: UrduVoiceAgent | null = null;
+let agent: AwaazLabsUvaVoice | null = null;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -41,7 +46,7 @@ app.innerHTML = `
       <p class="eyebrow">Phase 0 Example Consumer</p>
       <h1>Basic Web Client</h1>
       <p class="lede">
-        This app uses <code>@uva/voice</code> in the browser and expects a host-owned session endpoint.
+        This app uses <code>@awaazlabs-uva/voice</code> in the browser and expects a host-owned session endpoint.
       </p>
     </section>
 
@@ -167,7 +172,7 @@ form.addEventListener('submit', async (event) => {
   setStatus('connecting');
 
   try {
-    agent = new UrduVoiceAgent({
+    agent = new AwaazLabsUvaVoice({
       publishableKey,
       sessionEndpoint,
       refreshEndpoint: refreshEndpoint || undefined,
@@ -194,7 +199,7 @@ disconnectButton.addEventListener('click', async () => {
 
 render();
 
-function bindAgent(client: UrduVoiceAgent): void {
+function bindAgent(client: AwaazLabsUvaVoice): void {
   client.on('connected', () => {
     setStatus('connected');
   });
@@ -256,7 +261,7 @@ function resetSessionView(): void {
 }
 
 function renderError(error: unknown): void {
-  if (isUvaError(error)) {
+  if (isAwaazLabsUvaVoiceError(error)) {
     state.errorText = `${error.code}: ${error.message}`;
   } else if (error && typeof error === 'object' && 'message' in error) {
     state.errorText = String((error as { message: unknown }).message);
@@ -293,8 +298,8 @@ function formatMetrics(metrics: MetricsEvent): string {
   return JSON.stringify(metrics, null, 2);
 }
 
-function isUvaError(error: unknown): error is UvaError {
-  return error instanceof UvaError;
+function isAwaazLabsUvaVoiceError(error: unknown): error is AwaazLabsUvaVoiceError {
+  return error instanceof AwaazLabsUvaVoiceError;
 }
 
 function escapeHtml(value: string): string {

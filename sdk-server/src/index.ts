@@ -1,23 +1,25 @@
-// UrduVoiceAgent SERVER-SIDE agent-management client (docs/MACHINE_AGENT_API_CONTRACT.md).
+// AwaazLabs-UVA-Agents server-side agent-management client (docs/MACHINE_AGENT_API_CONTRACT.md).
 //
 // SERVER-SIDE ONLY. This package holds the tenant's raw HMAC secret to sign requests. It must
-// NEVER be imported into browser code — that is the entire point of @uva/voice being a separate
+// NEVER be imported into browser code - that is the entire point of @awaazlabs-uva/voice being a separate
 // package. If your app is a browser SPA, this client belongs in your own backend, which then hands
-// the resulting agentId to the browser for @uva/voice to connect with.
+// the resulting agentId to the browser for @awaazlabs-uva/voice to connect with.
 //
 // Existing-tenant scope only: this client assumes tenantId + tenantSecret are already provisioned
 // (see the tenant portal or your platform contact). It has no tenant-signup capability.
 
 import { createHmac, randomUUID } from 'node:crypto';
 
-export interface UvaAgentsClientOptions {
+export interface AwaazLabsUvaAgentsClientOptions {
   /** The tenant UUID this client acts as. */
   tenantId: string;
-  /** The tenant's raw HMAC secret — SERVER-SIDE SECRET, never expose it to a browser. */
+  /** The tenant's raw HMAC secret - SERVER-SIDE SECRET, never expose it to a browser. */
   tenantSecret: string;
   /** Base URL of the tenant_portal_api deployment, e.g. https://portal-api.example.com */
   baseUrl: string;
 }
+
+export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
 
 export interface AgentRecord {
   id: string;
@@ -43,20 +45,22 @@ export interface UpdateAgentParams {
   llmModel?: string;
 }
 
-export class UvaAgentsError extends Error {
+export class AwaazLabsUvaAgentsError extends Error {
   constructor(
     public readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = 'UvaAgentsError';
+    this.name = 'AwaazLabsUvaAgentsError';
   }
 }
+
+export { AwaazLabsUvaAgentsError as UvaAgentsError };
 
 /**
  * Canonical JSON: recursively sort object keys, no whitespace. Must match the server's
  * `json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)` byte-for-byte,
- * including leaving non-ASCII (Urdu-script) text unescaped — see machine_auth.py::payload_hash.
+ * including leaving non-ASCII (Urdu-script) text unescaped - see machine_auth.py::payload_hash.
  */
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -77,8 +81,8 @@ async function sha256Hex(input: string): Promise<string> {
   return Buffer.from(digest).toString('hex');
 }
 
-export class UvaAgentsClient {
-  constructor(private readonly options: UvaAgentsClientOptions) {
+export class AwaazLabsUvaAgentsClient {
+  constructor(private readonly options: AwaazLabsUvaAgentsClientOptions) {
     if (!options.tenantId.trim()) throw new Error('tenantId is required');
     if (!options.tenantSecret.trim()) throw new Error('tenantSecret is required');
     if (!options.baseUrl.trim()) throw new Error('baseUrl is required');
@@ -125,6 +129,7 @@ export class UvaAgentsClient {
       'X-Timestamp': ts,
       'X-Nonce': nonce,
       'X-Signature': signature,
+      'ngrok-skip-browser-warning': 'true',
     };
 
     const hasBody = method !== 'GET';
@@ -138,8 +143,10 @@ export class UvaAgentsClient {
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
       const detail = parsed?.detail ?? res.statusText;
-      throw new UvaAgentsError(res.status, String(detail));
+      throw new AwaazLabsUvaAgentsError(res.status, String(detail));
     }
     return parsed;
   }
 }
+
+export { AwaazLabsUvaAgentsClient as UvaAgentsClient };

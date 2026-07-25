@@ -1,0 +1,232 @@
+# Credentials Template — AwaazLabs-UVA-Voice SDK
+
+> **Finova Solutions** — Confidential Onboarding Document
+> This document will be completed by your Finova Solutions account manager
+> and delivered to you through a secure channel.
+
+---
+
+> [!CAUTION]
+> **Never commit this file to version control once it contains real values.**
+> Add `credentials-template.md` to your `.gitignore` if you store filled values here.
+> The recommended practice is to copy each value directly into your `.env` files
+> and keep this file as a blank reference template.
+
+---
+
+## How to Use This Document
+
+1. Your Finova onboarding contact will **deliver the real values** for each placeholder below through a secure channel (encrypted email, 1Password share, or equivalent)
+2. Copy each value into the corresponding environment variable in your `.env` files
+3. Refer to `docs/INTEGRATION_GUIDE.md` Section 5 for the exact `.env` file structure
+
+---
+
+## Part A: Programmatic SDK Credentials
+
+These credentials are loaded by your **backend** at runtime via environment variables.
+They are required to initialise and operate the SDK programmatically.
+
+---
+
+### `UVA_TENANT_ID`
+
+| Property | Value |
+|---|---|
+| **Description** | Your unique tenant UUID, issued by Finova during account provisioning |
+| **Format** | UUID v4 (e.g. `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) |
+| **Environment** | Backend `.env` only |
+| **SDK Usage** | Passed as `tenantId` to `AwaazLabsUvaAgentsClient`; included in `X-Tenant-Id` request header |
+| **Sensitivity** | Medium — identifies your tenant, but alone cannot authorise any action |
+
+**Placeholder value (to be filled by Finova):**
+```
+UVA_TENANT_ID=[YOUR_TENANT_ID]
+```
+
+**How it connects to your code:**
+```typescript
+// In @awaazlabs-uva/agents initialisation (backend only):
+const agents = new AwaazLabsUvaAgentsClient({
+  tenantId: process.env.UVA_TENANT_ID!,  // ← this credential
+  tenantSecret: process.env.UVA_HMAC_SECRET!,
+  baseUrl: process.env.UVA_PORTAL_API_URL!,
+});
+```
+
+---
+
+### `UVA_HMAC_SECRET`
+
+| Property | Value |
+|---|---|
+| **Description** | Your tenant's HMAC-SHA256 signing key. Used by your backend to sign every API request to the Finova control plane and portal API |
+| **Format** | Base64-encoded or hex string (≥ 32 bytes) |
+| **Environment** | Backend `.env` **ONLY** — **NEVER** expose to the browser |
+| **SDK Usage** | Passed as `tenantSecret` to `AwaazLabsUvaAgentsClient`; used locally to compute `X-Signature` headers |
+| **Sensitivity** | **CRITICAL** — possession of this secret allows signing requests as your tenant |
+
+> [!WARNING]
+> This is the most sensitive credential in your integration.
+> If this value is ever exposed (committed to Git, logged to stdout, bundled in a frontend), treat it as **compromised** and contact Finova immediately for a rotation.
+
+**Placeholder value (to be filled by Finova):**
+```
+UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
+```
+
+**How it connects to your code:**
+```typescript
+// In your backend session-minting route:
+const signature = crypto
+  .createHmac('sha256', process.env.UVA_HMAC_SECRET!)  // ← this credential
+  .update(message)
+  .digest('hex');
+
+// In @awaazlabs-uva/agents (internally — you never call this directly):
+// Each createAgent / listAgents / updateAgent call auto-signs with this secret.
+```
+
+---
+
+### `UVA_PUBLISHABLE_KEY`
+
+| Property | Value |
+|---|---|
+| **Description** | Your tenant's public identifier. Safe to embed in browser JavaScript |
+| **Format** | UUID v4 (typically same as `UVA_TENANT_ID` in the current release) |
+| **Environment** | Backend `.env` **and** frontend `.env` |
+| **SDK Usage** | Passed as `publishableKey` to `AwaazLabsUvaVoice` in the browser; also sent in the session-mint request body |
+| **Sensitivity** | **Low** — identifies but never authorises; the SDK is designed so this can be public |
+
+**Placeholder value (to be filled by Finova):**
+```
+UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY]
+```
+
+**How it connects to your code:**
+```typescript
+// In your frontend (browser-safe):
+const agent = new AwaazLabsUvaVoice({
+  publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY,  // ← this credential
+  sessionEndpoint: import.meta.env.VITE_UVA_SESSION_ENDPOINT,
+});
+```
+
+---
+
+### `UVA_CONTROL_PLANE_URL`
+
+| Property | Value |
+|---|---|
+| **Description** | The base URL of the Finova Control Plane API. Your backend sends HMAC-signed session-mint requests to this URL |
+| **Format** | HTTPS URL (e.g. `https://control-plane.finova.io`) |
+| **Environment** | Backend `.env` only |
+| **SDK Usage** | Used in your backend session-minting route as the upstream target |
+| **Sensitivity** | Low — a URL, not a secret; but kept server-side to avoid exposing the infrastructure topology |
+
+**Placeholder value (to be filled by Finova):**
+```
+UVA_CONTROL_PLANE_URL=[YOUR_CONTROL_PLANE_URL]
+```
+
+**How it connects to your code:**
+```typescript
+// In your backend session-minting route:
+const response = await fetch(
+  `${process.env.UVA_CONTROL_PLANE_URL}/v1/session/mint`,  // ← this URL
+  { method: 'POST', headers: signedHeaders, body: ... }
+);
+```
+
+---
+
+### `UVA_PORTAL_API_URL`
+
+| Property | Value |
+|---|---|
+| **Description** | The base URL of the Finova Tenant Portal API. Used by `@awaazlabs-uva/agents` to create, list, and update agents |
+| **Format** | HTTPS URL (e.g. `https://portal-api.finova.io`) |
+| **Environment** | Backend `.env` only |
+| **SDK Usage** | Passed as `baseUrl` to `AwaazLabsUvaAgentsClient` |
+| **Sensitivity** | Low — a URL, not a secret |
+
+**Placeholder value (to be filled by Finova):**
+```
+UVA_PORTAL_API_URL=[YOUR_PORTAL_API_URL]
+```
+
+**How it connects to your code:**
+```typescript
+// In @awaazlabs-uva/agents initialisation (backend only):
+const agents = new AwaazLabsUvaAgentsClient({
+  tenantId: process.env.UVA_TENANT_ID!,
+  tenantSecret: process.env.UVA_HMAC_SECRET!,
+  baseUrl: process.env.UVA_PORTAL_API_URL!,  // ← this URL
+});
+```
+
+---
+
+## Part B: Runtime Agent Identifier
+
+### `AGENT_ID` (per-agent, not a global secret)
+
+| Property | Value |
+|---|---|
+| **Description** | The UUID of a specific AI agent within your tenant. You create agents via `@awaazlabs-uva/agents`; this is the ID of the one you want browsers to connect to |
+| **Format** | UUID v4 |
+| **Environment** | Frontend `.env` (safe to expose; identifies an agent, not a secret) |
+| **SDK Usage** | Passed as `agentId` in `agent.connect({ agentId })` |
+| **Sensitivity** | Low — agent IDs are not secret |
+
+**Placeholder value (create your first agent via the SDK or test app UI):**
+```
+VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
+```
+
+**How to obtain:** Use the `AgentManager` UI in the test app, or call `agents.createAgent(...)` from your backend and log the returned `id`.
+
+---
+
+## Part C: Dashboard Access Credentials
+
+If your Finova onboarding package includes access to the Finova Operations Dashboard, you will receive separate login credentials. These are **not used in code** — they are for human access to monitoring, usage analytics, and configuration panels only.
+
+| Credential | Description |
+|---|---|
+| `DASHBOARD_URL` | URL of the Finova web dashboard |
+| `DASHBOARD_EMAIL` | Your administrator email address |
+| `DASHBOARD_PASSWORD` | Initial login password (change on first login) |
+
+> [!IMPORTANT]
+> Dashboard credentials are separate from SDK credentials. Rotating the dashboard password does NOT affect SDK operations. Rotating `UVA_HMAC_SECRET` DOES affect all active sessions and must be coordinated with your engineering team.
+
+---
+
+## Credential Summary Table
+
+| Credential | Backend `.env` | Frontend `.env` | Sensitivity |
+|---|---|---|---|
+| `UVA_TENANT_ID` | ✅ Required | ❌ Never | Medium |
+| `UVA_HMAC_SECRET` | ✅ Required | ❌ **NEVER** | 🔴 Critical |
+| `UVA_PUBLISHABLE_KEY` | ✅ Required | ✅ Required | 🟢 Low |
+| `UVA_CONTROL_PLANE_URL` | ✅ Required | ❌ Never | 🟢 Low |
+| `UVA_PORTAL_API_URL` | ✅ Required | ❌ Never | 🟢 Low |
+| `AGENT_ID` | ❌ Optional | ✅ Recommended | 🟢 Low |
+| `DASHBOARD_EMAIL` | ❌ Never | ❌ Never | Medium |
+| `DASHBOARD_PASSWORD` | ❌ Never | ❌ Never | 🟡 High |
+
+---
+
+## Credential Rotation
+
+| Credential | How to Rotate | Impact |
+|---|---|---|
+| `UVA_HMAC_SECRET` | Contact Finova support → coordinate a rotation window | All in-flight HMAC-signed requests will fail until the new secret is deployed |
+| `DASHBOARD_PASSWORD` | Self-service via dashboard settings | No SDK impact |
+| `UVA_PUBLISHABLE_KEY` | Contact Finova (rare — tied to tenant ID) | Requires frontend redeployment |
+
+---
+
+*Delivered by Finova Solutions. Questions? Contact your account manager.*

@@ -2,9 +2,9 @@
 
 Phase 3 defines the supported contract between:
 
-- the browser SDK (`@uva/voice`)
+- the browser SDK (`@awaazlabs-uva/voice`)
 - the host platform's own backend
-- the UVA control plane
+- the AwaazLabs-UVA control plane
 
 The browser never holds the tenant HMAC secret. The host backend owns that secret and is the only
 party allowed to sign control-plane mint requests.
@@ -172,7 +172,7 @@ small browser-safe taxonomy through status codes:
 
 ## Starter backend env contract
 
-The reference Node starter in `examples/host-backend-node/` expects:
+The reference Node starter in `examples/host-backend/` expects:
 
 - `UVA_CONTROL_PLANE_URL`
 - `UVA_TENANT_ID`

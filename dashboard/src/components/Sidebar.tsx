@@ -3,18 +3,34 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { preload } from 'swr';
 import { LayoutDashboard, Bot, KeyRound, PhoneCall, BarChart3, LogOut } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { clearStoredTenantToken } from '@/lib/portalAuth';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 
 const navItems = [
-  { href: '/', label: 'Overview', icon: LayoutDashboard },
-  { href: '/agents', label: 'Agents & Voices', icon: Bot },
-  { href: '/usage', label: 'Usage', icon: BarChart3 },
-  { href: '/credentials', label: 'Credentials', icon: KeyRound },
-  { href: '/sessions', label: 'Call Sessions', icon: PhoneCall },
+  {
+    href: '/',
+    label: 'Overview',
+    icon: LayoutDashboard,
+    prefetch: ['agents', 'credentials', 'usage', 'sessions'] as const,
+  },
+  { href: '/agents', label: 'Agents & Voices', icon: Bot, prefetch: ['agents', 'voices'] as const },
+  { href: '/usage', label: 'Usage', icon: BarChart3, prefetch: ['usage'] as const },
+  { href: '/credentials', label: 'Credentials', icon: KeyRound, prefetch: ['credentials'] as const },
+  { href: '/sessions', label: 'Call Sessions', icon: PhoneCall, prefetch: ['sessions'] as const },
 ];
+
+/** Warms SWR's global cache for a route's data before the user actually navigates there,
+ *  so the page renders from cache instantly instead of showing a skeleton. Safe to call
+ *  repeatedly — SWR dedupes concurrent/duplicate requests for the same key on its own. */
+function prefetchRouteData(keys: readonly (keyof typeof swrKeys)[]) {
+  for (const key of keys) {
+    void preload(swrKeys[key], swrFetchers[key]);
+  }
+}
 
 /**
  * Nav content only — no wrapping `<aside>` — so it can be rendered inside the persistent
@@ -50,6 +66,8 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 onClick={onNavigate}
+                onMouseEnter={() => prefetchRouteData(item.prefetch)}
+                onFocus={() => prefetchRouteData(item.prefetch)}
                 className={cn(
                   'flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors hover:bg-accent',
                   active && 'bg-accent font-medium text-accent-foreground',

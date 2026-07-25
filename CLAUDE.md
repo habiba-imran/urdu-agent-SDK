@@ -1,4 +1,4 @@
-# Urdu Voice Agent SDK
+# AwaazLabs-UVA-Voice SDK
 
 Multi-tenant SDK embedded in a THIRD-PARTY platform. Their users create Urdu voice
 agents from (prompt + voiceId). We own the SDK. We do not own the host platform.

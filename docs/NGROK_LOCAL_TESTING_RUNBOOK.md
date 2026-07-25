@@ -1,6 +1,6 @@
 # ngrok Local Testing Runbook
 
-This document explains how to temporarily test the Urdu Voice Agent SDK with:
+This document explains how to temporarily test the AwaazLabs-UVA-Voice SDK with:
 
 - the `worker` running locally on our machine
 - the `host backend` running locally on our machine
@@ -44,7 +44,7 @@ What `ngrok` does **not** do:
 
 So the correct temporary setup is:
 
-`External frontend -> ngrok URL -> our local host backend -> UVA control plane -> our local worker via LiveKit`
+`External frontend -> ngrok URL -> our local host backend -> AwaazLabs-UVA control plane -> our local worker via LiveKit`
 
 ## Official ngrok behavior
 
@@ -143,13 +143,13 @@ Important:
 
 Use:
 
-- `examples/host-backend-node/`
+- `examples/host-backend/`
 
 ### Backend `.env`
 
 Create:
 
-`examples/host-backend-node/.env`
+`examples/host-backend/.env`
 
 Use:
 
@@ -283,11 +283,11 @@ Replace `https://abc123.ngrok-free.app` with the real ngrok URL.
 
 Use:
 
-- `examples/basic-web-client/`
+- `examples/web-client/`
 
 Create:
 
-`examples/basic-web-client/.env`
+`examples/web-client/.env`
 
 Then run:
 

@@ -1,12 +1,12 @@
 # Host Backend Node Starter
 
-Reference host-owned backend for `@uva/voice`.
+Reference host-owned backend for `@awaazlabs-uva/voice`.
 
 This example is the missing middle layer between:
 
 - the browser SDK
 - the host platform's HMAC secret
-- the UVA control plane
+- the AwaazLabs-UVA control plane
 
 It is intentionally small and single-tenant so a client team can understand the integration path
 without inheriting unrelated product code.
