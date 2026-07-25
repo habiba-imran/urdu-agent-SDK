@@ -82,7 +82,7 @@ export default function UsagePage() {
       list.push({ day: row.day, total_qty: row.total_qty });
       map.set(row.kind, list);
     }
-    for (const list of map.values()) {
+    for (const list of Array.from(map.values())) {
       list.sort((a, b) => a.day.localeCompare(b.day));
     }
     return map;
