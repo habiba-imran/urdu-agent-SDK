@@ -5,6 +5,8 @@ export interface AwaazLabsUvaAgentsClientOptions {
     tenantSecret: string;
     /** Base URL of the tenant_portal_api deployment, e.g. https://portal-api.example.com */
     baseUrl: string;
+    /** Optional non-auth headers for local tunnels/proxies. Auth headers cannot be overridden. */
+    extraHeaders?: Record<string, string>;
 }
 export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
 export interface AgentRecord {

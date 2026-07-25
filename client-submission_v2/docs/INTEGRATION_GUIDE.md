@@ -72,7 +72,7 @@ You will receive the following credentials from your Finova Solutions onboarding
 | `UVA_TENANT_ID` | Backend `.env` only | Your tenant UUID |
 | `UVA_HMAC_SECRET` | Backend `.env` only | HMAC signing key — **never expose to browser** |
 | `UVA_PUBLISHABLE_KEY` | Backend + Frontend `.env` | Public identifier — safe in browser |
-| `UVA_CONTROL_PLANE_URL` | Backend `.env` only | Finova control plane base URL |
+| Backend-only session upstream config | Backend `.env` only | Provided securely by Finova or the approved host-backend starter |
 | `UVA_PORTAL_API_URL` | Backend `.env` only | Finova portal API base URL |
 
 ---
@@ -250,9 +250,9 @@ Create a `.env` file in your backend project root:
 # ─── Server Port ─────────────────────────────────────────────
 PORT=3100
 
-# ─── Finova Control Plane ────────────────────────────────────
-# URL of the Finova-hosted control plane (provided during onboarding)
-UVA_CONTROL_PLANE_URL=[YOUR_CONTROL_PLANE_URL]
+# ─── AwaazLabs-UVA Session Upstream ──────────────────────────
+# Backend-only AwaazLabs-UVA session upstream config (provided during onboarding)
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
 
 # ─── Finova Portal API ───────────────────────────────────────
 # URL of the Finova-hosted tenant portal API (provided during onboarding)
@@ -262,7 +262,7 @@ UVA_PORTAL_API_URL=[YOUR_PORTAL_API_URL]
 # Your tenant UUID — identifies your organisation
 UVA_TENANT_ID=[YOUR_TENANT_ID]
 
-# Your HMAC secret — signs session mint requests to the control plane
+# Your HMAC secret — backend only; never expose it to the browser
 # THIS IS A SECRET. NEVER EXPOSE IT TO THE BROWSER.
 UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
 
@@ -286,6 +286,7 @@ VITE_UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY]
 # ─── Backend Session Endpoints (your own backend — NOT Finova's) ─
 VITE_UVA_SESSION_ENDPOINT=http://localhost:3100/api/voice/session
 VITE_UVA_REFRESH_ENDPOINT=http://localhost:3100/api/voice/session/refresh
+VITE_UVA_VOICE_CATALOG_ENDPOINT=http://localhost:3100/api/voices
 
 # ─── Agent ID ────────────────────────────────────────────────
 # The UUID of the AI agent to connect to (create one via @awaazlabs-uva/agents first)
@@ -298,22 +299,21 @@ VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
 
 ## 6. Backend Integration: Session Endpoint
 
-Your backend must expose a **session minting endpoint**. The browser SDK posts to this endpoint to obtain a short-lived LiveKit token. **Your backend — not the browser — signs requests to Finova's control plane.**
+Your backend must expose a **session minting endpoint**. The browser SDK posts to this endpoint to obtain a short-lived LiveKit token. **Your backend — not the browser — owns all upstream session-service credentials and signing.**
 
-### Minimal Express.js Implementation
+### Browser-Facing Express.js Shape
 
 ```typescript
 import express from 'express';
-import crypto from 'node:crypto';
 
 const app = express();
 app.use(express.json());
 
 const {
-  UVA_CONTROL_PLANE_URL,
-  UVA_TENANT_ID,
-  UVA_HMAC_SECRET,
+  UVA_PUBLISHABLE_KEY,
 } = process.env;
+
+const sessionClient = createAwaazLabsSessionClientFromSecureBackendConfig();
 
 // Session mint endpoint — called by the browser SDK
 app.post('/api/voice/session', async (req, res) => {
@@ -323,40 +323,28 @@ app.post('/api/voice/session', async (req, res) => {
     return res.status(400).json({ error: 'publishableKey and agentId are required' });
   }
 
-  const ts = Math.floor(Date.now() / 1000).toString();
-  const nonce = crypto.randomUUID();
-  const body = { agent_id: agentId, publishable_key: publishableKey };
-  const bodyJson = JSON.stringify(body, Object.keys(body).sort());
-  const bodyHash = crypto.createHash('sha256').update(bodyJson).digest('hex');
-  const message = `${UVA_TENANT_ID}.${ts}.${nonce}.session.mint.${bodyHash}`;
-  const signature = crypto
-    .createHmac('sha256', UVA_HMAC_SECRET!)
-    .update(message)
-    .digest('hex');
-
-  const cpRes = await fetch(`${UVA_CONTROL_PLANE_URL}/v1/session/mint`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Id': UVA_TENANT_ID!,
-      'X-Timestamp': ts,
-      'X-Nonce': nonce,
-      'X-Signature': signature,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!cpRes.ok) {
-    const text = await cpRes.text();
-    return res.status(cpRes.status).json({ error: text });
+  if (publishableKey !== UVA_PUBLISHABLE_KEY) {
+    return res.status(401).json({ error: 'unknown publishable key' });
   }
 
-  const session = await cpRes.json();
-  return res.json(session);
+  try {
+    const session = await sessionClient.createSession({
+      publishableKey,
+      agentId,
+      origin: req.get('origin'),
+    });
+    return res.json(session);
+  } catch (error) {
+    return res.status(mapSessionErrorToStatus(error)).json({ error: mapSessionErrorToCode(error) });
+  }
 });
 
 app.listen(Number(process.env.PORT ?? 3100));
 ```
+
+`createAwaazLabsSessionClientFromSecureBackendConfig()` represents the Finova-provided backend-only
+session adapter or approved host-backend starter. Keep its upstream URL and signing implementation
+out of frontend code, browser bundles, AI prompts, and public client docs.
 
 ### Session Response Shape
 
@@ -477,7 +465,7 @@ const agents = new AwaazLabsUvaAgentsClient({
 const newAgent = await agents.createAgent({
   name: 'Customer Support Agent',
   prompt: 'آپ ایک مددگار اردو کسٹمر سروس نمائندے ہیں۔ مہربانی سے ہر سوال کا مفید جواب دیں۔',
-  voiceId: 'helpdesk-agent', // See listVoices() for available IDs
+  voiceId: 'helpdesk-agent', // Use your backend voice catalog endpoint for available IDs
   llmModel: 'gemini-2.5-flash', // Optional; defaults to gemini-2.5-flash
 });
 
@@ -499,7 +487,7 @@ await agents.updateAgent(newAgent.id, {
 ```typescript
 import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
-const voices = await AwaazLabsUvaVoice.listVoices();
+const voices = await AwaazLabsUvaVoice.listVoices(import.meta.env.VITE_UVA_VOICE_CATALOG_ENDPOINT);
 // Returns: [{ id, displayName, gender, previewUrl, artworkUrl, enabled }]
 voices.filter(v => v.enabled).forEach(v => console.log(v.id, v.displayName));
 ```
@@ -594,6 +582,7 @@ Before deploying to production, verify the following:
 - [ ] `UVA_PUBLISHABLE_KEY` is the **only** AwaazLabs-UVA credential in your frontend `.env`
 - [ ] `.env` files are listed in `.gitignore` — never committed to version control
 - [ ] Your session endpoint validates `publishableKey` against expected value before minting
+- [ ] `VITE_UVA_VOICE_CATALOG_ENDPOINT` points to your backend, never to AwaazLabs-UVA infrastructure
 - [ ] CORS is restricted to your known frontend origin (`HOST_ALLOWED_ORIGINS`)
 - [ ] `@awaazlabs-uva/agents` is NOT listed in your frontend `package.json`
 - [ ] Your bundler is not accidentally including `@awaazlabs-uva/agents` in the client build
@@ -606,9 +595,9 @@ Before deploying to production, verify the following:
 |---|---|---|
 | `quota_exceeded` immediately | Monthly or concurrent quota hit | Contact Finova support to check quota |
 | `agent_not_found` | Wrong `agentId` or wrong tenant | Verify agent was created under this tenant ID |
-| `session_failed` immediately | Misconfigured backend or wrong control plane URL | Check `UVA_CONTROL_PLANE_URL` and HMAC signing logic |
+| `session_failed` immediately | Misconfigured backend or session adapter | Check backend-only session upstream configuration and logs |
 | Audio plays on agent connect but then stops | Browser autoplay policy | Listen for `audio_blocked` event and call `agent.startAudio()` in a click handler |
-| Browser reaches control plane directly | Frontend calling wrong URL | The browser SDK must call **your backend** session endpoint, never Finova's control plane directly |
+| Browser reaches AwaazLabs-UVA upstream directly | Frontend calling wrong URL | The browser SDK must call **your backend** session endpoint, never AwaazLabs-UVA upstream services directly |
 | `401 Unauthorized` from portal API | Bad HMAC secret or clock drift > 5 min | Verify `UVA_HMAC_SECRET` and ensure server clock is synced |
 | TypeScript errors on import | Missing `dist/` folder | Run `npm run build` inside the SDK package directory |
 | `ERR_REQUIRE_ESM` | Importing `@awaazlabs-uva/agents` with CommonJS `require()` | Use `import()` syntax; `@awaazlabs-uva/agents` is ESM-only |

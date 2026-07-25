@@ -10,6 +10,14 @@ function requireEnv(name) {
   return value;
 }
 
+function requireSessionUpstreamUrl() {
+  const value = process.env.UVA_SESSION_UPSTREAM_URL?.trim();
+  if (!value) {
+    throw new Error('UVA_SESSION_UPSTREAM_URL is required');
+  }
+  return value;
+}
+
 function parseOrigins(raw) {
   return raw
     .split(',')
@@ -20,7 +28,7 @@ function parseOrigins(raw) {
 export function loadConfig() {
   return {
     port: Number(process.env.PORT || 3000),
-    controlPlaneUrl: requireEnv('UVA_CONTROL_PLANE_URL').replace(/\/$/, ''),
+    sessionUpstreamUrl: requireSessionUpstreamUrl().replace(/\/$/, ''),
     tenantId: requireEnv('UVA_TENANT_ID'),
     hmacSecret: requireEnv('UVA_HMAC_SECRET'),
     publishableKey: requireEnv('UVA_PUBLISHABLE_KEY'),

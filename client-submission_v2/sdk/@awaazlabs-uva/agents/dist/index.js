@@ -79,6 +79,7 @@ export class AwaazLabsUvaAgentsClient {
         const message = `${this.options.tenantId}.${ts}.${nonce}.${action}.${bodyHash}`;
         const signature = createHmac('sha256', this.options.tenantSecret).update(message).digest('hex');
         const headers = {
+            ...(this.options.extraHeaders ?? {}),
             'Content-Type': 'application/json',
             'X-Tenant-Id': this.options.tenantId,
             'X-Timestamp': ts,

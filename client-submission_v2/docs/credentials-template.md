@@ -60,7 +60,7 @@ const agents = new AwaazLabsUvaAgentsClient({
 
 | Property | Value |
 |---|---|
-| **Description** | Your tenant's HMAC-SHA256 signing key. Used by your backend to sign every API request to the Finova control plane and portal API |
+| **Description** | Your tenant's HMAC-SHA256 signing key. Used only by backend-side AwaazLabs-UVA integrations |
 | **Format** | Base64-encoded or hex string (≥ 32 bytes) |
 | **Environment** | Backend `.env` **ONLY** — **NEVER** expose to the browser |
 | **SDK Usage** | Passed as `tenantSecret` to `AwaazLabsUvaAgentsClient`; used locally to compute `X-Signature` headers |
@@ -77,14 +77,15 @@ UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
 
 **How it connects to your code:**
 ```typescript
-// In your backend session-minting route:
-const signature = crypto
-  .createHmac('sha256', process.env.UVA_HMAC_SECRET!)  // ← this credential
-  .update(message)
-  .digest('hex');
+// In @awaazlabs-uva/agents initialisation (backend only):
+const agents = new AwaazLabsUvaAgentsClient({
+  tenantId: process.env.UVA_TENANT_ID!,
+  tenantSecret: process.env.UVA_HMAC_SECRET!,  // ← this credential
+  baseUrl: process.env.UVA_PORTAL_API_URL!,
+});
 
-// In @awaazlabs-uva/agents (internally — you never call this directly):
-// Each createAgent / listAgents / updateAgent call auto-signs with this secret.
+// Session minting must use the Finova-provided backend-only session adapter or approved starter.
+// Do not place raw signing code in frontend code, browser bundles, or AI-generated client prompts.
 ```
 
 ---
@@ -115,28 +116,26 @@ const agent = new AwaazLabsUvaVoice({
 
 ---
 
-### `UVA_CONTROL_PLANE_URL`
+### Backend-only session upstream configuration
 
 | Property | Value |
 |---|---|
-| **Description** | The base URL of the Finova Control Plane API. Your backend sends HMAC-signed session-mint requests to this URL |
-| **Format** | HTTPS URL (e.g. `https://control-plane.finova.io`) |
+| **Description** | Backend-only AwaazLabs-UVA session upstream configuration, provided through a secure onboarding channel if your backend starter requires it |
+| **Format** | HTTPS URL or adapter-specific configuration value |
 | **Environment** | Backend `.env` only |
-| **SDK Usage** | Used in your backend session-minting route as the upstream target |
-| **Sensitivity** | Low — a URL, not a secret; but kept server-side to avoid exposing the infrastructure topology |
+| **SDK Usage** | Used only by the backend-only session adapter or approved host-backend starter |
+| **Sensitivity** | Medium — keep server-side to avoid exposing infrastructure topology |
 
 **Placeholder value (to be filled by Finova):**
 ```
-UVA_CONTROL_PLANE_URL=[YOUR_CONTROL_PLANE_URL]
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
 ```
 
 **How it connects to your code:**
 ```typescript
-// In your backend session-minting route:
-const response = await fetch(
-  `${process.env.UVA_CONTROL_PLANE_URL}/v1/session/mint`,  // ← this URL
-  { method: 'POST', headers: signedHeaders, body: ... }
-);
+// In your backend only:
+// Pass this value to the Finova-provided session adapter or approved host-backend starter.
+// Do not expose it in frontend env files or public client documentation.
 ```
 
 ---
@@ -211,7 +210,7 @@ If your Finova onboarding package includes access to the Finova Operations Dashb
 | `UVA_TENANT_ID` | ✅ Required | ❌ Never | Medium |
 | `UVA_HMAC_SECRET` | ✅ Required | ❌ **NEVER** | 🔴 Critical |
 | `UVA_PUBLISHABLE_KEY` | ✅ Required | ✅ Required | 🟢 Low |
-| `UVA_CONTROL_PLANE_URL` | ✅ Required | ❌ Never | 🟢 Low |
+| `UVA_SESSION_UPSTREAM_URL` | If provided | ❌ Never | Medium |
 | `UVA_PORTAL_API_URL` | ✅ Required | ❌ Never | 🟢 Low |
 | `AGENT_ID` | ❌ Optional | ✅ Recommended | 🟢 Low |
 | `DASHBOARD_EMAIL` | ❌ Never | ❌ Never | Medium |

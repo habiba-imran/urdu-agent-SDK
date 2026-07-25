@@ -1,7 +1,7 @@
 export interface AwaazLabsUvaVoiceOptions {
     /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
     publishableKey: string;
-    /** The HOST platform's OWN server (holds their HMAC secret, calls our mint). NOT our server. */
+    /** The HOST platform's OWN server. It returns the short-lived session payload. */
     sessionEndpoint: string;
     /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
     refreshEndpoint?: string;
@@ -63,7 +63,7 @@ export declare class AwaazLabsUvaVoice {
     private refreshTimer;
     private session;
     private state;
-    static listVoices(endpointUrl?: string): Promise<Voice[]>;
+    static listVoices(endpointUrl: string): Promise<Voice[]>;
     constructor(options: AwaazLabsUvaVoiceOptions);
     get connectionState(): ConnectionState;
     get isConnected(): boolean;
