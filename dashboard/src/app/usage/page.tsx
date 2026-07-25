@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { Download } from 'lucide-react';
 
-import { type PortalUsageSummary, getUsageSummary } from '@/lib/portalApi';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Skeleton, StatCardSkeleton, DataTableSkeleton } from '@/components/ui/skeleton';
 
 const KIND_LABELS: Record<string, string> = {
   stt_sec: 'STT Seconds',
@@ -55,25 +57,7 @@ function DailyBarChart({ data }: { data: Array<{ day: string; total_qty: number 
 }
 
 export default function UsagePage() {
-  const [usage, setUsage] = useState<PortalUsageSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await getUsageSummary(30);
-        setUsage(data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load usage data');
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    void load();
-  }, []);
+  const { data: usage, isLoading: loading, error } = useSWR(swrKeys.usage, swrFetchers.usage);
 
   const dailyByKind = useMemo(() => {
     const map = new Map<string, Array<{ day: string; total_qty: number }>>();
@@ -82,7 +66,7 @@ export default function UsagePage() {
       list.push({ day: row.day, total_qty: row.total_qty });
       map.set(row.kind, list);
     }
-    for (const list of Array.from(map.values())) {
+    for (const list of map.values()) {
       list.sort((a, b) => a.day.localeCompare(b.day));
     }
     return map;
@@ -123,12 +107,37 @@ export default function UsagePage() {
 
       {error ? (
         <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <strong>Backend connection error:</strong> {error}
+          <strong>Backend connection error:</strong>{' '}
+          {error instanceof Error ? error.message : 'Failed to load usage data'}
         </div>
       ) : null}
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading usage data...</p>
+        <div className="flex flex-col gap-6">
+          <Card>
+            <CardContent className="flex flex-col gap-5 pt-6">
+              <Skeleton className="h-4 w-16" />
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-2 w-full" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-2 w-full" />
+              </div>
+            </CardContent>
+          </Card>
+          <div className="grid grid-cols-2 gap-4">
+            {Array.from({ length: 4 }, (_, i) => (
+              <StatCardSkeleton key={i} />
+            ))}
+          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <DataTableSkeleton rows={3} />
+            </CardContent>
+          </Card>
+        </div>
       ) : usage ? (
         <div className="flex flex-col gap-6">
           <Card>

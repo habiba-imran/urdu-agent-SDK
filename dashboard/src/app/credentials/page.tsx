@@ -1,34 +1,21 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import useSWR from 'swr';
 
-import { type PortalCredentials, getCredentials } from '@/lib/portalApi';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export default function CredentialsPage() {
   const [copiedKey, setCopiedKey] = useState(false);
-  const [credentials, setCredentials] = useState<PortalCredentials | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await getCredentials();
-        setCredentials(data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load credentials');
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    void load();
-  }, []);
+  const { data: credentials, isLoading: loading, error } = useSWR(
+    swrKeys.credentials,
+    swrFetchers.credentials,
+  );
 
   const handleCopyKey = () => {
     if (!credentials?.publishable_key) {
@@ -40,7 +27,7 @@ export default function CredentialsPage() {
   };
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <PageHeader
         title="Credentials"
         description="Tenant API credentials & trust boundaries."
@@ -48,7 +35,8 @@ export default function CredentialsPage() {
 
       {error ? (
         <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <strong>Backend connection error:</strong> {error}
+          <strong>Backend connection error:</strong>{' '}
+          {error instanceof Error ? error.message : 'Failed to load credentials'}
         </div>
       ) : null}
 
@@ -63,42 +51,56 @@ export default function CredentialsPage() {
             <label className="text-xs font-semibold text-muted-foreground">
               PUBLISHABLE KEY (Safe to embed in browser clients)
             </label>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted px-4 py-3 font-mono text-sm text-foreground">
-              <span className="min-w-0 flex-1 truncate">
-                {loading ? 'Loading...' : (credentials?.publishable_key ?? 'Unavailable')}
-              </span>
-              <Button size="sm" variant="secondary" onClick={handleCopyKey} className="shrink-0">
-                {copiedKey ? 'Copied!' : 'Copy Key'}
-              </Button>
-            </div>
+            {loading ? (
+              <Skeleton className="h-11 w-full" />
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted px-4 py-3 font-mono text-sm text-foreground">
+                <span className="min-w-0 flex-1 truncate">
+                  {credentials?.publishable_key ?? 'Unavailable'}
+                </span>
+                <Button size="sm" variant="secondary" onClick={handleCopyKey} className="shrink-0">
+                  {copiedKey ? 'Copied!' : 'Copy Key'}
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-muted-foreground">
               SECRET HMAC KEY (Masked - Host Server Only)
             </label>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted px-4 py-3 font-mono text-sm text-muted-foreground">
-              <span>{loading ? 'Loading...' : (credentials?.secret_masked ?? 'Unavailable')}</span>
-              <Badge variant="outline">{loading ? '...' : (credentials?.status ?? 'Unknown')}</Badge>
-            </div>
+            {loading ? (
+              <Skeleton className="h-11 w-full" />
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted px-4 py-3 font-mono text-sm text-muted-foreground">
+                <span>{credentials?.secret_masked ?? 'Unavailable'}</span>
+                <Badge variant="outline">{credentials?.status ?? 'Unknown'}</Badge>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               Secrets are never returned via GET API queries. To issue a new secret, request
               secret rotation from your administrator.
             </p>
           </div>
 
-          <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-            <div>Tenant ID: {loading ? 'Loading...' : (credentials?.tenant_id ?? 'Unavailable')}</div>
-            <div>Tenant Name: {loading ? 'Loading...' : (credentials?.name ?? 'Unavailable')}</div>
-            <div>
-              Allowed Origins:{' '}
-              {loading
-                ? 'Loading...'
-                : credentials?.allowed_origins?.length
+          {loading ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-4 w-64" />
+              <Skeleton className="h-4 w-56" />
+              <Skeleton className="h-4 w-72" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+              <div>Tenant ID: {credentials?.tenant_id ?? 'Unavailable'}</div>
+              <div>Tenant Name: {credentials?.name ?? 'Unavailable'}</div>
+              <div>
+                Allowed Origins:{' '}
+                {credentials?.allowed_origins?.length
                   ? credentials.allowed_origins.join(', ')
                   : 'None configured'}
+              </div>
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
 

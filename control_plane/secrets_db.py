@@ -39,7 +39,7 @@ class DbSecretProvider(SecretProvider):
         try:
             with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
                 row = conn.execute(
-                    "SELECT hmac_secret FROM tenants WHERE id = %s AND status = 'active'",
+                    "SELECT hmac_secret FROM tenants WHERE id = %s",
                     (tenant_id,),
                 ).fetchone()
                 if row and row[0]:

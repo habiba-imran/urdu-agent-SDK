@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import useSWR from 'swr';
 import { Copy, Check, Download } from 'lucide-react';
 
-import { type PortalSession, getSessions } from '@/lib/portalApi';
+import { type PortalSession } from '@/lib/portalApi';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Drawer } from '@/components/ui/drawer';
+import { DataTableSkeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableHeader,
@@ -109,10 +112,11 @@ function CopyableId({
 }
 
 export default function SessionsPage() {
-  const [sessions, setSessions] = useState<PortalSession[]>([]);
+  const { data: sessions, isLoading: loading, error } = useSWR(
+    swrKeys.sessions,
+    swrFetchers.sessions,
+  );
   const [activeSession, setActiveSession] = useState<PortalSession | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const handleCopy = (field: string, value: string) => {
@@ -123,26 +127,10 @@ export default function SessionsPage() {
     }, 1500);
   };
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await getSessions();
-        setSessions(data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load sessions');
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    void load();
-  }, []);
-
   const handleExportSessions = () => {
     const csv = toCsv(
       ['Session ID', 'Agent', 'Room', 'Status', 'Duration (sec)', 'End Reason', 'Started At', 'Ended At'],
-      sessions.map((session) => [
+      (sessions ?? []).map((session) => [
         session.id,
         session.agent_name,
         session.room_name,
@@ -162,7 +150,7 @@ export default function SessionsPage() {
         title="Call Sessions"
         description="Historical record of completed WebRTC calls. Open a row to inspect the session details currently exposed by the tenant API."
         actions={
-          sessions.length > 0 ? (
+          (sessions ?? []).length > 0 ? (
             <Button variant="secondary" onClick={handleExportSessions}>
               <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
               Export CSV
@@ -173,15 +161,16 @@ export default function SessionsPage() {
 
       {error ? (
         <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <strong>Backend connection error:</strong> {error}
+          <strong>Backend connection error:</strong>{' '}
+          {error instanceof Error ? error.message : 'Failed to load sessions'}
         </div>
       ) : null}
 
       <Card>
         <CardContent className="pt-6">
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading sessions...</p>
-          ) : sessions.length === 0 ? (
+            <DataTableSkeleton rows={5} />
+          ) : (sessions ?? []).length === 0 ? (
             <EmptyState title="No recent sessions found" />
           ) : (
             <Table className="overflow-x-hidden" tableClassName="table-fixed">
@@ -196,7 +185,7 @@ export default function SessionsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sessions.map((session) => (
+                {(sessions ?? []).map((session) => (
                   <TableRow key={session.id} onClick={() => setActiveSession(session)}>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       <RowOpenButton
