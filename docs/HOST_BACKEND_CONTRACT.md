@@ -4,10 +4,10 @@ Phase 3 defines the supported contract between:
 
 - the browser SDK (`@awaazlabs-uva/voice`)
 - the host platform's own backend
-- the AwaazLabs-UVA control plane
+- the AwaazLabs-UVA session service
 
 The browser never holds the tenant HMAC secret. The host backend owns that secret and is the only
-party allowed to sign control-plane mint requests.
+party allowed to delegate session creation to the backend-only session upstream.
 
 ## Browser to host backend
 
@@ -40,7 +40,7 @@ Notes:
 
 - `publishableKey` is a browser-safe identifier. It does not authorize the session by itself.
 - `agentId` is the public integration handle the host app uses to target an agent.
-- `refreshUrl` should point back to the host backend, not the control plane.
+- `refreshUrl` should point back to the host backend, not the session upstream.
 
 Recommended browser-facing status mapping:
 
@@ -77,94 +77,30 @@ Expected success response:
 }
 ```
 
-## Host backend to control plane
+## Host backend to AwaazLabs-UVA session service
 
-### Create session
+The browser-facing contract above is the only interface client frontend code should know about.
+The host backend must delegate upstream session creation and refresh to the Finova-provided
+backend-only session adapter or approved host-backend starter.
 
-`POST /v1/session`
+Do not publish upstream service URLs, signature headers, replay-window details, nonce construction,
+or raw signing algorithms in client-facing documentation or frontend code. Keep that material in the
+backend-only adapter/starter and in the secure onboarding channel.
 
-Required headers:
+Backend implementation requirements:
 
-- `X-Tenant-Id`
-- `X-Timestamp`
-- `X-Nonce`
-- `X-Signature`
-
-Optional forwarded header:
-
-- `Origin`
-
-Required body:
-
-```json
-{
-  "agent_id": "agent_uuid"
-}
-```
-
-Signature algorithm:
-
-```text
-HMAC-SHA256(tenant_secret, "<tenant_id>.<ts>.<nonce>.<agent_id>")
-```
-
-Where:
-
-- `tenant_secret` is the raw host-owned HMAC secret for that tenant
-- `tenant_id` is the UUID bound to that secret
-- `ts` is a Unix timestamp in seconds
-- `nonce` is a single-use unique value
-- `agent_id` is the same UUID sent in the body
-
-Control-plane expectations that the host backend must respect:
-
-- replay window is 60 seconds
-- nonce is single-use
-- body field name is `agent_id` (snake_case), not `agentId`
-- the host backend should forward the browser `Origin` header when present so tenant allowlists
-  still apply end to end
-
-Expected success response from the control plane:
-
-```json
-{
-  "token": "<livekit-join-token>",
-  "wsUrl": "wss://your-livekit-instance",
-  "roomName": "uuid-room-name",
-  "refreshUrl": "/v1/session/refresh",
-  "expiresIn": 120
-}
-```
-
-Important normalization rule:
-
-- the host backend should rewrite `refreshUrl` to its own `/api/voice/session/refresh` route before
+- validate `publishableKey` before creating a session
+- forward the browser `Origin` to the backend-only session adapter/starter when supported
+- return only `{ token, wsUrl, roomName, refreshUrl?, expiresIn? }` to the browser
+- rewrite any upstream refresh URL to the host backend's `/api/voice/session/refresh` route before
   returning the response to the browser SDK
-
-### Refresh session
-
-`POST /v1/session/refresh`
-
-Supported request forms:
-
-- `Authorization: Bearer <existing-session-token>`
-- or body `{ "token": "<existing-session-token>" }`
-
-No HMAC headers are required for refresh in the current control-plane implementation.
+- collapse upstream failures into the browser-safe status mapping below
 
 ## Error mapping guidance
 
-The control plane can return infrastructure-oriented details such as:
-
-- `bad signature`
-- `timestamp outside replay window`
-- `nonce replay`
-- `tenant not active`
-- `origin not allowed`
-- `agent dispatch failed`
-
-The browser SDK should not depend on those raw internals. The host backend should collapse them to a
-small browser-safe taxonomy through status codes:
+The upstream session service can return infrastructure-oriented details. The browser SDK should not
+depend on those raw internals. The host backend should collapse them to a small browser-safe taxonomy
+through status codes:
 
 - upstream `429` -> browser-facing `429`
 - upstream `403` or `404` caused by agent lookup/authorization -> browser-facing `404`
@@ -172,9 +108,10 @@ small browser-safe taxonomy through status codes:
 
 ## Starter backend env contract
 
-The reference Node starter in `examples/host-backend/` expects:
+The reference Node starter in `examples/host-backend/` expects backend-only values from the secure
+onboarding channel:
 
-- `UVA_CONTROL_PLANE_URL`
+- `UVA_SESSION_UPSTREAM_URL`
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`

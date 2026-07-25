@@ -66,14 +66,14 @@ Finova Solutions operates a **multi-tenant B2B2C platform**:
 
 ### Step 2: Programmatic Agent Creation (`@awaazlabs-uva/agents`)
 1. Client backend uses `@awaazlabs-uva/agents` (`createAgent`) to create a new agent.
-2. The client backend signs the request header using `HMAC-SHA256(tenant_secret, "<tenant_id>.<ts>.<nonce>.<action>.<payload_hash>")`.
+2. The client backend uses the server-only `@awaazlabs-uva/agents` SDK to authenticate the request without exposing raw signing material to browsers, prompts, or public handoff docs.
 3. Finova's `tenant_portal_api` (`/machine/agents`) verifies the HMAC signature, checks for nonce replay, and inserts the agent record into PostgreSQL linked to `agents.tenant_id = tenant_id`.
 
 ### Step 3: Session Token Minting (`control_plane`)
 1. An end-user clicks "Connect" on the client's web app.
-2. The browser calls the client backend, which calls Finova's Control Plane `POST /v1/session` with an HMAC signature.
-3. Finova's Control Plane (`control_plane/mint.py`):
-   - Verifies HMAC signature and replay window (≤60s).
+2. The browser calls the client backend, which delegates to the backend-only AwaazLabs-UVA session service integration.
+3. The AwaazLabs-UVA session service:
+   - Verifies backend authentication and replay protections.
    - Verifies single-use nonce via `used_nonces` table.
    - Verifies agent belongs to tenant (IDOR check).
    - Verifies tenant status is active and origin is allowed.

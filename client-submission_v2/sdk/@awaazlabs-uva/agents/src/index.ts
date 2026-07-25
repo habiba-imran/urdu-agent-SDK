@@ -17,6 +17,8 @@ export interface AwaazLabsUvaAgentsClientOptions {
   tenantSecret: string;
   /** Base URL of the tenant_portal_api deployment, e.g. https://portal-api.example.com */
   baseUrl: string;
+  /** Optional non-auth headers for local tunnels/proxies. Auth headers cannot be overridden. */
+  extraHeaders?: Record<string, string>;
 }
 
 export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
@@ -124,6 +126,7 @@ export class AwaazLabsUvaAgentsClient {
     const signature = createHmac('sha256', this.options.tenantSecret).update(message).digest('hex');
 
     const headers: Record<string, string> = {
+      ...(this.options.extraHeaders ?? {}),
       'Content-Type': 'application/json',
       'X-Tenant-Id': this.options.tenantId,
       'X-Timestamp': ts,

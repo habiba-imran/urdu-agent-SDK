@@ -17,7 +17,7 @@ Here is what your engineering team needs:
 - `publishableKey`: `<publishable-key>`
 - `tenantId`: `<tenant-id>`
 - `agentId`: `<agent-id>`
-- control-plane URL: `<control-plane-url>`
+- backend-only session upstream URL: `<session-upstream-url>`
 - HMAC secret: `<send separately through a secure channel>`
 
 Important security note:

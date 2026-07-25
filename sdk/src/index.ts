@@ -1,17 +1,10 @@
-// AwaazLabs-UVA-Voice browser client SDK (docs/24-PHASE-4-CLIENT-SDK.md).
-//
-// This bundle ships into a THIRD-PARTY app and is assumed fully decompiled on day one, so it holds
-// ZERO secrets (no API key, no HMAC secret, no LiveKit secret). It talks only to the HOST
-// platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
-// and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
-
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
 
 export interface AwaazLabsUvaVoiceOptions {
   /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
   publishableKey: string;
-  /** The HOST platform's OWN server (holds their HMAC secret, calls our mint). NOT our server. */
+  /** The HOST platform's OWN server. It returns the short-lived session payload. */
   sessionEndpoint: string;
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
@@ -112,9 +105,10 @@ export class AwaazLabsUvaVoice {
   private session: SessionResponse | null = null;
   private state: ConnectionState = 'idle';
 
-  static async listVoices(
-    endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices'
-  ): Promise<Voice[]> {
+  static async listVoices(endpointUrl: string): Promise<Voice[]> {
+    if (!endpointUrl.trim()) {
+      throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
+    }
     try {
       const res = await fetch(endpointUrl);
       if (!res.ok) {

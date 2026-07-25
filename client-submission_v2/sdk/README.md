@@ -36,7 +36,7 @@ sdk/
 | **Secrets held** | **None** — fully safe to ship in a public bundle |
 | **Key dependency** | `livekit-client ^2.0.0` |
 
-The browser SDK never talks to Finova's control plane with credentials. It calls
+The browser SDK never talks to AwaazLabs-UVA upstream services with credentials. It calls
 **your own backend's** session endpoint, which holds your secrets and mints the
 LiveKit token on your behalf.
 
@@ -69,8 +69,8 @@ LiveKit token on your behalf.
 └───────────────────────────────────────────|────────────────┘
                                             │
                               ┌─────────────▼──────────────┐
-                              │  Finova Control Plane       │
-                              │  (LiveKit token minting,    │
+                              │  AwaazLabs-UVA Services     │
+                              │  (session issuance and      │
                               │   agent orchestration)      │
                               └────────────────────────────┘
 ```

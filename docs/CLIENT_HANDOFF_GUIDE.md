@@ -37,10 +37,10 @@ The client receives:
 | Item | What it is | Why the client needs it |
 |---|---|---|
 | `publishableKey` | Browser-safe public identifier | Used by the browser SDK and backend validation |
-| `tenantId` | Tenant UUID | Used by the backend when signing control-plane requests |
+| `tenantId` | Tenant UUID | Used by the backend-only session integration |
 | raw tenant `HMAC secret` | Private signing secret | Used by the backend to generate the HMAC signature |
 | `agentId` | Voice agent UUID | Used when the browser calls `connect({ agentId })` |
-| control-plane base URL | AwaazLabs-UVA control-plane URL | Used by the client backend to mint sessions |
+| backend-only session upstream URL | AwaazLabs-UVA session service URL | Used only by the client backend to mint sessions |
 | SDK package | Browser SDK | Used in the client frontend |
 | host backend starter | Example backend | Fastest supported backend integration path |
 | browser example | Example frontend | Fastest supported frontend integration path |
@@ -48,20 +48,21 @@ The client receives:
 
 ## Current AwaazLabs-UVA handoff values
 
-As of **July 22, 2026**, these are the current active demo/staging integration values:
+The real integration values must be delivered through a secure channel. Do not paste live secrets,
+tenant IDs, agent IDs, or upstream service URLs into this document.
 
 | Value name | Current value | Used in | Provided by |
 |---|---|---|---|
-| `publishableKey` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | frontend + backend | AwaazLabs-UVA |
-| `tenantId` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | backend only | AwaazLabs-UVA |
-| raw tenant `HMAC secret` | `7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw` | backend only | AwaazLabs-UVA |
-| `agentId` | `aa3898ac-312d-43ea-8930-0b4776475a16` | frontend | AwaazLabs-UVA |
-| control-plane base URL | `https://uva-control-plane-staging.onrender.com` | backend only | AwaazLabs-UVA |
+| `publishableKey` | `[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]` | frontend + backend | AwaazLabs-UVA |
+| `tenantId` | `[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]` | backend only | AwaazLabs-UVA |
+| raw tenant `HMAC secret` | `[YOUR_HMAC_SECRET]` | backend only | AwaazLabs-UVA |
+| `agentId` | `[YOUR_AGENT_ID]` | frontend | AwaazLabs-UVA |
+| backend-only session upstream URL | `[BACKEND_ONLY_SESSION_UPSTREAM_URL]` | backend only | AwaazLabs-UVA |
 
 Important:
 
-- These are the current **demo/staging** values.
-- If AwaazLabs-UVA later provisions a separate production tenant, these values must be replaced.
+- These are placeholders only.
+- Use the current demo/staging or production values delivered through the secure onboarding channel.
 - The raw tenant `HMAC secret` must stay on the backend only.
 
 ## Very important security rule
@@ -76,18 +77,18 @@ The raw tenant `HMAC secret`:
 
 ## Simple architecture
 
-The browser does **not** talk to the AwaazLabs-UVA control plane directly.
+The browser does **not** talk to AwaazLabs-UVA upstream services directly.
 
 The correct flow is:
 
-`Browser app -> Client backend -> AwaazLabs-UVA control plane -> LiveKit worker`
+`Browser app -> Client backend -> AwaazLabs-UVA session service -> LiveKit worker`
 
 What this means:
 
 - the browser uses `@awaazlabs-uva/voice`
 - the browser asks the client's own backend for a session
 - the client's backend signs the request using the tenant HMAC secret
-- the AwaazLabs-UVA control plane returns a LiveKit token
+- the AwaazLabs-UVA session service returns a LiveKit token
 - the browser connects using that token
 
 ## Which files AwaazLabs-UVA sends to the client
@@ -119,7 +120,7 @@ The AwaazLabs-UVA team should send the client these items together:
 | Value | `tenantId` |
 | Value | raw tenant `HMAC secret` |
 | Value | `agentId` |
-| Value | control-plane base URL |
+| Value | backend-only session upstream URL |
 
 What this means in simple words:
 
@@ -138,7 +139,7 @@ This is the most important table for the client team.
 | `tenantId` | No | Yes | Backend only |
 | raw tenant `HMAC secret` | No | Yes | Secret, backend only |
 | `agentId` | Yes | No | Used by browser `connect()` |
-| control-plane base URL | No | Yes | Backend only |
+| backend-only session upstream URL | No | Yes | Backend only |
 
 ## What the client needs to build
 
@@ -162,7 +163,7 @@ This backend:
 
 - receives browser session requests
 - validates the `publishableKey`
-- signs control-plane requests using the tenant secret
+- calls the AwaazLabs-UVA session service using backend-only credentials
 - returns the session token to the browser
 - handles refresh safely
 
@@ -191,10 +192,10 @@ Then set:
 
 ```env
 PORT=3000
-UVA_CONTROL_PLANE_URL=https://uva-control-plane-staging.onrender.com
-UVA_TENANT_ID=bb8fa755-4175-4a6f-8789-d315d8d6c449
-UVA_HMAC_SECRET=7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw
-UVA_PUBLISHABLE_KEY=bb8fa755-4175-4a6f-8789-d315d8d6c449
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
+UVA_TENANT_ID=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
+UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
+UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
 HOST_ALLOWED_ORIGINS=http://localhost:5173
 HOST_PUBLIC_BASE_URL=http://localhost:3000
 ```
@@ -204,7 +205,7 @@ HOST_PUBLIC_BASE_URL=http://localhost:3000
 | Env var | Meaning |
 |---|---|
 | `PORT` | Local port for the backend |
-| `UVA_CONTROL_PLANE_URL` | AwaazLabs-UVA control-plane base URL |
+| `UVA_SESSION_UPSTREAM_URL` | Backend-only AwaazLabs-UVA session upstream URL |
 | `UVA_TENANT_ID` | Tenant UUID used in signing |
 | `UVA_HMAC_SECRET` | Private HMAC signing secret |
 | `UVA_PUBLISHABLE_KEY` | Browser-safe tenant identifier |
@@ -252,10 +253,10 @@ below into it.
 Then set:
 
 ```env
-VITE_UVA_PUBLISHABLE_KEY=bb8fa755-4175-4a6f-8789-d315d8d6c449
+VITE_UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
 VITE_UVA_SESSION_ENDPOINT=http://localhost:3000/api/voice/session
 VITE_UVA_REFRESH_ENDPOINT=http://localhost:3000/api/voice/session/refresh
-VITE_UVA_AGENT_ID=aa3898ac-312d-43ea-8930-0b4776475a16
+VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
 ```
 
 ### What each frontend env var means
@@ -318,13 +319,8 @@ The client backend must:
 - expose `POST /api/voice/session`
 - expose `POST /api/voice/session/refresh`
 - validate the incoming `publishableKey`
-- send `agent_id` to the AwaazLabs-UVA control plane
-- create this signature:
-
-```text
-HMAC-SHA256(tenant_secret, "<tenant_id>.<ts>.<nonce>.<agent_id>")
-```
-
+- call the AwaazLabs-UVA session service only from the backend
+- keep the upstream URL, signing details, tenant ID, and HMAC secret out of frontend code and docs
 - return the minted session token back to the browser
 
 Exact contract:
@@ -335,16 +331,16 @@ In simple words:
 
 - the backend is the secure middle layer
 - it protects the tenant secret
-- it talks to the AwaazLabs-UVA control plane on behalf of the browser
+- it talks to the AwaazLabs-UVA session service on behalf of the browser
 
 ## What the client should never do
 
 | Do not do this | Why |
 |---|---|
 | Put the raw tenant HMAC secret in frontend code | Security risk |
-| Call the AwaazLabs-UVA control plane directly from the browser | Wrong integration model |
-| Send `agentId` directly from the browser to `/v1/session` | Browser must go through host backend |
-| Rename `agent_id` to `agentId` in the backend -> control-plane request | Contract mismatch |
+| Call AwaazLabs-UVA upstream services directly from the browser | Wrong integration model |
+| Send `agentId` directly from the browser to the AwaazLabs-UVA session service | Browser must go through host backend |
+| Expose backend-only upstream URLs or signing details in frontend docs/code | Infrastructure disclosure risk |
 | Hardcode a stale session token in frontend code | Token expiry will break the app |
 
 ## How to verify the integration
@@ -355,7 +351,7 @@ The setup is working if:
 |---|---|
 | Browser calls the client backend | Yes |
 | `POST /api/voice/session` succeeds | Yes |
-| Backend signs control-plane request | Yes |
+| Backend creates session through backend-only upstream | Yes |
 | Control plane returns `token`, `wsUrl`, `roomName` | Yes |
 | Browser connects to LiveKit | Yes |
 | Transcript events appear | Yes |
@@ -381,7 +377,7 @@ If those steps pass, the integration is working.
 |---|---|
 | `quota_exceeded` | Tenant concurrency or monthly quota reached |
 | `agent_not_found` | Wrong `agentId`, wrong tenant, or agent not attached to this tenant |
-| `session_failed` | Bad signing, wrong control-plane URL, wrong refresh route, malformed backend response, or upstream issue |
+| `session_failed` | Bad backend configuration, wrong refresh route, malformed backend response, or upstream issue |
 
 ## Short client checklist
 
@@ -407,7 +403,7 @@ The client needs:
 
 The client does **not** need:
 
-- direct browser access to the control plane
+- direct browser access to AwaazLabs-UVA upstream services
 - the tenant secret in frontend code
 - any manual session token pasted into the browser
 
@@ -421,7 +417,7 @@ Before sending this package to a client, AwaazLabs-UVA should confirm:
 | `tenantId` ready | Yes |
 | raw tenant `HMAC secret` ready | Yes |
 | `agentId` ready | Yes |
-| control-plane URL ready | Yes |
+| backend-only session upstream configured | Yes |
 | backend example works locally | Yes |
 | frontend example works locally | Yes |
 | secret is intended for this client/demo handoff | Yes |

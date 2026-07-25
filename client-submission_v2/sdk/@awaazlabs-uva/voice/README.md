@@ -17,7 +17,7 @@ Every client integration needs four things:
 - a deployed host-owned backend that implements the session contract
 - a `publishableKey`
 - an `agentId`
-- a browser app that calls the host backend, not the control plane directly
+- a browser app that calls the host backend, not AwaazLabs-UVA upstream services directly
 
 If you are starting from the client-submission bundle:
 
@@ -110,7 +110,7 @@ of its public contract.
 
 ## Session endpoint contract
 
-The browser SDK never talks directly to the control plane with secrets. It calls the host
+The browser SDK never talks directly to AwaazLabs-UVA upstream services. It calls the host
 platform's own backend:
 
 - Request body: `{ publishableKey, agentId }`
@@ -151,7 +151,7 @@ These are intentionally out of scope for the supported surface right now:
 - Zero secrets in the bundle.
 - `publishableKey` identifies, never authorizes.
 - The SDK talks only to the host's session endpoint and then to LiveKit.
-- The SDK never directly calls provider APIs such as Uplift, Gladia, Gemini, or Supabase.
+- The SDK never directly calls private provider, database, or administrative infrastructure.
 
 ## Troubleshooting
 
@@ -159,8 +159,8 @@ These are intentionally out of scope for the supported surface right now:
 |---|---|
 | `quota_exceeded` | tenant concurrency or monthly quota cap reached |
 | `agent_not_found` | wrong `agentId`, wrong tenant, or agent no longer exists |
-| `session_failed` immediately | host backend misconfigured, bad signing, wrong control-plane URL, or refresh/session route mismatch |
-| browser reaches control plane directly | integration bug — the browser should call the host backend only |
+| `session_failed` immediately | host backend misconfigured, bad session upstream config, or refresh/session route mismatch |
+| browser reaches AwaazLabs-UVA upstream directly | integration bug — the browser should call the host backend only |
 
 ## Client-submission guide
 

@@ -1,16 +1,8 @@
 {
   "name": "@awaazlabs-uva/agents",
   "version": "0.1.0",
+  "private": true,
   "description": "AwaazLabs-UVA-Agents server-side agent-management SDK - SERVER-SIDE ONLY, holds your tenant secret.",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
-    "directory": "sdk-server"
-  },
-  "homepage": "https://github.com/habiba-imran/urdu-agent-SDK/tree/staging/sdk-server",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": [
     "voice-agent",
     "urdu",

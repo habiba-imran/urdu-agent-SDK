@@ -26,6 +26,9 @@ const agents = new AwaazLabsUvaAgentsClient({
   tenantId: process.env.UVA_TENANT_ID!,
   tenantSecret: process.env.UVA_HMAC_SECRET!,
   baseUrl: 'https://portal-api.example.com',
+  extraHeaders: process.env.NODE_ENV === 'development'
+    ? { 'ngrok-skip-browser-warning': 'true' }
+    : undefined,
 });
 
 const agent = await agents.createAgent({
@@ -47,6 +50,9 @@ Each call signs its own request with `tenantSecret` (HMAC-SHA256, timestamped, s
 scoped to that one action) — see
 [docs/MACHINE_AGENT_API_CONTRACT.md](../docs/MACHINE_AGENT_API_CONTRACT.md) for the wire contract if
 you'd rather implement your own client in another language.
+
+`extraHeaders` is only for development tunnels or corporate proxies. It is merged before the SDK's
+auth headers, so it cannot override tenant/signature headers.
 
 ## Errors
 

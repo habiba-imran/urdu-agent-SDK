@@ -19,15 +19,15 @@ A client integration needs these values from the AwaazLabs-UVA team:
 - `tenantId`
 - raw tenant HMAC secret
 - `agentId`
-- control-plane base URL
+- backend-only session upstream configuration
 
 The HMAC secret belongs on the client's backend only. Never put it in browser code.
 
 ## Architecture in one sentence
 
-Browser SDK -> host backend -> AwaazLabs-UVA control plane -> LiveKit worker.
+Browser SDK -> host backend -> AwaazLabs-UVA session service -> LiveKit worker.
 
-The browser never signs control-plane requests itself.
+The browser never signs requests or calls AwaazLabs-UVA upstream services itself.
 
 ## Step 1: install the SDK
 
@@ -47,7 +47,7 @@ cp .env.example .env
 
 Set:
 
-- `UVA_CONTROL_PLANE_URL`
+- backend-only session upstream configuration supplied through the secure onboarding channel
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`
@@ -102,7 +102,7 @@ await agent.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 
 Successful integration means:
 
-- the browser calls the host backend, not the control plane directly
+- the browser calls the host backend, not AwaazLabs-UVA upstream services directly
 - `POST /api/voice/session` returns `token`, `wsUrl`, and `roomName`
 - the browser connects to LiveKit
 - voice transcript events appear
@@ -111,9 +111,9 @@ Successful integration means:
 ## Common mistakes
 
 - putting the raw HMAC secret in frontend code
-- sending `agentId` directly to `/v1/session` from the browser
-- forgetting to forward the browser `Origin` header from the host backend to the control plane
-- using `agentId` instead of `agent_id` in the host-backend request body to the control plane
+- calling the AwaazLabs-UVA session service directly from the browser
+- forgetting to forward the browser `Origin` header from the host backend to the session upstream
+- exposing backend-only upstream URLs or signing details in frontend docs/code
 - setting different session and refresh routes than the SDK expects
 
 ## Browser-facing error meanings
@@ -122,7 +122,7 @@ Successful integration means:
 |---|---|
 | `quota_exceeded` | tenant cap reached |
 | `agent_not_found` | wrong `agentId` or wrong tenant |
-| `session_failed` | host backend misconfiguration, signing issue, refresh issue, or upstream failure |
+| `session_failed` | host backend misconfiguration, refresh issue, or upstream failure |
 
 ## Files to hand to a client team
 

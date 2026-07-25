@@ -1,9 +1,3 @@
-// AwaazLabs-UVA-Voice browser client SDK (docs/24-PHASE-4-CLIENT-SDK.md).
-//
-// This bundle ships into a THIRD-PARTY app and is assumed fully decompiled on day one, so it holds
-// ZERO secrets (no API key, no HMAC secret, no LiveKit secret). It talks only to the HOST
-// platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
-// and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
 import { Room, RoomEvent, Track } from 'livekit-client';
 export class AwaazLabsUvaVoiceError extends Error {
     constructor(code, message) {
@@ -14,7 +8,10 @@ export class AwaazLabsUvaVoiceError extends Error {
 }
 export { AwaazLabsUvaVoiceError as UvaError };
 export class AwaazLabsUvaVoice {
-    static async listVoices(endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices') {
+    static async listVoices(endpointUrl) {
+        if (!endpointUrl.trim()) {
+            throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
+        }
         try {
             const res = await fetch(endpointUrl);
             if (!res.ok) {

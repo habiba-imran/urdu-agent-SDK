@@ -46,7 +46,7 @@ You are an expert TypeScript/JavaScript developer. I need you to integrate the *
 PUBLISHABLE_KEY    = [YOUR_PUBLISHABLE_KEY]
 TENANT_ID          = [YOUR_TENANT_ID]
 HMAC_SECRET        = [YOUR_HMAC_SECRET]             ← backend only
-CONTROL_PLANE_URL  = [YOUR_CONTROL_PLANE_URL]       ← backend only
+SESSION_UPSTREAM   = [BACKEND_ONLY_SESSION_UPSTREAM_URL]  ← backend only
 PORTAL_API_URL     = [YOUR_PORTAL_API_URL]          ← backend only
 AGENT_ID           = [YOUR_AGENT_ID]                ← optional; I may want to create one
 BACKEND_PORT       = 3100
@@ -64,7 +64,7 @@ Create the following environment files. **Do not put any secrets in the frontend
 **`backend/.env`:**
 ```
 PORT=3100
-UVA_CONTROL_PLANE_URL=[YOUR_CONTROL_PLANE_URL]
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
 UVA_PORTAL_API_URL=[YOUR_PORTAL_API_URL]
 UVA_TENANT_ID=[YOUR_TENANT_ID]
 UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
@@ -78,6 +78,7 @@ HOST_PUBLIC_BASE_URL=http://localhost:3100
 VITE_UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY]
 VITE_UVA_SESSION_ENDPOINT=http://localhost:3100/api/voice/session
 VITE_UVA_REFRESH_ENDPOINT=http://localhost:3100/api/voice/session/refresh
+VITE_UVA_VOICE_CATALOG_ENDPOINT=http://localhost:3100/api/voices
 VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
 ```
 
@@ -102,22 +103,19 @@ npm install ../sdk/@awaazlabs-uva/agents
 
 #### Route A: `POST /api/voice/session` — Session Mint Endpoint
 
-This is the most critical route. The browser SDK (`@awaazlabs-uva/voice`) posts to this endpoint to get a LiveKit token. **This route signs requests to Finova's control plane using HMAC-SHA256.**
+This is the most critical route. The browser SDK (`@awaazlabs-uva/voice`) posts to this endpoint to get a LiveKit token. **This route must delegate to the Finova-provided backend-only session adapter or approved host-backend starter. Do not generate raw HMAC signing code from this prompt.**
 
 Implementation requirements:
 - Read `publishableKey` and `agentId` from the request body
-- Compute a canonical JSON body hash of `{ agent_id, publishable_key }` using SHA-256
-- Build the HMAC message: `${tenantId}.${timestamp}.${nonce}.session.mint.${bodyHash}`
-- Sign it with `UVA_HMAC_SECRET` using HMAC-SHA256 (hex digest)
-- Forward the request to `${UVA_CONTROL_PLANE_URL}/v1/session/mint` with headers:
-  - `X-Tenant-Id`, `X-Timestamp`, `X-Nonce`, `X-Signature`
+- Validate `publishableKey` against the expected backend value
+- Call the backend-only AwaazLabs-UVA session adapter/starter with `{ publishableKey, agentId, origin }`
 - Proxy the response JSON `{ token, wsUrl, roomName, refreshUrl?, expiresIn? }` back to the browser
 - Handle `429` (quota), `404` (agent not found), and other errors with appropriate HTTP status codes
 
 #### Route B: `POST /api/voice/session/refresh` — Token Refresh
 
 - Accept `Authorization: Bearer <existing_token>` header from the browser SDK
-- Forward a refresh request to the control plane
+- Forward a refresh request through the same backend-only session adapter/starter
 - Return the new `{ token, wsUrl, roomName, refreshUrl?, expiresIn? }`
 
 #### Route C: `GET /api/agents` and `POST /api/agents` — Agent Management
@@ -170,14 +168,14 @@ npm install ../sdk/@awaazlabs-uva/voice livekit-client@^2.0.0
 
 **Also build an `AgentManager` component** that:
 - Fetches and lists existing agents from `GET /api/agents`
-- Has a form to create a new agent (`name`, `prompt`, `voiceId` dropdown populated from `AwaazLabsUvaVoice.listVoices()`)
+- Has a form to create a new agent (`name`, `prompt`, `voiceId` dropdown populated from `AwaazLabsUvaVoice.listVoices(voiceCatalogEndpoint)`)
 - On creation, sets the new agent ID as the active agent for `VoiceWidget`
 
 ---
 
 ### STEP 4 — Voice Picker (Optional)
 
-Call the static method `AwaazLabsUvaVoice.listVoices()` to fetch the available Urdu voices and populate a `<select>` dropdown in the `AgentManager` form. Filter to only `enabled: true` voices.
+Call the static method `AwaazLabsUvaVoice.listVoices(import.meta.env.VITE_UVA_VOICE_CATALOG_ENDPOINT)` to fetch the available Urdu voices from your own backend and populate a `<select>` dropdown in the `AgentManager` form. Filter to only `enabled: true` voices. The browser must never call an AwaazLabs-UVA infrastructure URL directly for this list.
 
 ---
 
@@ -206,7 +204,7 @@ List every action the developer must perform manually, including:
 
 Highlight:
 - Zero-secret browser bundle — `@awaazlabs-uva/voice` holds no credentials
-- HMAC-SHA256 signed session minting — every session token is cryptographically authenticated
+- Backend-only authenticated session minting — every session token is minted through your server boundary
 - Automatic token refresh — sessions self-renew without user intervention
 - Real-time Urdu transcription via LiveKit WebRTC
 - Browser autoplay policy handling — `audio_blocked` event + `startAudio()` pattern
@@ -272,7 +270,7 @@ TESTING CHECKLIST
 
 - `UVA_HMAC_SECRET` and `UVA_TENANT_ID` must ONLY exist in backend environment variables
 - `@awaazlabs-uva/agents` must ONLY be imported in backend code
-- The browser must NEVER call Finova's control plane directly
+- The browser must NEVER call AwaazLabs-UVA upstream services directly
 - `publishableKey` is the only AwaazLabs-UVA credential that may appear in frontend code
 - All `.env` files must be in `.gitignore`
 
@@ -290,7 +288,7 @@ TESTING CHECKLIST
 
 ### After the AI Generates the Code
 
-1. **Review the output** before running it — especially the session-minting HMAC logic in the backend. Compare it against Section 6 of `docs/INTEGRATION_GUIDE.md` to verify correctness.
+1. **Review the output** before running it — especially the backend session route. It must delegate to the Finova-provided backend-only session adapter or approved starter and must not expose upstream URLs or signing details to the browser.
 
 2. **Fill in credentials** from `credentials-template.md` into the generated `.env` files before running anything.
 
