@@ -80,7 +80,7 @@ export function createApp(config, fetchImpl = fetch) {
       origin: req.get('origin'),
     });
 
-    const upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session`, {
+    const upstream = await fetchImpl(`${config.sessionUpstreamUrl}/v1/session`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ agent_id: agentId }),
@@ -123,7 +123,7 @@ export function createApp(config, fetchImpl = fetch) {
       headers['Content-Type'] = 'application/json';
     }
 
-    const upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session/refresh`, {
+    const upstream = await fetchImpl(`${config.sessionUpstreamUrl}/v1/session/refresh`, {
       method: 'POST',
       headers,
       body: bearer?.startsWith('Bearer ') ? undefined : JSON.stringify({ token }),

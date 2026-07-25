@@ -2,7 +2,7 @@
 ## Urdu Voice-Agent-as-a-Service (VaaS) Platform
 
 > **Version**: 1.0.0  
-> **Base URL**: `https://uva-control-plane.onrender.com` (Production) / `http://localhost:8000` (Dev)
+> **Base URL**: `[CONTROL_PLANE_BASE_URL]` (Production) / `http://localhost:8000` (Dev)
 
 The Control Plane is the core authentication, session minting, quota enforcement, and LiveKit dispatch engine of the VaaS platform. Host backends authenticate requests to the Control Plane using HMAC-SHA256 signatures and receive scoped LiveKit WebRTC access JWTs.
 
@@ -139,5 +139,5 @@ Minimal liveness probe for load balancers and Render health monitoring.
 ## 3. Interactive API Documentation
 
 Interactive Swagger UI and ReDoc documentation are auto-generated and served at runtime:
-- **Swagger UI**: `https://uva-control-plane.onrender.com/docs`
-- **ReDoc**: `https://uva-control-plane.onrender.com/redoc`
+- **Swagger UI**: `[CONTROL_PLANE_BASE_URL]/docs`
+- **ReDoc**: `[CONTROL_PLANE_BASE_URL]/redoc`

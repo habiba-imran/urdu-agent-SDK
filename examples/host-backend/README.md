@@ -1,12 +1,12 @@
 # Host Backend Node Starter
 
-Reference host-owned backend for `@uva/voice`.
+Reference host-owned backend for `@awaazlabs-uva/voice`.
 
 This example is the missing middle layer between:
 
 - the browser SDK
 - the host platform's HMAC secret
-- the UVA control plane
+- the AwaazLabs-UVA session service
 
 It is intentionally small and single-tenant so a client team can understand the integration path
 without inheriting unrelated product code.
@@ -16,15 +16,15 @@ without inheriting unrelated product code.
 - exposes `POST /api/voice/session`
 - exposes `POST /api/voice/session/refresh`
 - validates the browser-facing `publishableKey`
-- signs control-plane session requests with the tenant HMAC secret
-- forwards token refresh to the control plane
+- creates sessions through the backend-only AwaazLabs-UVA session upstream
+- forwards token refresh through the same backend-only upstream
 - rewrites `refreshUrl` back to the host backend
 
 ## Environment
 
 Copy `.env.example` to `.env` and set:
 
-- `UVA_CONTROL_PLANE_URL`
+- `UVA_SESSION_UPSTREAM_URL`
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`

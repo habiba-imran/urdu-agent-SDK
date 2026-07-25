@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@uva/voice": "file:../../sdk"
+    "@awaazlabs-uva/voice": "file:../../sdk"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

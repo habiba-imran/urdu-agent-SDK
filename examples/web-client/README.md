@@ -1,10 +1,10 @@
 # Basic Web Client
 
-This is the browser-side Phase 3 example consumer app for `@uva/voice`.
+This is the browser-side Phase 3 example consumer app for `@awaazlabs-uva/voice`.
 
 ## What it demonstrates
 
-- browser-side `@uva/voice` usage
+- browser-side `@awaazlabs-uva/voice` usage
 - config loaded from environment variables
 - connect and disconnect controls
 - transcript rendering
@@ -14,7 +14,8 @@ This is the browser-side Phase 3 example consumer app for `@uva/voice`.
 ## Pairing backend
 
 This app is meant to be run with [examples/host-backend](../host-backend/README.md), the
-reference host-owned backend starter that signs control-plane requests and relays refresh safely.
+reference host-owned backend starter that delegates to the backend-only session service and relays
+refresh safely.
 
 ## Environment
 
