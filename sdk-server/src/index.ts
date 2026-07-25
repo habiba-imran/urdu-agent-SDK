@@ -125,6 +125,7 @@ export class UvaAgentsClient {
       'X-Timestamp': ts,
       'X-Nonce': nonce,
       'X-Signature': signature,
+      'ngrok-skip-browser-warning': 'true',
     };
 
     const hasBody = method !== 'GET';
