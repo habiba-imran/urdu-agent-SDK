@@ -87,13 +87,13 @@ jobs:
           npm run build
 
       - name: Build Basic Web Client Example
-        working-directory: examples/basic-web-client
+        working-directory: examples/web-client
         run: |
           npm ci
           npm run build
 
       - name: Test Host Backend Starter Example
-        working-directory: examples/host-backend-node
+        working-directory: examples/host-backend
         run: |
           npm ci
           npm test

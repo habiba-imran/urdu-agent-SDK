@@ -8,6 +8,8 @@ import {
   loginTenantPortal,
   setStoredTenantToken,
 } from '@/lib/portalAuth';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,108 +42,54 @@ export default function LoginPage() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background:
-          'radial-gradient(circle at top, rgba(16,185,129,0.18), transparent 32%), #07111d',
-        padding: '2rem',
-      }}
-    >
-      <div
-        className="glass-card"
-        style={{ width: '100%', maxWidth: '480px', padding: '2rem' }}
-      >
-        <div style={{ marginBottom: '1.5rem' }}>
-          <h1 style={{ marginBottom: '0.5rem' }}>Tenant Portal Login</h1>
-          <p style={{ color: 'var(--text-muted)' }}>
-            Sign in with your tenant ID and tenant secret.
-          </p>
-        </div>
+    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-8">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>AwaazLabs Tenant Portal</CardTitle>
+          <CardDescription>Sign in with your tenant ID and tenant secret.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {error ? (
+            <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
 
-        {error && (
-          <div
-            style={{
-              marginBottom: '1rem',
-              border: '1px solid rgba(248, 113, 113, 0.35)',
-              color: '#fca5a5',
-              borderRadius: '12px',
-              padding: '0.9rem 1rem',
-              background: 'rgba(248, 113, 113, 0.08)',
-            }}
-          >
-            {error}
-          </div>
-        )}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="tenant-id" className="text-sm font-medium text-muted-foreground">
+                Tenant ID
+              </label>
+              <input
+                id="tenant-id"
+                type="text"
+                value={tenantId}
+                onChange={(event) => setTenantId(event.target.value)}
+                required
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem' }}>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: '0.4rem',
-                color: 'var(--text-muted)',
-                fontSize: '0.9rem',
-              }}
-            >
-              Tenant ID
-            </label>
-            <input
-              type="text"
-              value={tenantId}
-              onChange={(event) => setTenantId(event.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.85rem 1rem',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid var(--border-card)',
-                borderRadius: '12px',
-                color: '#fff',
-              }}
-            />
-          </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="tenant-secret" className="text-sm font-medium text-muted-foreground">
+                Tenant Secret
+              </label>
+              <input
+                id="tenant-secret"
+                type="password"
+                value={tenantSecret}
+                onChange={(event) => setTenantSecret(event.target.value)}
+                required
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
 
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: '0.4rem',
-                color: 'var(--text-muted)',
-                fontSize: '0.9rem',
-              }}
-            >
-              Tenant Secret
-            </label>
-            <input
-              type="password"
-              value={tenantSecret}
-              onChange={(event) => setTenantSecret(event.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.85rem 1rem',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid var(--border-card)',
-                borderRadius: '12px',
-                color: '#fff',
-              }}
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={submitting}
-            style={{ width: '100%' }}
-          >
-            {submitting ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
-      </div>
+            <Button type="submit" disabled={submitting} className="mt-2 w-full">
+              {submitting ? 'Signing in...' : 'Sign In'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
