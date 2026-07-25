@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@uva/voice": "file:../../../urdu-agent-SDK/sdk"
+    "@uva/voice": "file:../../sdk"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
