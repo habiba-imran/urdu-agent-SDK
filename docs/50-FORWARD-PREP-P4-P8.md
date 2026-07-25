@@ -13,7 +13,7 @@ dependency), what's BLOCKED on Phase 3 / a human decision, and open questions.
 **SAFE to prep now (zero Phase-3 dependency):**
 - `sdk/` project scaffold: package.json, tsconfig, bundler (the doc implies a decompilable JS bundle).
 - The PUBLIC API surface as TYPES only, exactly per the doc:
-  - `new UrduVoiceAgent({ publishableKey, sessionEndpoint })`, `connect({ agentId })`, `disconnect()`.
+  - `new AwaazLabsUvaVoice({ publishableKey, sessionEndpoint })`, `connect({ agentId })`, `disconnect()`.
   - Events (stub names EXACTLY): `'transcript' | 'speaking' | 'error' | 'ended'`.
   - Error taxonomy (stub): `quota_exceeded | agent_not_found | session_failed` — never leak internals.
 - Declared dep: `livekit-client` (install into sdk/, no wiring).

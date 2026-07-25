@@ -1,10 +1,10 @@
 # Client Handoff Guide
 
-This is the client-facing handoff document for integrating the Urdu Voice Agent SDK.
+This is the client-facing handoff document for integrating the AwaazLabs-UVA-Voice SDK.
 
 It is written in simple language and is meant to answer these questions quickly:
 
-- What are we getting from the UVA team?
+- What are we getting from the AwaazLabs-UVA team?
 - Which values do we need?
 - Which values go in frontend code and which go in backend code?
 - Which folders/files should we use?
@@ -17,11 +17,11 @@ If you only read one section first, read this one.
 
 To get the SDK working on your system, do these steps in order:
 
-1. Get the handoff package from the UVA team.
-2. Open `examples/host-backend-node/`.
+1. Get the handoff package from the AwaazLabs-UVA team.
+2. Open `examples/host-backend/`.
 3. Create `.env` in that folder and paste the backend values from this document.
 4. Run the backend with `npm install` and `npm run dev`.
-5. Open `examples/basic-web-client/`.
+5. Open `examples/web-client/`.
 6. Create `.env` in that folder and paste the frontend values from this document.
 7. Run the frontend with `npm install` and `npm run dev`.
 8. Open the browser app.
@@ -30,7 +30,7 @@ To get the SDK working on your system, do these steps in order:
 
 If all of that works, the integration is set up correctly.
 
-## What the client receives from UVA
+## What the client receives from AwaazLabs-UVA
 
 The client receives:
 
@@ -40,28 +40,28 @@ The client receives:
 | `tenantId` | Tenant UUID | Used by the backend when signing control-plane requests |
 | raw tenant `HMAC secret` | Private signing secret | Used by the backend to generate the HMAC signature |
 | `agentId` | Voice agent UUID | Used when the browser calls `connect({ agentId })` |
-| control-plane base URL | UVA control-plane URL | Used by the client backend to mint sessions |
+| control-plane base URL | AwaazLabs-UVA control-plane URL | Used by the client backend to mint sessions |
 | SDK package | Browser SDK | Used in the client frontend |
 | host backend starter | Example backend | Fastest supported backend integration path |
 | browser example | Example frontend | Fastest supported frontend integration path |
 | contract docs | Integration docs | Explains exact request/response format |
 
-## Current UVA handoff values
+## Current AwaazLabs-UVA handoff values
 
 As of **July 22, 2026**, these are the current active demo/staging integration values:
 
 | Value name | Current value | Used in | Provided by |
 |---|---|---|---|
-| `publishableKey` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | frontend + backend | UVA |
-| `tenantId` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | backend only | UVA |
-| raw tenant `HMAC secret` | `7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw` | backend only | UVA |
-| `agentId` | `aa3898ac-312d-43ea-8930-0b4776475a16` | frontend | UVA |
-| control-plane base URL | `https://uva-control-plane-staging.onrender.com` | backend only | UVA |
+| `publishableKey` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | frontend + backend | AwaazLabs-UVA |
+| `tenantId` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` | backend only | AwaazLabs-UVA |
+| raw tenant `HMAC secret` | `7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw` | backend only | AwaazLabs-UVA |
+| `agentId` | `aa3898ac-312d-43ea-8930-0b4776475a16` | frontend | AwaazLabs-UVA |
+| control-plane base URL | `https://uva-control-plane-staging.onrender.com` | backend only | AwaazLabs-UVA |
 
 Important:
 
 - These are the current **demo/staging** values.
-- If UVA later provisions a separate production tenant, these values must be replaced.
+- If AwaazLabs-UVA later provisions a separate production tenant, these values must be replaced.
 - The raw tenant `HMAC secret` must stay on the backend only.
 
 ## Very important security rule
@@ -76,21 +76,21 @@ The raw tenant `HMAC secret`:
 
 ## Simple architecture
 
-The browser does **not** talk to the UVA control plane directly.
+The browser does **not** talk to the AwaazLabs-UVA control plane directly.
 
 The correct flow is:
 
-`Browser app -> Client backend -> UVA control plane -> LiveKit worker`
+`Browser app -> Client backend -> AwaazLabs-UVA control plane -> LiveKit worker`
 
 What this means:
 
-- the browser uses `@uva/voice`
+- the browser uses `@awaazlabs-uva/voice`
 - the browser asks the client's own backend for a session
 - the client's backend signs the request using the tenant HMAC secret
-- the UVA control plane returns a LiveKit token
+- the AwaazLabs-UVA control plane returns a LiveKit token
 - the browser connects using that token
 
-## Which files UVA sends to the client
+## Which files AwaazLabs-UVA sends to the client
 
 The handoff package should include these files/folders:
 
@@ -100,21 +100,21 @@ The handoff package should include these files/folders:
 | `docs/CLIENT_HANDOFF_GUIDE.md` | Main onboarding/handoff document |
 | `docs/CLIENT_QUICKSTART.md` | Short setup guide |
 | `docs/HOST_BACKEND_CONTRACT.md` | Exact API contract |
-| `examples/host-backend-node/` | Reference backend starter |
-| `examples/basic-web-client/` | Reference frontend/browser app |
+| `examples/host-backend/` | Reference backend starter |
+| `examples/web-client/` | Reference frontend/browser app |
 
-## Exactly what UVA must provide with this document
+## Exactly what AwaazLabs-UVA must provide with this document
 
-The UVA team should send the client these items together:
+The AwaazLabs-UVA team should send the client these items together:
 
-| Type | What UVA sends |
+| Type | What AwaazLabs-UVA sends |
 |---|---|
 | Document | `docs/CLIENT_HANDOFF_GUIDE.md` |
 | Document | `docs/CLIENT_QUICKSTART.md` |
 | Document | `docs/HOST_BACKEND_CONTRACT.md` |
 | Document | `sdk/README.md` |
-| Code | `examples/host-backend-node/` |
-| Code | `examples/basic-web-client/` |
+| Code | `examples/host-backend/` |
+| Code | `examples/web-client/` |
 | Value | `publishableKey` |
 | Value | `tenantId` |
 | Value | raw tenant `HMAC secret` |
@@ -148,13 +148,13 @@ The client needs two things:
 
 This app:
 
-- uses `@uva/voice`
+- uses `@awaazlabs-uva/voice`
 - calls the client's backend session route
 - connects to the selected voice agent
 
 Reference folder:
 
-`examples/basic-web-client/`
+`examples/web-client/`
 
 ### 2. Host-owned backend
 
@@ -168,13 +168,13 @@ This backend:
 
 Reference folder:
 
-`examples/host-backend-node/`
+`examples/host-backend/`
 
 ## Backend setup
 
 Use:
 
-`examples/host-backend-node/`
+`examples/host-backend/`
 
 ### Step 1: create backend env file
 
@@ -204,7 +204,7 @@ HOST_PUBLIC_BASE_URL=http://localhost:3000
 | Env var | Meaning |
 |---|---|
 | `PORT` | Local port for the backend |
-| `UVA_CONTROL_PLANE_URL` | UVA control-plane base URL |
+| `UVA_CONTROL_PLANE_URL` | AwaazLabs-UVA control-plane base URL |
 | `UVA_TENANT_ID` | Tenant UUID used in signing |
 | `UVA_HMAC_SECRET` | Private HMAC signing secret |
 | `UVA_PUBLISHABLE_KEY` | Browser-safe tenant identifier |
@@ -213,7 +213,7 @@ HOST_PUBLIC_BASE_URL=http://localhost:3000
 
 ### Step 2: run backend
 
-From `examples/host-backend-node/`:
+From `examples/host-backend/`:
 
 ```bash
 npm install
@@ -236,7 +236,7 @@ What success looks like:
 
 Use:
 
-`examples/basic-web-client/`
+`examples/web-client/`
 
 ### Step 1: create frontend env file
 
@@ -269,7 +269,7 @@ VITE_UVA_AGENT_ID=aa3898ac-312d-43ea-8930-0b4776475a16
 
 ### Step 2: run frontend
 
-From `examples/basic-web-client/`:
+From `examples/web-client/`:
 
 ```bash
 npm install
@@ -291,9 +291,9 @@ What success looks like:
 ## Minimal SDK example
 
 ```ts
-import { UrduVoiceAgent } from '@uva/voice';
+import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
-const agent = new UrduVoiceAgent({
+const agent = new AwaazLabsUvaVoice({
   publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY,
   sessionEndpoint: import.meta.env.VITE_UVA_SESSION_ENDPOINT,
   refreshEndpoint: import.meta.env.VITE_UVA_REFRESH_ENDPOINT,
@@ -318,7 +318,7 @@ The client backend must:
 - expose `POST /api/voice/session`
 - expose `POST /api/voice/session/refresh`
 - validate the incoming `publishableKey`
-- send `agent_id` to the UVA control plane
+- send `agent_id` to the AwaazLabs-UVA control plane
 - create this signature:
 
 ```text
@@ -335,14 +335,14 @@ In simple words:
 
 - the backend is the secure middle layer
 - it protects the tenant secret
-- it talks to the UVA control plane on behalf of the browser
+- it talks to the AwaazLabs-UVA control plane on behalf of the browser
 
 ## What the client should never do
 
 | Do not do this | Why |
 |---|---|
 | Put the raw tenant HMAC secret in frontend code | Security risk |
-| Call the UVA control plane directly from the browser | Wrong integration model |
+| Call the AwaazLabs-UVA control plane directly from the browser | Wrong integration model |
 | Send `agentId` directly from the browser to `/v1/session` | Browser must go through host backend |
 | Rename `agent_id` to `agentId` in the backend -> control-plane request | Contract mismatch |
 | Hardcode a stale session token in frontend code | Token expiry will break the app |
@@ -387,10 +387,10 @@ If those steps pass, the integration is working.
 
 The client should do these steps in order:
 
-1. Get the handoff package from UVA.
-2. Put the backend values into `examples/host-backend-node/.env`.
+1. Get the handoff package from AwaazLabs-UVA.
+2. Put the backend values into `examples/host-backend/.env`.
 3. Run the backend.
-4. Put the frontend values into `examples/basic-web-client/.env`.
+4. Put the frontend values into `examples/web-client/.env`.
 5. Run the frontend.
 6. Open the browser app.
 7. Connect to the agent.
@@ -403,7 +403,7 @@ The client needs:
 - the SDK
 - the sample backend
 - the sample frontend
-- the five UVA-provided integration values
+- the five AwaazLabs-UVA-provided integration values
 
 The client does **not** need:
 
@@ -411,9 +411,9 @@ The client does **not** need:
 - the tenant secret in frontend code
 - any manual session token pasted into the browser
 
-## Short UVA checklist before sending
+## Short AwaazLabs-UVA checklist before sending
 
-Before sending this package to a client, UVA should confirm:
+Before sending this package to a client, AwaazLabs-UVA should confirm:
 
 | Check | Status should be |
 |---|---|
@@ -429,5 +429,5 @@ Before sending this package to a client, UVA should confirm:
 ## Final note
 
 This document currently includes the active **demo/staging** integration values.  
-If UVA later creates a separate production tenant for the client, this document must be updated
+If AwaazLabs-UVA later creates a separate production tenant for the client, this document must be updated
 with the new production values before final delivery.

@@ -1,6 +1,6 @@
 # PROGRESS
 Updated: 2026-07-23 | Existing-tenant machine-auth agent management built (`/machine/agents` +
-`@uva/agents`), see "Now (Session 13)" below — unrelated to and does not change Phase 8's still-OPEN
+`@awaazlabs-uva/agents`), see "Now (Session 13)" below — unrelated to and does not change Phase 8's still-OPEN
 status. Phase 8 status as of 2026-07-18, unchanged: **GATE 8 still
 OPEN, 5/6 lines green (ADR-032), 6th needs a human decision (ADR-030), not new work.** Phase 9
 (deployment readiness, config/artifacts only) DONE: Dockerfiles for control_plane/admin built and
@@ -50,8 +50,8 @@ retirement call, H9's vendor replies). Nothing further is being guessed at or bu
   `PATCH /machine/agents/{agent_id}` — call the exact same `queries.create_agent`/`update_agent`/
   `list_agents` the JWT-authenticated `/portal/agents` routes already use. No change to
   `control_plane`, `worker`, or the admin app.
-- **New package `sdk-server/` (`@uva/agents`)** — deliberately separate from `@uva/voice`, not a
-  subpath, zero runtime deps (Node 20 built-in `crypto`/`fetch`). `UvaAgentsClient.
+- **New package `sdk-server/` (`@awaazlabs-uva/agents`)** — deliberately separate from `@awaazlabs-uva/voice`, not a
+  subpath, zero runtime deps (Node 20 built-in `crypto`/`fetch`). `AwaazLabsUvaAgentsClient.
   {createAgent,listAgents,updateAgent}` sign their own requests. New isolation test
   `tests/test_admin.py::test_sdk_bundle_never_references_agents_server` (mirrors the existing
   `test_sdk_bundle_never_references_admin` pattern) — confirmed passing.
@@ -142,7 +142,7 @@ retirement call, H9's vendor replies). Nothing further is being guessed at or bu
 - **P8-T03**: `docs/60-RUNBOOK-CAP-EXHAUSTION.md`, written from the actual code
   (`control_plane/mint.py`'s 3 cap checks, `sdk/src/index.ts::connect()`'s full error handling).
   Real finding: no queue/retry/backoff exists at any layer — a cap hit is an immediate, thrown
-  `UvaError`, and all 3 distinct 429 causes (rate limit, concurrent cap, monthly cap) currently
+  `AwaazLabsUvaVoiceError`, and all 3 distinct 429 causes (rate limit, concurrent cap, monthly cap) currently
   collapse to the identical `quota_exceeded` code client-side, indistinguishable to an
   integrator without server-side log access.
 - **P8-T04**: `/ponytail-debt`'s fallback grep re-run a 3rd time, still empty. ADR-025 records it

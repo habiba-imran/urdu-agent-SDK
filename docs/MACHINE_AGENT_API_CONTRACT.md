@@ -1,6 +1,6 @@
 # Machine Agent-Management API Contract
 
-Defines the contract between a client's own backend (or `@uva/agents`) and `tenant_portal_api`'s
+Defines the contract between a client's own backend (or `@awaazlabs-uva/agents`) and `tenant_portal_api`'s
 machine-auth routes. This is **not** the tenant-portal JWT flow used by the dashboard
 (`/portal/login` + `/portal/agents`) — it is a separate, machine-callable auth model for an
 **existing** tenant to manage its own agents programmatically. See
@@ -16,7 +16,7 @@ Scope: existing tenants only. There is no tenant-signup/bootstrap capability her
   sign `/v1/session` mint requests (`tenants.hmac_secret`) — reused deliberately rather than
   introducing a second credential, since that would touch tenant provisioning.
 - **This secret must never be placed in browser code.** Only a server (your backend, or
-  `@uva/agents` running in your backend) may hold it.
+  `@awaazlabs-uva/agents` running in your backend) may hold it.
 - Each request is scoped to one specific action and one specific payload — a captured signature
   for one call cannot be replayed against a different action, a different payload, or
   `/v1/session`.

@@ -2,7 +2,7 @@
 ## Enterprise Production Infrastructure & Browser SDK
 
 [![CI Pipeline](https://github.com/habiba-imran/urdu-agent-SDK/actions/workflows/ci.yml/badge.svg)](https://github.com/habiba-imran/urdu-agent-SDK/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@uva/voice.svg)](https://www.npmjs.com/package/@uva/voice)
+[![npm version](https://img.shields.io/npm/v/@awaazlabs-uva/voice.svg)](https://www.npmjs.com/package/@awaazlabs-uva/voice)
 
 An enterprise-grade, multi-tenant Voice-Agent-as-a-Service (VaaS) platform built specifically for low-latency Urdu voice interaction. Powered by LiveKit WebRTC, Gladia STT, Gemini LLM, and Uplift TTS.
 
@@ -13,7 +13,7 @@ An enterprise-grade, multi-tenant Voice-Agent-as-a-Service (VaaS) platform built
 The platform follows an **SDK-First, Explicit Dispatch** multi-tenant architecture:
 
 ```text
-[ Browser Client ] ──(@uva/voice SDK)──> [ Host Platform Backend ]
+[ Browser Client ] ──(@awaazlabs-uva/voice SDK)──> [ Host Platform Backend ]
                                                  │ (HMAC Signature)
                                                  ▼
 [ LiveKit WebRTC ] <──(Session JWT)─── [ Control Plane Minter ]
@@ -27,8 +27,8 @@ The platform follows an **SDK-First, Explicit Dispatch** multi-tenant architectu
 |---|---|---|
 | **Control Plane** | `control_plane/` | FastAPI server for HMAC validation, quota enforcement, and LiveKit session token minting. |
 | **Voice Worker** | `worker/` | LiveKit agent process running Silero VAD → Gladia STT → Gemini LLM → Uplift TTS. |
-| **Client SDK** | `sdk/` | `@uva/voice` npm package — zero-secret WebRTC browser client wrapper. |
-| **Host Backend Starter** | `examples/host-backend-node/` | Reference Node.js/Express server that signs HMAC requests to the Control Plane. |
+| **Client SDK** | `sdk/` | `@awaazlabs-uva/voice` npm package — zero-secret WebRTC browser client wrapper. |
+| **Host Backend Starter** | `examples/host-backend/` | Reference Node.js/Express server that signs HMAC requests to the Control Plane. |
 | **Tenant Dashboard** | `dashboard/` | Next.js self-service portal for managing agents, voices, and credentials. |
 | **Super-Admin Portal** | `admin/` | Separate administrative backend for TOTP auth, audit logging, and usage metrics. |
 
@@ -38,7 +38,7 @@ The platform follows an **SDK-First, Explicit Dispatch** multi-tenant architectu
 
 - **[Control Plane API Reference](docs/api-reference.md)** — Complete OpenAPI specification for Control Plane endpoints.
 - **[Host Backend Integration Spec](docs/HOST_BACKEND_CONTRACT.md)** — HMAC signature formula and backend integration contract.
-- **[Client Quickstart Guide](docs/CLIENT_QUICKSTART.md)** — Step-by-step guide for integrating `@uva/voice` into web applications.
+- **[Client Quickstart Guide](docs/CLIENT_QUICKSTART.md)** — Step-by-step guide for integrating `@awaazlabs-uva/voice` into web applications.
 - **[SDK Documentation](sdk/README.md)** — NPM package installation and API reference.
 - **[VaaS Master Plan V2](VAAS_GODTIER_MASTER_PLAN_V2.md)** — Architectural master plan and repository blueprint.
 - **[Dual-Track Collaboration Guide](VAAS_COLLABORATION_GUIDE.md)** — Developer workflow and GitHub branching timeline.
@@ -82,7 +82,7 @@ python -m worker.main dev
 
 ### 6. Test with Example Web Client
 ```bash
-cd examples/basic-web-client
+cd examples/web-client
 npm install
 npm run dev
 ```
@@ -101,13 +101,13 @@ python -m pytest tests/ -v
 cd sdk && npm run build && npm run lint
 
 # Host backend starter test runner
-cd examples/host-backend-node && npm test
+cd examples/host-backend && npm test
 ```
 
 ---
 
 ## 🔐 Security & Trust Boundaries
 
-1. **Zero Client Secrets**: The browser SDK `@uva/voice` holds **zero** provider or tenant secrets.
+1. **Zero Client Secrets**: The browser SDK `@awaazlabs-uva/voice` holds **zero** provider or tenant secrets.
 2. **HMAC Signing**: Host backends hold the tenant's raw HMAC secret and sign every mint request with a 60-second replay window.
 3. **Tenant Prompt Isolation**: Tenant prompts are treated as untrusted data and placed in a separate `chat_ctx` system message framing, never interpolated into system operating rules.

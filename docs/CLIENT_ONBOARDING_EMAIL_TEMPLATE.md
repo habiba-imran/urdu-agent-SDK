@@ -4,13 +4,13 @@ Use this when manually onboarding a client before a full self-serve portal exist
 
 ## Subject
 
-Urdu Voice Agent SDK onboarding package
+AwaazLabs-UVA-Voice SDK onboarding package
 
 ## Email body
 
 Hi <client-name>,
 
-Your Urdu Voice Agent integration package is ready.
+Your AwaazLabs-UVA-Voice integration package is ready.
 
 Here is what your engineering team needs:
 
@@ -36,8 +36,8 @@ Package contents:
 - `sdk/README.md`
 - `docs/CLIENT_QUICKSTART.md`
 - `docs/HOST_BACKEND_CONTRACT.md`
-- `examples/host-backend-node/`
-- `examples/basic-web-client/`
+- `examples/host-backend/`
+- `examples/web-client/`
 
 Expected backend routes:
 

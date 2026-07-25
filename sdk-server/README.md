@@ -1,30 +1,30 @@
-# @uva/agents
+# @awaazlabs-uva/agents
 
 **Server-side only. Never import this package in browser code — it holds your tenant secret.**
 
-Programmatic agent management for an **existing** Urdu Voice Agent tenant. If you don't have a
+Programmatic agent management for an **existing** AwaazLabs-UVA tenant. If you don't have a
 `tenantId` + `tenantSecret` yet, this package can't help you get them — that's a platform/tenant
 provisioning step outside this package's scope.
 
-This is a different package from [`@uva/voice`](../sdk/README.md) on purpose: `@uva/voice` is the
+This is a different package from [`@awaazlabs-uva/voice`](../sdk/README.md) on purpose: `@awaazlabs-uva/voice` is the
 public browser bundle that connects an end user to an already-created agent and ships with zero
-secrets; `@uva/agents` is what your own backend uses to create/manage the agents `@uva/voice` later
+secrets; `@awaazlabs-uva/agents` is what your own backend uses to create/manage the agents `@awaazlabs-uva/voice` later
 connects to.
 
 ## Install
 
 ```bash
-npm install @uva/agents
+npm install @awaazlabs-uva/agents
 ```
 
 ## Usage (in your backend only)
 
 ```ts
-import { UvaAgentsClient } from '@uva/agents';
+import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
 
-const agents = new UvaAgentsClient({
+const agents = new AwaazLabsUvaAgentsClient({
   tenantId: process.env.UVA_TENANT_ID!,
-  tenantSecret: process.env.UVA_TENANT_SECRET!,
+  tenantSecret: process.env.UVA_HMAC_SECRET!,
   baseUrl: 'https://portal-api.example.com',
 });
 
@@ -34,7 +34,7 @@ const agent = await agents.createAgent({
   voiceId: 'helpdesk-agent',
 });
 
-// hand agent.id to your frontend; the frontend uses @uva/voice + this agentId to connect
+// hand agent.id to your frontend; the frontend uses @awaazlabs-uva/voice + this agentId to connect
 ```
 
 ### Methods
@@ -50,7 +50,7 @@ you'd rather implement your own client in another language.
 
 ## Errors
 
-Failed calls throw `UvaAgentsError` with a `status` (the HTTP status from `tenant_portal_api`) and
+Failed calls throw `AwaazLabsUvaAgentsError` with a `status` (the HTTP status from `tenant_portal_api`) and
 a `message` (the server's `detail` string). Common cases: `401` bad signature/replay/expired
 timestamp, `403` tenant suspended, `404` agent not found (update), `429` rate limited.
 

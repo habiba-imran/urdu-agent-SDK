@@ -850,7 +850,7 @@ guessed:**
 - **P4-T04 (error taxonomy).** HTTP `429` from `sessionEndpoint` → `quota_exceeded`; `404` →
   `agent_not_found`; anything else non-2xx, a network/fetch failure, an incomplete JSON response,
   or a LiveKit connect failure → `session_failed`. Raw error text/exceptions are never attached to
-  the thrown `UvaError` for any of the internal-failure paths (network, JSON parse, LiveKit
+  the thrown `AwaazLabsUvaVoiceError` for any of the internal-failure paths (network, JSON parse, LiveKit
   connect) — only `MediaDevicesError`'s message is passed through, deliberately, since that's the
   end user's own local browser/device error, not something about our infrastructure, and is
   actionable for the host app to display ("please allow microphone access").
@@ -2108,13 +2108,13 @@ test_injection_live.py::run_attack()` (the compliance-check logic itself, confir
 privilege scope, unchanged by this correction); ADR-032 (the entry this corrects).
 
 ---
-## ADR-035 Existing-tenant machine-auth agent management — `/machine/agents` + `@uva/agents`   [ACCEPTED, scoped]
+## ADR-035 Existing-tenant machine-auth agent management — `/machine/agents` + `@awaazlabs-uva/agents`   [ACCEPTED, scoped]
 Date: 2026-07-23 | Planned in `EnterPlanMode`, human-approved before implementation | New:
 `tenant_portal_api/machine_auth.py`, `/machine/agents` routes in `tenant_portal_api/app.py`,
-`sdk-server/` (`@uva/agents`), `docs/MACHINE_AGENT_API_CONTRACT.md`,
+`sdk-server/` (`@awaazlabs-uva/agents`), `docs/MACHINE_AGENT_API_CONTRACT.md`,
 `tests/test_machine_agent_api.py`, one new isolation test in `tests/test_admin.py`.
 
-**Context.** Product direction: `@uva/voice`-integrating clients should be able to create agents
+**Context.** Product direction: `@awaazlabs-uva/voice`-integrating clients should be able to create agents
 programmatically instead of depending on the tenant dashboard's human-login flow
 (`/portal/login` + `/portal/agents`, JWT-authenticated). Scoped explicitly to **existing tenants
 only** — a tenant with a `tenant_id`/`hmac_secret` already provisioned. Tenant bootstrap/onboarding
@@ -2144,13 +2144,13 @@ A new in-memory per-tenant rate limiter (`MACHINE_RATE_LIMIT_PER_MIN = 30`, same
 stricter than session-mint's 120/min since this is config mutation, not session-connect traffic;
 flagged as a tunable default, not load-tested.
 
-**Decision — SDK shape.** A new, separate npm package, `sdk-server/` (`@uva/agents`) — not a
-subpath of `@uva/voice` — so an accidental browser import is a loud unresolved-import failure
+**Decision — SDK shape.** A new, separate npm package, `sdk-server/` (`@awaazlabs-uva/agents`) — not a
+subpath of `@awaazlabs-uva/voice` — so an accidental browser import is a loud unresolved-import failure
 rather than a silent secret leak. Zero runtime dependencies (Node 20's built-in `crypto`/`fetch`
-cover signing + HTTP). `UvaAgentsClient.{createAgent,listAgents,updateAgent}` sign their own
+cover signing + HTTP). `AwaazLabsUvaAgentsClient.{createAgent,listAgents,updateAgent}` sign their own
 requests client-side. A new isolation test
 (`tests/test_admin.py::test_sdk_bundle_never_references_agents_server`) asserts `sdk/src`/`sdk/dist`
-never reference `sdk-server`/`@uva/agents`/`UvaAgentsClient` — mirrors the existing
+never reference `sdk-server`/`@awaazlabs-uva/agents`/`AwaazLabsUvaAgentsClient` — mirrors the existing
 `test_sdk_bundle_never_references_admin` pattern.
 
 **A real cross-language correctness risk found and fixed before it shipped.** The signature covers

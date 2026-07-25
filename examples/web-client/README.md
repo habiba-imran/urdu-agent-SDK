@@ -1,10 +1,10 @@
 # Basic Web Client
 
-This is the browser-side Phase 3 example consumer app for `@uva/voice`.
+This is the browser-side Phase 3 example consumer app for `@awaazlabs-uva/voice`.
 
 ## What it demonstrates
 
-- browser-side `@uva/voice` usage
+- browser-side `@awaazlabs-uva/voice` usage
 - config loaded from environment variables
 - connect and disconnect controls
 - transcript rendering
