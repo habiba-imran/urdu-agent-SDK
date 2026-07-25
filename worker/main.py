@@ -138,6 +138,48 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
 
     _session_started_at = _time.monotonic()
 
+    async def _release_quota_slot(reason: str = "") -> None:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+        try:
+            from scripts.dbconn import conn_kwargs
+        except ImportError:
+            from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
+        import psycopg
+
+        tenant_id = md.get("tenant_id", "")
+        room_name = ctx.room.name
+        if not tenant_id:
+            return
+
+        elapsed_sec = int(_time.monotonic() - _session_started_at)
+        end_reason = reason or "normal"
+        try:
+            with psycopg.connect(**conn_kwargs(), connect_timeout=5, autocommit=True) as conn:
+                updated = conn.execute(
+                    "update sessions set ended_at = now(), duration_sec = %s, end_reason = %s "
+                    "where room_name = %s and ended_at is null returning id",
+                    (elapsed_sec, end_reason, room_name),
+                ).fetchone()
+
+                if updated:
+                    conn.execute(
+                        "update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
+                        "where tenant_id = %s",
+                        (tenant_id,),
+                    )
+        except Exception as e:
+            from livekit.agents.log import logger
+
+            logger.warning("failed to release quota slot for room %s: %s", room_name, e)
+        finally:
+            import gc
+            gc.collect()
+
+
     async def _record_agent_minutes(reason: str = "") -> None:
         import math
 
@@ -145,13 +187,19 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         from pathlib import Path as _Path
 
         _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-        from usage_guard import increment  # noqa: E402
+        try:
+            from scripts.usage_guard import increment
+        except ImportError:
+            from usage_guard import increment  # type: ignore # noqa: E402
+
 
         elapsed_sec = _time.monotonic() - _session_started_at
         minutes = max(1, math.ceil(elapsed_sec / 60))
         increment("livekit_agent_min", minutes)
 
+    ctx.add_shutdown_callback(_release_quota_slot)
     ctx.add_shutdown_callback(_record_agent_minutes)
+
 
     await session.start(agent, room=ctx.room)
     # NOTE (P3-T07 follow-up): emit usage_events (stt_sec/tts_sec/agent_sec) on session end via
@@ -236,6 +284,9 @@ if __name__ == "__main__":
     # guaranteed real main thread, before cli.run_app() ever spawns a job thread/process.
     # See prewarm()'s docstring above for why this is required on Windows.
     _prewarmed = prewarm(None)
+    import gc
+    gc.collect()
+
 
     # Direct evidence, not inference: confirm each plugin module prewarm() imported is
     # actually in sys.modules before any job thread/process exists. If one is missing, the

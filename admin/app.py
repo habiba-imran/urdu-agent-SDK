@@ -29,7 +29,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from dbconn import conn_kwargs  # noqa: E402
+try:
+    from scripts.dbconn import conn_kwargs
+except ImportError:
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
 
 from .audit import record_admin_action  # noqa: E402
 from .auth import AdminAuthError, login as admin_login, verify_admin_jwt  # noqa: E402
@@ -79,6 +83,13 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.get("/healthz")
+def admin_health():
+    """Minimal liveness probe for super-admin service."""
+    return {"status": "ok", "service": "uva-admin"}
+
 
 
 class LoginBody(BaseModel):
@@ -191,3 +202,50 @@ def blockers_route(authorization: str | None = Header(default=None)):
         record_admin_action(conn, admin_id=claims["sub"], action="blockers")
         conn.commit()
         return rows
+
+
+@app.post("/admin/tenants/{tenant_id}/rotate-secret")
+def rotate_secret_route(
+    tenant_id: str, authorization: str | None = Header(default=None)
+):
+    """Admin-only secret rotation: generates a new HMAC secret for tenant_id,
+    stores it in DB, and returns the raw secret ONCE.
+    """
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            new_secret = queries.rotate_tenant_secret(conn, tenant_id)
+            record_admin_action(
+                conn,
+                admin_id=claims["sub"],
+                action=f"rotate_secret:{tenant_id}",
+            )
+            conn.commit()
+            return {
+                "tenant_id": tenant_id,
+                "new_hmac_secret": new_secret,
+                "warning": "Store this secret securely now. It will never be displayed again.",
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/admin/tenants/{tenant_id}/credentials")
+def tenant_credentials_route(
+    tenant_id: str, authorization: str | None = Header(default=None)
+):
+    """Admin-only masked credential view for a tenant."""
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            creds = queries.get_tenant_credentials_masked(conn, tenant_id)
+            record_admin_action(
+                conn,
+                admin_id=claims["sub"],
+                action=f"read_credentials:{tenant_id}",
+            )
+            conn.commit()
+            return creds
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+

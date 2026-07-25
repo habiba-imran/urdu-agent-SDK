@@ -15,6 +15,8 @@ literal, exhaustive, per-service inventory, verified by grepping every `os.envir
 | `LIVEKIT_API_KEY` | `control_plane/app.py` | `.env.local` (dev) | **Required.** Prod LiveKit API key. |
 | `LIVEKIT_API_SECRET` | `control_plane/app.py` | `.env.local` (dev) | **Required, secret.** Prod LiveKit API secret. |
 | `CP_TENANT_SECRETS` | `control_plane/secrets.py::EnvSecretProvider` | `.env.local` (dev) | **Required, secret.** JSON map `{"<tenant_id>": "<raw HMAC secret>"}`. Already `os.environ`-first — no fix needed. ADR-005 flagged this as an OPEN decision: dev reads a flat JSON env var; prod should likely move to a real secret store (Supabase Vault / a secrets manager / an encrypted column) rather than one large JSON blob in an env var — not decided, not built here, flagged again since Phase 9 is exactly the point this should get decided. |
+| `CP_ALLOWED_ORIGINS` | `control_plane/app.py` | `.env.local` (dev, defaults to `*` if unset) | **Recommended.** Comma-separated CORS allowlist for control plane requests (e.g., tenant dashboard origins). |
+
 
 ## admin (docker/admin.Dockerfile)
 

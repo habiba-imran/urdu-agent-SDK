@@ -2108,6 +2108,94 @@ test_injection_live.py::run_attack()` (the compliance-check logic itself, confir
 privilege scope, unchanged by this correction); ADR-032 (the entry this corrects).
 
 ---
+## ADR-035 Existing-tenant machine-auth agent management — `/machine/agents` + `@uva/agents`   [ACCEPTED, scoped]
+Date: 2026-07-23 | Planned in `EnterPlanMode`, human-approved before implementation | New:
+`tenant_portal_api/machine_auth.py`, `/machine/agents` routes in `tenant_portal_api/app.py`,
+`sdk-server/` (`@uva/agents`), `docs/MACHINE_AGENT_API_CONTRACT.md`,
+`tests/test_machine_agent_api.py`, one new isolation test in `tests/test_admin.py`.
+
+**Context.** Product direction: `@uva/voice`-integrating clients should be able to create agents
+programmatically instead of depending on the tenant dashboard's human-login flow
+(`/portal/login` + `/portal/agents`, JWT-authenticated). Scoped explicitly to **existing tenants
+only** — a tenant with a `tenant_id`/`hmac_secret` already provisioned. Tenant bootstrap/onboarding
+is out of scope and untouched.
+
+**Decision — auth model.** Reuse the tenant's existing `hmac_secret` rather than introduce a second
+credential (a second credential would touch tenant provisioning, explicitly out of scope). To avoid
+letting a captured signature be replayed against a different action or against `/v1/session`, the
+signed message binds a server-derived `action` string (`agent.create`/`agent.list`/`agent.update`
+— never client-supplied) and a hash of the exact request payload:
+`HMAC-SHA256(secret, "tenant_id.ts.nonce.action.payload_hash")`
+(`tenant_portal_api/machine_auth.py::expected_signature`). **Residual, accepted risk, not solved
+here:** the raw secret still grants both session-mint and agent-management power if it leaks — true
+separation needs a second, narrower-scoped credential, deferred as a future enhancement since it
+touches provisioning.
+
+**Decision — route location.** New routes live in `tenant_portal_api`, beside the existing
+JWT-authenticated `/portal/*` routes, calling the exact same `queries.create_agent`/
+`update_agent`/`list_agents` functions unchanged. Not added to `control_plane`, whose own docstring
+scopes it to "the only endpoint that matters" (session mint) — diluting that would be a regression,
+not an improvement. `control_plane.secrets.DbSecretProvider` is reused for the raw-secret lookup
+(precedent: `tenant_portal_api/auth.py` already imports `control_plane.secrets.secret_hash`), and
+the existing `used_nonces` table is reused for single-use nonce enforcement (nonces are single-use
+per tenant, not per-endpoint — the action+payload binding already prevents cross-purpose replay).
+A new in-memory per-tenant rate limiter (`MACHINE_RATE_LIMIT_PER_MIN = 30`, same
+`defaultdict(list)` shape as `control_plane/app.py::_rate_limited`) covers all three routes —
+stricter than session-mint's 120/min since this is config mutation, not session-connect traffic;
+flagged as a tunable default, not load-tested.
+
+**Decision — SDK shape.** A new, separate npm package, `sdk-server/` (`@uva/agents`) — not a
+subpath of `@uva/voice` — so an accidental browser import is a loud unresolved-import failure
+rather than a silent secret leak. Zero runtime dependencies (Node 20's built-in `crypto`/`fetch`
+cover signing + HTTP). `UvaAgentsClient.{createAgent,listAgents,updateAgent}` sign their own
+requests client-side. A new isolation test
+(`tests/test_admin.py::test_sdk_bundle_never_references_agents_server`) asserts `sdk/src`/`sdk/dist`
+never reference `sdk-server`/`@uva/agents`/`UvaAgentsClient` — mirrors the existing
+`test_sdk_bundle_never_references_admin` pattern.
+
+**A real cross-language correctness risk found and fixed before it shipped.** The signature covers
+`sha256(canonical_json(body))`. Canonical JSON must be byte-identical between the Python server
+(`machine_auth.py::payload_hash`) and the TypeScript client (`sdk-server/src/index.ts::
+canonicalJson`) or every signature silently fails to verify. Python's `json.dumps` **escapes
+non-ASCII characters by default** (`ensure_ascii=True`); JS's `JSON.stringify` never does. Since
+agent prompts are Urdu-script text — this product's whole point — leaving Python's default on
+would have broken signature verification for almost every real agent, only working by accident on
+ASCII-only test bodies. Fixed by setting `ensure_ascii=False` and encoding as UTF-8 on the Python
+side. **Verified concretely, not assumed:** ran both implementations (Python via a local script, JS
+via a standalone Node script mirroring `canonicalJson` verbatim) against three shared bodies,
+including one with real Urdu text — all three canonical strings and their SHA-256 hex digests
+matched byte-for-byte across languages.
+
+**What was and wasn't verified live.** No live Postgres/Supabase project was available in this
+environment (no `.env.local`/`SUPABASE_DB_URL` configured, no local Docker/Postgres either) — every
+DB-touching test in `tests/test_machine_agent_api.py` (11 cases: happy-path create/list/update,
+wrong signature, replay-window, nonce replay, tampered-payload, suspended tenant, cross-tenant IDOR
+on update, rate limit, missing headers) **skips cleanly** via the same `_kw()` pattern
+`tests/test_mint.py` already uses in this environment — confirmed `test_mint.py`/
+`test_phase4_portal_api.py` skip identically here, so this is a pre-existing environment gap, not a
+new one. What *was* verified for real: `tenant_portal_api.app`/`machine_auth` import cleanly and
+register the 3 new routes correctly (checked via direct Python import + route introspection); the
+cross-language canonicalization match above; `ruff check`/`ruff format --check` clean on every
+new/touched Python file; `sdk-server`'s `tsc` build and `tsc --noEmit` type-check both pass; the
+built `dist/index.js` imports and constructs correctly under Node. **The full
+`tests/test_machine_agent_api.py` suite genuinely running green against a live dev DB is still an
+open verification step** — the next person with `.env.local`/`SUPABASE_DB_URL` access should run it
+before treating this as production-verified, per this repo's own "verify, don't assume" rule.
+
+**Consequences.** No change to `control_plane`, `worker`, or the admin app. The dashboard is
+unaffected (still uses `/portal/*` unchanged) and can be re-pointed to `/machine/*` later with no
+business-logic change, since both route families call the identical `queries.*` functions. Formal
+phase-number assignment in `docs/00-INDEX.md`'s routing table is left to whoever maintains that
+table — not guessed here.
+
+**Evidence.** `tenant_portal_api/machine_auth.py`, `tenant_portal_api/app.py`'s new routes,
+`sdk-server/src/index.ts`, `docs/MACHINE_AGENT_API_CONTRACT.md`; `tests/test_machine_agent_api.py`
+run (`2 passed, 24 skipped` alongside `test_mint.py`/`test_phase4_portal_api.py` in the same
+environment); `ruff check`/`ruff format --check` clean; `sdk-server`: `npm run build` and
+`npm run lint` (`tsc --noEmit`) both clean; the standalone Python/Node canonicalization
+cross-check (three bodies, byte-identical output including one with Urdu-script text).
+
+---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)
 *Ported 2026-07-16 per P0-T08. These are historical implementation decisions from the
 Pipecat 1.4.0 build that produced the persona/tools/db code now living in this repo.

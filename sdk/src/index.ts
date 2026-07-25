@@ -5,7 +5,7 @@
 // platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
 // and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
 
-import { Room, RoomEvent } from 'livekit-client';
+import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
 
 export interface UrduVoiceAgentOptions {
@@ -19,7 +19,20 @@ export interface UrduVoiceAgentOptions {
 
 export interface ConnectOptions {
   agentId: string;
+  voiceId?: string;
 }
+
+export interface Voice {
+  id: string;
+  displayName: string;
+  gender: 'male' | 'female' | 'unspecified';
+  previewUrl?: string | null;
+  artworkUrl?: string | null;
+  enabled: boolean;
+}
+
+
+export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
 export type UvaEvent =
   | 'transcript'
@@ -29,9 +42,20 @@ export type UvaEvent =
   | 'connected'
   | 'disconnected'
   | 'agent_speaking'
-  | 'metrics_updated';
+  | 'metrics_updated'
+  | 'audio_blocked';
 
 export type UvaErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+
+export interface TranscriptEvent {
+  text: string;
+  final: boolean;
+}
+
+export interface MetricsEvent {
+  type: 'metrics_updated' | 'turn_latency';
+  [key: string]: unknown;
+}
 
 export class UvaError extends Error {
   constructor(
@@ -51,20 +75,75 @@ interface SessionResponse {
   expiresIn?: number;
 }
 
-type Listener = (...args: unknown[]) => void;
+export interface UvaEventMap {
+  transcript: [TranscriptEvent];
+  speaking: [boolean];
+  error: [UvaError];
+  ended: [unknown];
+  connected: [];
+  disconnected: [unknown];
+  agent_speaking: [boolean];
+  metrics_updated: [MetricsEvent];
+  /**
+   * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
+   * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
+   * button and call agent.startAudio() inside its click handler.
+   */
+  audio_blocked: [boolean];
+}
+
+type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
 export class UrduVoiceAgent {
   private room: Room | null = null;
   private readonly listeners = new Map<UvaEvent, Set<Listener>>();
+  private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
+  private state: ConnectionState = 'idle';
 
-  constructor(private readonly options: UrduVoiceAgentOptions) {}
+  static async listVoices(
+    endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices'
+  ): Promise<Voice[]> {
+    try {
+      const res = await fetch(endpointUrl);
+      if (!res.ok) {
+        throw new UvaError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+      }
+      return (await res.json()) as Voice[];
+    } catch (e) {
+      if (e instanceof UvaError) throw e;
+      throw new UvaError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
+    }
+  }
+
+  constructor(private readonly options: UrduVoiceAgentOptions) {
+
+    if (!options.publishableKey.trim()) {
+      throw new UvaError('session_failed', 'publishableKey is required');
+    }
+    if (!options.sessionEndpoint.trim()) {
+      throw new UvaError('session_failed', 'sessionEndpoint is required');
+    }
+  }
+
+  get connectionState(): ConnectionState {
+    return this.state;
+  }
+
+  get isConnected(): boolean {
+    return this.state === 'connected';
+  }
 
   async connect(opts: ConnectOptions): Promise<void> {
     if (this.room) {
       throw new UvaError('session_failed', 'already connected - call disconnect() first');
     }
+    if (!opts.agentId.trim()) {
+      throw new UvaError('session_failed', 'agentId is required');
+    }
+
+    this.state = 'connecting';
 
     let body: SessionResponse;
     try {
@@ -91,6 +170,7 @@ export class UrduVoiceAgent {
       }
       body = parsed as SessionResponse;
     } catch (err) {
+      this.state = 'idle';
       if (err instanceof UvaError) throw err;
       throw new UvaError('session_failed', 'could not reach sessionEndpoint');
     }
@@ -101,6 +181,7 @@ export class UrduVoiceAgent {
     try {
       await room.connect(body.wsUrl, body.token);
     } catch {
+      this.state = 'idle';
       throw new UvaError('session_failed', 'LiveKit connection failed');
     }
 
@@ -108,6 +189,7 @@ export class UrduVoiceAgent {
       await room.localParticipant.setMicrophoneEnabled(true);
     } catch {
       await room.disconnect();
+      this.state = 'idle';
       throw new UvaError('session_failed', 'microphone permission denied or unavailable');
     }
 
@@ -116,37 +198,60 @@ export class UrduVoiceAgent {
     this.scheduleTokenRefresh(body);
   }
 
-  on(event: UvaEvent, cb: Listener): this {
+  on<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(cb);
+    this.listeners.get(event)!.add(cb as Listener);
+    return this;
+  }
+
+  off<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+    this.listeners.get(event)?.delete(cb as Listener);
     return this;
   }
 
   async disconnect(): Promise<void> {
     this.clearRefreshTimer();
     if (!this.room) return;
+    this.state = 'disconnecting';
     await this.room.disconnect();
+    this.detachAllRemoteAudio();
     this.room = null;
     this.session = null;
+    this.state = 'idle';
   }
 
-  private emit(event: UvaEvent, ...args: unknown[]): void {
+  /**
+   * Call this inside a user-gesture event handler (e.g. button click) when the
+   * 'audio_blocked' event fires with blocked=true.
+   * Browsers require a user interaction before they allow audio playback, so
+   * the LiveKit Room's internal AudioContext must be resumed explicitly here.
+   */
+  async startAudio(): Promise<void> {
+    if (this.room) {
+      await this.room.startAudio();
+    }
+  }
+
+  private emit<K extends UvaEvent>(event: K, ...args: UvaEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      cb(...args);
+      (cb as Listener<UvaEventMap[K]>)(...args);
     }
   }
 
   private wireRoomEvents(room: Room): void {
     room.on(RoomEvent.Connected, () => {
+      this.state = 'connected';
       this.emit('connected');
     });
 
     room.on(RoomEvent.Disconnected, (reason) => {
       this.clearRefreshTimer();
+      this.detachAllRemoteAudio();
       this.room = null;
       this.session = null;
+      this.state = 'idle';
       this.emit('disconnected', reason);
       this.emit('ended', reason);
     });
@@ -166,6 +271,30 @@ export class UrduVoiceAgent {
       this.emit('agent_speaking', agentSpeaking);
     });
 
+    // --- AUDIO PLAYBACK FIX ---
+    // Explicitly subscribe to remote audio tracks and attach them to audio
+    // elements. Without this, LiveKit's default audio playback relies on the
+    // browser's AudioContext which is suspended until a user gesture.
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind !== Track.Kind.Audio || participant.isLocal) {
+        return;
+      }
+      const trackSid = track.sid ?? publication.trackSid;
+      // track.attach() creates an <audio> element and pipes the MediaStream
+      // into it. We then force .play() inside a try/catch so we always
+      // attempt playback even if autoplay policy fires first.
+      const el = track.attach();
+      this.attachRemoteAudio(trackSid, el);
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+      if (track.kind !== Track.Kind.Audio) {
+        return;
+      }
+      const trackSid = track.sid ?? publication.trackSid;
+      this.detachRemoteAudio(trackSid);
+    });
+
     room.on(RoomEvent.MediaDevicesError, (error: Error) => {
       this.emit('error', new UvaError('session_failed', error.message));
     });
@@ -179,6 +308,50 @@ export class UrduVoiceAgent {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
       if (metrics) this.emit('metrics_updated', metrics);
     });
+
+    // Browsers block audio autoplay without a prior user gesture.
+    // LiveKit signals this via AudioPlaybackStatusChanged when its internal
+    // HTMLAudioElement.play() promise rejects (NotAllowedError).
+    // We forward it as 'audio_blocked' so the host app can show an
+    // "Unlock Audio" button and call agent.startAudio() on click.
+    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      const blocked = !room.canPlaybackAudio;
+      this.emit('audio_blocked', blocked);
+    });
+  }
+
+  private attachRemoteAudio(trackSid: string, element: HTMLMediaElement): void {
+    this.detachRemoteAudio(trackSid); // clean up any previous element for this sid
+    element.autoplay = true;
+    element.setAttribute('playsinline', 'true');
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    this.remoteAudioElements.set(trackSid, element);
+    // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
+    // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
+    void element.play().catch(() => {
+      // Silently ignore — AudioPlaybackStatusChanged will handle the blocked state.
+    });
+  }
+
+  private detachRemoteAudio(trackSid: string): void {
+    const element = this.remoteAudioElements.get(trackSid);
+    if (!element) return;
+    try {
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    } catch {
+      // Best-effort cleanup.
+    }
+    element.remove();
+    this.remoteAudioElements.delete(trackSid);
+  }
+
+  private detachAllRemoteAudio(): void {
+    for (const trackSid of [...this.remoteAudioElements.keys()]) {
+      this.detachRemoteAudio(trackSid);
+    }
   }
 
   private scheduleTokenRefresh(session: SessionResponse): void {
@@ -246,12 +419,12 @@ export class UrduVoiceAgent {
     }
   }
 
-  private tryParseMetrics(text?: string): unknown | null {
+  private tryParseMetrics(text?: string): MetricsEvent | null {
     if (!text) return null;
     try {
       const parsed = JSON.parse(text) as { type?: string };
       if (parsed.type === 'metrics_updated' || parsed.type === 'turn_latency') {
-        return parsed;
+        return parsed as MetricsEvent;
       }
       return null;
     } catch {

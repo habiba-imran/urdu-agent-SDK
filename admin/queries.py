@@ -213,3 +213,59 @@ def blockers(conn: psycopg.Connection, *, hours: int = 24) -> list[dict]:
         {"tenant_id": str(r[0]) if r[0] else None, "status": r[1], "count": r[2]}
         for r in rows
     ]
+
+
+def rotate_tenant_secret(conn: psycopg.Connection, tenant_id: str) -> str:
+    """Generates a new 32-byte URL-safe secret for tenant_id, updates tenants table,
+    and returns the raw secret ONCE.
+    """
+    import hashlib
+    import secrets as _pysecrets
+
+    new_secret = _pysecrets.token_urlsafe(32)
+    new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
+
+    cur = conn.execute(
+        """
+        UPDATE tenants
+        SET hmac_secret = %s,
+            hmac_secret_hash = %s
+        WHERE id = %s
+        RETURNING id
+        """,
+        (new_secret, new_hash, tenant_id),
+    )
+    if not cur.fetchone():
+        raise ValueError(f"Tenant {tenant_id} not found")
+
+    return new_secret
+
+
+def get_tenant_credentials_masked(conn: psycopg.Connection, tenant_id: str) -> dict:
+    """Returns masked credential metadata for a tenant (publishable key, allowed origins, secret status).
+
+    The raw HMAC secret is NEVER returned by this read query — only a masked indicator and hash.
+    """
+    row = conn.execute(
+        """
+        SELECT id, name, allowed_origins, hmac_secret_hash, (hmac_secret IS NOT NULL) AS has_raw_secret, status
+        FROM tenants
+        WHERE id = %s
+        """,
+        (tenant_id,),
+    ).fetchone()
+
+    if not row:
+        raise ValueError(f"Tenant {tenant_id} not found")
+
+    return {
+        "publishable_key": str(row[0]),
+        "tenant_id": str(row[0]),
+        "name": row[1],
+        "allowed_origins": row[2] or [],
+        "hmac_secret_hash": row[3],
+        "has_raw_secret": bool(row[4]),
+        "secret_masked": "••••••••••••••••••••••••••••••••",
+        "status": row[5],
+    }
+

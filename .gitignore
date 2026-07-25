@@ -5,16 +5,14 @@ __pycache__/
 .venv/
 node_modules/
 dist/
+.next/
+*.tsbuildinfo
 /tmp/
 *.log
 urdu-voice-agent/
 voice-picker/index.local.html
-# Recorded voice preview audio (P5-T02) is CDN-bound via P5-T03 (voices.preview_url), not
-# committed to git -- formalized decision, not an implicit omission.
 voice-picker/previews/
 
-# P6 admin bootstrap credentials (password + TOTP secret) -- generated locally, read once by the
-# human, never committed and never pasted into any tracked file (BLOCKERS.md's demo-gate3 burned-
-# secret lesson: a secret that lands in tracked/logged text is compromised).
 state/admin_bootstrap.local.md
 /hamza docs
+client_deliverables/

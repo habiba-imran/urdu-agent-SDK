@@ -81,8 +81,8 @@ def env():
     )
     conn.execute(
         "insert into sessions (id, tenant_id, agent_id, room_name, ended_at, duration_sec, end_reason) "
-        "values (%s,%s,%s,'admin-test-room', now(), 65, 'normal')",
-        (sess, t, ag),
+        "values (%s,%s,%s,%s, now(), 65, 'normal')",
+        (sess, t, ag, f"admin-test-room-{uuid.uuid4()}"),
     )
     conn.execute(
         "insert into usage_events (tenant_id, session_id, kind, qty) values (%s,%s,'agent_sec',65)",
@@ -512,5 +512,27 @@ def test_sdk_bundle_never_references_admin():
             if f.is_file() and f.suffix in (".ts", ".tsx", ".js", ".d.ts"):
                 text = f.read_text(encoding="utf-8", errors="ignore")
                 if "/admin/" in text or "admin_" in text:
+                    hits.append(str(f))
+    assert hits == []
+
+
+def test_sdk_bundle_never_references_agents_server():
+    """The browser SDK (@uva/voice) must never reference the server-only @uva/agents package —
+    that package holds the tenant HMAC secret, and importing it into a browser bundle would leak
+    it. Mirrors test_sdk_bundle_never_references_admin's isolation check."""
+    root = Path(__file__).resolve().parent.parent
+    hits = []
+    for sub in ("sdk/src", "sdk/dist"):
+        d = root / sub
+        if not d.exists():
+            continue
+        for f in d.rglob("*"):
+            if f.is_file() and f.suffix in (".ts", ".tsx", ".js", ".d.ts"):
+                text = f.read_text(encoding="utf-8", errors="ignore")
+                if (
+                    "sdk-server" in text
+                    or "@uva/agents" in text
+                    or "UvaAgentsClient" in text
+                ):
                     hits.append(str(f))
     assert hits == []
