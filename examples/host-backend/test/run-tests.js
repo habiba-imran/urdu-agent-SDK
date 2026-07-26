@@ -3,7 +3,7 @@ import { createApp } from '../src/createApp.js';
 import { createSessionSignature } from '../src/signing.js';
 
 const baseConfig = {
-  controlPlaneUrl: 'https://control-plane.example.com',
+  sessionUpstreamUrl: 'https://session-upstream.example.com',
   tenantId: 'tenant-123',
   hmacSecret: 'secret-abc',
   publishableKey: 'pk-demo',
@@ -55,7 +55,7 @@ async function testSessionRouteSignsRequests() {
   server.close();
 
   assert.equal(response.status, 200);
-  assert.equal(seenUrl, 'https://control-plane.example.com/v1/session');
+  assert.equal(seenUrl, 'https://session-upstream.example.com/v1/session');
   assert.deepEqual(JSON.parse(seenBody), { agent_id: 'agent-123' });
   assert.equal(seenHeaders['X-Tenant-Id'], 'tenant-123');
   assert.equal(seenHeaders.Origin, 'http://localhost:5173');

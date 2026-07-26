@@ -263,8 +263,10 @@ def test_update_agent_of_another_tenant_404_idor(env):
         machine_auth._hits.pop(other_tenant_id, None)
 
 
-def test_rate_limited_429(env):
+def test_rate_limited_429(env, monkeypatch):
     client = TestClient(app)
+    fake_time = 1000000.0
+    monkeypatch.setattr(time, "time", lambda: fake_time)
     last_status = None
     for _ in range(machine_auth.MACHINE_RATE_LIMIT_PER_MIN + 1):
         headers = _headers(
