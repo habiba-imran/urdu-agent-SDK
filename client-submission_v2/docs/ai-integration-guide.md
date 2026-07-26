@@ -91,12 +91,12 @@ Also add both `.env` files to `.gitignore`.
 **Install the server SDK** from the local `sdk/` folder (path relative to `backend/`):
 
 > Note: `@awaazlabs-uva/agents` is a **private package** delivered inside `sdk/@awaazlabs-uva/agents/` —
-> it is NOT on the public npm registry. Install it by pointing npm at the local folder.
+> it is NOT on the public npm registry. Install it from the included `.tgz` package file.
 > The package code itself contains no hardcoded Finova secrets — it is a signing
 > library that your backend initialises at runtime with credentials from `.env`.
 
 ```bash
-npm install ../sdk/@awaazlabs-uva/agents
+npm install ../sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
 **Implement these three backend routes:**
@@ -145,11 +145,11 @@ Add CORS middleware so `http://localhost:5174` can reach the backend.
 **Install the browser SDK** from the local `sdk/` folder (path relative to `frontend/`):
 
 > Note: `@awaazlabs-uva/voice` is a **private package** delivered inside `sdk/@awaazlabs-uva/voice/` —
-> it is NOT on the public npm registry. Install it by pointing npm at the local folder.
+> it is NOT on the public npm registry. Install it from the included `.tgz` package file.
 > This package holds **zero secrets** — it is safe to bundle and ship publicly.
 
 ```bash
-npm install ../sdk/@awaazlabs-uva/voice livekit-client@^2.0.0
+npm install ../sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz livekit-client@^2.0.0
 ```
 
 **Build a `VoiceWidget` component** with the following behavior:

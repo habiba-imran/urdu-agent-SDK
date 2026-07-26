@@ -7,7 +7,7 @@ Browser SDK for AwaazLabs-UVA-Voice sessions.
 From the client-submission root:
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/voice
+npm install ./sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz livekit-client@^2.0.0
 ```
 
 ## What You Need Before You Start

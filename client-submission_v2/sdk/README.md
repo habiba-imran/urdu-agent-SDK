@@ -13,12 +13,14 @@ sdk/
 ├── @awaazlabs-uva/voice/          →  Browser SDK  (@awaazlabs-uva/voice)
 │   ├── dist/            →  Compiled JS + TypeScript declaration files
 │   ├── src/             →  TypeScript source (reference only)
+│   ├── awaazlabs-uva-voice-1.0.0.tgz
 │   ├── package.json
 │   └── README.md
 │
 └── @awaazlabs-uva/agents/         →  Server-side Agent Management SDK  (@awaazlabs-uva/agents)
     ├── dist/            →  Compiled JS + TypeScript declaration files
     ├── src/             →  TypeScript source (reference only)
+    ├── awaazlabs-uva-agents-0.1.0.tgz
     ├── package.json
     └── README.md
 ```

@@ -15,10 +15,12 @@ client-submission/
 │   ├── @awaazlabs-uva/voice/               ← @awaazlabs-uva/voice  (browser SDK, zero secrets)
 │   │   ├── dist/                 ← Compiled JS + type declarations (ready to use)
 │   │   ├── src/                  ← TypeScript source (reference)
+│   │   ├── awaazlabs-uva-voice-1.0.0.tgz
 │   │   └── package.json
 │   └── @awaazlabs-uva/agents/              ← @awaazlabs-uva/agents (server SDK, holds your HMAC secret)
 │       ├── dist/                 ← Compiled JS + type declarations (ready to use)
 │       ├── src/                  ← TypeScript source (reference)
+│       ├── awaazlabs-uva-agents-0.1.0.tgz
 │       └── package.json
 │
 └── docs/
@@ -45,13 +47,13 @@ client-submission/
 ### Browser SDK — install into your **frontend** project
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/voice livekit-client@^2.0.0
+npm install ./sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz livekit-client@^2.0.0
 ```
 
 ### Server SDK — install into your **backend** project only
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/agents
+npm install ./sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
 > ⚠️ **Never install `@awaazlabs-uva/agents` in a frontend project.** It holds your tenant secret.
