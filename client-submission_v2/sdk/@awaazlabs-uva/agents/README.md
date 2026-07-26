@@ -16,7 +16,7 @@ connects to.
 From the client-submission root:
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/agents
+npm install ./sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
 ## Usage (in your backend only)

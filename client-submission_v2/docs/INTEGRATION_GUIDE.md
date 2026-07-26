@@ -10,9 +10,9 @@
 >
 > This package includes the SDK source code inside the `sdk/` folder.
 > These are **private packages** (not yet published to a public npm registry),
-> so you install them by pointing `npm install` at the local folder path.
+> so you install them from the included `.tgz` package files.
 > You do **not** run `npm install @awaazlabs-uva/voice` from a registry — you install
-> from the `sdk/@awaazlabs-uva/voice/` directory inside this package.
+> from the package file inside the `sdk/@awaazlabs-uva/voice/` directory.
 >
 > **What secrets are in the SDK code itself?**
 > - `sdk/@awaazlabs-uva/voice/` (`@awaazlabs-uva/voice`) — **zero secrets.** This is the browser SDK.
@@ -129,12 +129,11 @@ cd .\client-submission
 ## 3. Installing the Browser SDK (`@awaazlabs-uva/voice`)
 
 > [!NOTE]
-> **Why `npm install` from a local folder?**
+> **Why `npm install` from a local `.tgz` file?**
 > `@awaazlabs-uva/voice` is a **private package** — it is not published on the public npm registry.
-> Finova delivers it directly inside this `client-submission/sdk/@awaazlabs-uva/voice/` folder.
-> The install command below tells npm to treat that local folder exactly as it would
-> a registry package: it reads `package.json`, resolves the `main`/`types` fields
-> pointing to `dist/`, and writes the dependency into your `package.json` as a `file:` path.
+> Finova delivers it directly as `client-submission/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz`.
+> The install command below tells npm to treat that local package file exactly as it would
+> a registry package, with `dist/` wired as the runtime entry point.
 >
 > **What does the package contain?** Zero Finova secrets. It is a WebRTC session
 > management library that only ever calls *your own backend's* session endpoint.
@@ -143,11 +142,11 @@ cd .\client-submission
 In your **frontend project's** root directory, run:
 
 ```bash
-# Replace the path with the actual path to this package on your machine
-npm install /absolute/path/to/client-submission/sdk/@awaazlabs-uva/voice
+# Replace the path with the actual path to this package file on your machine
+npm install /absolute/path/to/client-submission/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz
 
 # Or using a relative path from your frontend project root:
-npm install ../../client-submission/sdk/@awaazlabs-uva/voice
+npm install ../../client-submission/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz
 ```
 
 This adds the following to your frontend `package.json`:
@@ -155,7 +154,7 @@ This adds the following to your frontend `package.json`:
 ```json
 {
   "dependencies": {
-    "@awaazlabs-uva/voice": "file:../../client-submission/sdk/@awaazlabs-uva/voice"
+    "@awaazlabs-uva/voice": "file:../../client-submission/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz"
   }
 }
 ```
@@ -192,7 +191,7 @@ node -e "const {AwaazLabsUvaVoice} = require('@awaazlabs-uva/voice'); console.lo
 > bundled into a browser build, your secret would be exposed in the client bundle.
 
 > [!NOTE]
-> **Why `npm install` from a local folder?**
+> **Why `npm install` from a local `.tgz` file?**
 > Same reason as above — `@awaazlabs-uva/agents` is a private package delivered in this folder,
 > not on the public npm registry. The package code itself contains **no hardcoded
 > Finova credentials.** It is a pure signing/HTTP client that you initialise at
@@ -201,11 +200,11 @@ node -e "const {AwaazLabsUvaVoice} = require('@awaazlabs-uva/voice'); console.lo
 In your **Node.js backend project's** root directory:
 
 ```bash
-# Replace the path with the actual path to this package on your machine
-npm install /absolute/path/to/client-submission/sdk/@awaazlabs-uva/agents
+# Replace the path with the actual path to this package file on your machine
+npm install /absolute/path/to/client-submission/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 
 # Or using a relative path from your backend project root:
-npm install ../../client-submission/sdk/@awaazlabs-uva/agents
+npm install ../../client-submission/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
 This adds the following to your backend `package.json`:
@@ -213,7 +212,7 @@ This adds the following to your backend `package.json`:
 ```json
 {
   "dependencies": {
-    "@awaazlabs-uva/agents": "file:../../client-submission/sdk/@awaazlabs-uva/agents"
+    "@awaazlabs-uva/agents": "file:../../client-submission/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz"
   }
 }
 ```

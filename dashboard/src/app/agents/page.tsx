@@ -203,12 +203,11 @@ export default function AgentsPage() {
 
   const handleExportAgents = () => {
     const csv = toCsv(
-      ['Agent ID', 'Agent Name', 'Voice', 'LLM Model', 'Minutes Used', 'Created At'],
+      ['Agent ID', 'Agent Name', 'Voice', 'Minutes Used', 'Created At'],
       (agents ?? []).map((agent) => [
         agent.id,
         agent.name,
         agent.voice_id,
-        agent.llm_model,
         ((agent.total_agent_sec ?? 0) / 60).toFixed(1),
         agent.created_at ?? '',
       ]),
