@@ -17,8 +17,27 @@ _DEPRECATED_GEMINI_MODELS = {
 }
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _phrase_config_id() -> str | None:
-    """Read the committed phrase replacement configId, if any."""
+    """Resolve an optional Uplift phrase replacement configId.
+
+    Uplift config IDs are tied to the Uplift account/API key that created them. A committed
+    `.uplift_phrase_config` can therefore become stale when the local `.env.local` key changes.
+    Prefer an explicit environment variable; only use the checked-in file when opted in.
+    """
+    if _env_truthy("UPLIFT_DISABLE_PHRASE_CONFIG"):
+        return None
+
+    explicit = os.getenv("UPLIFT_PHRASE_CONFIG_ID")
+    if explicit is not None:
+        return explicit.strip() or None
+
+    if not _env_truthy("UPLIFT_USE_PHRASE_CONFIG_FILE"):
+        return None
+
     cfg_path = Path(__file__).resolve().parent.parent / ".uplift_phrase_config"
     if cfg_path.exists():
         raw = cfg_path.read_text(encoding="utf-8").strip()
@@ -95,7 +114,7 @@ def make_tts(voice_id: str):
 
         return upliftai.TTS(
             voice_id=voice_id,
-            output_format="WAV_22050_16",
+            output_format="PCM_22050_16",
             phrase_replacement_config_id=phrase_id,
         )
 
