@@ -1,21 +1,5 @@
 # @awaazlabs-uva/agents
 
-<<<<<<< HEAD
-Server-side agent management SDK for an existing AwaazLabs-UVA tenant.
-
-Never import this package in frontend/browser code. It uses the tenant HMAC secret at runtime and
-belongs only in the client's backend.
-
-## Install
-
-From the client's backend project:
-
-```bash
-npm install /path/to/client-submission_v2/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
-```
-
-## Usage
-=======
 **Server-side only. Never import this package in browser code — it holds your tenant secret.**
 
 Programmatic agent management for an **existing** AwaazLabs-UVA tenant. If you don't have a
@@ -36,7 +20,6 @@ npm install ./sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
 ## Usage (in your backend only)
->>>>>>> origin/ukasha
 
 ```ts
 import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
@@ -44,29 +27,14 @@ import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
 const agents = new AwaazLabsUvaAgentsClient({
   tenantId: process.env.UVA_TENANT_ID!,
   tenantSecret: process.env.UVA_HMAC_SECRET!,
-<<<<<<< HEAD
-  baseUrl: process.env.UVA_PORTAL_API_URL!,
-=======
   baseUrl: 'https://portal-api.example.com',
   extraHeaders: process.env.NODE_ENV === 'development'
     ? { 'ngrok-skip-browser-warning': 'true' }
     : undefined,
->>>>>>> origin/ukasha
 });
 
 const agent = await agents.createAgent({
   name: 'Support Agent',
-<<<<<<< HEAD
-  prompt: 'You are a helpful Urdu customer support assistant.',
-  voiceId: 'v_meklc281',
-  llmModel: 'gemini-2.5-flash',
-});
-
-console.log(agent.id);
-```
-
-## Methods
-=======
   prompt: 'آپ ایک مددگار معاون ہیں...',
   voiceId: 'helpdesk-agent',
 });
@@ -75,36 +43,11 @@ console.log(agent.id);
 ```
 
 ### Methods
->>>>>>> origin/ukasha
 
 - `createAgent({ name, prompt, voiceId, llmModel? })`
 - `listAgents()`
 - `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel? })`
 
-<<<<<<< HEAD
-## Security Model
-
-Each request is signed locally in the backend process with `tenantSecret` using HMAC-SHA256,
-timestamp, and nonce headers. The raw secret is never sent as a request body or header value.
-
-`extraHeaders` may be used for local tunnels or corporate proxies. It cannot override the SDK's
-tenant/signature headers.
-
-## Errors
-
-Failed calls throw `AwaazLabsUvaAgentsError`:
-
-| Status | Meaning |
-|---|---|
-| 401 | Bad secret, replayed nonce, or expired timestamp |
-| 403 | Tenant suspended |
-| 404 | Agent not found |
-| 429 | Rate limited |
-
-## Documentation
-
-See `../../../docs/INTEGRATION_GUIDE.md` for full backend route examples and validation steps.
-=======
 Each call signs its own request with `tenantSecret` (HMAC-SHA256, timestamped, single-use nonce,
 scoped to that one action) — see
 [docs/INTEGRATION_GUIDE.md](../../../docs/INTEGRATION_GUIDE.md) for the wire contract if
@@ -128,4 +71,3 @@ timestamp, `403` tenant suspended, `404` agent not found (update), `429` rate li
   around.
 - Rotating your tenant secret (via your platform's admin) invalidates every previously-issued
   signature going forward, same as it already does for session-mint signing.
->>>>>>> origin/ukasha
