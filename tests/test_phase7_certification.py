@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from control_plane.app import app as cp_app
+from control_plane.app import app as cp_app  # noqa: E402
 
 
 def test_control_plane_openapi_docs_routes():

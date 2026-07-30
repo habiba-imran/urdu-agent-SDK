@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from control_plane.app import app as cp_app
-from bench.load_test import run_load_test
-from scripts.simulate_worker_crash import run_failure_recovery_drill
+from control_plane.app import app as cp_app  # noqa: E402
+from bench.load_test import run_load_test  # noqa: E402
+from scripts.simulate_worker_crash import run_failure_recovery_drill  # noqa: E402
 
 
 def test_deep_health_check_endpoint():
@@ -38,7 +38,6 @@ def test_load_test_harness_dry_run():
     res_1 = client.get("/healthz")
     assert res_1.status_code == 200
 
-
     # Run load test helper function
     stats = asyncio.run(run_load_test("http://testserver", concurrency=2, bursts=1))
     assert isinstance(stats, dict)
@@ -52,4 +51,3 @@ def test_failure_recovery_drill():
     assert result["success"] is True
     assert result["final_concurrency"] == 0
     assert result["end_reason"] in ("reconciled_stale", "stale_reconciled")
-

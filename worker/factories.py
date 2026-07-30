@@ -136,5 +136,7 @@ def make_llm(model: str):
     agent-session cap and would become the real ceiling (docs/23-PHASE-3-WORKER.md)."""
     from livekit.plugins import google
 
-    resolved_model = _DEPRECATED_GEMINI_MODELS.get(model, model or _DEFAULT_GEMINI_MODEL)
+    resolved_model = _DEPRECATED_GEMINI_MODELS.get(
+        model, model or _DEFAULT_GEMINI_MODEL
+    )
     return google.LLM(model=resolved_model)

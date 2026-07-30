@@ -17,7 +17,7 @@ const navItems = [
     icon: LayoutDashboard,
     prefetch: ['agents', 'credentials', 'usage', 'sessions'] as const,
   },
-  { href: '/agents', label: 'Agents & Voices', icon: Bot, prefetch: ['agents', 'voices'] as const },
+  { href: '/agents', label: 'Agents', icon: Bot, prefetch: ['agents', 'voices'] as const },
   { href: '/usage', label: 'Usage', icon: BarChart3, prefetch: ['usage'] as const },
   { href: '/credentials', label: 'Credentials', icon: KeyRound, prefetch: ['credentials'] as const },
   { href: '/sessions', label: 'Call Sessions', icon: PhoneCall, prefetch: ['sessions'] as const },
@@ -58,7 +58,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 overflow-y-auto px-2 py-4" aria-label="Main navigation">
         <div className="flex flex-col gap-0.5">
           {navItems.map((item) => {
-            const active = pathname === item.href;
+            const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
             const Icon = item.icon;
             return (
               <Link

@@ -137,20 +137,56 @@ def get_credentials(conn: psycopg.Connection, tenant_id: str) -> dict:
     }
 
 
+def get_raw_secret(conn: psycopg.Connection, tenant_id: str) -> str:
+    """The tenant's own raw HMAC secret (tenants.hmac_secret), for the credentials-tab reveal
+    action. Scoped by tenant_id from the caller's own verified portal JWT — same trust boundary
+    as get_credentials above, just returning the real value instead of the masked placeholder.
+    """
+    row = conn.execute(
+        "select hmac_secret from tenants where id = %s",
+        (tenant_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("tenant not found")
+    if not row[0]:
+        raise ValueError("no secret provisioned")
+    return row[0]
+
+
+# An open session (ended_at IS NULL) older than this is NOT live — it leaked.
+#
+# The mint opens a `sessions` row; only worker/main.py's `_release_quota_slot` shutdown callback
+# closes it. Any ungraceful worker exit (Ctrl-C in dev, crash, OOM, dispatch that never lands)
+# leaves the row open forever, so `ended_at IS NULL` alone means "not known to have ended", NOT
+# "currently on a call". Treating it as live made the dashboard report 13 live calls against a
+# tenant whose oldest "live" session was 96 hours old.
+#
+# 30 minutes is not a new invention: it is scripts/reconcile_sessions.py's own
+# `--max-age-minutes` default, i.e. the staleness bound this repo already uses when it decides a
+# session is dead. Reusing that number keeps ONE definition of stale instead of two that can
+# disagree. Evaluated in Postgres against now(), so no app-server clock skew enters into it.
+LIVE_SESSION_MAX_AGE_MIN = 30
+
+
 def list_recent_sessions(
     conn: psycopg.Connection, tenant_id: str, *, limit: int = 50
 ) -> list[dict]:
     rows = conn.execute(
         """
         select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
-               s.duration_sec, s.end_reason
+               s.duration_sec, s.end_reason,
+               (
+                 s.ended_at is null
+                 and s.started_at > now() - (%s || ' minutes')::interval
+               ) as live,
+               s.summary, s.transcript
         from sessions s
         join agents a on a.id = s.agent_id
         where s.tenant_id = %s
         order by s.started_at desc
         limit %s
         """,
-        (tenant_id, limit),
+        (LIVE_SESSION_MAX_AGE_MIN, tenant_id, limit),
     ).fetchall()
     return [
         {
@@ -162,15 +198,37 @@ def list_recent_sessions(
             "ended_at": r[5].isoformat() if r[5] else None,
             "duration_sec": r[6],
             "end_reason": r[7],
-            "live": r[5] is None,
+            "live": r[8],
+            # Open but past the staleness bound: never closed, and reconciliation has not
+            # swept it yet. Surfaced rather than silently folded into "Ended" so a leaked
+            # session stays diagnosable from the dashboard instead of looking like a clean call.
+            "stale": r[5] is None and not r[8],
+            # Both set by the worker at session end (worker/tools.py::end_conversation_summary
+            # for summary, worker/main.py::_release_quota_slot for transcript) — null for any
+            # session that never reached a clean agent-initiated or shutdown-callback close.
+            "summary": r[9],
+            "transcript": r[10],
         }
         for r in rows
     ]
 
 
-def usage_summary(
-    conn: psycopg.Connection, tenant_id: str, *, days: int = 30
-) -> dict:
+def usage_summary(conn: psycopg.Connection, tenant_id: str) -> dict:
+    """Usage for the CURRENT CALENDAR MONTH — 1st through the last day, not a rolling window.
+
+    Matches `quota_state.minutes_this_month`, which worker/main.py's shutdown callback already
+    rolls over on `date_trunc('month', now())` (the monthly cap the mint enforces). Before this,
+    the two disagreed: the cap reset on the calendar month while this view showed a rolling
+    "last 30 days" — a tenant could be capped mid-month while the dashboard still showed room, or
+    see last month's tail-end usage bleeding into "this month"'s totals.
+
+    Bounds are computed in ONE query (`period` CTE) so `period_start`/`period_end` returned to the
+    caller are read from the exact same `now()` the WHERE clauses filtered on — a second query or
+    a Python-side `datetime.now()` could observe a different moment and label the data wrong,
+    especially right at a month boundary. `period_end` is the exclusive start of next month, not
+    "the last day" — deliberately, so there's no ambiguity about whether the last instant of the
+    month is included.
+    """
     quota = conn.execute(
         """
         select t.max_concurrent, t.max_minutes_month,
@@ -185,16 +243,24 @@ def usage_summary(
     if quota is None:
         raise ValueError("tenant not found")
 
+    period = conn.execute(
+        """
+        select date_trunc('month', now())::date,
+               (date_trunc('month', now()) + interval '1 month')::date
+        """
+    ).fetchone()
+    period_start, period_end = period[0], period[1]
+
     totals = conn.execute(
         """
         select kind, coalesce(sum(qty), 0) as total_qty
         from usage_events
         where tenant_id = %s
-          and at >= now() - (%s || ' days')::interval
+          and at >= %s and at < %s
         group by kind
         order by kind
         """,
-        (tenant_id, days),
+        (tenant_id, period_start, period_end),
     ).fetchall()
 
     daily = conn.execute(
@@ -202,15 +268,16 @@ def usage_summary(
         select date_trunc('day', at)::date as day, kind, coalesce(sum(qty), 0) as total_qty
         from usage_events
         where tenant_id = %s
-          and at >= now() - (%s || ' days')::interval
+          and at >= %s and at < %s
         group by day, kind
         order by day desc, kind
         """,
-        (tenant_id, days),
+        (tenant_id, period_start, period_end),
     ).fetchall()
 
     return {
-        "window_days": days,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
         "quota": {
             "max_concurrent": quota[0],
             "max_minutes_month": quota[1],

@@ -1,6 +1,8 @@
 # PROGRESS
-Updated: 2026-07-23 | Existing-tenant machine-auth agent management built (`/machine/agents` +
-`@awaazlabs-uva/agents`), see "Now (Session 13)" below — unrelated to and does not change Phase 8's still-OPEN
+Updated: 2026-07-29 | Call summary + transcript wired end-to-end (migration 0011, worker capture,
+portal API, dashboard drawer) — see "Now (Session 15)" below. Existing-tenant machine-auth agent
+management built (`/machine/agents` + `@awaazlabs-uva/agents`), see "Now (Session 13)" below — both
+unrelated to and do not change Phase 8's still-OPEN
 status. Phase 8 status as of 2026-07-18, unchanged: **GATE 8 still
 OPEN, 5/6 lines green (ADR-032), 6th needs a human decision (ADR-030), not new work.** Phase 9
 (deployment readiness, config/artifacts only) DONE: Dockerfiles for control_plane/admin built and
@@ -30,6 +32,261 @@ usage-check all clean, only the same 3 known tests red. H9 sent by the human, aw
 from here needs either a live LiveKit/Uplift call (the listening session itself), phonetic
 judgment only a human can make, or a decision already staged and waiting (ADR-030's CER-harness
 retirement call, H9's vendor replies). Nothing further is being guessed at or built ahead of that.
+
+## Now (Session 15 — call summary + transcript wired end-to-end, dashboard Sessions drawer)
+
+- **Trigger:** dashboard request to show a call summary and transcript in the Call Sessions tab.
+  Checked before building anything (this project's "verify, don't assume" rule): `sessions.summary`
+  already exists in the schema (0001) and is already written by a real, wired LiveKit tool
+  (`worker/tools.py::end_conversation_summary`, part of `FIXED_TOOLS` since ADR-029) — it was never
+  dormant, just never exposed past the worker. Transcript had **no storage anywhere** — no column,
+  no table, nothing capturing turns.
+- **Migration `0011_session_transcript.sql`**: `sessions.transcript jsonb`, nullable, additive only.
+  Applied directly via `psycopg` (not `make db-reset`, which drops-and-rebuilds from 0001 and would
+  have wiped this session's real dev data — tenants/agents/sessions created live during this
+  session). `scripts/db_inspect.py` re-run afterward to regenerate `SCHEMA.md`/`RLS.md` from the
+  live DB, per 33-GUIDE-SUPABASE.md (never hand-edit those files). No RLS change needed — the
+  existing `tenant_isolation_sessions` policy is row-level and already covers the new column; the
+  worker writes it through the same trusted `conn_kwargs()` DB-owner connection `summary` already
+  uses, never the RLS-scoped role.
+- **`worker/main.py::_release_quota_slot`**: now also builds a transcript (user/assistant turns
+  only — system messages hold OUR fixed instructions + the tenant's untrusted persona prompt, never
+  the caller's actual conversation) from `session.history.messages()` and writes it in the same
+  UPDATE that already sets `ended_at`/`duration_sec`/`end_reason`. Verified against the installed
+  `livekit-agents` source before writing any of this (not guessed): `AgentSession.history` ->
+  `self._chat_ctx` (`voice/agent_session.py` L610-611); `ChatContext.messages()` filters to
+  `ChatMessage` items only (`llm/chat_context.py`); `ChatMessage.text_content` already strips
+  `<expr/>` markup on assistant turns. Written via `psycopg.types.json.Jsonb(...)`, confirmed against
+  the installed psycopg 3.3.4 (auto-deserializes back to a plain Python list on read — checked
+  live, not assumed). Transcript-building wrapped in its own try/except, separate from the DB
+  write's try/except — same principle this function already applies to the usage-billing write:
+  a secondary failure must never cost the session close or the concurrency-slot release.
+  `pytest tests/test_worker.py` re-run after the change: **10 passed** (unchanged from before).
+- **`tenant_portal_api/queries.py::list_recent_sessions`**: now selects and returns `summary` and
+  `transcript` alongside the existing fields — no new endpoint; the Sessions page already loads the
+  full list once and drives its detail drawer from that same data, so this follows the established
+  pattern rather than introducing a per-session fetch. `pytest tests/test_phase4_portal_api.py`
+  re-run: **4 passed** (unchanged).
+- **Dashboard**: `PortalSession` type gained `summary`/`transcript`; `sessions/page.tsx`'s detail
+  Drawer gained a "Call Summary" section (falls back to "No summary available for this call." when
+  null) and replaced the old "Transcript text is not exposed by the current tenant portal API yet."
+  placeholder with a real scrollable turn-by-turn view (user/assistant bubbles), with the same
+  honest empty-state fallback for calls with no transcript (pre-migration sessions, or any call that
+  never reached a clean close).
+- **Scope decision, asked of the human up front rather than assumed:** offered three options
+  (worker+backend+UI full wiring / UI-only against the real-but-mostly-empty `summary` column / UI
+  mockup only) — human chose full wiring. Built exactly that, nothing beyond it (e.g. did not touch
+  the CSV export or add a new endpoint neither ask nor existing pattern called for).
+
+## Now (Session 14e — usage was NEVER recorded: P3-T07 closed, monthly cap made real)
+
+- **Human asked why every usage number is still zero after real test calls. It is not a display
+  bug — nothing was ever writing them.** Verified before changing anything: `usage_events` held
+  **4 rows in its entire history**, all test-fixture seeds; today's 3 real calls wrote **0 rows
+  each**; `minutes_this_month` = 0 for every tenant. Meanwhile `sessions.duration_sec` had real
+  values (6, 34, 6) — the duration was measured and then thrown away.
+- **Root cause**: `worker/usage.py::record_usage` had **zero production callers** (grep: only
+  `tests/test_worker.py`). A NOTE under `session.start()` had said "wire this up once measured
+  live" since Phase 3. So every provider figure on the dashboard was a correct SQL query over a
+  permanently empty table.
+- **Fixed at the one place that already has tenant_id + session id + true duration**:
+  `_release_quota_slot`. New `worker/usage.py::record_usage_many(conn, ...)` writes on the
+  ALREADY-OPEN connection (4 × `record_usage` would have meant 4 extra Supabase connections per
+  hangup), and `collect_model_usage(session)` maps livekit's usage onto our 4 kinds.
+- **Used the CURRENT livekit API, not the obvious one.** `metrics_collected` is deprecated in
+  1.6.5 — `agent_session.py` L561-568 logs a warning pointing at usage tracking instead. Correct
+  source is `AgentSession.usage.model_usage` (L642-644): a list with one entry per provider/model,
+  so same-type entries are **summed**, not overwritten. `STTModelUsage.audio_duration` -> stt_sec,
+  `TTSModelUsage.audio_duration` -> tts_sec, `LLMModelUsage.input+output_tokens` -> llm_tokens,
+  elapsed -> agent_sec. Zero-qty kinds are skipped so "measured zero" stays distinguishable from
+  "never measured".
+- **The monthly cap is now actually enforceable.** `control_plane/mint.py`'s
+  `if minutes >= max_minutes` could never fire because nothing incremented `minutes_this_month` —
+  non-negotiable #5 was only half-live (concurrency capped, minutes not). Now incremented on every
+  session close.
+- **Second latent bug found while doing it**: `quota_state.period_start` is in the schema but was
+  read/written by **nothing** — so "this month" was never scoped to a month, and the counter would
+  have grown forever until the tenant was permanently capped with no way to reset. The upsert now
+  rolls over atomically (stored period older than the current month -> replace, else add).
+- **Deliberate convention call, flagged not buried**: fractional minutes (`elapsed_sec/60.0`), not
+  ceil-per-call. The column is `numeric`, the dashboard renders `.toFixed(1)`, and rounding every
+  6-second call up to a whole minute would burn quota ~10x too fast. ADR-016's ceil convention is
+  for the free-tier LEDGER (what LiveKit bills US) — a different question from what we charge a
+  tenant. If per-started-minute billing is wanted instead, this is the line to change.
+- **Billing writes can never cost a session close**: the whole block is wrapped, failures log at
+  WARNING. The session close + concurrency release already committed (autocommit) before it runs.
+- **Verified against the LIVE dev DB, not just by reading**: throwaway tenant, real inserts —
+  4 usage_events written with correct per-kind quantities (stt summed 12.5+2.5=15.0 across two
+  providers), 0-qty kind correctly skipped, minutes **accumulated** within a month
+  (0.5667+0.1=0.6667) and **reset** on a simulated month rollover (0.5, not 1.1667). Also proved
+  `collect_model_usage` returns `{}` rather than crashing on a session whose usage attribute is
+  missing. All rows cleaned up after.
+- **`make gate` re-run after the change: `GATE: PASS`** — 76 passed, 1 skipped, RLS 11/11.
+- **NOT yet verified end-to-end**: needs a real call with the worker running to confirm live
+  numbers land. The SQL and the mapping are proven; the wiring into a real session is not yet
+  observed. Same honest caveat as 14b/14c.
+
+## Now (Session 14d — GATE GREEN for the first time this session; baseline commit recorded)
+
+- **Baseline: `12d7c12`** ("fix: install client SDKs from handoff tarballs", habiba-imran,
+  2026-07-27) is HEAD. It touched only `client-submission_v2/` (docs + the two handoff tarballs)
+  and is unrelated to this session's work. **Everything in Session 14a-14d is UNCOMMITTED on top
+  of it** — 25 modified files, listed by `git status`. Not committed: no instruction to commit was
+  given, and the standing rule is to commit only when asked.
+- **`make gate` -> `GATE: PASS` (exit 0).** Every line real, on this machine:
+  `secrets` (gitleaks 8.30.1, 142 commits, no leaks) | `lint` (ruff check + format, 80 files) |
+  `test` (**76 passed**) | `rls-check` (11/11 tables) | `usage-check` (every provider in budget).
+- **The suite went from reporting NOTHING to 76 passing.** Before: one collection error in
+  `test_tts.py` interrupted the whole run, so `make test` printed no test result at all. After:
+  the 57 that were always passing, plus the 19 that the whitelist had been hiding.
+- **Lint debt cleared with human sign-off (24 -> 0).** 3×F401 auto-fixed — each grepped first, and
+  `test_phase2.py` turned out to be importing `admin.app` purely for its ADMIN_JWT_SECRET side
+  effect, used nowhere. 19×E402 annotated `# noqa: E402`, matching the convention already used in
+  `control_plane/app.py`/`worker/tools.py`/`tenant_portal_api/app.py` rather than inventing a new
+  ruff config. 11 files formatted. All 5 touched services re-imported clean afterwards.
+- **`pytest.ini` fixed — both calls made by the human, not by me** (options + evidence presented
+  first; ADR-030 had been waiting on exactly this sign-off):
+  - dead CER files (`test_tts.py`, `test_harness.py`) **excluded, NOT deleted** — kept on disk so
+    the evidence survives if the harness is ever revived;
+  - 4 measured-green files added (**19 tests**, run and confirmed 19/0 before adding), so the
+    tenant portal API — the dashboard's entire backend, including 14a's stale-session regression
+    test — has gate coverage for the first time. Confirmed collected: the regression test now
+    runs inside `make gate`.
+  - `test_phase8_prod.py` deliberately left out (imports the missing `bench`); `*_live.py` never
+    added (they spend real money). Reasoning written inline in `pytest.ini` for the next reader.
+- **Two gate weaknesses found while doing this, NOT fixed (out of scope, flagged):**
+  1. `Makefile:14` sends gitleaks' stderr to `/dev/null`, so a **missing binary** and a **real
+     credential leak** produce the identical `GATE FAIL: secrets`. That is exactly what happened
+     all session — the secrets line was never actually scanning anything until today.
+  2. `make lint` ends with `(cd sdk && npm run lint || true)`. `tsc` is not installed there, so it
+     prints "not recognized" and `|| true` swallows it — **the TypeScript SDK is not type-checked
+     by the gate at all.**
+- Tooling installed per-user via winget, no admin: GNU Make 4.4.1 (ezwinports), gitleaks 8.30.1.
+
+## Now (Session 14c — the OTHER way a call ends: the agent's own end-call tool never ended it)
+
+- **Human clarified the requirement**: live status must reflect the call ending *either* way —
+  caller hangs up, **or the agent ends the call**. 14b covered only the hangup half.
+- **Gap found, and it is a naming lie**: `worker/tools.py::end_conversation_summary` — the tool
+  the LLM calls to finish a conversation — only ever wrote a `summary` string. It never closed
+  the session. So an "agent-ended" call did not end: the agent said its goodbye and then sat
+  there, session row `ended_at IS NULL`, dashboard showing a live call, until the caller happened
+  to hang up (or forever if they just closed the tab).
+- **Fix**: the tool now calls `AgentSession.shutdown(drain=True)`. Public API, verified in the
+  installed source (`voice/agent_session.py` L1006-1007 -> `_close_soon(reason=USER_INITIATED,
+  drain=drain)`); `drain=True` finishes in-flight speech via `AgentActivity.drain()` instead of
+  cutting the goodbye mid-word. Sync — schedules the close, so the tool still returns normally.
+- **14b's close handler is the single choke point that makes this work**: closing the session
+  emits `"close"` -> `JobContext.shutdown()` -> shutdown callbacks -> session row closed + slot
+  released. One path, both causes. That is why 14b was worth doing first.
+- **end_reason now distinguishes the two causes.** `AgentSession.shutdown()` reports the generic
+  `USER_INITIATED` ("closed via API"), which on a dashboard where "user" means *the caller* reads
+  as exactly the wrong thing. Added `AgentUserdata.ended_by_agent`, set by the tool and read by
+  the close handler, so the DB records `agent_ended` vs `participant_disconnected`. Dashboard maps
+  both to plain English ("Ended by Agent" / "Caller Hung Up"), plus worker-shutdown and error.
+- **Tool docstring rewritten** to say plainly that it HANGS UP and must be called only after the
+  closing line — it previously read as a harmless "save a summary" call.
+- **Justified test-file edit** (`tests/test_worker.py`): the tool's contract genuinely changed, and
+  the existing `_FakeRunContext` duck-typed only `.userdata`, so the new `ctx.session` call would
+  have silently no-op'd through `getattr`. Added a `_FakeSession` recorder and asserted the
+  shutdown IS requested, with `drain=True`, and that `ended_by_agent` is set. **No existing
+  assertion was weakened or removed** — only additions.
+- **Both directions verified, not just the green run**: removed the `session.shutdown()` call and
+  confirmed the new assertion FAILS ("must shut the AgentSession down"), then restored and
+  re-confirmed **10/10 green**. `ruff check`/`format` clean on all 3 touched files, imports clean,
+  dashboard `tsc --noEmit` clean.
+- **⚠ FLAGGED FOR THE HUMAN, not buried**: ending the call is now a real, reachable side effect of
+  a tool call. BLOCK-SEC in state/BLOCKERS.md records that live prompt injection has already
+  forced `escalate_to_human` on this exact agent (3/4 runs). The same class of attack can now
+  force a **hangup**. Severity is lower than data exfiltration (worst case: the call ends), and it
+  is the necessary cost of the tool doing what its name says — but it is a NEW reachable effect
+  and should be re-checked in the next injection pass, not assumed harmless.
+- **Not yet verified live** (same honest caveat as 14b): needs a real call where the agent decides
+  to end it. Unit-level behaviour is proven; end-to-end is not yet observed.
+
+## Now (Session 14b — ROOT CAUSE of the leak found: the job never ended on hangup)
+
+- **Human reproduced it live**: connected from a client frontend (showed live correctly, so the
+  Session-14a staleness fix works), disconnected, **and it never went back to zero.**
+- **Root cause, verified against the INSTALLED livekit-agents 1.6.5 source, not guessed:**
+  closing the AgentSession does not end the JOB, and only the job ending fires
+  `ctx.add_shutdown_callback`.
+  - on participant disconnect, RoomIO calls `AgentSession._close_soon(PARTICIPANT_DISCONNECTED)`
+    (`voice/room_io/room_io.py` L398-421) — `close_on_disconnect` already defaults True, so the
+    session *does* close;
+  - the only thing hooked to that close is `_on_agent_session_close` (same file L472), which
+    deletes the room ONLY if `delete_room_on_close` is set — and that defaults to **False**
+    (`voice/room_io/types.py` L129/L268);
+  - nothing in that path calls `JobContext.shutdown` (`job.py` L742). So the job stayed alive,
+    `_release_quota_slot` never ran, and the row stayed open until the worker process died.
+- **The DB proved it before any code changed** — `end_reason` distribution across all history:
+  `reconciled_stale` 73, **`parent process shutdown` 19**, `normal` **2**. That string comes from
+  `ipc/job_proc_lazy_main.py` L251, i.e. the parent worker process killing the job — Ctrl-C, not a
+  hangup. Sessions were essentially never closing on disconnect; 2 "normal" in the whole history.
+- **Fix 1 (the bug):** `session.on("close", ...)` -> `ctx.shutdown(reason=<CloseReason.value>)` in
+  `worker/main.py::entrypoint`, registered BEFORE `session.start()` so no close can be missed.
+  Confirmed `AgentSession` really emits it: `self.emit("close", CloseEvent(...))`
+  (`voice/agent_session.py` L1117), `CloseReason` is a `str` Enum (`voice/events.py` L564) so
+  `.value` yields e.g. `participant_disconnected` — which now lands in `sessions.end_reason`
+  instead of a blanket "normal", making the real hangup cause visible on the dashboard.
+- **Fix 2 (a second leak found while reading that function):** `_release_quota_slot` opened with
+  `if not tenant_id: return`, which skipped **closing the session row too** — leaking an open row
+  and a permanent "live call" over what is only a metadata problem. Closing the row is keyed on
+  `room_name` and never needed `tenant_id`; only the quota decrement does. Now: always close the
+  row, decrement only when the tenant is known, and log a WARNING (not silence) in the odd case.
+- **Verified without a live call:** `ruff check`/`format` clean, `worker.main` imports,
+  `tests/test_worker.py` **10/10 green**. `worker/main.py` was formatted (3 hunks, all
+  PRE-EXISTING lines, none of mine — file was already in the repo's unformatted set).
+- **NOT yet verified end-to-end — needs the human's live retest**, stated plainly rather than
+  claimed: the disconnect->shutdown path cannot be exercised without a real LiveKit call and a
+  real client disconnect. Mechanism is verified against the SDK source; the behaviour is not yet
+  observed. Retest procedure handed to the human (watch for the new INFO log line, then confirm
+  `ended_at`/`end_reason=participant_disconnected` and `concurrent_now=0` in SQL).
+- Zero live/paid API calls made by me. Dev Postgres reads only.
+
+## Now (Session 14a — dashboard "13 live calls" fixed: stale-session leak, data + code)
+
+- **Symptom (human-reported):** dashboard showed **13 live calls with nothing actually running**.
+- **Root cause, verified by direct query before any change** — not a display bug in the count
+  itself, the data was genuinely stale. `demo-gate3` had 13 open sessions, oldest **96.4 h**;
+  `habiba` had 14, oldest 10.5 h; **27 total, and ZERO younger than 30 minutes.** The mint opens a
+  `sessions` row; only `worker/main.py::_release_quota_slot` closes it, so any ungraceful worker
+  exit (Ctrl-C in dev, crash, dispatch that never lands) leaks the row permanently.
+  `quota_state.concurrent_now` was stuck at 13/14 to match — at 13/20 and 14/20, ~6 more calls per
+  tenant and the mint would have started rejecting `concurrent cap reached` **forever**. That part
+  was a live functional bug, not just cosmetics.
+- **Data fixed:** ran the repo's existing `scripts/reconcile_sessions.py` (dry-run first, then for
+  real). 27 sessions closed as `reconciled_stale`; both counters corrected 13→0 and 14→0. Verified
+  after: **0 open sessions across all tenants, 0 nonzero concurrency counters.**
+- **Code fixed so the display can never lie again**, independent of whether reconcile has run:
+  `tenant_portal_api/queries.py::list_recent_sessions` — `live` was exactly `ended_at is None`,
+  which reports every leaked row as an active call. Now `ended_at is null AND started_at > now() -
+  LIVE_SESSION_MAX_AGE_MIN`. New `stale` field distinguishes "leaked" from "ended cleanly" instead
+  of silently folding leaks into "Ended". **30 min is not a new invention** — it is
+  `reconcile_sessions.py`'s own `--max-age-minutes` default, reused deliberately so there is ONE
+  definition of stale. Computed in Postgres against `now()`, so no app-server clock skew.
+- **Dashboard:** `PortalSession.stale` added; sessions table + drawer show an amber **Stale** badge
+  and an explanatory note; CSV export writes `Stale` / `Never closed`. Overview's "Live Calls Now"
+  card needed no change — it counts `s.live`, which is now correct. `npx tsc --noEmit` clean.
+- **New regression test** `test_stale_open_session_is_not_reported_live` — seeds a 2-min-old open
+  session (live), a 96-h-old open session (the exact production shape), and a cleanly-ended one,
+  asserting all three states off one query. **Proven to actually catch the bug**: temporarily
+  reverted `live` to the old `r[5] is None` form and confirmed the test FAILS, then restored and
+  re-confirmed 3/3 green — a regression test that passes against the old code would be worthless.
+- **Verification run (`make` still unavailable — see BLOCK-ENV):** `tests/test_phase4_portal_api.py`
+  3/3 green against the live dev DB; `ruff check` clean on both touched files; `ruff format` clean
+  (formatted `queries.py`'s pre-existing `usage_summary` signature and one line of my own new test
+  — both mechanical, zero behavior change); E402 count in the test file unchanged at its
+  pre-existing 3, so no new lint introduced.
+- **Deliberately NOT changed, flagged for a decision:** the Overview "Concurrent Calls" card reads
+  `quota_state.concurrent_now`, the counter the MINT enforces against. Displaying a "truer"
+  computed number there would make the dashboard disagree with the thing that actually gates calls
+  — a tenant would see 0 concurrent and still get 429s. The counter can still drift on the next
+  ungraceful exit. Two real fixes, neither built unasked: (a) schedule `reconcile_sessions.py`
+  (cron/Render job — nothing schedules it today), or (b) derive concurrency from open+recent
+  `sessions` inside `control_plane/mint.py` so a counter cannot drift at all. (b) is the
+  architecturally right one but touches quota enforcement (non-negotiable #5) and deserves an ADR.
+- Zero live/paid API calls. Dev Postgres only.
 
 ## Now (Session 13 — existing-tenant machine-auth agent management, planned then implemented)
 - **Scope: existing tenants only**, per explicit instruction — a tenant with `tenant_id`/

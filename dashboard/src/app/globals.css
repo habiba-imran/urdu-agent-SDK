@@ -54,6 +54,18 @@ body {
   outline-offset: 2px;
 }
 
+/* Thin scrollbar for the voice catalogue grid, matching awaaz-labs-voice-catalogue. */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 9999px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
