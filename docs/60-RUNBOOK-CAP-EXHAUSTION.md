@@ -47,7 +47,7 @@ ship — a naive integration will show the caller an immediate failure with no a
 Exactly one of these is thrown by `await sdk.connect({ agentId })` (never emitted as an event —
 these are Promise rejections the caller's own `try/catch` must handle):
 
-| Server condition | HTTP status | `UvaError.code` | Notes |
+| Server condition | HTTP status | `AwaazLabsUvaVoiceError.code` | Notes |
 |---|---|---|---|
 | Rate limit (120/tenant/min) | 429 | `quota_exceeded` | **Indistinguishable from the two below** |
 | Concurrent cap reached | 429 | `quota_exceeded` | **Indistinguishable from the other two** |
@@ -69,7 +69,7 @@ flagged for whoever builds real host-platform integration UX next.
 ## 4. What about LiveKit's own cap (not our token mint's)?
 
 If a request GETS a token (passed all our checks) but LiveKit itself is at its own concurrency
-limit, that would surface as a `room.connect()` failure → `UvaError('session_failed', 'LiveKit
+limit, that would surface as a `room.connect()` failure → `AwaazLabsUvaVoiceError('session_failed', 'LiveKit
 connection failed')` (same generic code as any other WebRTC failure — LiveKit's specific
 rejection reason is not threaded through). **Whether this can actually happen is unresolved**:
 ADR-014 (3 separate live tests) and P8-T01 (a 4th, today) have never once reproduced LiveKit

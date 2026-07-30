@@ -33,8 +33,6 @@ except ImportError:
     sentry_sdk = None
 
 
-
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 try:
     from scripts.dbconn import conn_kwargs
@@ -86,11 +84,10 @@ def _require_env() -> None:
 
 _require_env()
 
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-_CORS_ORIGINS_RAW = (
-    os.environ.get("CP_ALLOWED_ORIGINS")
-    or _ENV.get("CP_ALLOWED_ORIGINS", "")
+_CORS_ORIGINS_RAW = os.environ.get("CP_ALLOWED_ORIGINS") or _ENV.get(
+    "CP_ALLOWED_ORIGINS", ""
 )
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 
@@ -107,14 +104,12 @@ if _SENTRY_DSN and sentry_sdk is not None:
 
 
 app = FastAPI(
-
     title="UVA Control Plane",
     description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
-
 
 
 app.add_middleware(
@@ -135,7 +130,12 @@ def health_check():
 @app.get("/healthz/deep")
 def deep_health_check():
     """Deep readiness probe — verifies live PostgreSQL DB connectivity and LiveKit credentials configuration."""
-    health = {"status": "healthy", "service": "uva-control-plane", "database": "unknown", "livekit": "configured"}
+    health = {
+        "status": "healthy",
+        "service": "uva-control-plane",
+        "database": "unknown",
+        "livekit": "configured",
+    }
 
     # 1. Verify DB
     try:
@@ -153,7 +153,6 @@ def deep_health_check():
 
     status_code = 200 if health["status"] == "healthy" else 503
     return JSONResponse(status_code=status_code, content=health)
-
 
 
 @app.get("/v1/voices")
@@ -186,18 +185,51 @@ def list_voices():
 
     # Fallback default catalog if DB query fails or unpopulated
     return [
-        {"id": "v_meklc281", "displayName": "Demo Voice (Default)", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "helpdesk-agent", "displayName": "Helpdesk Agent", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "street-vendor", "displayName": "Street Vendor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "prime-time-anchor", "displayName": "Prime Time Anchor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "nosey-aunty", "displayName": "Nosey Aunty", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {
+            "id": "v_meklc281",
+            "displayName": "Demo Voice (Default)",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "helpdesk-agent",
+            "displayName": "Helpdesk Agent",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "street-vendor",
+            "displayName": "Street Vendor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "prime-time-anchor",
+            "displayName": "Prime Time Anchor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "nosey-aunty",
+            "displayName": "Nosey Aunty",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
     ]
-
 
 
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _hits: dict[str, list[float]] = defaultdict(list)
-
 
 
 class SessionBody(BaseModel):
@@ -247,7 +279,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
     tenant_id = metadata.get("tenant_id")
     agent_id = metadata.get("agent_id")
     if not tenant_id or not agent_id:
-        raise HTTPException(status_code=401, detail="token metadata missing tenant or agent")
+        raise HTTPException(
+            status_code=401, detail="token metadata missing tenant or agent"
+        )
 
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
@@ -260,7 +294,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
                 room=room,
                 can_publish=claims.video.can_publish if claims.video else True,
                 can_subscribe=claims.video.can_subscribe if claims.video else True,
-                can_publish_data=claims.video.can_publish_data if claims.video else True,
+                can_publish_data=claims.video.can_publish_data
+                if claims.video
+                else True,
             )
         )
         .to_jwt()
@@ -371,7 +407,11 @@ def _dev_mint_session(
                 origin=request.headers.get("origin"),
             )
         except MintError as e:
-            if auto_reset_quota and e.status == 429 and e.reason == "concurrent cap reached":
+            if (
+                auto_reset_quota
+                and e.status == 429
+                and e.reason == "concurrent cap reached"
+            ):
                 _dev_reset_concurrency(conn, tenant_id)
                 res = mint_session(
                     conn=conn,

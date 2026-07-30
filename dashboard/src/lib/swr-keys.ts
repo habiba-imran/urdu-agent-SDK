@@ -19,6 +19,6 @@ export const swrFetchers = {
   agents: () => getAgents(),
   credentials: () => getCredentials(),
   sessions: () => getSessions(),
-  usage: () => getUsageSummary(30),
+  usage: () => getUsageSummary(),
   voices: () => getVoiceCatalogue(),
 };

@@ -216,6 +216,16 @@ def credentials_route(authorization: str | None = Header(default=None)):
             raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+@app.get("/portal/credentials/secret")
+def credentials_secret_route(authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        try:
+            return {"hmac_secret": queries.get_raw_secret(conn, claims["sub"])}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 @app.get("/portal/sessions")
 def sessions_route(limit: int = 50, authorization: str | None = Header(default=None)):
     claims = _require_tenant(authorization)
@@ -224,13 +234,14 @@ def sessions_route(limit: int = 50, authorization: str | None = Header(default=N
 
 
 @app.get("/portal/usage-summary")
-def usage_summary_route(
-    days: int = 30, authorization: str | None = Header(default=None)
-):
+def usage_summary_route(authorization: str | None = Header(default=None)):
+    """Always the CURRENT CALENDAR MONTH (1st through the end of the month) — see
+    queries.usage_summary's docstring. No `days` param: this used to be an arbitrary rolling
+    window that disagreed with the monthly cap the mint actually enforces."""
     claims = _require_tenant(authorization)
     with _conn() as conn:
         try:
-            return queries.usage_summary(conn, claims["sub"], days=days)
+            return queries.usage_summary(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 

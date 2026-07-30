@@ -268,4 +268,3 @@ def get_tenant_credentials_masked(conn: psycopg.Connection, tenant_id: str) -> d
         "secret_masked": "••••••••••••••••••••••••••••••••",
         "status": row[5],
     }
-

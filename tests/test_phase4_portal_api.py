@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
@@ -11,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from control_plane.secrets import secret_hash
-from dbconn import conn_kwargs
-from tenant_portal_api.app import app
+from control_plane.secrets import secret_hash  # noqa: E402
+from dbconn import conn_kwargs  # noqa: E402
+from tenant_portal_api.app import app  # noqa: E402
 
 
 def _seed_portal_tenant():
@@ -113,6 +114,108 @@ def test_portal_login_and_scoped_routes():
         usage_json = usage.json()
         assert usage_json["quota"]["minutes_this_month"] == 12.0
         assert any(row["kind"] == "agent_sec" for row in usage_json["totals"])
+
+        # Calendar-month bounds, not a rolling "last N days" window (regression: this endpoint
+        # used to take ?days=30 and had no notion of a calendar month at all).
+        today = date.today()
+        assert usage_json["period_start"] == today.replace(day=1).isoformat()
+        next_month = today.replace(day=28) + timedelta(days=4)
+        expected_end = next_month.replace(day=1)
+        assert usage_json["period_end"] == expected_end.isoformat()
+        # the seeded session's usage_events row (inserted `now()` above) must fall inside it
+        assert (
+            usage_json["period_start"] <= today.isoformat() < usage_json["period_end"]
+        )
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_credentials_secret_reveal():
+    """The credentials-tab 'view/copy HMAC secret' action returns the tenant's OWN raw secret.
+
+    Scoped by claims["sub"] from the caller's own verified portal JWT — same boundary as every
+    other /portal/* route, just returning the real value instead of get_credentials' masked one.
+    """
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        token = login.json()["token"]
+
+        revealed = client.get(
+            "/portal/credentials/secret", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert revealed.status_code == 200
+        assert revealed.json()["hmac_secret"] == secret
+
+        no_auth = client.get("/portal/credentials/secret")
+        assert no_auth.status_code == 401
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_stale_open_session_is_not_reported_live():
+    """An open session past the staleness bound must NOT read as live.
+
+    Regression: the dashboard showed "13 live calls" for a tenant whose oldest open session was
+    96 hours old. `sessions` rows are opened by the mint and closed only by worker/main.py's
+    shutdown callback, so any ungraceful worker exit leaks a row with ended_at IS NULL forever.
+    `live` used to be exactly `ended_at is None`, which reported every leaked row as an active
+    call. Asserts all three states off ONE query, so a regression in any direction fails.
+    """
+    tenant_id, secret, voice_id, agent_id = _seed_portal_tenant()
+    fresh_id, stale_id = str(uuid.uuid4()), str(uuid.uuid4())
+
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        # open, started 2 min ago -> genuinely live
+        conn.execute(
+            """
+            insert into sessions (id, tenant_id, agent_id, room_name, started_at)
+            values (%s, %s, %s, %s, now() - interval '2 minutes')
+            """,
+            (fresh_id, tenant_id, agent_id, f"room-{uuid.uuid4()}"),
+        )
+        # open, started 96 h ago -> leaked, must not be live (the exact production shape)
+        conn.execute(
+            """
+            insert into sessions (id, tenant_id, agent_id, room_name, started_at)
+            values (%s, %s, %s, %s, now() - interval '96 hours')
+            """,
+            (stale_id, tenant_id, agent_id, f"room-{uuid.uuid4()}"),
+        )
+
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        token = login.json()["token"]
+        rows = client.get(
+            "/portal/sessions", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert rows.status_code == 200
+        by_id = {r["id"]: r for r in rows.json()}
+
+        fresh = by_id[fresh_id]
+        assert fresh["live"] is True, "a 2-minute-old open session must be live"
+        assert fresh["stale"] is False
+
+        stale = by_id[stale_id]
+        assert stale["live"] is False, "a 96-hour-old open session must NOT be live"
+        assert stale["stale"] is True, (
+            "it must be surfaced as stale, not silently 'ended'"
+        )
+
+        # the pre-seeded cleanly-ended session is neither live nor stale
+        ended = next(r for r in by_id.values() if r["ended_at"] is not None)
+        assert ended["live"] is False
+        assert ended["stale"] is False
+
+        # and the count the Overview card renders is now 1, not 2
+        assert sum(1 for r in by_id.values() if r["live"]) == 1
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)
 

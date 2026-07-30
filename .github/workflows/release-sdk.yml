@@ -8,7 +8,7 @@ on:
 
 jobs:
   release-sdk:
-    name: Publish @uva/voice
+    name: Publish @awaazlabs-uva/voice
     runs-on: ubuntu-latest
     permissions:
       contents: read

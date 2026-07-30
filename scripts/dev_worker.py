@@ -28,7 +28,9 @@ def main():
             # Run worker in dev mode
             res = subprocess.run([sys.executable, "-m", "worker.main", "dev"])
             restart_count += 1
-            print(f"\n🔄 Worker exited (code {res.returncode}). Auto-restarting watchdog (attempt #{restart_count})...")
+            print(
+                f"\n🔄 Worker exited (code {res.returncode}). Auto-restarting watchdog (attempt #{restart_count})..."
+            )
             time.sleep(0.5)
         except KeyboardInterrupt:
             print("\n🛑 Worker watchdog stopped by user.")

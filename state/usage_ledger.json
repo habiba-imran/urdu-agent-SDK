@@ -1,6 +1,10 @@
 {
   "uplift_tts_sec": 327,
+<<<<<<< HEAD
   "livekit_agent_min": 69,
+=======
+  "livekit_agent_min": 84,
+>>>>>>> origin/ukasha
   "gladia_stt_sec": 0,
   "supabase_db_mb": 0,
   "livekit_adaptive_interruption_req": 0

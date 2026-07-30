@@ -83,6 +83,7 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | duration_sec | integer | YES |  |
 | end_reason | text | YES |  |
 | summary | text | YES |  |
+| transcript | jsonb | YES |  |
 - FK: agent_id -> agents(id)
 - FK: tenant_id -> tenants(id)
 - index: sessions_pkey
@@ -100,6 +101,7 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | allowed_origins | ARRAY | NO | '{}'::text[] |
 | status | text | NO | 'active'::text |
 | created_at | timestamp with time zone | NO | now() |
+| hmac_secret | text | YES |  |
 - index: tenants_pkey
 
 ## table: usage_events

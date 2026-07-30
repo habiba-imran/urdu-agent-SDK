@@ -1,21 +1,16 @@
-// UrduVoiceAgent client SDK (docs/24-PHASE-4-CLIENT-SDK.md).
-//
-// This bundle ships into a THIRD-PARTY app and is assumed fully decompiled on day one, so it holds
-// ZERO secrets (no API key, no HMAC secret, no LiveKit secret). It talks only to the HOST
-// platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
-// and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
-
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
 
-export interface UrduVoiceAgentOptions {
+export interface AwaazLabsUvaVoiceOptions {
   /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
   publishableKey: string;
-  /** The HOST platform's OWN server (holds their HMAC secret, calls our mint). NOT our server. */
+  /** The HOST platform's OWN server. It returns the short-lived session payload. */
   sessionEndpoint: string;
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
 }
+
+export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
 
 export interface ConnectOptions {
   agentId: string;
@@ -34,7 +29,7 @@ export interface Voice {
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
-export type UvaEvent =
+export type AwaazLabsUvaVoiceEvent =
   | 'transcript'
   | 'speaking'
   | 'error'
@@ -45,7 +40,11 @@ export type UvaEvent =
   | 'metrics_updated'
   | 'audio_blocked';
 
-export type UvaErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+export type UvaEvent = AwaazLabsUvaVoiceEvent;
+
+export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+
+export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface TranscriptEvent {
   text: string;
@@ -57,15 +56,17 @@ export interface MetricsEvent {
   [key: string]: unknown;
 }
 
-export class UvaError extends Error {
+export class AwaazLabsUvaVoiceError extends Error {
   constructor(
-    public readonly code: UvaErrorCode,
+    public readonly code: AwaazLabsUvaVoiceErrorCode,
     message?: string,
   ) {
     super(message ?? code);
-    this.name = 'UvaError';
+    this.name = 'AwaazLabsUvaVoiceError';
   }
 }
+
+export { AwaazLabsUvaVoiceError as UvaError };
 
 interface SessionResponse {
   token: string;
@@ -75,10 +76,10 @@ interface SessionResponse {
   expiresIn?: number;
 }
 
-export interface UvaEventMap {
+export interface AwaazLabsUvaVoiceEventMap {
   transcript: [TranscriptEvent];
   speaking: [boolean];
-  error: [UvaError];
+  error: [AwaazLabsUvaVoiceError];
   ended: [unknown];
   connected: [];
   disconnected: [unknown];
@@ -92,38 +93,41 @@ export interface UvaEventMap {
   audio_blocked: [boolean];
 }
 
+export type UvaEventMap = AwaazLabsUvaVoiceEventMap;
+
 type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
-export class UrduVoiceAgent {
+export class AwaazLabsUvaVoice {
   private room: Room | null = null;
-  private readonly listeners = new Map<UvaEvent, Set<Listener>>();
+  private readonly listeners = new Map<AwaazLabsUvaVoiceEvent, Set<Listener>>();
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
   private state: ConnectionState = 'idle';
 
-  static async listVoices(
-    endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices'
-  ): Promise<Voice[]> {
+  static async listVoices(endpointUrl: string): Promise<Voice[]> {
+    if (!endpointUrl.trim()) {
+      throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
+    }
     try {
       const res = await fetch(endpointUrl);
       if (!res.ok) {
-        throw new UvaError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+        throw new AwaazLabsUvaVoiceError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
       }
       return (await res.json()) as Voice[];
     } catch (e) {
-      if (e instanceof UvaError) throw e;
-      throw new UvaError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
+      if (e instanceof AwaazLabsUvaVoiceError) throw e;
+      throw new AwaazLabsUvaVoiceError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
     }
   }
 
-  constructor(private readonly options: UrduVoiceAgentOptions) {
+  constructor(private readonly options: AwaazLabsUvaVoiceOptions) {
 
     if (!options.publishableKey.trim()) {
-      throw new UvaError('session_failed', 'publishableKey is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'publishableKey is required');
     }
     if (!options.sessionEndpoint.trim()) {
-      throw new UvaError('session_failed', 'sessionEndpoint is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'sessionEndpoint is required');
     }
   }
 
@@ -137,10 +141,10 @@ export class UrduVoiceAgent {
 
   async connect(opts: ConnectOptions): Promise<void> {
     if (this.room) {
-      throw new UvaError('session_failed', 'already connected - call disconnect() first');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'already connected - call disconnect() first');
     }
     if (!opts.agentId.trim()) {
-      throw new UvaError('session_failed', 'agentId is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'agentId is required');
     }
 
     this.state = 'connecting';
@@ -156,23 +160,23 @@ export class UrduVoiceAgent {
         }),
       });
       if (res.status === 429) {
-        throw new UvaError('quota_exceeded');
+        throw new AwaazLabsUvaVoiceError('quota_exceeded');
       }
       if (res.status === 404) {
-        throw new UvaError('agent_not_found');
+        throw new AwaazLabsUvaVoiceError('agent_not_found');
       }
       if (!res.ok) {
-        throw new UvaError('session_failed');
+        throw new AwaazLabsUvaVoiceError('session_failed');
       }
       const parsed = (await res.json()) as Partial<SessionResponse>;
       if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-        throw new UvaError('session_failed', 'session endpoint returned an incomplete response');
+        throw new AwaazLabsUvaVoiceError('session_failed', 'session endpoint returned an incomplete response');
       }
       body = parsed as SessionResponse;
     } catch (err) {
       this.state = 'idle';
-      if (err instanceof UvaError) throw err;
-      throw new UvaError('session_failed', 'could not reach sessionEndpoint');
+      if (err instanceof AwaazLabsUvaVoiceError) throw err;
+      throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
 
     const room = new Room();
@@ -182,7 +186,7 @@ export class UrduVoiceAgent {
       await room.connect(body.wsUrl, body.token);
     } catch {
       this.state = 'idle';
-      throw new UvaError('session_failed', 'LiveKit connection failed');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
 
     try {
@@ -190,7 +194,7 @@ export class UrduVoiceAgent {
     } catch {
       await room.disconnect();
       this.state = 'idle';
-      throw new UvaError('session_failed', 'microphone permission denied or unavailable');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
     }
 
     this.room = room;
@@ -198,7 +202,7 @@ export class UrduVoiceAgent {
     this.scheduleTokenRefresh(body);
   }
 
-  on<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+  on<K extends AwaazLabsUvaVoiceEvent>(event: K, cb: Listener<AwaazLabsUvaVoiceEventMap[K]>): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
@@ -206,7 +210,7 @@ export class UrduVoiceAgent {
     return this;
   }
 
-  off<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+  off<K extends AwaazLabsUvaVoiceEvent>(event: K, cb: Listener<AwaazLabsUvaVoiceEventMap[K]>): this {
     this.listeners.get(event)?.delete(cb as Listener);
     return this;
   }
@@ -234,9 +238,9 @@ export class UrduVoiceAgent {
     }
   }
 
-  private emit<K extends UvaEvent>(event: K, ...args: UvaEventMap[K]): void {
+  private emit<K extends AwaazLabsUvaVoiceEvent>(event: K, ...args: AwaazLabsUvaVoiceEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      (cb as Listener<UvaEventMap[K]>)(...args);
+      (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
     }
   }
 
@@ -296,7 +300,7 @@ export class UrduVoiceAgent {
     });
 
     room.on(RoomEvent.MediaDevicesError, (error: Error) => {
-      this.emit('error', new UvaError('session_failed', error.message));
+      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', error.message));
     });
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
@@ -398,7 +402,7 @@ export class UrduVoiceAgent {
       }
       this.scheduleTokenRefresh(this.session);
     } catch {
-      this.emit('error', new UvaError('session_failed', 'token refresh failed'));
+      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', 'token refresh failed'));
     }
   }
 
@@ -432,3 +436,5 @@ export class UrduVoiceAgent {
     }
   }
 }
+
+export { AwaazLabsUvaVoice as UrduVoiceAgent };

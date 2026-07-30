@@ -1,7 +1,7 @@
 {
-  "name": "@uva/voice",
+  "name": "@awaazlabs-uva/voice",
   "version": "0.1.0",
-  "description": "Urdu Voice Agent client SDK - public bundle, zero secrets (Phase 4 scaffold).",
+  "description": "AwaazLabs-UVA-Voice browser client SDK - public bundle, zero secrets.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
@@ -15,6 +15,7 @@
     "voice-agent",
     "livekit",
     "urdu",
+    "awaazlabs-uva",
     "sdk"
   ],
   "type": "module",

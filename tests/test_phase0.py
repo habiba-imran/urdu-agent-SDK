@@ -10,16 +10,17 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from control_plane.app import app as cp_app
-from admin.app import app as admin_app
+from control_plane.app import app as cp_app  # noqa: E402
+from admin.app import app as admin_app  # noqa: E402
+
 try:
     from scripts.reconcile_sessions import reconcile_sessions
 except ImportError:
     from reconcile_sessions import reconcile_sessions  # type: ignore # noqa: E402
 
 
+import pytest  # noqa: E402
 
-import pytest
 
 def test_control_plane_healthz():
     """Verify GET /healthz on control plane returns 200 with service name."""
@@ -46,4 +47,3 @@ def test_reconcile_sessions_dry_run():
         assert "tenants_reconciled" in stats
     except Exception as e:
         pytest.skip(f"Database connection not available: {e}")
-

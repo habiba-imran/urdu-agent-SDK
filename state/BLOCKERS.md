@@ -15,6 +15,95 @@
 
 ## Open
 
+## BLOCK-ENV | gate toolchain absent on this machine | 2026-07-27
+**Expected:** `.claude/hooks/gate.sh` runs `make gate` (secrets -> lint -> test -> rls-check ->
+usage-check) and reports a real pass/fail.
+**Actual:** Hook aborts at line 5 with `make: command not found`. The gate never executes — no
+lint, no test, no RLS check runs at all. Fires on EVERY stop, regardless of what changed.
+**Tried:** (1) `which make mingw32-make` + checked Git-for-Windows' `usr/bin` -> absent everywhere.
+(2) Ran the gate's steps directly instead. (3) Confirmed this is not caused by any edit:
+`git status --porcelain` empty — the session that hit this was a read-only review that wrote no
+files.
+
+**PARTIALLY RESOLVED 2026-07-27:** human ran `pip install -r requirements.txt`, which supplies
+`ruff==0.15.21` and `pytest==9.1.1`. Still absent: `make` and `gitleaks`. So the hook itself still
+cannot run, but 4 of the 5 gate lines were executed manually. **Real results, this machine:**
+| gate line | result |
+|---|---|
+| `secrets` (gitleaks) | UNRUNNABLE — gitleaks not installed |
+| `lint` — `ruff check .` | **RED** — 24 errors (21×E402, 3×F401), ALL pre-existing |
+| `lint` — `ruff format --check .` | **RED** — 13 files would reformat, ALL pre-existing |
+| `test` — `pytest -q` | **RED** — see below |
+| `rls-check` | **GREEN** — 11/11 tables OK |
+| `usage-check` | **GREEN** — ledger within every budget, zero spend |
+
+`test` fails two ways, both pre-existing legacy-harness breakage, neither introduced here:
+  1. **Collection aborts** on `tests/test_tts.py` -> `ModuleNotFoundError: No module named
+     'services'`. One collection error interrupts the WHOLE run, so `make test` currently reports
+     nothing at all rather than a test result.
+  2. With that file ignored: **5 failed, 57 passed, 3 skipped.** All 5 are
+     `test_harness.py::TestCERHarness::*` failing on `No module named 'config'`
+     (`tests/helpers.py:26`). Note this is BROADER than PROGRESS.md's long-tracked "3 CER
+     failures" — it is now 5, and the error changed from a schema mismatch to a missing module.
+`services/`, `config`, and `pipecat_stubs/` (the latter referenced by `pytest.ini`'s `pythonpath`)
+do not exist in this checkout. Same root cause as ADR-013/ADR-030's deferred CER-harness pile.
+
+**Separate real finding, surfaced while doing this — not an environment issue:**
+`pytest.ini`'s `python_files` whitelist does NOT include `test_phase4_portal_api.py` or
+`test_machine_agent_api.py`. Verified: `pytest --collect-only | grep -c` -> **0**. The tenant
+portal API (the dashboard's whole backend) and the machine-auth agent surface therefore have
+**zero coverage inside `make gate`**. Run explicitly with `-o python_files="test_*.py"` they are
+**13/13 GREEN against the live dev DB** — which also closes PROGRESS.md Session 13's open item
+("running the full test file green against a live dev DB is still an open step"). It is done now.
+
+### UPDATE 2026-07-27 (session 14) — (a) and (b) are now DONE; only the CER decision is left
+
+- **(a) RESOLVED.** `make` (ezwinports 4.4.1) and `gitleaks` (8.30.1) installed per-user via winget,
+  no admin needed. The hook genuinely runs now. **`secrets` line is GREEN** — gitleaks scanned 142
+  commits, **no leaks found**. Note: for this whole session a *missing binary* and a *real leak*
+  produced the identical `GATE FAIL: secrets`, because `Makefile:14` sends stderr to /dev/null.
+  Worth making that distinguish "tool absent" from "leak found".
+- **(b) RESOLVED.** Lint debt cleaned: 3×F401 auto-fixed (all genuinely unused — verified by grep
+  before removing; `admin.app` in particular was being imported into `test_phase2.py` purely for
+  its ADMIN_JWT_SECRET side effect), 19×E402 annotated `# noqa: E402` following the convention this
+  repo already uses, 11 files `ruff format`ed. **`lint` line is GREEN.** All 5 touched services
+  re-imported clean afterwards.
+- **Gate now stops at exactly one place: `test`.** Real numbers this machine, today:
+  **57 passed, 5 failed, 3 skipped, 1 collection error.** Every red item is the same legacy pile:
+  `test_tts.py` (needs `services`) and `test_harness.py` (needs `config`). Confirmed missing from
+  this checkout: **`services/`, `config/`, `bench/`, `pipecat_stubs/` — all four do not exist.**
+  Nothing else in the suite is red.
+- **The collection error is the expensive part**: ONE bad import interrupts the entire run, so
+  `make test` reports *nothing at all* rather than "57 passed". The gate is not merely red, it is
+  uninformative.
+- **The whitelist inversion, now measured.** `pytest.ini`'s `python_files` is an explicit 9-file
+  list. It INCLUDES both dead files (`test_tts.py`, `test_harness.py`) and EXCLUDES the live ones.
+  Verified today by running the excluded non-live files directly: `test_phase4_portal_api.py`,
+  `test_machine_agent_api.py`, `test_phase2.py`, `test_phase4_voice_picker.py` -> **19 passed, 0
+  failed.** So the gate currently runs the broken legacy tests and skips 19 green ones — including
+  this session's new stale-session regression test, which guards the dashboard bug just fixed.
+  `test_phase8_prod.py` must NOT be added (imports the missing `bench`), and no `*_live.py` file
+  should ever be added — those spend real money.
+
+**STILL NEEDED FROM HUMAN — this is the 3-strike stop, not a thing to keep retrying.** These same
+failures have now been re-confirmed across six sessions. ADR-030 already recommends CER-harness
+retirement and is explicitly waiting on sign-off. Two separable calls:
+  1. **The dead CER files** (`test_tts.py`, `test_harness.py`) — delete, or exclude from
+     `pytest.ini` (reversible, keeps the files as evidence)? This is the sole gate blocker.
+  2. **The whitelist** — add the 4 measured-green files (19 tests) so the dashboard backend stops
+     having zero gate coverage? Purely additive; no bearing on decision 1.
+Not doing either unilaterally: deleting tests is the human's call, and the hook's own instruction
+is "do not edit the test."
+
+(historical, superseded by the UPDATE above)
+**Need from human:** (a) `winget install GnuWin32.Make` + `gitleaks` to make the hook itself run;
+(b) decide whether the pre-existing lint debt (13 files reformat + 21 E402) gets cleaned — it is
+mechanical but touches 13 files unrelated to current work; (c) decide whether `pytest.ini` should
+collect the portal/machine test files, which is the finding that actually matters.
+Not editing the hook to skip `make` unilaterally: making the gate stop gating is exactly the move
+its own "do not rationalise" line exists to prevent.
+**STATUS: BLOCKED on (a) only. Gate substance IS known — 2 green, 2 red (pre-existing), 1 unrunnable.**
+
 ## BLOCK-SEC | P7 injection live gate | 2026-07-18T13:51:26Z
 **SECURITY-CRITICAL — not a normal 3-strike blocker.**
 A live prompt-injection attack SUCCEEDED against the real worker/main.py agent construction:
