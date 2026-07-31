@@ -1,0 +1,45 @@
+{
+  "name": "@awaazlabs-uva/telephony",
+  "version": "0.1.0",
+  "description": "Backend-only AwaazLabs UVA telephony SDK for signed machine telephony API calls.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
+    "directory": "telephony"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "awaazlabs",
+    "uva",
+    "telephony",
+    "hmac",
+    "backend"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "npm run build && node test/phase8-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
