@@ -504,7 +504,7 @@ Subphases:
 
 Tests/checks:
 
-- `tests/test_schema.py`
+- `tests/test_schema.py` only if the legacy CER/TechZone harness is intentionally revived; otherwise record it as non-telephony retired-harness debt per `state/HANDOFF.md` and `docs/40-ADR.md` ADR-030.
 - `tests/test_isolation.py`
 - `tests/test_cross_tenant_read_live.py` when live credentials are configured and approved
 - `tests/test_machine_agent_api.py`
