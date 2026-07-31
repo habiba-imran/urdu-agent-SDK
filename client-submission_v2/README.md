@@ -29,6 +29,13 @@ client-submission/
     └── credentials-template.md   ← Credential placeholders (filled by Finova)
 ```
 
+Phase 10 telephony addition:
+
+- `sdk/@awaazlabs-uva/telephony/` contains the backend-only telephony SDK source,
+  package files, README, and `awaazlabs-uva-telephony-0.1.0.tgz`.
+- The `.tgz` contains the compiled `dist` files used at install time.
+- It is installed in backend services only. It is not part of a browser bundle.
+
 ---
 
 ## Where to Start
@@ -39,6 +46,7 @@ client-submission/
 | Follow the full step-by-step integration guide | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
 | Let my AI assistant write the integration code | [`docs/ai-integration-guide.md`](docs/ai-integration-guide.md) |
 | See what credentials I need and how they connect to code | [`docs/credentials-template.md`](docs/credentials-template.md) |
+| Add backend telephony management | [`sdk/@awaazlabs-uva/telephony/README.md`](sdk/@awaazlabs-uva/telephony/README.md) |
 
 ---
 
@@ -56,7 +64,28 @@ npm install ./sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz livekit-cli
 npm install ./sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 ```
 
+### Telephony SDK - install into your **backend** project only
+
+```bash
+npm install ./sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+```
+
+Use `@awaazlabs-uva/telephony` only from trusted backend code to manage Telnyx
+connection state, phone numbers, routing, and outbound call creation.
+
 > ⚠️ **Never install `@awaazlabs-uva/agents` in a frontend project.** It holds your tenant secret.
+
+> ⚠️ **Never install `@awaazlabs-uva/telephony` in a frontend project.** It signs machine telephony calls and can receive transient Telnyx API keys from backend environment variables.
+
+---
+
+## Package Model
+
+| Package | Use it in | Purpose |
+|---|---|---|
+| `@awaazlabs-uva/voice` | Browser/frontend | WebRTC voice sessions only; zero secrets. |
+| `@awaazlabs-uva/agents` | Node backend | Agent management; uses backend HMAC signing. |
+| `@awaazlabs-uva/telephony` | Node backend | Telephony management; uses backend HMAC signing and transient Telnyx keys. |
 
 ---
 
