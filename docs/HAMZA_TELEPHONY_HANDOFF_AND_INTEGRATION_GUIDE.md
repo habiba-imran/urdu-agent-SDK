@@ -77,7 +77,7 @@ Habiba owns creating and applying Supabase database migrations under `supabase/m
 
 Habiba is building the Node.js backend-only TypeScript SDK `@awaazlabs-uva/telephony`.
 
-### Machine HMAC Action Strings Matrix
+### Machine HMAC Action Strings Matrix (All 27 Frozen SDK Methods / 26 Unique Endpoints)
 
 When `@awaazlabs-uva/telephony` makes requests to `/machine/telephony/*`, it signs `tenant_id.timestamp.nonce.action.payload_hash` using the tenant's HMAC secret. Below are the exact action strings:
 
@@ -85,14 +85,31 @@ When `@awaazlabs-uva/telephony` makes requests to `/machine/telephony/*`, it sig
 |---|---|---|---|
 | `connectTelnyxAccount` | POST | `/machine/telephony/telnyx/connect` | `telephony.telnyx_connection.connect` |
 | `rotateTelnyxAccountKey` | POST | `/machine/telephony/telnyx/rotate` | `telephony.telnyx_connection.rotate` |
+| `reverifyTelnyxAccount` | POST | `/machine/telephony/telnyx/reverify` | `telephony.telnyx_connection.reverify` |
 | `disconnectTelnyxAccount` | DELETE | `/machine/telephony/telnyx/connection` | `telephony.telnyx_connection.disconnect` |
 | `getConnectionStatus` | GET | `/machine/telephony/telnyx/connection` | `telephony.telnyx_connection.status` |
+| `listTelnyxOwnedNumbers` | POST | `/machine/telephony/telnyx/owned-numbers/list` | `telephony.telnyx_owned_numbers.list` |
 | `listManagedPhoneNumbers` | POST | `/machine/telephony/numbers/list` | `telephony.managed_numbers.list` |
+| `importTelnyxNumber` | POST | `/machine/telephony/numbers/import` | `telephony.managed_numbers.import` |
+| `syncTelnyxOwnedNumbers` | POST | `/machine/telephony/numbers/sync` | `telephony.managed_numbers.sync` |
+| `getTelnyxNumberDrift` | POST | `/machine/telephony/numbers/drift` | `telephony.managed_numbers.drift` |
 | `searchAvailableNumbers` | POST | `/machine/telephony/available-numbers/search` | `telephony.available_numbers.search` |
+| `reserveNumber` | POST | `/machine/telephony/number-reservations` | `telephony.number_reservations.create` |
 | `purchaseNumber` | POST | `/machine/telephony/number-orders` | `telephony.number_orders.create` |
-| `assignAgentToNumber` | PATCH | `/machine/telephony/numbers/{id}/assignment` | `telephony.numbers.assign_agent` |
+| `getNumberOrderStatus` | POST | `/machine/telephony/number-orders/get` | `telephony.number_orders.get` |
+| `assignAgentToNumber` | PATCH | `/machine/telephony/numbers/{number_id}/assignment` | `telephony.numbers.assign_agent` |
+| `unassignAgentFromNumber` | PATCH | `/machine/telephony/numbers/{number_id}/assignment` | `telephony.numbers.assign_agent` |
+| `upsertTelnyxSipConnection` | POST | `/machine/telephony/telnyx/sip-connection` | `telephony.telnyx_sip_connection.upsert` |
+| `verifyTelnyxSipConnection` | POST | `/machine/telephony/telnyx/sip-connection/test` | `telephony.telnyx_sip_connection.test` |
+| `upsertTelnyxOutboundVoiceProfile` | POST | `/machine/telephony/telnyx/outbound-voice-profile` | `telephony.telnyx_outbound_voice_profile.upsert` |
+| `verifyTelnyxOutboundVoiceProfile` | POST | `/machine/telephony/telnyx/outbound-voice-profile/reverify` | `telephony.telnyx_outbound_voice_profile.reverify` |
+| `configureNumberRouting` | POST | `/machine/telephony/numbers/{number_id}/routing/configure` | `telephony.number_routing.configure` |
+| `configureOutboundTrunk` | POST | `/machine/telephony/telnyx/outbound-trunk/configure` | `telephony.outbound_trunk.configure` |
 | `getOutboundReadiness` | GET | `/machine/telephony/outbound-readiness` | `telephony.outbound_readiness.get` |
 | `createOutboundCall` | POST | `/machine/telephony/outbound-calls` | `telephony.outbound_calls.create` |
+| `getCallStatus` | POST | `/machine/telephony/calls/get` | `telephony.calls.get` |
+| `listCallRecords` | POST | `/machine/telephony/calls/list` | `telephony.calls.list` |
+| `disableNumber` | POST | `/machine/telephony/numbers/{number_id}/disable` | `telephony.numbers.disable` |
 
 ### Testing `@awaazlabs-uva/telephony` in Mock Mode
 - `TelnyxClient` and `LiveKitSipClient` automatically operate in **Mock Mode** when the Telnyx API key starts with `mock_` or `test_`.
@@ -143,6 +160,6 @@ When `@awaazlabs-uva/telephony` makes requests to `/machine/telephony/*`, it sig
 
 ### Running Backend Verification Tests
 ```powershell
-python -m pytest tests/test_telephony_scaffold.py tests/test_telephony_telnyx_client.py tests/test_telephony_livekit_sip.py tests/test_telephony_queries.py tests/test_telephony_routes.py tests/test_telephony_runtime_and_reconcile.py
+python -m pytest tests/test_telephony_scaffold.py tests/test_telephony_telnyx_client.py tests/test_telephony_livekit_sip.py tests/test_telephony_queries.py tests/test_telephony_routes.py tests/test_telephony_runtime_and_reconcile.py tests/test_telephony_machine_routes_full.py
 ```
-* **Status**: 25/25 passed.
+* **Status**: 52/52 passed.

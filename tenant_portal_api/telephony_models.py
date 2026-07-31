@@ -163,3 +163,33 @@ class TelephonyCallDetailResponse(BaseModel):
     error_message: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
+
+
+# Machine Route Action Body Models
+class GetNumberOrderStatusBody(BaseModel):
+    order_id: str = Field(..., description="Target order ID")
+
+
+class GetCallStatusBody(BaseModel):
+    telephony_call_id: str = Field(..., description="Target call ID")
+
+
+class ListCallRecordsBody(BaseModel):
+    assigned_agent_id: str | None = None
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class ListManagedNumbersBody(BaseModel):
+    assigned_agent_id: str | None = None
+
+
+class ListTelnyxOwnedNumbersBody(BaseModel):
+    filter_country: str | None = None
+
+
+class ConfigureNumberRoutingBody(BaseModel):
+    inbound_agent_id: str | None = None
+
+
+class ConfigureOutboundTrunkBody(BaseModel):
+    outbound_voice_profile_id: str | None = None

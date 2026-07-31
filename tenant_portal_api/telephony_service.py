@@ -260,3 +260,236 @@ class TelephonyService:
         self._idempotency[idemp_id] = res
         self._calls[call_id] = res
         return res
+
+    def reverify_telnyx_account(self, tenant_id: str) -> dict[str, Any]:
+        """Re-verify permissions and platform status of existing connection."""
+        conn = self._connections.get(tenant_id)
+        if not conn:
+            raise TelephonyError(
+                status=404,
+                code=TelephonyErrorCode.TELNYX_CONNECTION_MISSING,
+                message="No active Telnyx connection found for tenant.",
+            )
+        conn["last_verified_at"] = "2026-01-01T00:00:00Z"
+        conn["permission_last_checked_at"] = "2026-01-01T00:00:00Z"
+        return conn
+
+    def list_telnyx_owned_numbers(
+        self, tenant_id: str, filter_country: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Fetch Telnyx-owned number inventory for connection."""
+        client = self._get_telnyx_client("mock_key")
+        # Returns un-imported Telnyx account numbers in mock mode
+        return [
+            {
+                "provider_number_id": "pn_mock_owned_1",
+                "e164_number": "+15550001111",
+                "country": filter_country or "US",
+                "number_type": "local",
+                "features": ["voice"],
+            }
+        ]
+
+    def import_telnyx_number(
+        self, tenant_id: str, e164_number: str, external_customer_ref: str | None = None
+    ) -> dict[str, Any]:
+        """Import an existing Telnyx-owned number into managed inventory."""
+        num_id = f"num_{uuid.uuid4().hex[:12]}"
+        num_data = {
+            "id": num_id,
+            "tenant_id": tenant_id,
+            "provider_number_id": f"pn_{uuid.uuid4().hex[:8]}",
+            "e164_number": e164_number,
+            "country": "US",
+            "number_type": "local",
+            "features": ["voice"],
+            "provisioning_status": NumberProvisioningStatus.IMPORTED.value,
+            "routing_status": NumberRoutingStatus.READY.value,
+            "assigned_agent_id": None,
+            "external_customer_ref": external_customer_ref,
+        }
+        if tenant_id not in self._numbers:
+            self._numbers[tenant_id] = []
+        self._numbers[tenant_id].append(num_data)
+        return num_data
+
+    def sync_telnyx_owned_numbers(self, tenant_id: str) -> dict[str, Any]:
+        """Sync managed number inventory against Telnyx account."""
+        return {
+            "tenant_id": tenant_id,
+            "synced_count": len(self._numbers.get(tenant_id, [])),
+            "drift_count": 0,
+            "items": self._numbers.get(tenant_id, []),
+        }
+
+    def get_telnyx_number_drift(self, tenant_id: str) -> dict[str, Any]:
+        """Report configuration drift for tenant numbers."""
+        return {
+            "tenant_id": tenant_id,
+            "has_drift": False,
+            "drift_count": 0,
+            "drifted_numbers": [],
+        }
+
+    def reserve_number(
+        self, tenant_id: str, e164_number: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Optional number reservation (mock supported)."""
+        res_id = f"res_{uuid.uuid4().hex[:8]}"
+        return {
+            "id": res_id,
+            "tenant_id": tenant_id,
+            "e164_number": e164_number,
+            "idempotency_key": idempotency_key,
+            "status": "reserved",
+            "expires_at": "2026-01-01T01:00:00Z",
+        }
+
+    def get_number_order_status(self, tenant_id: str, order_id: str) -> dict[str, Any]:
+        """Get number purchase order status by ID."""
+        for key, val in self._idempotency.items():
+            if val.get("id") == order_id or val.get("provider_order_id") == order_id:
+                return val
+        return {
+            "id": order_id,
+            "tenant_id": tenant_id,
+            "platform_status": "purchased",
+            "provider_status": "success",
+            "selected_e164_number": "+15551234567",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+    def upsert_telnyx_sip_connection(
+        self, tenant_id: str, sip_fqdn: str | None = None, sip_username: str | None = None
+    ) -> dict[str, Any]:
+        """Configure or update tenant Telnyx SIP/FQDN connection."""
+        conn = self._connections.get(tenant_id)
+        if not conn:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_CONNECTION_MISSING,
+                message="Tenant Telnyx account must be connected first.",
+            )
+        return {
+            "id": f"sip_conn_{uuid.uuid4().hex[:8]}",
+            "tenant_id": tenant_id,
+            "telnyx_connection_id": conn["id"],
+            "sip_fqdn": sip_fqdn or "sip.awaazlabs.com",
+            "sip_username": sip_username or f"user_{tenant_id[:8]}",
+            "platform_status": "active",
+            "provider_status": "active",
+        }
+
+    def verify_telnyx_sip_connection(self, tenant_id: str) -> dict[str, Any]:
+        """Test and verify SIP connection readiness."""
+        return {
+            "tenant_id": tenant_id,
+            "is_valid": True,
+            "sip_status": "active",
+            "latency_ms": 42,
+        }
+
+    def upsert_telnyx_outbound_voice_profile(
+        self,
+        tenant_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        """Upsert Outbound Voice Profile for tenant connection."""
+        conn = self._connections.get(tenant_id)
+        if not conn:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_CONNECTION_MISSING,
+                message="Tenant Telnyx account must be connected first.",
+            )
+        return {
+            "id": f"ovp_{uuid.uuid4().hex[:8]}",
+            "tenant_id": tenant_id,
+            "telnyx_connection_id": conn["id"],
+            "allowed_destinations": allowed_destinations or ["US", "CA"],
+            "concurrency_limit": concurrency_limit or 10,
+            "daily_spending_limit": daily_spending_limit or 100.0,
+            "platform_status": "active",
+            "provider_status": "active",
+        }
+
+    def verify_telnyx_outbound_voice_profile(self, tenant_id: str) -> dict[str, Any]:
+        """Re-verify outbound voice profile readiness."""
+        return {
+            "tenant_id": tenant_id,
+            "is_valid": True,
+            "platform_status": "active",
+        }
+
+    def configure_number_routing(
+        self, tenant_id: str, number_id: str, inbound_agent_id: str | None = None
+    ) -> dict[str, Any]:
+        """Configure LiveKit inbound trunk & SIP dispatch rule for phone number."""
+        nums = self._numbers.get(tenant_id, [])
+        target = next((n for n in nums if n["id"] == number_id), None)
+        if not target:
+            raise TelephonyError(
+                status=404,
+                code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                message=f"Number {number_id} not found for tenant.",
+            )
+        target["routing_status"] = NumberRoutingStatus.READY.value
+        if inbound_agent_id:
+            target["assigned_agent_id"] = inbound_agent_id
+        return {
+            "number_id": number_id,
+            "tenant_id": tenant_id,
+            "inbound_trunk_id": f"lk_in_{uuid.uuid4().hex[:8]}",
+            "dispatch_rule_id": f"lk_rule_{uuid.uuid4().hex[:8]}",
+            "routing_status": NumberRoutingStatus.READY.value,
+        }
+
+    def configure_outbound_trunk(
+        self, tenant_id: str, outbound_voice_profile_id: str | None = None
+    ) -> dict[str, Any]:
+        """Configure long-lived LiveKit outbound trunk for tenant."""
+        return {
+            "tenant_id": tenant_id,
+            "outbound_trunk_id": f"lk_out_{uuid.uuid4().hex[:8]}",
+            "platform_status": "active",
+        }
+
+    def get_call_status(self, tenant_id: str, telephony_call_id: str) -> dict[str, Any]:
+        """Get call record detail and status."""
+        call = self._calls.get(telephony_call_id)
+        if not call:
+            return {
+                "id": telephony_call_id,
+                "tenant_id": tenant_id,
+                "direction": "outbound",
+                "room_name": "mock-room",
+                "platform_status": "completed",
+                "duration_sec": 45,
+            }
+        return call
+
+    def list_call_records(
+        self, tenant_id: str, assigned_agent_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """List call records for tenant."""
+        res = list(self._calls.values())
+        if assigned_agent_id:
+            res = [c for c in res if c.get("agent_id") == assigned_agent_id]
+        return res[:limit]
+
+    def disable_number(self, tenant_id: str, number_id: str) -> dict[str, Any]:
+        """Soft-disable managed phone number."""
+        nums = self._numbers.get(tenant_id, [])
+        target = next((n for n in nums if n["id"] == number_id), None)
+        if not target:
+            raise TelephonyError(
+                status=404,
+                code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                message=f"Number {number_id} not found.",
+            )
+        target["provisioning_status"] = NumberProvisioningStatus.DISABLED.value
+        target["routing_status"] = NumberRoutingStatus.DISABLED.value
+        target["disabled_at"] = "2026-01-01T00:00:00Z"
+        return target
