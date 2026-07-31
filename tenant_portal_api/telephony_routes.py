@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _secrets = SecretProvider()
 _service = TelephonyService()
+MOCK_MACHINE_SIGNATURE = "valid_mock_signature"
 
 TENANT_PORTAL_JWT_SECRET = os.environ.get("TENANT_PORTAL_JWT_SECRET", "mock_jwt_secret_for_tests")
 
@@ -70,28 +71,40 @@ def _verify_machine(
     conn, tenant_id: str, ts: str, nonce: str, action: str, body: dict, signature: str
 ):
     """Verify machine HMAC request signature."""
-    if signature.startswith("invalid") or signature.startswith("bad") or not signature:
+    def reject(message: str = "Invalid signature") -> None:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": "telephony_auth_failed", "message": "Invalid signature", "status": 401}},
+            detail={"error": {"code": "telephony_auth_failed", "message": message, "status": 401}},
         )
-    if conn:
-        try:
-            verify_machine_request(
-                conn,
-                _secrets,
-                tenant_id=tenant_id,
-                ts=ts,
-                nonce=nonce,
-                action=action,
-                body=body,
-                signature=signature,
-            )
-        except MachineAuthError as e:
-            raise HTTPException(
-                status_code=e.status,
-                detail={"error": {"code": "telephony_auth_failed", "message": e.reason, "status": e.status}},
-            ) from e
+
+    if not signature:
+        reject()
+
+    if not conn:
+        # Offline route tests run without a database connection. Keep that test-only
+        # path explicit so arbitrary signatures cannot pass in mock/no-DB mode.
+        if os.environ.get("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH") != "1":
+            reject("Machine auth unavailable")
+        if signature != MOCK_MACHINE_SIGNATURE:
+            reject()
+        return
+
+    try:
+        verify_machine_request(
+            conn,
+            _secrets,
+            tenant_id=tenant_id,
+            ts=ts,
+            nonce=nonce,
+            action=action,
+            body=body,
+            signature=signature,
+        )
+    except MachineAuthError as e:
+        raise HTTPException(
+            status_code=e.status,
+            detail={"error": {"code": "telephony_auth_failed", "message": e.reason, "status": e.status}},
+        ) from e
 
 
 # ==========================================

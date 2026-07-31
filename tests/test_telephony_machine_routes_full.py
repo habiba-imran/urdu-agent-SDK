@@ -9,8 +9,12 @@ Verifies:
 - Bad/invalid signature returns stable 401 auth error
 """
 
+import os
+
 from fastapi.testclient import TestClient
 import pytest
+
+os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
 from tenant_portal_api.app import app
 
@@ -28,6 +32,13 @@ BAD_HEADERS = {
     "X-Timestamp": "1700000000",
     "X-Nonce": "nonce_12345",
     "X-Signature": "invalid_signature",
+}
+
+RANDOM_BAD_HEADERS = {
+    "X-Tenant-Id": "tenant_test_123",
+    "X-Timestamp": "1700000000",
+    "X-Nonce": "nonce_random_bad",
+    "X-Signature": "totally_wrong_signature",
 }
 
 
@@ -53,6 +64,15 @@ def test_machine_connect_telnyx():
         json={"api_key": "mock_api_key_123"},
     )
     assert bad.status_code == 401
+
+
+def test_machine_rejects_random_bad_signature():
+    resp = client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=RANDOM_BAD_HEADERS,
+        json={"api_key": "mock_api_key_123"},
+    )
+    assert resp.status_code == 401
 
 
 def test_machine_rotate_telnyx():
