@@ -14,6 +14,8 @@ import os
 from fastapi.testclient import TestClient
 import pytest
 
+import tenant_portal_api.telephony_routes as telephony_routes
+
 os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
 from tenant_portal_api.app import app
@@ -73,6 +75,46 @@ def test_machine_rejects_random_bad_signature():
         json={"api_key": "mock_api_key_123"},
     )
     assert resp.status_code == 401
+
+
+def test_machine_uses_request_scoped_db_auth_when_mock_auth_disabled(monkeypatch):
+    class DummyConnection:
+        committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self):
+            self.committed = True
+
+    dummy_conn = DummyConnection()
+    calls = []
+
+    def fake_verify(conn, tenant_id, ts, nonce, action, body, signature):
+        calls.append((conn, tenant_id, ts, nonce, action, body, signature))
+
+    monkeypatch.delenv("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH", raising=False)
+    monkeypatch.setattr(telephony_routes, "_open_db", lambda: dummy_conn)
+    monkeypatch.setattr(telephony_routes, "_verify_machine", fake_verify)
+
+    resp = client.get("/machine/telephony/telnyx/connection", headers=HEADERS)
+
+    assert resp.status_code == 200
+    assert calls == [
+        (
+            dummy_conn,
+            "tenant_test_123",
+            "1700000000",
+            "nonce_12345",
+            "telephony.telnyx_connection.status",
+            {},
+            "valid_mock_signature",
+        )
+    ]
+    assert dummy_conn.committed is True
 
 
 def test_machine_rotate_telnyx():
