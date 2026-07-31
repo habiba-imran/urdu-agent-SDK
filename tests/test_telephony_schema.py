@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "supabase" / "migrations" / "0012_telephony_core_tables.sql"
+PHASE4_MIGRATION = ROOT / "supabase" / "migrations" / "0013_telephony_constraints_indexes_status_idempotency.sql"
 
 TELEPHONY_TABLES = [
     "tenant_telnyx_connections",
@@ -162,6 +163,10 @@ def _sql() -> str:
     return MIGRATION.read_text(encoding="utf-8")
 
 
+def _phase4_sql() -> str:
+    return re.sub(r"\s+", " ", PHASE4_MIGRATION.read_text(encoding="utf-8").lower())
+
+
 def _table_body(table: str) -> str:
     pattern = rf"create table if not exists {table}\s*\((.*?)\n\);"
     match = re.search(pattern, _sql(), flags=re.IGNORECASE | re.DOTALL)
@@ -186,6 +191,46 @@ def test_phase3_migration_creates_only_reserved_core_tables():
 
     for table in TELEPHONY_TABLES:
         assert f"create table if not exists {table}" in sql
+
+
+def test_phase4_migration_adds_constraints_indexes_without_phase5_scope():
+    sql = _phase4_sql()
+    required = [
+        "add constraint agents_tenant_id_id_unique unique (tenant_id, id)",
+        "add constraint sessions_tenant_id_id_unique unique (tenant_id, id)",
+        "foreign key (tenant_id, assigned_agent_id) references agents(tenant_id, id)",
+        "foreign key (tenant_id, session_id) references sessions(tenant_id, id)",
+        "foreign key (tenant_id, inbound_trunk_record_id) references livekit_inbound_trunks(tenant_id, id)",
+        "foreign key (tenant_id, sip_dispatch_rule_record_id) references livekit_sip_dispatch_rules(tenant_id, id)",
+        "add constraint telephony_number_orders_idempotency_key_unique unique (tenant_id, idempotency_key)",
+        "add constraint telephony_idempotency_keys_pkey primary key (tenant_id, idempotency_key, action)",
+        "create unique index telephony_call_events_provider_event_dedupe_uidx",
+        "create unique index tenant_telnyx_connections_one_active_per_tenant_uidx",
+        "create unique index telnyx_sip_connections_one_active_per_connection_uidx",
+        "create unique index telephony_phone_numbers_one_active_e164_per_tenant_uidx",
+        "create unique index livekit_inbound_trunks_one_active_per_number_uidx",
+        "create unique index livekit_outbound_trunks_one_active_per_connection_uidx",
+        "create unique index livekit_sip_dispatch_rules_one_active_per_number_uidx",
+        "create index idx_telephony_phone_numbers_e164_number",
+        "create index idx_telephony_phone_numbers_assigned_agent_id",
+        "create index idx_livekit_inbound_trunks_provider_id",
+        "create index idx_livekit_outbound_trunks_provider_id",
+        "create index idx_livekit_sip_dispatch_rules_provider_id",
+        "create index idx_telephony_calls_room_name",
+        "create index idx_telephony_calls_livekit_sip_call_id",
+        "create index idx_telephony_calls_livekit_sip_call_id_full",
+        "create index idx_telephony_calls_platform_status",
+        "create index idx_telephony_calls_created_at",
+        "create index idx_telephony_call_events_provider_event_id",
+    ]
+    status_checks = "tenant_telnyx_connections_platform_status_check telnyx_sip_connections_platform_status_check telnyx_outbound_voice_profiles_platform_status_check telephony_phone_numbers_provisioning_status_check telephony_phone_numbers_routing_status_check telephony_number_orders_provider_status_check telephony_number_orders_platform_status_check telephony_calls_direction_check telephony_calls_platform_status_check".split()
+
+    assert PHASE4_MIGRATION.exists()
+    assert not re.search(r"\bgrant\b", sql)
+    for snippet in ["0014_", "0015_", "enable row level security", "usage_events"]:
+        assert snippet not in sql
+    for snippet in required + status_checks:
+        assert snippet in sql
 
 
 def test_every_tenant_owned_telephony_table_has_tenant_id():
