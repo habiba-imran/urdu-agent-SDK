@@ -6,7 +6,7 @@
 
 ## What's in This Folder
 
-This folder contains the two npm packages that power your AwaazLabs-UVA integration.
+This folder contains the three npm packages that power your AwaazLabs-UVA integration.
 
 ```
 sdk/
@@ -25,9 +25,16 @@ sdk/
     └── README.md
 ```
 
+Phase 10 telephony addition:
+
+- `@awaazlabs-uva/telephony/` contains `src`, package files, README,
+  and `awaazlabs-uva-telephony-0.1.0.tgz`.
+- The telephony `.tgz` contains the compiled `dist` files used at install time.
+- Install it only in a Node.js backend. Do not import it from browser code.
+
 ---
 
-## The Two Packages at a Glance
+## The Three Packages at a Glance
 
 ### `@awaazlabs-uva/voice` — Browser SDK
 
@@ -50,6 +57,19 @@ LiveKit token on your behalf.
 | **Purpose** | Create, list, and update Urdu AI agents via the Tenant Portal API |
 | **Secrets held** | `tenantSecret` (HMAC-SHA256 signing key) — **NEVER import in browser code** |
 | **Key dependency** | Node.js built-ins (`crypto`) only |
+
+### `@awaazlabs-uva/telephony` - Backend Telephony Management SDK
+
+| Property | Value |
+|---|---|
+| **Environment** | Node.js backend **only** |
+| **Purpose** | Manage Telnyx connection state, phone numbers, routing, and outbound calls through signed machine routes |
+| **Secrets held** | `tenantSecret` for HMAC signing; Telnyx API keys only as transient connect/rotate method parameters |
+| **Key dependency** | Node.js built-ins (`crypto`) only |
+
+This package calls only `/machine/telephony/*` routes. It never belongs in a
+frontend bundle and never returns raw provider payloads, signatures, Telnyx
+keys, SIP secrets, or restricted diagnostics.
 
 ---
 
@@ -91,6 +111,9 @@ Your backend holds them; your browser only ever holds the `publishableKey`.
 | Create a new AI agent | `@awaazlabs-uva/agents` | Backend |
 | List existing agents | `@awaazlabs-uva/agents` | Backend |
 | Update agent prompt / voice | `@awaazlabs-uva/agents` | Backend |
+| Connect or rotate a Telnyx account | `@awaazlabs-uva/telephony` | Backend |
+| Search, purchase, assign, or disable phone numbers | `@awaazlabs-uva/telephony` | Backend |
+| Create outbound telephony calls | `@awaazlabs-uva/telephony` | Backend |
 | Sign session token requests | Your backend + HMAC secret | Backend |
 
 ---
@@ -101,6 +124,7 @@ Your backend holds them; your browser only ever holds the `publishableKey`.
 |---|---|---|
 | `@awaazlabs-uva/voice` | N/A | ES2020+, all modern browsers |
 | `@awaazlabs-uva/agents` | ≥ 18.0.0 | Not applicable |
+| `@awaazlabs-uva/telephony` | ≥ 20.0.0 | Not applicable |
 
 ---
 

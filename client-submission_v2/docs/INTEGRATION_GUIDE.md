@@ -22,6 +22,10 @@
 >   It is a server-side signing library that accepts *your* credentials as
 >   constructor arguments at runtime (loaded from your own `.env` file).
 >   The package code itself is inert without you providing those values.
+> - `sdk/@awaazlabs-uva/telephony/` (`@awaazlabs-uva/telephony`) — **backend only.**
+>   It signs `/machine/telephony/*` calls and accepts Telnyx API keys only as
+>   transient method parameters for connect/rotate flows. Never install it in a
+>   frontend or browser bundle.
 
 ---
 
@@ -31,10 +35,12 @@
 2. [Package Contents & Extraction](#2-package-contents--extraction)
 3. [Installing the Browser SDK (`@awaazlabs-uva/voice`)](#3-installing-the-browser-sdk-uvavoice)
 4. [Installing the Server SDK (`@awaazlabs-uva/agents`)](#4-installing-the-server-sdk-uvaagents)
+4A. [Installing the Telephony SDK (`@awaazlabs-uva/telephony`)](#4a-installing-the-telephony-sdk-awaazlabs-uvatelephony)
 5. [Environment Configuration](#5-environment-configuration)
 6. [Backend Integration: Session Endpoint](#6-backend-integration-session-endpoint)
 7. [Frontend Integration: Voice Session](#7-frontend-integration-voice-session)
 8. [Agent Management: Creating & Listing Agents](#8-agent-management-creating--listing-agents)
+8A. [Telephony Management: Numbers & Calls](#8a-telephony-management-numbers--calls)
 9. [Running the Reference Test App](#9-running-the-reference-test-app)
 10. [Event Reference](#10-event-reference)
 11. [Error Reference](#11-error-reference)
@@ -74,6 +80,8 @@ You will receive the following credentials from your Finova Solutions onboarding
 | `UVA_PUBLISHABLE_KEY` | Backend + Frontend `.env` | Public identifier — safe in browser |
 | Backend-only session upstream config | Backend `.env` only | Provided securely by Finova or the approved host-backend starter |
 | `UVA_PORTAL_API_URL` | Backend `.env` only | Finova portal API base URL |
+| `UVA_TELEPHONY_API_URL` | Backend `.env` only | Finova telephony machine API base URL |
+| `TELNYX_API_KEY` | Backend `.env` only | Optional Telnyx key used only during backend connect/rotate calls |
 
 ---
 
@@ -103,9 +111,16 @@ client-submission/
     └── credentials-template.md   ← Credential placeholders (filled by Finova)
 ```
 
+Phase 10 telephony addition:
+
+- `sdk/@awaazlabs-uva/telephony/` contains `src`, `dist`, package files,
+  README, and `awaazlabs-uva-telephony-0.1.0.tgz`.
+- It is a backend-only package for signed machine telephony calls and is not
+  part of any browser bundle.
+
 > [!NOTE]
-> The `dist/` folder inside each SDK package is the compiled, ready-to-use output.
-> You do **not** need to build anything. `npm install` will wire up the `dist/` files directly.
+> The SDK `.tgz` files contain the compiled, ready-to-use `dist/` output.
+> You do **not** need to build anything when installing from the provided tarballs.
 > The `src/` folder is included for reference and transparency only.
 
 ### Extraction Steps
@@ -237,6 +252,43 @@ node -e "import('@awaazlabs-uva/agents').then(m => console.log('OK:', typeof m.A
 
 ---
 
+## 4A. Installing the Telephony SDK (`@awaazlabs-uva/telephony`)
+
+> [!WARNING]
+> **Install this package in your BACKEND only.**
+> Never add `@awaazlabs-uva/telephony` to a frontend/browser project's
+> `package.json`. It signs machine telephony requests with `UVA_HMAC_SECRET`
+> and can accept a Telnyx API key during connect/rotate flows.
+
+In your **Node.js backend project's** root directory:
+
+```bash
+# Replace the path with the actual path to this package file on your machine
+npm install /absolute/path/to/client-submission/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+
+# Or using a relative path from your backend project root:
+npm install ../../client-submission/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+```
+
+This adds the following to your backend `package.json`:
+
+```json
+{
+  "dependencies": {
+    "@awaazlabs-uva/telephony": "file:../../client-submission/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz"
+  }
+}
+```
+
+### Verify Installation
+
+```bash
+node -e "import('@awaazlabs-uva/telephony').then(m => console.log('OK:', typeof m.TelephonyClient));"
+# Expected output: OK: function
+```
+
+---
+
 ## 5. Environment Configuration
 
 Your application uses environment variables to supply credentials and endpoint URLs to the SDK. **Never hardcode these values in source code.**
@@ -257,6 +309,9 @@ UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
 # URL of the Finova-hosted tenant portal API (provided during onboarding)
 UVA_PORTAL_API_URL=[YOUR_PORTAL_API_URL]
 
+# URL of the Finova-hosted telephony machine API (provided during onboarding)
+UVA_TELEPHONY_API_URL=[YOUR_TELEPHONY_MACHINE_API_URL]
+
 # ─── Tenant Credentials (SERVER-SIDE ONLY) ───────────────────
 # Your tenant UUID — identifies your organisation
 UVA_TENANT_ID=[YOUR_TENANT_ID]
@@ -264,6 +319,9 @@ UVA_TENANT_ID=[YOUR_TENANT_ID]
 # Your HMAC secret — backend only; never expose it to the browser
 # THIS IS A SECRET. NEVER EXPOSE IT TO THE BROWSER.
 UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
+
+# Optional Telnyx key, used only in trusted backend connect/rotate calls
+TELNYX_API_KEY=[YOUR_TELNYX_API_KEY]
 
 # ─── Publishable Key (safe for browser) ──────────────────────
 # Passed through to your frontend; identifies your tenant publicly
@@ -493,6 +551,71 @@ voices.filter(v => v.enabled).forEach(v => console.log(v.id, v.displayName));
 
 ---
 
+## 8A. Telephony Management: Numbers & Calls
+
+Use `@awaazlabs-uva/telephony` in your **backend only** to manage phone-number
+operations and outbound telephony calls through signed machine routes.
+
+```typescript
+import {
+  AwaazLabsUvaTelephonyError,
+  TelephonyClient,
+} from '@awaazlabs-uva/telephony';
+import { randomUUID } from 'node:crypto';
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+const telephony = new TelephonyClient({
+  tenantId: requireEnv('UVA_TENANT_ID'),
+  tenantSecret: requireEnv('UVA_HMAC_SECRET'),
+  baseUrl: requireEnv('UVA_TELEPHONY_API_URL'),
+});
+
+try {
+  const readiness = await telephony.getOutboundReadiness();
+
+  if (readiness.platform_status !== 'ready') {
+    throw new Error('Telephony outbound routing is not ready yet.');
+  }
+
+  const call = await telephony.createOutboundCall({
+    agentId: '<AGENT_ID>',
+    fromNumberId: '<TELEPHONY_NUMBER_ID>',
+    toNumber: '<E164_NUMBER>',
+    recipient: '<RECIPIENT_LABEL>',
+    externalCustomerRef: '<OPAQUE_CUSTOMER_REF>',
+    externalWorkflowRef: '<OPAQUE_WORKFLOW_REF>',
+    idempotencyKey: randomUUID(),
+  });
+
+  console.log(call.telephony_call_id);
+} catch (error) {
+  if (error instanceof AwaazLabsUvaTelephonyError) {
+    console.error(error.status, error.code, error.message);
+  }
+  throw error;
+}
+```
+
+Connect or rotate Telnyx from trusted backend code only:
+
+```typescript
+await telephony.connectTelnyxAccount({
+  apiKey: requireEnv('TELNYX_API_KEY'),
+  label: 'primary',
+});
+```
+
+Never pass Telnyx keys, `UVA_HMAC_SECRET`, or machine-route responses through
+browser code. Return only your own redacted application response to the
+frontend.
+
+---
+
 ## 9. Running the Reference Test App
 
 The `test-app/` directory contains a ready-to-run reference implementation.
@@ -570,6 +693,19 @@ npm run dev
 | `404` | Agent ID not found (for `updateAgent`) |
 | `429` | Rate limited |
 
+### `@awaazlabs-uva/telephony` - `AwaazLabsUvaTelephonyError`
+
+| Code | Typical handling |
+|---|---|
+| `telnyx_connection_missing` | Connect the Telnyx account from a trusted backend/admin flow. |
+| `number_order_action_required` | Surface the provider action requirement to an operator. |
+| `regulatory_action_required` | Stop automated purchase flow until required documents are approved. |
+| `outbound_not_ready` | Check routing, SIP connection, outbound profile, and number assignment. |
+| `idempotency_payload_mismatch` | Reuse the original payload or generate a new idempotency key. |
+| `number_not_available` | Ask the user to choose another exact number. |
+| `unsupported_number_feature` | Treat reservation or requested feature as unavailable for the selected market. |
+| `telnyx_key_permission_failed` | Rotate the Telnyx key or grant the required provider permissions. |
+
 ---
 
 ## 12. Security Checklist
@@ -585,6 +721,9 @@ Before deploying to production, verify the following:
 - [ ] CORS is restricted to your known frontend origin (`HOST_ALLOWED_ORIGINS`)
 - [ ] `@awaazlabs-uva/agents` is NOT listed in your frontend `package.json`
 - [ ] Your bundler is not accidentally including `@awaazlabs-uva/agents` in the client build
+- [ ] `@awaazlabs-uva/telephony` is NOT listed in your frontend `package.json`
+- [ ] `TELNYX_API_KEY` is only in backend environment storage and used only for connect/rotate calls
+- [ ] Telephony responses returned to browsers are app-owned, minimal, and redacted
 
 ---
 
@@ -600,6 +739,9 @@ Before deploying to production, verify the following:
 | `401 Unauthorized` from portal API | Bad HMAC secret or clock drift > 5 min | Verify `UVA_HMAC_SECRET` and ensure server clock is synced |
 | TypeScript errors on import | Missing `dist/` folder | Run `npm run build` inside the SDK package directory |
 | `ERR_REQUIRE_ESM` | Importing `@awaazlabs-uva/agents` with CommonJS `require()` | Use `import()` syntax; `@awaazlabs-uva/agents` is ESM-only |
+| `telnyx_connection_missing` from telephony SDK | Telnyx has not been connected for the tenant | Run the backend connect flow with `TELNYX_API_KEY` available only server-side |
+| `outbound_not_ready` from telephony SDK | Number routing or outbound trunk setup is incomplete | Check assignment, SIP connection, outbound profile, and readiness status |
+| `idempotency_payload_mismatch` from telephony SDK | Same idempotency key was reused with different payload | Reuse the exact original payload or generate a new idempotency key |
 
 ---
 
