@@ -29,6 +29,7 @@ except ImportError:
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .machine_auth import MachineAuthError, verify_machine_request
 from . import queries
+from .telephony_routes import router as telephony_router
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
@@ -73,8 +74,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=TENANT_PORTAL_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Timestamp", "X-Nonce", "X-Signature"],
 )
 
 
@@ -336,3 +337,6 @@ def machine_update_agent_route(
             return updated
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+app.include_router(telephony_router)
