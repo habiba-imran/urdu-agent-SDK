@@ -1,8 +1,8 @@
 # Telephony API And Schema Contract
 
-Status: proposed freeze for Hamza + Habiba review.
+Status: frozen / implementation-approved for Habiba Phase 1, with open blockers listed below.
 
-This document turns the telephony architecture documents into a shared build contract. After Hamza and Habiba approve it, treat the names, route shapes, SDK methods, statuses, error codes, idempotency rules, and ownership boundaries here as frozen unless both agree to a contract change.
+This document turns the telephony architecture documents into a shared build contract. Habiba has approved using this contract for Phase 1 implementation planning. Hamza has been sent the shared contract and is expected to follow it, but this document does not claim Hamza has confirmed the open items listed below. Treat the names, route shapes, SDK methods, statuses, error codes, idempotency rules, and ownership boundaries here as frozen unless both developers agree to a contract change.
 
 ## What Contract Freeze Means
 
@@ -19,6 +19,30 @@ After this document is frozen:
 - Hamza can implement backend service code against these table/API contracts.
 - Habiba can implement migrations and the backend-only SDK against these same contracts.
 - Neither side should rename fields, actions, statuses, or methods without updating this document and telling the other developer.
+
+## Phase 1 Freeze Coverage
+
+Phase 1 review confirms this contract covers the shared surfaces that schema, SDK, and backend runtime work depend on:
+
+- table names, tenant-owned resource boundaries, required columns, existing-table links, and provider-ID ownership rules
+- tenant-scoped constraints, active-resource uniqueness rules, idempotency constraints, provider-event dedupe, row-lock expectations, and critical index requirements
+- RLS expectations, browser/backend secret boundaries, restricted diagnostic payload rules, and redacted public response rules
+- public statuses, provider/platform status split, direction-specific call transitions, internal event stages, and stable error codes
+- portal routes, machine routes, HTTP methods, request-body binding rules, response-shape conventions, SDK method names, and fixed machine HMAC action strings
+
+## Open Decisions And Blockers
+
+These items remain unresolved. Do not treat them as approved until this document is updated with the final decision.
+
+| Decision | Current contract position | Blocks |
+|---|---|---|
+| Encryption mechanism | Secret-store reference is preferred. App-level encrypted ciphertext is allowed only after reviewed key management. Exact mechanism is not selected. | Final credential columns, key-management migration details, and Hamza credential lifecycle implementation. |
+| Retention/export/offboarding policy | Telephony data must support retention, deletion/offboarding, export/access audit, redaction, and restricted diagnostics. Exact periods, export permissions, and offboarding behavior are not selected. | Data-governance migration fields, tests, live migration approval, and client/admin documentation. |
+| Restricted payload access | Raw provider payloads are restricted diagnostics only. Exact tenant/admin/service access model, RLS/grant shape, redaction requirements, and storage location are not finalized. | RLS/grants, diagnostic field design, response contracts, and restricted payload tests. |
+| DB-vs-app status enforcement | Status values and transitions are frozen. The enforcement split between DB checks/functions, app-layer validation, or both is not selected. | Status constraints/functions and status-transition tests in migration phases. |
+| Deliverable packaging format | `@awaazlabs-uva/telephony` is backend-only. Final client deliverable format is not selected: source, `dist`, tarball, or all three. | Client-submission packaging and final SDK handoff docs. |
+| Hamza route/action/fixture confirmation | Route paths, SDK methods, and machine HMAC action strings are frozen as the shared contract surface. Hamza still must confirm final request/response fields, row locks, route/action compatibility, fake fixtures, and error examples. | SDK contract tests, mocked fixture design, staging compatibility, and backend runtime signoff. |
+| Ukasha migration-number coordination | Telephony migration numbers are not reserved in this contract. Provider/language migration coordination is still required before any migration file is created. | Phase 2 migration planning and all migration file creation. |
 
 ## Scope Decisions
 
@@ -574,4 +598,4 @@ Habiba signs off when she confirms:
 - SDK test fixture requirements
 - docs and client-deliverable packaging path
 
-After both sign off, change `Status: proposed freeze` to `Status: frozen`.
+Open blockers above must be resolved by explicit contract updates before dependent migrations, SDK implementation, Hamza runtime implementation, live provider tests, or live Supabase changes rely on them.
