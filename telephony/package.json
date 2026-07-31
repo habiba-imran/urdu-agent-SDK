@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "test": "npm run build && node test/phase8-smoke.mjs"
+    "test": "npm run build && node test/phase8-smoke.mjs && node test/phase9-contract.mjs"
   },
   "engines": {
     "node": ">=20"
