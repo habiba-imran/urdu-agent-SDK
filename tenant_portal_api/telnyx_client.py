@@ -1,6 +1,6 @@
 """Telnyx API client adapter for credential verification, inventory sync, number search, number orders, FQDN connection, and outbound voice profile management.
 
-Backend-only module. Supports fake provider mock mode by default for testing.
+Backend-only module. Supports fake provider mock mode only when explicitly configured for testing.
 Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
 """
 
@@ -16,6 +16,7 @@ from tenant_portal_api.telephony_errors import (
     TelephonyErrorCode,
     redact_sensitive_string,
 )
+from tenant_portal_api.telephony_config import is_mock_provider_mode
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +38,13 @@ class TelnyxClient:
         self._owned_client = http_client is None
         self.client = http_client or httpx.Client(timeout=timeout)
 
-        # Auto-detect mock mode if api_key starts with mock_ or test_ or mock_mode explicitly set
+        # Mock mode must be explicit through the caller or TELEPHONY_PROVIDER_MODE.
+        # Staging/production should fail closed instead of silently synthesizing
+        # provider resources when credentials are absent or placeholder-shaped.
         if mock_mode is not None:
             self.mock_mode = mock_mode
         else:
-            self.mock_mode = (
-                not api_key
-                or api_key.startswith("mock_")
-                or api_key.startswith("test_")
-                or api_key == "REDACTED"
-            )
+            self.mock_mode = is_mock_provider_mode()
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -71,6 +69,13 @@ class TelnyxClient:
                 "status": "active",
             }
 
+        if not self.api_key:
+            raise TelephonyError(
+                status=503,
+                code=TelephonyErrorCode.PROVIDER_CREDENTIALS_MISSING,
+                message="Telnyx API key is not configured for this tenant.",
+            )
+
         try:
             resp = self.client.get(
                 f"{TELNYX_API_BASE_URL}/balance",
@@ -90,8 +95,14 @@ class TelnyxClient:
                 )
             resp.raise_for_status()
             data = resp.json().get("data", {})
+            account_id = (
+                data.get("account_id")
+                or data.get("organization_id")
+                or data.get("customer_id")
+            )
             return {
-                "telnyx_account_id": data.get("record_type", "account"),
+                "telnyx_account_id": account_id,
+                "verification_record_type": data.get("record_type"),
                 "balance": str(data.get("balance", "0.00")),
                 "currency": data.get("currency", "USD"),
                 "status": "active",

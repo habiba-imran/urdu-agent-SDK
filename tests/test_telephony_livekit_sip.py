@@ -5,6 +5,7 @@ Phase 4 & 5 verification suite.
 
 import pytest
 from tenant_portal_api.livekit_sip import LiveKitSipClient
+from tenant_portal_api.telephony_errors import TelephonyError
 
 
 def test_livekit_sip_client_mock():
@@ -31,3 +32,17 @@ def test_livekit_sip_client_mock():
     )
     assert sip_part["status"] == "dialing"
     assert "sip_call_mock_" in sip_part["livekit_sip_call_id"]
+
+
+def test_livekit_sip_real_mode_requires_credentials(monkeypatch):
+    monkeypatch.setenv("TELEPHONY_PROVIDER_MODE", "real")
+    monkeypatch.delenv("LIVEKIT_URL", raising=False)
+    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
+    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
+    client = LiveKitSipClient(mock_mode=False)
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.create_or_get_inbound_trunk("phone_12345678", "+15551234567")
+
+    assert exc_info.value.code == "provider_credentials_missing"
+    assert exc_info.value.status == 503

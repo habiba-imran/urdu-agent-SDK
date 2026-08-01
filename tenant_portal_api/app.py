@@ -30,6 +30,7 @@ from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .machine_auth import MachineAuthError, verify_machine_request
 from . import queries
 from .telephony_routes import router as telephony_router
+from .telephony_webhooks import router as telephony_webhook_router
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
@@ -340,3 +341,4 @@ def machine_update_agent_route(
 
 
 app.include_router(telephony_router)
+app.include_router(telephony_webhook_router)

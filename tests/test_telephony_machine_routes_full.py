@@ -11,6 +11,8 @@ Verifies:
 
 import os
 
+os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -42,6 +44,15 @@ RANDOM_BAD_HEADERS = {
     "X-Nonce": "nonce_random_bad",
     "X-Signature": "totally_wrong_signature",
 }
+
+
+def _ensure_mock_connection():
+    resp = client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key", "label": "Test Connection"},
+    )
+    assert resp.status_code == 200
 
 
 def test_mounted_app_health():
@@ -148,6 +159,7 @@ def test_machine_get_connection_status():
 
 
 def test_machine_list_owned_numbers():
+    _ensure_mock_connection()
     resp = client.post(
         "/machine/telephony/telnyx/owned-numbers/list",
         headers=HEADERS,
@@ -186,6 +198,7 @@ def test_machine_get_number_drift():
 
 
 def test_machine_search_available_numbers():
+    _ensure_mock_connection()
     resp = client.post(
         "/machine/telephony/available-numbers/search",
         headers=HEADERS,
@@ -206,6 +219,7 @@ def test_machine_reserve_number():
 
 
 def test_machine_purchase_number():
+    _ensure_mock_connection()
     resp = client.post(
         "/machine/telephony/number-orders",
         headers=HEADERS,
