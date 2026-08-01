@@ -695,7 +695,7 @@ class TelephonyService:
                             country, number_type, features, provisioning_status, routing_status,
                             provider_status, last_synced_at
                         ) values (%s, %s, %s, %s, %s, %s, %s, 'owned', 'not_configured', %s, now())
-                        on conflict (tenant_id, provider_number_id) where provider_number_id is not null do update set
+                        on conflict (tenant_id, provider_number_id) do update set
                             telnyx_connection_id = excluded.telnyx_connection_id,
                             e164_number = excluded.e164_number,
                             country = excluded.country,
