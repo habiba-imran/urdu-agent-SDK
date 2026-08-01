@@ -329,7 +329,7 @@ def test_livekit_missing_credentials_do_not_produce_mock_success():
     client = LiveKitSipClient(mock_mode=False)
 
     with pytest.raises(TelephonyError) as exc_info:
-        client.create_or_get_outbound_trunk("conn_real_123", "sip.telnyx.example")
+        client.create_or_get_outbound_trunk("conn_real_123", "sip.telnyx.example", ["+14155550123"])
 
     assert exc_info.value.code == "provider_credentials_missing"
     assert exc_info.value.status == 503

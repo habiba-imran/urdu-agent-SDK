@@ -133,6 +133,25 @@ class TelephonyService:
         api_key = decrypt_provider_secret(conn_data.get("encrypted_api_key_ref"))
         return self._get_telnyx_client(api_key), conn_data
 
+    def _eligible_outbound_trunk_numbers(self, conn: Any, tenant_id: str, telnyx_connection_id: str) -> list[str]:
+        rows = conn.execute(
+            """
+            select distinct e164_number
+            from telephony_phone_numbers
+            where tenant_id = %s
+              and telnyx_connection_id = %s
+              and provider_number_id is not null
+              and disabled_at is null
+              and deleted_at is null
+              and provisioning_status in ('owned', 'active')
+              and e164_number ~ '^\\+[1-9][0-9]{7,14}$'
+            order by e164_number
+            """,
+            (tenant_id, telnyx_connection_id),
+        ).fetchall()
+        return [row[0] for row in rows if row and row[0]]
+
+
     def connect_telnyx_account(
         self, tenant_id: str, api_key: str, label: str | None = None
     ) -> dict[str, Any]:
@@ -1146,6 +1165,13 @@ class TelephonyService:
             if not profile_row:
                 raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_VOICE_PROFILE_MISSING, message="Tenant outbound voice profile is not configured.")
             profile = self._outbound_profile_from_row(profile_row)
+            trunk_numbers = self._eligible_outbound_trunk_numbers(conn, tenant_id, conn_data["id"])
+            if not trunk_numbers:
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.OUTBOUND_NOT_READY,
+                    message="Tenant has no eligible managed phone numbers for outbound trunk setup.",
+                )
             existing = conn.execute(
                 """
                 select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
@@ -1156,10 +1182,23 @@ class TelephonyService:
                 """,
                 (tenant_id, profile["id"]),
             ).fetchone()
+            created = self._get_livekit_sip_client().create_or_get_outbound_trunk(conn_data["id"], sip["sip_fqdn"], trunk_numbers)
             if existing:
-                trunk = self._outbound_trunk_from_row(existing)
+                row = conn.execute(
+                    """
+                    update livekit_outbound_trunks
+                    set livekit_outbound_trunk_id = %s,
+                        platform_status = 'active',
+                        provider_status = %s,
+                        last_reconciled_at = now(),
+                        updated_at = now()
+                    where tenant_id = %s and id = %s
+                    returning id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
+                    """,
+                    (created.get("livekit_outbound_trunk_id"), created.get("status", "active"), tenant_id, existing[0]),
+                ).fetchone()
+                trunk = self._outbound_trunk_from_row(row or existing)
                 return {"tenant_id": tenant_id, "outbound_trunk_id": trunk["livekit_outbound_trunk_id"], "platform_status": trunk["platform_status"]}
-            created = self._get_livekit_sip_client().create_or_get_outbound_trunk(conn_data["id"], sip["sip_fqdn"])
             row = conn.execute(
                 """
                 insert into livekit_outbound_trunks (
@@ -1173,6 +1212,8 @@ class TelephonyService:
             ).fetchone()
             trunk = self._outbound_trunk_from_row(row)
             return {"tenant_id": tenant_id, "outbound_trunk_id": trunk["livekit_outbound_trunk_id"], "platform_status": trunk["platform_status"]}
+
+
     def get_call_status(self, tenant_id: str, telephony_call_id: str) -> dict[str, Any]:
         """Get call record detail and status."""
         with self._connection() as conn:
