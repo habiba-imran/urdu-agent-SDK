@@ -10,7 +10,7 @@ import {
   assertNonEmpty,
   buildUrl,
   fillPath,
-  isJsonObject,
+  isJsonResponse,
   makeRequestInit,
   readJsonBody,
   resolveFetch,
@@ -25,6 +25,7 @@ import type {
   ImportTelnyxNumberParams,
   JsonInputObject,
   JsonObject,
+  JsonResponse,
   ListTelephonyFilters,
   MachineOperation,
   OutboundCallResponse,
@@ -99,11 +100,11 @@ export class TelephonyClient {
     return this.request<TelnyxConnectionResponse>('getConnectionStatus');
   }
 
-  listTelnyxOwnedNumbers(filters: ListTelephonyFilters = {}): Promise<JsonObject> {
+  listTelnyxOwnedNumbers(filters: ListTelephonyFilters = {}): Promise<JsonResponse> {
     return this.request('listTelnyxOwnedNumbers', toSnakeCaseBody(filters));
   }
 
-  listManagedPhoneNumbers(filters: ListTelephonyFilters = {}): Promise<JsonObject> {
+  listManagedPhoneNumbers(filters: ListTelephonyFilters = {}): Promise<JsonResponse> {
     return this.request('listManagedPhoneNumbers', toSnakeCaseBody(filters));
   }
 
@@ -120,7 +121,7 @@ export class TelephonyClient {
     return this.request('getTelnyxNumberDrift');
   }
 
-  searchAvailableNumbers(params: SearchAvailableNumbersParams): Promise<JsonObject> {
+  searchAvailableNumbers(params: SearchAvailableNumbersParams): Promise<JsonResponse> {
     assertNonEmpty(params.country, 'country');
     return this.request('searchAvailableNumbers', toSnakeCaseBody(params));
   }
@@ -203,7 +204,7 @@ export class TelephonyClient {
     return this.request('getCallStatus', { telephony_call_id: telephonyCallId });
   }
 
-  listCallRecords(filters: ListTelephonyFilters = {}): Promise<JsonObject> {
+  listCallRecords(filters: ListTelephonyFilters = {}): Promise<JsonResponse> {
     return this.request('listCallRecords', toSnakeCaseBody(filters));
   }
 
@@ -212,7 +213,7 @@ export class TelephonyClient {
     return this.request('disableNumber', { number_id: numberId }, { number_id: numberId });
   }
 
-  private async request<TResponse extends JsonObject>(
+  private async request<TResponse extends JsonResponse>(
     name: OperationName,
     body: JsonInputObject = {},
     pathParams: Record<string, string> = {},
@@ -246,11 +247,11 @@ export class TelephonyClient {
   }
 }
 
-async function parseTelephonyResponse<TResponse extends JsonObject>(
+async function parseTelephonyResponse<TResponse extends JsonResponse>(
   response: TelephonyFetchResponse,
 ): Promise<TResponse> {
   const body = await readJsonBody(response);
   if (!response.ok) throw errorFromResponse(response.status, response.statusText, body);
-  if (!isJsonObject(body)) throw createInvalidResponseError();
+  if (!isJsonResponse(body)) throw createInvalidResponseError();
   return sanitizePublicResponse(body) as TResponse;
 }

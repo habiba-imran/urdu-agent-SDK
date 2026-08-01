@@ -1,5 +1,7 @@
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
+export type JsonArray = JsonValue[];
+export type JsonResponse = JsonObject | JsonArray;
 export type JsonInputValue =
   | JsonPrimitive
   | undefined
