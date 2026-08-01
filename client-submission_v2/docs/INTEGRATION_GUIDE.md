@@ -466,6 +466,9 @@ const newAgent = await agents.createAgent({
   prompt: 'آپ ایک مددگار اردو کسٹمر سروس نمائندے ہیں۔ مہربانی سے ہر سوال کا مفید جواب دیں۔',
   voiceId: 'helpdesk-agent', // Use your backend voice catalog endpoint for available IDs
   llmModel: 'gemini-2.5-flash', // Optional; defaults to gemini-2.5-flash
+  // Optional (see @awaazlabs-uva/agents' README for the full list): agentLanguage, sttProvider,
+  // sttModel, sttOptions, llmProvider, llmOptions, ttsProvider, ttsVoiceId, ttsOptions.
+  // Omit all of them for the current default (ur + Gladia + Gemini + Uplift) — unchanged.
 });
 
 console.log('Created agent ID:', newAgent.id);

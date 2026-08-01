@@ -147,6 +147,70 @@ def test_happy_path_update_agent(env):
     assert res.json()["name"] == "Renamed Agent"
 
 
+def test_create_agent_old_style_payload_syncs_new_fields(env):
+    """Phase 3 (ADR-036): the machine surface shares resolve_agent_provider_fields with /portal —
+    proves that's actually wired here too, not just on the JWT-authenticated routes."""
+    client = TestClient(app)
+    body = {
+        "name": "Old Style Machine Agent",
+        "prompt": "Answer politely",
+        "voice_id": env["voice_id"],
+        "llm_model": "gemini-2.5-flash",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 200
+    created = res.json()
+    assert created["agent_language"] == "ur"
+    assert created["tts_provider"] == "uplift"
+    assert created["tts_voice_id"] == env["voice_id"] == created["voice_id"]
+
+
+def test_create_agent_rejects_unsupported_provider_combo(env):
+    client = TestClient(app)
+    body = {
+        "name": "Bad Combo Machine Agent",
+        "prompt": "x",
+        "voice_id": env["voice_id"],
+        # llm_model has a non-None Pydantic default ("gemini-2.5-flash"), so it's always present
+        # in the server's resolved body.model_dump(exclude_none=True) even when omitted from the
+        # wire JSON — must be signed explicitly, same as every other happy-path test here already
+        # does (pre-existing behavior, not something Phase 3 changed).
+        "llm_model": "gemini-2.5-flash",
+        "tts_provider": "elevenlabs",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "unsupported_provider_for_language"
+
+
+def test_machine_provider_capabilities_requires_signature_and_returns_ur(env):
+    client = TestClient(app)
+    no_auth = client.get("/machine/provider-capabilities")
+    assert no_auth.status_code == 401
+
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="provider_capabilities.get",
+        body={},
+    )
+    res = client.get("/machine/provider-capabilities", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["languages"]["ur"]["stt"]["gladia"]["state"] == "enabled"
+
+
 def test_wrong_signature_401(env):
     client = TestClient(app)
     body = {

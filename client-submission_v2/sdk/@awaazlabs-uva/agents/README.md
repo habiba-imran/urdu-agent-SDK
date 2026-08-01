@@ -44,9 +44,14 @@ const agent = await agents.createAgent({
 
 ### Methods
 
-- `createAgent({ name, prompt, voiceId, llmModel? })`
+- `createAgent({ name, prompt, voiceId, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions? })`
 - `listAgents()`
-- `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel? })`
+- `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions? })`
+
+Every field beyond `name`/`prompt`/`voiceId` is optional — omit them all and you get the same
+`ur` + Gladia + Gemini + Uplift agent this package has always created. `ttsVoiceId` takes priority
+over `voiceId` when both are given (server-resolved). See
+`docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` for what's live vs. planned.
 
 Each call signs its own request with `tenantSecret` (HMAC-SHA256, timestamped, single-use nonce,
 scoped to that one action) — see
@@ -60,7 +65,9 @@ auth headers, so it cannot override tenant/signature headers.
 
 Failed calls throw `AwaazLabsUvaAgentsError` with a `status` (the HTTP status from `tenant_portal_api`) and
 a `message` (the server's `detail` string). Common cases: `401` bad signature/replay/expired
-timestamp, `403` tenant suspended, `404` agent not found (update), `429` rate limited.
+timestamp, `403` tenant suspended, `404` agent not found (update), `422` unsupported/disabled
+provider-language-model-voice combination (message is a JSON string with a stable `code`, e.g.
+`unsupported_provider_for_language`), `429` rate limited.
 
 ## Security notes
 

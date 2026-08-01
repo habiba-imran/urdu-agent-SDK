@@ -15,6 +15,33 @@
 
 ## Open
 
+## BLOCK-FISHAUDIO | Phase 6e Fish Audio TTS — account not funded | 2026-08-02
+**Expected:** `docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` Phase 6e — a standalone
+credential-verification probe (`fishaudio.TTS(voice_id=...).synthesize(...)`, same pattern used
+successfully in Phase 6c/6d for Cartesia/ElevenLabs) should confirm `FISH_API_KEY` can produce
+real audio before any live worker/room test is attempted.
+**Actual:** Construction succeeds (the plugin accepts the key at `TTS()` init time — no
+`ValueError`), but the actual synthesize call fails: `livekit.agents._exceptions.APIStatusError:
+message='Payment Required', status_code=402, retryable=False`.
+**Tried:** (1) Confirmed `FISH_API_KEY` is present in `.env.local` (non-exposing `grep -q` check,
+human confirmed adding it earlier). (2) Ran the direct probe via
+`livekit.agents.utils.http_context.open()` (same pattern that worked for Cartesia after its own
+401 was fixed) — same 402 both times, not a transient blip.
+**Hypothesis:** This is an account/billing state issue on Fish Audio's side, not a code or key-
+validity bug — same class of problem this repo already hit with Soniox (`ADR-002`,
+`scripts/probe_soniox_402.py`, also 402). The API key itself is presumably syntactically valid
+(construction never rejects it), but the account has no funded plan/credits to actually run
+inference.
+**Need from human:** Check `fish.audio`'s billing/dashboard, add a payment method or credits (or
+confirm which paid tier is required), then ask to retry the probe. Until resolved:
+`en.tts.fish_audio` stays at `rollout_state = "testing"` (code, migration, and tests are all
+already in place and passing — see `worker/providers/tts/fish_audio.py`,
+`supabase/migrations/0020_seed_fish_audio_voice.sql`, `tests/test_fish_audio_tts.py`). Human
+explicitly chose to skip this for now and proceed to Phase 6f (Rime) rather than block further
+progress on it.
+**STATUS: BLOCKED — Phase 6e live test does not start. Phase 6f (Rime) begun instead, per human
+decision 2026-08-02.**
+
 ## BLOCK-ENV | gate toolchain absent on this machine | 2026-07-27
 **Expected:** `.claude/hooks/gate.sh` runs `make gate` (secrets -> lint -> test -> rls-check ->
 usage-check) and reports a real pass/fail.
