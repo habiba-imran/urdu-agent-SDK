@@ -3,6 +3,11 @@
 Phase 9, 11 & 12 verification suite.
 """
 
+import os
+
+os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
+os.environ.pop("TELNYX_PUBLIC_KEY", None)
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest

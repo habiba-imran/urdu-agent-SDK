@@ -112,7 +112,7 @@ When `@awaazlabs-uva/telephony` makes requests to `/machine/telephony/*`, it sig
 | `disableNumber` | POST | `/machine/telephony/numbers/{number_id}/disable` | `telephony.numbers.disable` |
 
 ### Testing `@awaazlabs-uva/telephony` in Mock Mode
-- `TelnyxClient` and `LiveKitSipClient` automatically operate in **Mock Mode** when the Telnyx API key starts with `mock_` or `test_`.
+- `TelnyxClient` and `LiveKitSipClient` operate in **Mock Mode** only when `TELEPHONY_PROVIDER_MODE=mock` (or an explicit test/local mode) is configured, or when tests instantiate adapters with `mock_mode=True`. Staging and production default to real mode and fail closed when provider credentials are missing.
 - Habiba can write unit tests for `@awaazlabs-uva/telephony` against running backend routes without requiring real Telnyx accounts or paid PSTN lines.
 
 ---

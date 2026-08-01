@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from tenant_portal_api.telephony_config import is_mock_provider_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,8 +52,10 @@ def resolve_inbound_sip_call(
     attributes = extract_sip_participant_attributes(participant_metadata)
     trunk_num = attributes["trunk_phone_number"]
 
-    # Mock mode or fallback resolution if db_conn not provided
+    # Explicit local/test mock mode. Real staging must provide a DB connection.
     if not db_conn:
+        if not is_mock_provider_mode():
+            raise ValueError("Database connection is required for live inbound SIP resolution")
         logger.info("Resolving inbound SIP call for number: %s (mock mode)", trunk_num or "+15551234567")
         return {
             "tenant_id": "tenant_test_123",

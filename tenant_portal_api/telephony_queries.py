@@ -22,7 +22,7 @@ def get_active_telnyx_connection(conn: DbConnection, tenant_id: str) -> dict[str
     row = conn.execute(
         """
         select id, tenant_id, label, platform_status, provider_status, key_fingerprint,
-               telnyx_account_id, last_verified_at, permission_last_checked_at
+               telnyx_account_id, last_verified_at, permission_last_checked_at, encrypted_api_key_ref
         from tenant_telnyx_connections
         where tenant_id = %s and platform_status in ('verifying', 'active', 'rotation_required')
         order by created_at desc
@@ -42,6 +42,7 @@ def get_active_telnyx_connection(conn: DbConnection, tenant_id: str) -> dict[str
         "telnyx_account_id": row[6],
         "last_verified_at": str(row[7]) if row[7] else None,
         "permission_last_checked_at": str(row[8]) if row[8] else None,
+        "encrypted_api_key_ref": row[9],
     }
 
 

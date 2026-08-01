@@ -75,7 +75,7 @@ graph TD
 |---|---|---|---|
 | **TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md** | Multi-tenant Telnyx account connection, single active Telnyx connection per tenant, normalized resource model. | Fully supported in `tenant_portal_api/telnyx_client.py` and `telephony_queries.py`. | **PASSED** |
 | **TELEPHONY_WORKLOAD_AND_RESPONSIBILITY_DIVISION.md** | Hamza owns backend service, adapters, routes, and worker hooks; does not alter live Supabase DB or build TS SDK. | Respected 100%. Zero live DB migrations written by Hamza; TS SDK left to Habiba. | **PASSED** |
-| **HAMZA_TELEPHONY_IMPLEMENTATION_WORKFLOW.md** | Mandatory mock provider default, parameterized SQL queries, row locks, redacted sensitive error responses. | Implemented `mock_mode=True` across Telnyx and LiveKit clients. Parameterized SQL and error redaction verified. | **PASSED** |
+| **HAMZA_TELEPHONY_IMPLEMENTATION_WORKFLOW.md** | Explicit mock mode for local tests, real-provider staging mode, parameterized SQL queries, row locks, redacted sensitive error responses. | Telnyx and LiveKit mock adapters are now gated by `TELEPHONY_PROVIDER_MODE=mock`; staging/production default to real mode and fail closed when provider credentials are missing. Parameterized SQL and error redaction verified. | **PASSED** |
 | **HAMZA_AGENT_FACING_TELEPHONY_IMPLEMENTATION_PLAN.md** | 15-phase implementation roadmap, unit test verification, minimal worker hooks in `worker/telephony_runtime.py`. | All backend phases (0 to 14) completed with 25 passing unit tests. Minimal worker resolver implemented. | **PASSED** |
 | **TELEPHONY_API_AND_SCHEMA_CONTRACT.md** (Commit `6288eb9`) | Fixed machine HMAC action strings, public status enums, platform error codes, request/response models. | All action strings (e.g. `telephony.number_orders.create`), error codes, and Pydantic models strictly match frozen contract. | **PASSED** |
 
@@ -83,8 +83,8 @@ graph TD
 
 ## 5. How to Test & Validate
 
-### 1. Offline Unit Test Suite (100% Mock Mode)
-Run the entire backend telephony test suite offline without needing live Telnyx API keys, LiveKit servers, or Supabase credentials:
+### 1. Offline Unit Test Suite (Explicit Mock Mode)
+Run the backend telephony mock-mode test suite offline without needing live Telnyx API keys, LiveKit servers, or Supabase credentials:
 
 ```powershell
 python -m pytest tests/test_telephony_scaffold.py tests/test_telephony_telnyx_client.py tests/test_telephony_livekit_sip.py tests/test_telephony_queries.py tests/test_telephony_routes.py tests/test_telephony_runtime_and_reconcile.py
@@ -92,22 +92,23 @@ python -m pytest tests/test_telephony_scaffold.py tests/test_telephony_telnyx_cl
 
 **Expected Output**:
 ```
-======================== 25 passed in ~7.00s ========================
+======================== all selected telephony tests passed ========================
 ```
 
 ### 2. Live Staging PSTN Validation (Gated)
 When you are ready to test real phone calls with live Telnyx numbers and LiveKit PSTN gateways:
 
-1. Configure `.env.local` with real credentials:
+1. Configure Render or `.env.local` with real-provider mode and real credentials:
    ```ini
+   TELEPHONY_PROVIDER_MODE=real
    TELEPHONY_CREDENTIAL_ENCRYPTION_KEY=your_encryption_secret
-   TELNYX_WEBHOOK_SIGNING_SECRET=your_telnyx_webhook_secret
+   TELNYX_PUBLIC_KEY=your_telnyx_api_v2_webhook_public_key
    LIVEKIT_URL=https://your-livekit-domain.livekit.cloud
    LIVEKIT_API_KEY=your_livekit_api_key
    LIVEKIT_API_SECRET=your_livekit_api_secret
    TELEPHONY_ENABLE_REAL_PROVIDER_TESTS=true
    ```
-2. Connect a Telnyx Account via API:
+2. Confirm `TELEPHONY_ALLOW_MOCK_MACHINE_AUTH` is not set in staging/production. Then connect a Telnyx Account via API:
    ```http
    POST /portal/telephony/telnyx/connect
    Header: Authorization: Bearer <tenant_jwt>
@@ -118,7 +119,7 @@ When you are ready to test real phone calls with live Telnyx numbers and LiveKit
      "label": "Staging Telnyx Account"
    }
    ```
-3. Search and Purchase a Number:
+3. Search/list real Telnyx inventory first. Purchase a number only after paid-action approval is recorded:
    ```http
    POST /portal/telephony/number-orders
    Header: Authorization: Bearer <tenant_jwt>

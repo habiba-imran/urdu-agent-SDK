@@ -1,18 +1,23 @@
 """LiveKit SIP adapter for managing long-lived inbound/outbound trunks, SIP dispatch rules, and SIP participant creation.
 
-Backend-only module. Supports fake adapter mode by default for testing.
+Backend-only module. Mock mode is available only when explicitly requested.
 Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
 """
 
 from __future__ import annotations
 
-import os
+import asyncio
 import logging
-from typing import Any
+import os
+import threading
+from typing import Any, Awaitable, Callable, TypeVar
 
+from tenant_portal_api.telephony_config import is_mock_provider_mode
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class LiveKitSipClient:
@@ -25,19 +30,10 @@ class LiveKitSipClient:
         api_secret: str | None = None,
         mock_mode: bool | None = None,
     ):
-        self.url = url or os.getenv("LIVEKIT_URL", "http://localhost:7880")
+        self.url = url or os.getenv("LIVEKIT_URL", "")
         self.api_key = api_key or os.getenv("LIVEKIT_API_KEY", "")
         self.api_secret = api_secret or os.getenv("LIVEKIT_API_SECRET", "")
-
-        if mock_mode is not None:
-            self.mock_mode = mock_mode
-        else:
-            self.mock_mode = (
-                not self.api_key
-                or self.api_key.startswith("mock_")
-                or self.api_key.startswith("test_")
-                or self.api_key == "devkey"
-            )
+        self.mock_mode = is_mock_provider_mode() if mock_mode is None else mock_mode
 
     def create_or_get_inbound_trunk(
         self, phone_number_id: str, e164_number: str
@@ -49,23 +45,35 @@ class LiveKitSipClient:
                 "e164_number": e164_number,
                 "status": "active",
             }
+        self._require_credentials()
 
-        try:
-            # When live LiveKit SDK is invoked:
-            # from livekit.api import SipClient
-            # ...
-            return {
-                "livekit_inbound_trunk_id": f"lk_tr_in_{phone_number_id[:8]}",
-                "e164_number": e164_number,
-                "status": "active",
-            }
-        except Exception as e:
-            logger.error("Failed to create LiveKit inbound trunk: %s", str(e))
-            raise TelephonyError(
-                status=502,
-                code=TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED,
-                message="Failed to create or configure LiveKit inbound trunk.",
-            ) from e
+        async def op():
+            import livekit.api as lk
+
+            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            try:
+                listed = await api.sip.list_sip_inbound_trunk(lk.ListSIPInboundTrunkRequest(numbers=[e164_number]))
+                for item in listed.items:
+                    if e164_number in list(item.numbers):
+                        return {
+                            "livekit_inbound_trunk_id": item.sip_trunk_id,
+                            "e164_number": e164_number,
+                            "status": "active",
+                        }
+                trunk = lk.SIPInboundTrunkInfo(
+                    name=f"uva-inbound-{phone_number_id}",
+                    numbers=[e164_number],
+                )
+                created = await api.sip.create_sip_inbound_trunk(lk.CreateSIPInboundTrunkRequest(trunk=trunk))
+                return {
+                    "livekit_inbound_trunk_id": created.sip_trunk_id,
+                    "e164_number": e164_number,
+                    "status": "active",
+                }
+            finally:
+                await api.aclose()
+
+        return self._run(op(), TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit inbound trunk.")
 
     def create_or_get_outbound_trunk(
         self, telnyx_connection_id: str, sip_fqdn: str
@@ -77,20 +85,33 @@ class LiveKitSipClient:
                 "sip_fqdn": sip_fqdn,
                 "status": "active",
             }
+        self._require_credentials()
 
-        try:
-            return {
-                "livekit_outbound_trunk_id": f"lk_tr_out_{telnyx_connection_id[:8]}",
-                "sip_fqdn": sip_fqdn,
-                "status": "active",
-            }
-        except Exception as e:
-            logger.error("Failed to create LiveKit outbound trunk: %s", str(e))
-            raise TelephonyError(
-                status=502,
-                code=TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED,
-                message="Failed to create or configure LiveKit outbound trunk.",
-            ) from e
+        async def op():
+            import livekit.api as lk
+
+            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            try:
+                listed = await api.sip.list_sip_outbound_trunk(lk.ListSIPOutboundTrunkRequest())
+                name = f"uva-outbound-{telnyx_connection_id}"
+                for item in listed.items:
+                    if item.name == name:
+                        return {
+                            "livekit_outbound_trunk_id": item.sip_trunk_id,
+                            "sip_fqdn": sip_fqdn,
+                            "status": "active",
+                        }
+                trunk = lk.SIPOutboundTrunkInfo(name=name, address=sip_fqdn)
+                created = await api.sip.create_sip_outbound_trunk(lk.CreateSIPOutboundTrunkRequest(trunk=trunk))
+                return {
+                    "livekit_outbound_trunk_id": created.sip_trunk_id,
+                    "sip_fqdn": sip_fqdn,
+                    "status": "active",
+                }
+            finally:
+                await api.aclose()
+
+        return self._run(op(), TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit outbound trunk.")
 
     def create_or_get_dispatch_rule(
         self, inbound_trunk_id: str, phone_number_id: str, e164_number: str
@@ -103,21 +124,42 @@ class LiveKitSipClient:
                 "e164_number": e164_number,
                 "status": "active",
             }
+        self._require_credentials()
 
-        try:
-            return {
-                "livekit_sip_dispatch_rule_id": f"lk_rule_{phone_number_id[:8]}",
-                "inbound_trunk_id": inbound_trunk_id,
-                "e164_number": e164_number,
-                "status": "active",
-            }
-        except Exception as e:
-            logger.error("Failed to create LiveKit SIP dispatch rule: %s", str(e))
-            raise TelephonyError(
-                status=502,
-                code=TelephonyErrorCode.LIVEKIT_SIP_DISPATCH_RULE_FAILED,
-                message="Failed to create or configure LiveKit SIP dispatch rule.",
-            ) from e
+        async def op():
+            import livekit.api as lk
+
+            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            try:
+                listed = await api.sip.list_sip_dispatch_rule(lk.ListSIPDispatchRuleRequest(trunk_ids=[inbound_trunk_id]))
+                name = f"uva-dispatch-{phone_number_id}"
+                for item in listed.items:
+                    if item.name == name:
+                        return {
+                            "livekit_sip_dispatch_rule_id": item.sip_dispatch_rule_id,
+                            "inbound_trunk_id": inbound_trunk_id,
+                            "e164_number": e164_number,
+                            "status": "active",
+                        }
+                rule = lk.SIPDispatchRule(dispatch_rule_direct=lk.SIPDispatchRuleDirect(room_name=f"telephony-inbound-{phone_number_id}"))
+                created = await api.sip.create_sip_dispatch_rule(
+                    lk.CreateSIPDispatchRuleRequest(
+                        name=name,
+                        rule=rule,
+                        trunk_ids=[inbound_trunk_id],
+                        inbound_numbers=[e164_number],
+                    )
+                )
+                return {
+                    "livekit_sip_dispatch_rule_id": created.sip_dispatch_rule_id,
+                    "inbound_trunk_id": inbound_trunk_id,
+                    "e164_number": e164_number,
+                    "status": "active",
+                }
+            finally:
+                await api.aclose()
+
+        return self._run(op(), TelephonyErrorCode.LIVEKIT_SIP_DISPATCH_RULE_FAILED, "Failed to create or configure LiveKit SIP dispatch rule.")
 
     def create_sip_participant(
         self,
@@ -135,19 +177,69 @@ class LiveKitSipClient:
                 "to_number": to_number,
                 "status": "dialing",
             }
+        self._require_credentials()
 
-        try:
-            return {
-                "livekit_sip_call_id": f"sip_call_{room_name[:8]}",
-                "livekit_sip_call_id_full": f"sip_call_{room_name[:8]}_full",
-                "room_name": room_name,
-                "to_number": to_number,
-                "status": "dialing",
-            }
-        except Exception as e:
-            logger.error("Failed to create LiveKit SIP participant: %s", str(e))
+        async def op():
+            import livekit.api as lk
+
+            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            try:
+                created = await api.sip.create_sip_participant(
+                    lk.CreateSIPParticipantRequest(
+                        sip_trunk_id=outbound_trunk_id,
+                        sip_call_to=to_number,
+                        room_name=room_name,
+                        participant_identity=participant_identity or f"sip-{room_name}",
+                    )
+                )
+                return {
+                    "livekit_sip_call_id": created.sip_call_id,
+                    "livekit_sip_call_id_full": getattr(created, "sip_call_id_full", created.sip_call_id),
+                    "room_name": room_name,
+                    "to_number": to_number,
+                    "status": "dialing",
+                }
+            finally:
+                await api.aclose()
+
+        return self._run(op(), TelephonyErrorCode.LIVEKIT_AGENT_DISPATCH_FAILED, "Failed to initiate outbound SIP participant.")
+
+    def _require_credentials(self) -> None:
+        if not self.url or not self.api_key or not self.api_secret:
             raise TelephonyError(
-                status=502,
-                code=TelephonyErrorCode.LIVEKIT_AGENT_DISPATCH_FAILED,
-                message="Failed to initiate outbound SIP participant.",
-            ) from e
+                status=503,
+                code=TelephonyErrorCode.PROVIDER_CREDENTIALS_MISSING,
+                message="LiveKit SIP credentials are not configured.",
+            )
+
+    def _run(self, awaitable: Awaitable[T], code: str, message: str) -> T:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                return asyncio.run(awaitable)
+            except TelephonyError:
+                raise
+            except Exception as exc:
+                logger.error("LiveKit SIP provider operation failed: %s", str(exc))
+                raise TelephonyError(status=502, code=code, message=message) from exc
+
+        result: dict[str, T] = {}
+        error: dict[str, BaseException] = {}
+
+        def runner() -> None:
+            try:
+                result["value"] = asyncio.run(awaitable)
+            except BaseException as exc:  # noqa: BLE001 - re-raised in caller thread
+                error["error"] = exc
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join()
+        if error:
+            exc = error["error"]
+            if isinstance(exc, TelephonyError):
+                raise exc
+            logger.error("LiveKit SIP provider operation failed: %s", str(exc))
+            raise TelephonyError(status=502, code=code, message=message) from exc
+        return result["value"]

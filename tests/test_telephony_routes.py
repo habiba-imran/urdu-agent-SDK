@@ -3,6 +3,10 @@
 Phase 7 & 8 verification suite.
 """
 
+import os
+
+os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest

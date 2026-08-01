@@ -573,10 +573,10 @@ Subphases:
 3. Add redacted structured logs for credential changes, provider failures, routing failures, call setup/cleanup, webhooks, reconciliation, and health diagnostics.
 4. Add backend-only env var names to `.env.example` and docs only after final architecture decision.
 5. Do not edit `.env.local` or commit real values.
-6. Add config validation for encryption reference, webhook signing secret, provider timeout, reconciliation settings, and live-provider-test gating.
+6. Add config validation for encryption reference, webhook public key, provider timeout, reconciliation settings, and live-provider-test gating.
 7. Define these backend-only env var names subject to final architecture decision:
    - `TELEPHONY_CREDENTIAL_ENCRYPTION_KEY` or a secret-store/KMS reference
-   - `TELNYX_WEBHOOK_SIGNING_SECRET`
+   - `TELNYX_PUBLIC_KEY`
    - `TELEPHONY_WEBHOOK_PUBLIC_BASE_URL` if provider configuration needs callback URLs
    - `TELEPHONY_PROVIDER_HTTP_TIMEOUT_SEC`
    - `TELEPHONY_RECONCILE_INTERVAL_SEC`
