@@ -19,7 +19,8 @@ TENANT_B = "b5231868-2f06-426a-b9a5-1081e89554ec"
 OLD_KEY = "KEY01_OLD_REAL_STYLE_SECRET_1234567890"
 NEW_KEY = "KEY01_NEW_REAL_STYLE_SECRET_1234567890"
 ENCRYPTION_KEY = "local-test-encryption-key-for-telephony-db-fixes"
-MIGRATION_PATH = Path("supabase/migrations/20260801185628_telephony_provider_number_identity.sql")
+PARTIAL_MIGRATION_PATH = Path("supabase/migrations/20260801185628_telephony_provider_number_identity.sql")
+NORMAL_UNIQUE_MIGRATION_PATH = Path("supabase/migrations/20260801193716_telephony_provider_number_normal_unique.sql")
 
 
 @pytest.fixture(autouse=True)
@@ -144,7 +145,9 @@ class StatefulTelephonyDb:
             (
                 number
                 for number in self.numbers
-                if number["tenant_id"] == tenant_id and number["provider_number_id"] == provider_id
+                if provider_id is not None
+                and number["tenant_id"] == tenant_id
+                and number["provider_number_id"] == provider_id
             ),
             None,
         )
@@ -226,12 +229,23 @@ def service_for(db: StatefulTelephonyDb, items: list[dict[str, Any]], fail_verif
     return TelephonyService(db_conn=db, telnyx_client_factory=factory)
 
 
-def test_provider_number_identity_migration_exists():
-    sql = MIGRATION_PATH.read_text(encoding="utf-8").lower()
+def test_previous_partial_provider_number_migration_is_unchanged():
+    sql = PARTIAL_MIGRATION_PATH.read_text(encoding="utf-8").lower()
 
     assert "telephony_phone_numbers_provider_number_per_tenant_uidx" in sql
     assert "on telephony_phone_numbers (tenant_id, provider_number_id)" in sql
     assert "where provider_number_id is not null" in sql
+
+
+def test_corrective_provider_number_normal_unique_migration_exists():
+    sql = NORMAL_UNIQUE_MIGRATION_PATH.read_text(encoding="utf-8").lower()
+
+    assert "having count(*) > 1" in sql
+    assert "raise exception" in sql
+    assert "drop index if exists telephony_phone_numbers_provider_number_per_tenant_uidx" in sql
+    assert "telephony_phone_numbers_provider_number_per_tenant_key" in sql
+    assert "unique (tenant_id, provider_number_id)" in sql
+    assert "nulls not distinct" not in sql
 
 
 def test_first_number_synchronization_creates_provider_identity_row():
@@ -241,7 +255,8 @@ def test_first_number_synchronization_creates_provider_identity_row():
     assert result["synced_count"] == 1
     assert result["items"][0]["provider_number_id"] == "pn_real_123"
     assert len(db.numbers) == 1
-    assert "on conflict (tenant_id, provider_number_id) where provider_number_id is not null" in db.last_sync_sql
+    assert "on conflict (tenant_id, provider_number_id) do update set" in db.last_sync_sql
+    assert "where provider_number_id is not null do update" not in db.last_sync_sql
 
 
 def test_repeat_synchronization_updates_the_same_provider_number_row():
@@ -272,6 +287,15 @@ def test_empty_provider_inventory_syncs_zero_numbers():
     assert result == {"tenant_id": TENANT_A, "synced_count": 0, "drift_count": 0, "items": []}
     assert db.numbers == []
 
+
+def test_stateful_normal_unique_model_allows_multiple_null_provider_ids():
+    db = StatefulTelephonyDb()
+
+    first = db._upsert_number((TENANT_A, "conn_a", None, "+14155550130", "US", "local", ["voice"], "active")).fetchone()
+    second = db._upsert_number((TENANT_A, "conn_a", None, "+14155550131", "US", "local", ["voice"], "active")).fetchone()
+
+    assert first[0] != second[0]
+    assert len([number for number in db.numbers if number["provider_number_id"] is None]) == 2
 
 def test_existing_disabled_number_becomes_synchronized_again():
     db = StatefulTelephonyDb()
@@ -353,3 +377,121 @@ def test_number_sync_database_conflict_maps_to_stable_platform_error():
     assert exc_info.value.code == "call_state_conflict"
     assert OLD_KEY not in exc_info.value.message
     assert NEW_KEY not in exc_info.value.message
+
+
+def _postgres_conn_kwargs_or_skip():
+    try:
+        from scripts.dbconn import conn_kwargs
+
+        return conn_kwargs()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"SUPABASE_DB_URL not configured for real PostgreSQL constraint check: {exc}")
+
+
+def test_provider_number_unique_constraint_works_against_real_postgres_schema():
+    kwargs = _postgres_conn_kwargs_or_skip()
+    try:
+        conn = psycopg.connect(**kwargs, connect_timeout=10, autocommit=True, prepare_threshold=None)
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"PostgreSQL connection not available for constraint check: {exc}")
+
+    with conn:
+        conn.execute("drop table if exists pg_temp.telephony_provider_unique_test")
+        conn.execute(
+            """
+            create temporary table telephony_provider_unique_test (
+                id text primary key,
+                tenant_id uuid not null,
+                provider_number_id text,
+                e164_number text not null,
+                provisioning_status text not null default 'owned',
+                routing_status text not null default 'not_configured',
+                disabled_at timestamptz,
+                updated_at timestamptz not null default now()
+            ) on commit preserve rows
+            """
+        )
+        conn.execute(
+            """
+            alter table telephony_provider_unique_test
+              add constraint telephony_provider_unique_test_provider_key
+              unique (tenant_id, provider_number_id)
+            """
+        )
+
+        conn.execute(
+            """
+            insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
+            values (%s, %s, null, %s), (%s, %s, null, %s)
+            """,
+            ("null_1", TENANT_A, "+14155550140", "null_2", TENANT_A, "+14155550141"),
+        )
+        null_count = conn.execute(
+            """
+            select count(*)
+            from telephony_provider_unique_test
+            where tenant_id = %s and provider_number_id is null
+            """,
+            (TENANT_A,),
+        ).fetchone()[0]
+        assert null_count == 2
+
+        conn.execute(
+            """
+            insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
+            values (%s, %s, %s, %s)
+            """,
+            ("provider_a_1", TENANT_A, "pn_shared_real", "+14155550142"),
+        )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            conn.execute(
+                """
+                insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
+                values (%s, %s, %s, %s)
+                """,
+                ("provider_a_2", TENANT_A, "pn_shared_real", "+14155550143"),
+            )
+        conn.rollback()
+
+        conn.execute(
+            """
+            insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
+            values (%s, %s, %s, %s)
+            """,
+            ("provider_b_1", TENANT_B, "pn_shared_real", "+14155550144"),
+        )
+
+        conn.execute(
+            """
+            insert into telephony_provider_unique_test (
+                id, tenant_id, provider_number_id, e164_number, provisioning_status, disabled_at
+            ) values (%s, %s, %s, %s, 'released', now())
+            """,
+            ("released_original", TENANT_A, "pn_reactivated_real", "+14155550145"),
+        )
+        reactivated = conn.execute(
+            """
+            insert into telephony_provider_unique_test (
+                id, tenant_id, provider_number_id, e164_number, provisioning_status, routing_status, disabled_at
+            ) values (%s, %s, %s, %s, 'owned', 'not_configured', null)
+            on conflict (tenant_id, provider_number_id) do update set
+                e164_number = excluded.e164_number,
+                provisioning_status = case
+                    when telephony_provider_unique_test.disabled_at is not null
+                      or telephony_provider_unique_test.provisioning_status in ('released', 'deleted')
+                    then excluded.provisioning_status
+                    else telephony_provider_unique_test.provisioning_status
+                end,
+                routing_status = case
+                    when telephony_provider_unique_test.disabled_at is not null
+                    then excluded.routing_status
+                    else telephony_provider_unique_test.routing_status
+                end,
+                disabled_at = null,
+                updated_at = now()
+            returning id, e164_number, provisioning_status, disabled_at
+            """,
+            ("released_duplicate", TENANT_A, "pn_reactivated_real", "+14155550146"),
+        ).fetchone()
+
+        assert reactivated == ("released_original", "+14155550146", "owned", None)
