@@ -5,7 +5,7 @@ Phase 4 & 5 verification suite.
 
 import pytest
 from tenant_portal_api.livekit_sip import LiveKitSipClient
-from tenant_portal_api.telephony_errors import TelephonyError
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 
 
 def test_livekit_sip_client_mock():
@@ -15,9 +15,10 @@ def test_livekit_sip_client_mock():
     assert inbound["status"] == "active"
     assert "lk_tr_in_mock_" in inbound["livekit_inbound_trunk_id"]
 
-    outbound = client.create_or_get_outbound_trunk("telnyx_12345678", "sip.telnyx.com")
+    outbound = client.create_or_get_outbound_trunk("telnyx_12345678", "sip.telnyx.com", ["+15551234567"])
     assert outbound["status"] == "active"
     assert "lk_tr_out_mock_" in outbound["livekit_outbound_trunk_id"]
+    assert outbound["numbers"] == ["+15551234567"]
 
     rule = client.create_or_get_dispatch_rule(
         inbound["livekit_inbound_trunk_id"], "phone_12345678", "+15551234567"
@@ -46,3 +47,27 @@ def test_livekit_sip_real_mode_requires_credentials(monkeypatch):
 
     assert exc_info.value.code == "provider_credentials_missing"
     assert exc_info.value.status == 503
+
+
+def test_livekit_outbound_trunk_requires_numbers_before_provider_call():
+    client = LiveKitSipClient(mock_mode=True)
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.create_or_get_outbound_trunk("telnyx_12345678", "sip.telnyx.com", [])
+
+    assert exc_info.value.code == "outbound_not_ready"
+    assert exc_info.value.status == 409
+
+
+def test_livekit_outbound_trunk_validation_maps_to_readiness_error():
+    client = LiveKitSipClient(url="wss://livekit.example", api_key="key", api_secret="secret", mock_mode=False)
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client._raise_provider_error(
+            RuntimeError("ServerError(code=invalid_argument, message=no trunk numbers specified, status=400)"),
+            TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED,
+            "Failed to create or configure LiveKit outbound trunk.",
+        )
+
+    assert exc_info.value.code == "outbound_not_ready"
+    assert exc_info.value.status == 409

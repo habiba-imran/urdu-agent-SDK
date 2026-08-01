@@ -13,7 +13,7 @@ import threading
 from typing import Any, Awaitable, Callable, TypeVar
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode
-from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode, redact_sensitive_string
 
 logger = logging.getLogger(__name__)
 
@@ -76,13 +76,21 @@ class LiveKitSipClient:
         return self._run(op(), TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit inbound trunk.")
 
     def create_or_get_outbound_trunk(
-        self, telnyx_connection_id: str, sip_fqdn: str
+        self, telnyx_connection_id: str, sip_fqdn: str, trunk_numbers: list[str]
     ) -> dict[str, Any]:
         """Configure or retrieve a reusable long-lived LiveKit outbound trunk for a Telnyx connection."""
+        numbers = sorted({number.strip() for number in trunk_numbers if number and number.strip().startswith("+")})
+        if not numbers:
+            raise TelephonyError(
+                status=409,
+                code=TelephonyErrorCode.OUTBOUND_NOT_READY,
+                message="Tenant has no eligible managed phone numbers for outbound trunk setup.",
+            )
         if self.mock_mode:
             return {
                 "livekit_outbound_trunk_id": f"lk_tr_out_mock_{telnyx_connection_id[:8]}",
                 "sip_fqdn": sip_fqdn,
+                "numbers": numbers,
                 "status": "active",
             }
         self._require_credentials()
@@ -96,16 +104,25 @@ class LiveKitSipClient:
                 name = f"uva-outbound-{telnyx_connection_id}"
                 for item in listed.items:
                     if item.name == name:
+                        current_numbers = sorted(set(item.numbers))
+                        if current_numbers != numbers or item.address != sip_fqdn:
+                            item = await api.sip.update_outbound_trunk_fields(
+                                item.sip_trunk_id,
+                                address=sip_fqdn,
+                                numbers=numbers,
+                            )
                         return {
                             "livekit_outbound_trunk_id": item.sip_trunk_id,
                             "sip_fqdn": sip_fqdn,
+                            "numbers": numbers,
                             "status": "active",
                         }
-                trunk = lk.SIPOutboundTrunkInfo(name=name, address=sip_fqdn)
-                created = await api.sip.create_sip_outbound_trunk(lk.CreateSIPOutboundTrunkRequest(trunk=trunk))
+                trunk = lk.SIPOutboundTrunkInfo(name=name, address=sip_fqdn, numbers=numbers)
+                created = await api.sip.create_outbound_trunk(lk.CreateSIPOutboundTrunkRequest(trunk=trunk))
                 return {
                     "livekit_outbound_trunk_id": created.sip_trunk_id,
                     "sip_fqdn": sip_fqdn,
+                    "numbers": numbers,
                     "status": "active",
                 }
             finally:
@@ -221,8 +238,7 @@ class LiveKitSipClient:
             except TelephonyError:
                 raise
             except Exception as exc:
-                logger.error("LiveKit SIP provider operation failed: %s", str(exc))
-                raise TelephonyError(status=502, code=code, message=message) from exc
+                self._raise_provider_error(exc, code, message)
 
         result: dict[str, T] = {}
         error: dict[str, BaseException] = {}
@@ -240,6 +256,16 @@ class LiveKitSipClient:
             exc = error["error"]
             if isinstance(exc, TelephonyError):
                 raise exc
-            logger.error("LiveKit SIP provider operation failed: %s", str(exc))
-            raise TelephonyError(status=502, code=code, message=message) from exc
+            self._raise_provider_error(exc, code, message)
         return result["value"]
+
+    def _raise_provider_error(self, exc: BaseException, code: str, message: str) -> None:
+        provider_message = str(exc)
+        logger.error("LiveKit SIP provider operation failed: %s", redact_sensitive_string(provider_message))
+        if code == TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED and "no trunk numbers specified" in provider_message.lower():
+            raise TelephonyError(
+                status=409,
+                code=TelephonyErrorCode.OUTBOUND_NOT_READY,
+                message="Tenant has no eligible managed phone numbers for outbound trunk setup.",
+            ) from exc
+        raise TelephonyError(status=502, code=code, message=message) from exc
