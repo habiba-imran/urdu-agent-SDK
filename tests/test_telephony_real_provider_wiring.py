@@ -105,6 +105,8 @@ class ConnectWriteDb(ActiveConnectionDb):
     def execute(self, query: str, params: tuple[Any, ...] = ()):
         self.calls.append((query, params))
         sql = " ".join(query.lower().split())
+        if "from tenant_telnyx_connections" in sql and self.stored_encrypted_ref is None:
+            return FakeCursor(row=None)
         if "insert into tenant_telnyx_connections" in sql:
             self.stored_encrypted_ref = params[3]
             self.encrypted_ref = self.stored_encrypted_ref

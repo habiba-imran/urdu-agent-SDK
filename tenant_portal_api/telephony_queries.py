@@ -92,6 +92,60 @@ def mark_telnyx_connection_active(
     )
 
 
+
+def update_active_telnyx_connection_credential(
+    conn: DbConnection,
+    tenant_id: str,
+    connection_id: str,
+    key_fingerprint: str,
+    encrypted_ref: str,
+    label: str | None,
+    telnyx_account_id: str | None,
+    provider_status: str | None,
+) -> dict[str, Any] | None:
+    """Replace the stored credential on the current active Telnyx connection."""
+    row = conn.execute(
+        """
+        update tenant_telnyx_connections
+        set label = coalesce(%s, label),
+            platform_status = 'active',
+            provider_status = coalesce(%s, 'active'),
+            key_fingerprint = %s,
+            encrypted_api_key_ref = %s,
+            telnyx_account_id = %s,
+            last_verified_at = now(),
+            permission_last_checked_at = now(),
+            updated_at = now()
+        where tenant_id = %s
+          and id = %s
+          and platform_status in ('verifying', 'active', 'rotation_required')
+        returning id, tenant_id, label, platform_status, provider_status, key_fingerprint,
+                  telnyx_account_id, last_verified_at, permission_last_checked_at, encrypted_api_key_ref
+        """,
+        (
+            label,
+            provider_status,
+            key_fingerprint,
+            encrypted_ref,
+            telnyx_account_id,
+            tenant_id,
+            connection_id,
+        ),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "tenant_id": row[1],
+        "label": row[2],
+        "platform_status": row[3],
+        "provider_status": row[4],
+        "key_fingerprint": row[5],
+        "telnyx_account_id": row[6],
+        "last_verified_at": str(row[7]) if row[7] else None,
+        "permission_last_checked_at": str(row[8]) if row[8] else None,
+        "encrypted_api_key_ref": row[9],
+    }
 def disconnect_telnyx_connection(conn: DbConnection, connection_id: str) -> None:
     """Soft disconnect a Telnyx connection."""
     conn.execute(
