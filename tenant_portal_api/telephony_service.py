@@ -88,6 +88,13 @@ class TelephonyService:
             return self._livekit_client_factory(mock_mode=is_mock_provider_mode())
         return LiveKitSipClient(mock_mode=is_mock_provider_mode())
 
+    def _raise_database_conflict(self, operation: str, exc: Exception) -> None:
+        logger.warning("Telephony database conflict during %s: %s", operation, exc.__class__.__name__)
+        raise TelephonyError(
+            status=409,
+            code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+            message="Telephony resource state changed during the database update. Refresh and retry.",
+        ) from exc
     def _public_connection(self, conn_data: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": conn_data.get("id"),
@@ -159,25 +166,84 @@ class TelephonyService:
                 self._connections[tenant_id] = conn_data
                 return self._public_connection(conn_data)
 
-            pending = queries.upsert_telnyx_connection_verifying(
-                conn,
-                tenant_id,
-                label or "Primary Telnyx Account",
-                fingerprint,
-                encrypted_ref,
-            )
-            queries.mark_telnyx_connection_active(
-                conn,
-                pending["id"],
-                account_info.get("telnyx_account_id"),
-            )
+            existing = self._active_connection(conn, tenant_id)
+            if existing:
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                    message="Tenant already has an active Telnyx connection. Use key rotation to refresh credentials.",
+                )
+
+            try:
+                pending = queries.upsert_telnyx_connection_verifying(
+                    conn,
+                    tenant_id,
+                    label or "Primary Telnyx Account",
+                    fingerprint,
+                    encrypted_ref,
+                )
+                queries.mark_telnyx_connection_active(
+                    conn,
+                    pending["id"],
+                    account_info.get("telnyx_account_id"),
+                )
+            except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                self._raise_database_conflict("connect Telnyx account", exc)
             stored = queries.get_active_telnyx_connection(conn, tenant_id) or pending
             return self._public_connection(stored)
+
     def rotate_telnyx_account_key(
         self, tenant_id: str, api_key: str
     ) -> dict[str, Any]:
-        """Rotate API key for tenant."""
-        return self.connect_telnyx_account(tenant_id, api_key, label="Rotated Telnyx Account")
+        """Verify and replace the credential on the current active Telnyx connection."""
+        if not api_key:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_KEY_INVALID,
+                message="Telnyx API key is required.",
+            )
+
+        client = self._get_telnyx_client(api_key)
+        account_info = client.verify_api_key()
+        encrypted_ref = None if is_mock_provider_mode() else encrypt_provider_secret(api_key)
+        fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12]
+
+        with self._connection() as conn:
+            conn_data = self._require_active_connection(conn, tenant_id)
+            if conn is None:
+                conn_data.update(
+                    {
+                        "platform_status": ConnectionPlatformStatus.ACTIVE.value,
+                        "label": "Rotated Telnyx Account",
+                        "provider_status": account_info.get("status", "active"),
+                        "key_fingerprint": fingerprint,
+                        "telnyx_account_id": account_info.get("telnyx_account_id"),
+                        "last_verified_at": "2026-01-01T00:00:00Z",
+                        "permission_last_checked_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+                return self._public_connection(conn_data)
+
+            try:
+                updated = queries.update_active_telnyx_connection_credential(
+                    conn,
+                    tenant_id,
+                    conn_data["id"],
+                    fingerprint,
+                    encrypted_ref,
+                    "Rotated Telnyx Account",
+                    account_info.get("telnyx_account_id"),
+                    account_info.get("status", "active"),
+                )
+            except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                self._raise_database_conflict("rotate Telnyx account key", exc)
+            if not updated:
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                    message="Active Telnyx connection changed during rotation. Refresh and retry.",
+                )
+            return self._public_connection(updated)
 
     def disconnect_telnyx_account(self, tenant_id: str) -> dict[str, Any]:
         """Disconnect tenant Telnyx account."""
@@ -616,36 +682,57 @@ class TelephonyService:
             provider_numbers = client.list_owned_numbers()
             items = []
             for item in provider_numbers:
-                row = conn.execute(
-                    """
-                    insert into telephony_phone_numbers (
-                        tenant_id, telnyx_connection_id, provider_number_id, e164_number,
-                        country, number_type, features, provisioning_status, routing_status,
-                        provider_status, last_synced_at
-                    ) values (%s, %s, %s, %s, %s, %s, %s, 'owned', 'not_configured', %s, now())
-                    on conflict (tenant_id, e164_number) where disabled_at is null do update set
-                        provider_number_id = excluded.provider_number_id,
-                        country = excluded.country,
-                        number_type = excluded.number_type,
-                        features = excluded.features,
-                        provider_status = excluded.provider_status,
-                        last_synced_at = now(),
-                        updated_at = now()
-                    returning id, tenant_id, provider_number_id, e164_number, country, number_type,
-                              features, provisioning_status, routing_status, assigned_agent_id,
-                              external_customer_ref, disabled_at
-                    """,
-                    (
-                        tenant_id,
-                        conn_data["id"],
-                        item.get("provider_number_id"),
-                        item.get("e164_number"),
-                        item.get("country"),
-                        item.get("number_type"),
-                        item.get("features") or ["voice"],
-                        item.get("status"),
-                    ),
-                ).fetchone()
+                provider_number_id = item.get("provider_number_id")
+                e164_number = item.get("e164_number")
+                if not provider_number_id or not e164_number:
+                    logger.warning("Skipping Telnyx number missing provider identity or E.164 value.")
+                    continue
+                try:
+                    row = conn.execute(
+                        """
+                        insert into telephony_phone_numbers (
+                            tenant_id, telnyx_connection_id, provider_number_id, e164_number,
+                            country, number_type, features, provisioning_status, routing_status,
+                            provider_status, last_synced_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, 'owned', 'not_configured', %s, now())
+                        on conflict (tenant_id, provider_number_id) where provider_number_id is not null do update set
+                            telnyx_connection_id = excluded.telnyx_connection_id,
+                            e164_number = excluded.e164_number,
+                            country = excluded.country,
+                            number_type = excluded.number_type,
+                            features = excluded.features,
+                            provisioning_status = case
+                                when telephony_phone_numbers.disabled_at is not null
+                                  or telephony_phone_numbers.provisioning_status in ('released', 'deleted')
+                                then excluded.provisioning_status
+                                else telephony_phone_numbers.provisioning_status
+                            end,
+                            routing_status = case
+                                when telephony_phone_numbers.disabled_at is not null
+                                then excluded.routing_status
+                                else telephony_phone_numbers.routing_status
+                            end,
+                            provider_status = excluded.provider_status,
+                            disabled_at = null,
+                            last_synced_at = now(),
+                            updated_at = now()
+                        returning id, tenant_id, provider_number_id, e164_number, country, number_type,
+                                  features, provisioning_status, routing_status, assigned_agent_id,
+                                  external_customer_ref, disabled_at
+                        """,
+                        (
+                            tenant_id,
+                            conn_data["id"],
+                            provider_number_id,
+                            e164_number,
+                            item.get("country"),
+                            item.get("number_type"),
+                            item.get("features") or ["voice"],
+                            item.get("status"),
+                        ),
+                    ).fetchone()
+                except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                    self._raise_database_conflict("sync Telnyx owned numbers", exc)
                 if row:
                     items.append(self._number_from_row(row))
             return {
@@ -654,6 +741,7 @@ class TelephonyService:
                 "drift_count": 0,
                 "items": items,
             }
+
     def get_telnyx_number_drift(self, tenant_id: str) -> dict[str, Any]:
         """Report configuration drift for tenant numbers."""
         return {
