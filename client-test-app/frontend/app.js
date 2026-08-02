@@ -163,6 +163,11 @@ function handleNumberSelection(numberId) {
   if (number.assigned_agent_id) syncAgentSelections(number.assigned_agent_id);
 }
 
+function getAssignedAgentIdForNumber(numberId) {
+  const number = state.numbers.find((item) => item.id === numberId);
+  return number?.assigned_agent_id || '';
+}
+
 function renderNumberOptions(selectId) {
   const select = $(selectId);
   if (!select) return;
@@ -184,6 +189,15 @@ function renderAgentOptions(selectId) {
       `<option value="${escHtml(agent.id)}">${escHtml(`${agent.name} (${agent.id.slice(0, 8)}...)`)}</option>`
     )).join('');
   if (current) select.value = current;
+}
+
+function activateTab(tabName) {
+  document.querySelectorAll('.tab-btn').forEach((item) => {
+    item.classList.toggle('active', item.dataset.tab === tabName);
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+  });
 }
 
 async function refreshNumbersAndAgents() {
@@ -543,7 +557,7 @@ window.disableNumber = async (numberId) => {
 
 window.selectManagedNumber = (numberId) => {
   handleNumberSelection(numberId);
-  document.querySelector('[data-tab="providertest"]')?.click();
+  activateTab('workspace');
 };
 
 async function createAgent() {
@@ -552,7 +566,7 @@ async function createAgent() {
   const prompt = $('agent-prompt')?.value.trim();
   const voiceId = $('agent-voice-id')?.value.trim();
   if (!name || !prompt || !voiceId) {
-    toast('warning', 'Name, prompt, and voice ID are required');
+    toast('warning', 'Name, prompt, and voice ID are required for this test app');
     return;
   }
   setLoading(button, true, 'Creating...');
@@ -811,21 +825,29 @@ async function simulateInbound() {
 }
 
 async function createOutboundCall() {
-  const agentId = $('call-agent-id')?.value;
+  const selectedAgentId = $('call-agent-id')?.value;
   const fromNumberId = $('call-from-id')?.value;
   const toNumber = $('call-to-number')?.value.trim();
   const recipient = $('call-recipient')?.value.trim();
-  if (!agentId || !fromNumberId || !toNumber) {
+  if (!selectedAgentId || !fromNumberId || !toNumber) {
     toast('warning', 'Agent, from number, and destination are required');
     return;
   }
+  await refreshNumbersAndAgents();
+  populateProviderTestSelects();
+  const assignedAgentId = getAssignedAgentIdForNumber(fromNumberId);
+  if (!assignedAgentId) {
+    toast('warning', 'Attach the selected number to an agent before placing an outbound call');
+    return;
+  }
+  syncAgentSelections(assignedAgentId);
   if (!window.confirm(`Place a real outbound call to ${toNumber}?`)) return;
   const button = $('btn-make-call');
   const resultBox = $('call-result');
   setLoading(button, true, 'Calling...');
   try {
     const result = await api('POST', '/api/outbound-call', {
-      agentId,
+      agentId: assignedAgentId,
       fromNumberId,
       toNumber,
       recipient,
@@ -844,7 +866,7 @@ async function createOutboundCall() {
       `;
     }
     handleNumberSelection(fromNumberId);
-    syncAgentSelections(agentId);
+    syncAgentSelections(assignedAgentId);
     toast('success', 'Outbound call placed', toNumber);
   } catch (error) {
     toast('error', 'Outbound call failed', error.message);
@@ -957,15 +979,16 @@ function closeModal(id) {
 function registerEvents() {
   document.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', async () => {
-      document.querySelectorAll('.tab-btn').forEach((item) => item.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
-      button.classList.add('active');
-      $(`tab-${button.dataset.tab}`)?.classList.add('active');
-      if (button.dataset.tab === 'numbers') await loadManagedNumbers();
-      if (button.dataset.tab === 'agents') await loadAgents();
-      if (button.dataset.tab === 'providertest') await populateProviderTestSelects();
-      if (button.dataset.tab === 'voice') await populateProviderTestSelects();
-      if (button.dataset.tab === 'calllog') await loadCallLog();
+      const tabName = button.dataset.tab;
+      activateTab(tabName);
+      if (tabName === 'workspace') {
+        await Promise.all([loadManagedNumbers(), loadAgents()]);
+        await populateProviderTestSelects();
+      }
+      if (tabName === 'activity') {
+        await populateProviderTestSelects();
+        await loadCallLog();
+      }
     });
   });
 
@@ -1041,7 +1064,8 @@ async function init() {
   registerEvents();
   await checkBackendHealth();
   await checkConfig();
-  await loadAgents();
+  await Promise.all([loadAgents(), loadManagedNumbers()]);
+  await populateProviderTestSelects();
 }
 
 init();

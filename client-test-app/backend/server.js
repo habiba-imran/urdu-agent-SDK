@@ -743,16 +743,45 @@ app.post('/api/outbound-call', async (req, res) => {
     if (!/^\+[1-9]\d{6,14}$/.test(toNumber)) {
       return res.status(400).json({ ok: false, message: 'toNumber must be in E.164 format (e.g. +12125551234)' });
     }
+
+    const [numbers, agents] = await Promise.all([listManagedNumbers(), listAgents()]);
+    const selectedNumber = numbers.find((item) => item.id === fromNumberId);
+    if (!selectedNumber) {
+      return res.status(404).json({ ok: false, code: 'number_not_found', message: `Managed number ${fromNumberId} was not found.` });
+    }
+    if (!selectedNumber.assigned_agent_id) {
+      return res.status(409).json({
+        ok: false,
+        code: 'number_not_assigned',
+        message: 'Attach this managed number to an agent before placing an outbound call.',
+      });
+    }
+
+    const effectiveAgentId = selectedNumber.assigned_agent_id;
+    const selectedAgent = agents.find((item) => item.id === effectiveAgentId) || null;
+    if (agentId !== effectiveAgentId) {
+      console.warn('[Outbound Call] Overriding stale agent selection', {
+        requestedAgentId: agentId,
+        effectiveAgentId,
+        fromNumberId,
+      });
+    }
+
     const telephony = getTelephonyClient();
     const call = await telephony.createOutboundCall({
-      agentId,
+      agentId: effectiveAgentId,
       fromNumberId,
       toNumber,
       recipient: recipient || 'Test Recipient',
       context: context || { source: 'uva-client-test-app' },
       idempotencyKey: randomUUID(),
     });
-    res.json(call);
+    res.json({
+      ...call,
+      agentId: effectiveAgentId,
+      agentName: selectedAgent?.name || null,
+      requestedAgentId: agentId,
+    });
   } catch (error) {
     handleError(res, error);
   }
