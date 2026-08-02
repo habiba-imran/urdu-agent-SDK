@@ -155,14 +155,14 @@ class TelephonyService:
         agent_id: str,
         require_ready_routing: bool = True,
     ) -> None:
-        assigned_agent_id = phone.get("assigned_agent_id")
+        assigned_agent_id = str(phone.get("assigned_agent_id")) if phone.get("assigned_agent_id") else None
         if not assigned_agent_id:
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
                 message="Phone number is not assigned to an agent.",
             )
-        if assigned_agent_id != agent_id:
+        if str(assigned_agent_id) != str(agent_id):
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
@@ -1588,7 +1588,7 @@ class TelephonyService:
             "features": row[6] if row[6] else [],
             "provisioning_status": row[7],
             "routing_status": row[8],
-            "assigned_agent_id": row[9],
+            "assigned_agent_id": str(row[9]) if row[9] else None,
             "external_customer_ref": row[10],
             "disabled_at": str(row[11]) if len(row) > 11 and row[11] else None,
         }
