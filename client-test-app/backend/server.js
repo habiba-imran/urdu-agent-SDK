@@ -12,7 +12,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHmac } from 'crypto';
 import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
 import { TelephonyClient, AwaazLabsUvaTelephonyError } from '@awaazlabs-uva/telephony';
 
@@ -50,6 +50,22 @@ function getTelephonyClient() {
     tenantId: config.tenantId,
     tenantSecret: config.hmacSecret,
   });
+}
+
+function createControlPlaneHeaders(tenantId, secret, agentId) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomUUID();
+  const signature = createHmac('sha256', secret)
+    .update(`${tenantId}.${timestamp}.${nonce}.${agentId}`)
+    .digest('hex');
+
+  return {
+    'Content-Type': 'application/json',
+    'X-Tenant-Id': tenantId,
+    'X-Timestamp': timestamp,
+    'X-Nonce': nonce,
+    'X-Signature': signature,
+  };
 }
 
 // ─── Error helpers ───────────────────────────────────────────────────────────
@@ -219,6 +235,79 @@ app.patch('/api/agents/:agentId', async (req, res) => {
       llmProvider, ttsProvider, ttsVoiceId,
     });
     res.json(updated);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ─── BROWSER VOICE SESSION ENDPOINTS ──────────────────────────────────────────
+
+app.post('/api/voice/session', async (req, res) => {
+  const { agentId } = req.body || {};
+  if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+  if (!config.tenantId || !config.hmacSecret) return res.status(401).json({ error: 'Tenant credentials not set' });
+
+  try {
+    const headers = createControlPlaneHeaders(config.tenantId, config.hmacSecret, agentId);
+    const upstream = await fetch(`${config.apiBaseUrl}/v1/session`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+
+    let payload;
+    try { payload = await upstream.json(); } catch { payload = {}; }
+
+    if (!upstream.ok || !payload?.token || !payload?.wsUrl || !payload?.roomName) {
+      return res.status(502).json({ error: 'session_failed', detail: payload });
+    }
+
+    res.json({
+      token: payload.token,
+      wsUrl: payload.wsUrl,
+      roomName: payload.roomName,
+      refreshUrl: `http://localhost:${process.env.PORT || 3001}/api/voice/session/refresh`,
+      expiresIn: payload.expiresIn || 120,
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+app.post('/api/voice/session/refresh', async (req, res) => {
+  const bearer = req.get('authorization');
+  const bodyToken = req.body?.token;
+  const token = bearer?.startsWith('Bearer ') ? bearer.slice(7).trim() : bodyToken;
+  if (!token) return res.status(401).json({ error: 'missing token' });
+
+  try {
+    const headers = {};
+    if (bearer?.startsWith('Bearer ')) {
+      headers.Authorization = bearer;
+    } else {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const upstream = await fetch(`${config.apiBaseUrl}/v1/session/refresh`, {
+      method: 'POST',
+      headers,
+      body: bearer?.startsWith('Bearer ') ? undefined : JSON.stringify({ token }),
+    });
+
+    let payload;
+    try { payload = await upstream.json(); } catch { payload = {}; }
+
+    if (!upstream.ok || !payload?.token || !payload?.wsUrl || !payload?.roomName) {
+      return res.status(502).json({ error: 'session_failed', detail: payload });
+    }
+
+    res.json({
+      token: payload.token,
+      wsUrl: payload.wsUrl,
+      roomName: payload.roomName,
+      refreshUrl: `http://localhost:${process.env.PORT || 3001}/api/voice/session/refresh`,
+      expiresIn: payload.expiresIn || 120,
+    });
   } catch (error) {
     handleError(res, error);
   }

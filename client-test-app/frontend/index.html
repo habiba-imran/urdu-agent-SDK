@@ -42,6 +42,9 @@
   <button class="tab-btn" data-tab="providertest">
     <span class="tab-icon">🧪</span> Provider Test
   </button>
+  <button class="tab-btn" data-tab="voice">
+    <span class="tab-icon">🎤</span> Browser Voice
+  </button>
   <button class="tab-btn" data-tab="calllog">
     <span class="tab-icon">📋</span> Call Log
   </button>
@@ -420,6 +423,43 @@
     </div>
   </section>
 
+  <!-- ════════════════════════════════════════════ BROWSER VOICE TAB -->
+  <section class="tab-panel" id="tab-voice">
+    <div class="header-flex mb-2">
+      <h1 class="section-title">Browser Voice Session</h1>
+      <span class="badge badge-purple">WebRTC Web SDK</span>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Session Setup</div>
+        <div class="form-group">
+          <label class="form-label">Select Agent</label>
+          <select id="voice-agent-id" class="form-select">
+            <option value="">— select an agent —</option>
+          </select>
+        </div>
+        
+        <div class="mt-2" id="voice-connection-status" style="display:none; padding:1rem; border-radius:var(--radius-sm); background:var(--bg-secondary);">
+          <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:0.5rem">Status</div>
+          <div id="voice-status-badge" class="badge badge-gray">Disconnected</div>
+        </div>
+
+        <div class="flex gap-1 mt-2">
+          <button class="btn btn-primary" id="btn-voice-connect" style="flex:1">Connect</button>
+          <button class="btn btn-danger" id="btn-voice-disconnect" style="display:none; flex:1">Disconnect</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Live Transcript</div>
+        <div id="voice-transcript-log" style="height:250px; overflow-y:auto; background:var(--bg-secondary); border-radius:var(--radius-sm); padding:1rem; font-family:monospace; font-size:0.9rem; display:flex; flex-direction:column; gap:0.5rem;">
+          <div style="color:var(--text-secondary); text-align:center; margin-top:2rem;">Connect to start conversation</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ════════════════════════════════════════ TAB: CALL LOG -->
   <section id="tab-calllog" class="tab-panel">
     <h1 class="section-title">Call Log</h1>
@@ -539,6 +579,6 @@
 <!-- ════════════════════════════════════════════ TOAST CONTAINER -->
 <div id="toast-container"></div>
 
-<script src="app.js" type="module"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

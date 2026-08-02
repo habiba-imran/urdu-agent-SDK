@@ -2,6 +2,7 @@
  * UVA Client Test App — Frontend Logic
  * Calls the local Express backend at http://localhost:3001
  */
+import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
 const API = 'http://localhost:3001';
 
@@ -83,9 +84,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (tabId === 'agents') loadAgents();
     if (tabId === 'numbers') loadManagedNumbers();
     if (tabId === 'calllog') loadCallLog();
-    if (tabId === 'providertest') {
-      populateProviderTestSelects();
-    }
+    if (tabId === 'providertest') populateProviderTestSelects();
+    if (tabId === 'voice') populateVoiceAgentSelect();
   });
 });
 
@@ -552,12 +552,17 @@ async function populateProviderTestSelects() {
   try {
     const result = await api('GET', '/api/agents');
     const agents = result.agents || result.data || result || [];
-    ['pt-agent-id', 'call-agent-id'].forEach(id => {
+    ['pt-agent-id', 'call-agent-id', 'voice-agent-id'].forEach(id => {
       const sel = document.getElementById(id);
+      if (!sel) return;
       sel.innerHTML = '<option value="">— select an agent —</option>' +
         agents.map(a => `<option value="${escHtml(a.id)}">${escHtml(a.name)} (${escHtml(a.id.slice(0, 8))}…)</option>`).join('');
     });
   } catch { /* silently ignore */ }
+}
+
+async function populateVoiceAgentSelect() {
+  await populateProviderTestSelects();
 }
 
 document.getElementById('btn-assign-number').addEventListener('click', async () => {
@@ -804,6 +809,105 @@ async function loadCallLog() {
 
 document.getElementById('btn-refresh-calls').addEventListener('click', loadCallLog);
 document.getElementById('calllog-limit').addEventListener('change', loadCallLog);
+
+// ─── BROWSER VOICE SESSION ────────────────────────────────────────────────────
+
+let voiceClient = null;
+
+function getVoiceClient() {
+  if (voiceClient) return voiceClient;
+
+  // Uses the environment variables from frontend/.env
+  voiceClient = new AwaazLabsUvaVoice({
+    publishableKey: import.meta.env.VITE_PUBLIC_UVA_PUBLISHABLE_KEY || import.meta.env.PUBLIC_UVA_PUBLISHABLE_KEY,
+    sessionEndpoint: import.meta.env.VITE_PUBLIC_UVA_SESSION_ENDPOINT || import.meta.env.PUBLIC_UVA_SESSION_ENDPOINT,
+    refreshEndpoint: import.meta.env.VITE_PUBLIC_UVA_REFRESH_ENDPOINT || import.meta.env.PUBLIC_UVA_REFRESH_ENDPOINT,
+  });
+
+  voiceClient.on('connected', () => {
+    document.getElementById('voice-status-badge').className = 'badge badge-green';
+    document.getElementById('voice-status-badge').innerHTML = '<span class="dot pulse"></span> Connected';
+    document.getElementById('btn-voice-connect').style.display = 'none';
+    document.getElementById('btn-voice-disconnect').style.display = 'block';
+    
+    document.getElementById('voice-transcript-log').innerHTML = 
+      `<div style="color:var(--text-secondary); text-align:center;">Recording started... Speak now!</div>`;
+  });
+
+  voiceClient.on('disconnected', () => {
+    document.getElementById('voice-status-badge').className = 'badge badge-gray';
+    document.getElementById('voice-status-badge').textContent = 'Disconnected';
+    document.getElementById('btn-voice-connect').style.display = 'block';
+    document.getElementById('btn-voice-disconnect').style.display = 'none';
+  });
+
+  voiceClient.on('transcript', (event) => {
+    const log = document.getElementById('voice-transcript-log');
+    if (log.innerHTML.includes('Recording started')) log.innerHTML = '';
+    
+    // Remove the partial indicator if the message is final
+    const id = event.id || Math.random().toString(36).substring(7);
+    const existing = document.getElementById(`msg-${id}`);
+    
+    const sender = event.speaker === 'agent' ? '🤖 Agent' : '👤 You';
+    const color = event.speaker === 'agent' ? 'var(--blue)' : 'var(--green)';
+    const text = escHtml(event.text || '');
+    
+    if (existing) {
+      existing.innerHTML = `<strong style="color:${color}">${sender}:</strong> ${text}`;
+      if (!event.final) existing.style.opacity = '0.7';
+      else existing.style.opacity = '1';
+    } else {
+      const el = document.createElement('div');
+      el.id = `msg-${id}`;
+      el.style.opacity = event.final ? '1' : '0.7';
+      el.innerHTML = `<strong style="color:${color}">${sender}:</strong> ${text}`;
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+    }
+  });
+
+  voiceClient.on('audio_blocked', async (blocked) => {
+    if (blocked) {
+      toast('warning', 'Audio Blocked', 'Browser requires interaction. Click Connect again.');
+      document.getElementById('voice-status-badge').textContent = 'Audio Blocked - Interaction Required';
+    }
+  });
+
+  return voiceClient;
+}
+
+document.getElementById('btn-voice-connect').addEventListener('click', async () => {
+  const agentId = document.getElementById('voice-agent-id').value;
+  if (!agentId) return toast('warning', 'Select an agent to connect', '');
+
+  const btn = document.getElementById('btn-voice-connect');
+  setLoading(btn, true, 'Connecting…');
+  document.getElementById('voice-connection-status').style.display = 'block';
+  document.getElementById('voice-status-badge').className = 'badge badge-yellow';
+  document.getElementById('voice-status-badge').textContent = 'Minting token...';
+
+  try {
+    const vc = getVoiceClient();
+    if (vc.state === 'audio_blocked') {
+      await vc.startAudio();
+    } else {
+      await vc.connect({ agentId });
+    }
+  } catch (e) {
+    toast('error', 'Voice connection failed', e.message);
+    document.getElementById('voice-status-badge').className = 'badge badge-red';
+    document.getElementById('voice-status-badge').textContent = 'Error connecting';
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+document.getElementById('btn-voice-disconnect').addEventListener('click', async () => {
+  if (voiceClient) {
+    await voiceClient.disconnect();
+  }
+});
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 (async () => {
