@@ -900,6 +900,52 @@ advance.
   human-approved and present throughout, plus one standalone credential-verification probe).
 - **Human approved Phase 6f on review, 2026-08-02.**
 
+### Voice-catalogue expansion (follow-up to Phase 6, not a numbered phase) — 2026-08-02
+Each Phase 6 TTS subphase seeded exactly one voice — enough to prove the provider works, not a
+real catalogue. Human asked, after Phase 6 closed, for the full voice list from every `en` TTS
+provider rather than just the one default each.
+- **Rime**: package ships a small, real, static list —
+  `livekit.plugins.rime.models.ArcanaVoices = Literal["luna", "celeste", "orion", "ursa", "astra",
+  "esther", "estelle", "andromeda"]`, confirmed by reading the installed package directly. Seeded
+  the remaining 7 (0021 already had `astra`) with zero network calls —
+  `supabase/migrations/0022_seed_rime_all_arcana_voices.sql`. 8 total.
+- **Cartesia** and **ElevenLabs** have no static list — each vendor's real catalogue only exists
+  behind a live "list voices" REST call. Confirmed via WebSearch before calling: both vendors
+  bill TTS *generation* by character count; listing/browsing voices is a separate, unbilled
+  metadata endpoint (Cartesia's own docs describe `GET /voices` as informational; ElevenLabs'
+  character quota language never mentions the voices-list endpoint). New scripts
+  `scripts/fetch_cartesia_voices.py` / `scripts/fetch_elevenlabs_voices.py` call each vendor's
+  real endpoint, filter to `language == "en"`, and generate the seed migration from the live
+  response — no invented IDs or names anywhere.
+  - **Cartesia**: `GET /voices` (paginated) returned **843 voices total, 417 English** — a real
+    finding, dramatically larger than the single seeded default. Human explicitly confirmed
+    wanting the full 417 before this was written (asked directly given the scale), not assumed.
+    `supabase/migrations/0023_seed_cartesia_all_english_voices.sql`. The pre-existing
+    `cartesia-sonic-default` row's `provider_voice_id` is one of the 417 (real name "Katie -
+    Friendly Fixer") — left as a harmless duplicate row (no unique constraint on
+    `provider_voice_id`, confirmed via `pg_constraint`), not merged/deleted.
+  - **ElevenLabs**: first attempt hit a real, blocking permission gap —
+    `GET /v2/voices` returned `401` with `"missing the permission voices_read"` (the key was
+    scoped to Text-to-Speech only when created during Phase 6d). Human added the `voices_read`
+    permission to the existing key; retried and got **21 voices, all English** (this account's own
+    premade set — `/v2/voices` returns the authenticated account's voices, not ElevenLabs' much
+    larger public shared-voice library, which is a different endpoint entirely).
+    `supabase/migrations/0024_seed_elevenlabs_all_english_voices.sql`.
+- **Fish Audio deliberately skipped.** `GET /model` (self_only=true and false both) returned the
+  same **1000-capped (`window_limited: true`), community-uploaded voice marketplace** — not a
+  small vendor-curated set like the other two. Flagged to the human rather than silently seeding
+  it: unlike Cartesia/ElevenLabs' official voices, this is arbitrary user content of unknown
+  quality, and the provider is still blocked on account funding anyway
+  (`BLOCK-FISHAUDIO`, unaffected). Human explicitly chose to skip it entirely for now.
+- Full `make gate` after seeding: `test` **134 passed, 1 skipped** (unchanged from Phase 6f — the
+  larger catalogue is a pure data change, no code touched), `rls-check` **OK on all 23 tables**.
+  `lint` step separately hit a pre-existing error in `scripts/reconcile_telephony.py` (Habiba/
+  Hamza's telephony commit, `60516c3` 2026-07-31 — confirmed via `git log`, not introduced by this
+  session) — left untouched, outside this work's scope; `test`/`rls-check` run directly to confirm
+  this session's own changes are clean.
+- Final counts, `en` voices by provider: cartesia 418, elevenlabs 22, rime 8, fish_audio 1
+  (unchanged, still just the Phase 6e default — provider itself still blocked).
+
 ### Phase 6 — COMPLETE (5 of 6 English TTS vendors enabled; Fish Audio deliberately left blocked) — 2026-08-02
 `en` now has three fully `enabled` TTS providers (cartesia, elevenlabs, rime) alongside its
 already-enabled gladia/deepgram STT and gemini/groq LLM — a complete, real, tenant-creatable

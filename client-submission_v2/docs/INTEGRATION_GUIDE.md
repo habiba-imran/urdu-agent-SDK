@@ -183,13 +183,12 @@ await telephony.importTelnyxNumber({ e164Number: '<E164_NUMBER>' });
 await telephony.syncTelnyxOwnedNumbers();
 await telephony.getTelnyxNumberDrift();
 await telephony.searchAvailableNumbers({ country: 'US', areaCode: '<AREA_CODE>' });
-await telephony.reserveNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
 await telephony.purchaseNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
 await telephony.getNumberOrderStatus('<ORDER_ID>');
 await telephony.disableNumber('<MANAGED_NUMBER_ID>');
 ```
 
-Only run reserve, purchase, disable, and outbound call actions after your product flow has explicit user or operator approval.
+Only run purchase, disable, and outbound call actions after your product flow has explicit user or operator approval. For real-provider number acquisition, use sync/import for owned numbers or purchase through an approved backend flow.
 
 ## 8. Inbound telephony flow
 
@@ -265,7 +264,7 @@ Telephony errors use `AwaazLabsUvaTelephonyError` with `status`, `code`, `messag
 - Do not log raw secrets, HMAC signatures, SIP passwords, provider payloads, or full webhook bodies.
 - Do not expose backend-only SDKs through a frontend bundle.
 - Use HTTPS for every API endpoint.
-- Use one idempotency key per intended reserve, purchase, or outbound call action.
+- Use one idempotency key per intended purchase or outbound call action.
 - Validate E.164 phone numbers before sending outbound call requests.
 - Keep provider webhook verification enabled in hosted environments.
 

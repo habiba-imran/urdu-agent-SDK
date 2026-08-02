@@ -1,4 +1,4 @@
-﻿# @awaazlabs-uva/telephony
+# @awaazlabs-uva/telephony
 
 Backend-only TypeScript SDK for AwaazLabs UVA telephony management.
 
@@ -84,7 +84,6 @@ client.importTelnyxNumber({ e164Number, externalCustomerRef? })
 client.syncTelnyxOwnedNumbers()
 client.getTelnyxNumberDrift()
 client.searchAvailableNumbers({ country, areaCode?, numberType?, features? })
-client.reserveNumber({ e164Number, idempotencyKey })
 client.purchaseNumber({ e164Number, externalCustomerRef?, idempotencyKey })
 client.getNumberOrderStatus(orderId)
 client.disableNumber(numberId)
@@ -142,5 +141,5 @@ Common error codes include `telephony_auth_failed`, `provider_credentials_missin
 - Do not import this package in browser code.
 - Do not log raw Telnyx API keys, SIP secrets, tenant HMAC secrets, HMAC signatures, provider webhook bodies, or restricted diagnostic payloads.
 - Use HTTPS endpoints.
-- Use stable idempotency keys for reserve, purchase, and outbound call operations.
+- Use stable idempotency keys for purchase and outbound call operations.
 - Validate E.164 phone numbers in your application before requesting outbound calls.

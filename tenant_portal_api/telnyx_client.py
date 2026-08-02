@@ -47,6 +47,80 @@ def _normalize_features(raw: Any) -> list[str]:
     return []
 
 
+def _telnyx_error_message(response: httpx.Response, fallback: str) -> str:
+    """Extract a safe provider error message without exposing credentials."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return fallback
+
+    messages: list[str] = []
+    if isinstance(payload, dict):
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            for item in errors[:3]:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("title", "detail", "code"):
+                    value = item.get(key)
+                    if value:
+                        messages.append(str(value))
+        for key in ("message", "error", "detail", "title"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                messages.append(value)
+
+    combined = " ".join(part.strip() for part in messages if part and part.strip())
+    return redact_sensitive_string(combined or fallback)
+
+
+def _raise_telnyx_number_order_error(response: httpx.Response, e164_number: str) -> None:
+    provider_message = _telnyx_error_message(response, "Telnyx rejected the number order.")
+    normalized = provider_message.lower()
+
+    if response.status_code == 401:
+        raise TelephonyError(
+            status=401,
+            code=TelephonyErrorCode.TELNYX_KEY_INVALID,
+            message="Invalid Telnyx API key or unauthorized.",
+        )
+    if response.status_code == 403:
+        raise TelephonyError(
+            status=403,
+            code=TelephonyErrorCode.TELNYX_KEY_PERMISSION_FAILED,
+            message="Telnyx API key lacks permission to order phone numbers.",
+        )
+    if response.status_code == 429:
+        raise TelephonyError(
+            status=429,
+            code=TelephonyErrorCode.TELNYX_RATE_LIMITED,
+            message="Telnyx rate-limited the number order request.",
+        )
+    if response.status_code == 402 or any(token in normalized for token in ("balance", "credit", "fund", "payment")):
+        raise TelephonyError(
+            status=402,
+            code=TelephonyErrorCode.INSUFFICIENT_TELNYX_BALANCE,
+            message="Telnyx rejected the number order because the account balance, credit, or payment state is not sufficient.",
+        )
+    if any(token in normalized for token in ("regulatory", "kyc", "verification", "verified", "address", "document", "requirement")):
+        raise TelephonyError(
+            status=409,
+            code=TelephonyErrorCode.REGULATORY_ACTION_REQUIRED,
+            message="Telnyx requires account, destination, or regulatory verification before this number can be ordered.",
+        )
+    if response.status_code in {404, 409, 422} or any(token in normalized for token in ("not available", "unavailable", "already been taken", "already purchased")):
+        raise TelephonyError(
+            status=422,
+            code=TelephonyErrorCode.NUMBER_NOT_AVAILABLE,
+            message=f"Phone number {e164_number} is no longer available for purchase.",
+        )
+
+    raise TelephonyError(
+        status=502,
+        code=TelephonyErrorCode.TELNYX_API_ERROR,
+        message=f"Telnyx rejected the number order: {provider_message}",
+    )
+
 class TelnyxClient:
     """Backend client for Telnyx REST v2 APIs."""
 
@@ -273,12 +347,8 @@ class TelnyxClient:
                 headers=self._headers(),
                 json=payload,
             )
-            if resp.status_code == 422:
-                raise TelephonyError(
-                    status=422,
-                    code=TelephonyErrorCode.NUMBER_NOT_AVAILABLE,
-                    message=f"Phone number {e164_number} is no longer available for purchase.",
-                )
+            if resp.status_code >= 400:
+                _raise_telnyx_number_order_error(resp, e164_number)
             resp.raise_for_status()
             data = resp.json().get("data", {})
             return {

@@ -101,7 +101,7 @@ try {
   `reverifyTelnyxAccount`, `disconnectTelnyxAccount`, `getConnectionStatus`
 - Number inventory and purchase: `listTelnyxOwnedNumbers`,
   `listManagedPhoneNumbers`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
-  `getTelnyxNumberDrift`, `searchAvailableNumbers`, `reserveNumber`,
+  `getTelnyxNumberDrift`, `searchAvailableNumbers`,
   `purchaseNumber`, `getNumberOrderStatus`
 - Routing and trunks: `assignAgentToNumber`, `unassignAgentFromNumber`,
   `upsertTelnyxSipConnection`, `verifyTelnyxSipConnection`,
@@ -123,7 +123,7 @@ Failed calls throw `AwaazLabsUvaTelephonyError`:
 | `outbound_not_ready` | Check routing, SIP connection, outbound profile, and number assignment. |
 | `idempotency_payload_mismatch` | Reuse the original payload or generate a new idempotency key. |
 | `number_not_available` | Ask the user to choose another exact number. |
-| `unsupported_number_feature` | Treat reservation or requested feature as unavailable for the selected market. |
+| `unsupported_number_feature` | Treat the requested feature as unavailable for the selected market. |
 | `telnyx_key_permission_failed` | Rotate the Telnyx key or grant the required provider permissions. |
 
 Public error objects and SDK responses are redacted. Raw provider payloads,
