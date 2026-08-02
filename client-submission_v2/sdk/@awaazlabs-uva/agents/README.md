@@ -51,9 +51,18 @@ try {
     ttsProvider: 'rime',
     ttsVoiceId: 'voice_id_from_catalog',
   });
+
+  // Which (language, layer, provider) combinations are enabled right now, plus each TTS
+  // provider's own voice IDs - build pickers from this instead of hardcoding options.
+  const capabilities = await client.getProviderCapabilities();
+  const enVoices = capabilities.languages.en?.tts?.cartesia?.voices ?? [];
 } catch (error) {
   if (error instanceof AwaazLabsUvaAgentsError) {
-    console.error(error.status, error.message);
+    // `code` is only set for provider/language/model/voice validation failures (422) - a
+    // stable string like `unsupported_provider_for_language` or `provider_not_enabled` to
+    // branch on. Auth failures, 404s, etc. leave it undefined; `message` is always
+    // human-readable either way.
+    console.error(error.status, error.code, error.message);
   }
   throw error;
 }
@@ -97,13 +106,17 @@ client.updateAgent(agentId, {
   ttsVoiceId?,
   ttsOptions?,
 })
+
+client.getProviderCapabilities()
 ```
 
 All provider/language/model fields are optional. Omitting them keeps the platform defaults. When both `voiceId` and `ttsVoiceId` are provided, the backend resolves the provider-specific TTS voice selection.
 
+`getProviderCapabilities()` returns `{ languages: { [lang]: { label, stt?, llm?, tts? } } }`, where each `stt`/`llm` entry is `{ [provider]: { state: 'enabled', models, defaultModel } }` and each `tts` entry is `{ [provider]: { state: 'enabled', voices, defaultVoice } }`. Only currently-`enabled` combinations ever appear — a provider absent from a language's entry means it's either unsupported for that language or not enabled yet; check for key presence before offering it as an option.
+
 ## Errors
 
-Failed calls throw `AwaazLabsUvaAgentsError` with `status` and `message`. Common cases include authentication failures, suspended tenants, missing agents, rate limits, and unsupported provider/language/model/voice combinations.
+Failed calls throw `AwaazLabsUvaAgentsError` with `status`, `message`, and (for 422 provider/language/model/voice validation failures only) a stable `code` — e.g. `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`. Other failures (auth, suspended tenants, missing agents, rate limits) leave `code` undefined.
 
 ## Security notes
 

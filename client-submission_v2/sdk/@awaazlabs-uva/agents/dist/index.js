@@ -9,9 +9,15 @@
 // (see the tenant portal or your platform contact). It has no tenant-signup capability.
 import { createHmac, randomUUID } from 'node:crypto';
 export class AwaazLabsUvaAgentsError extends Error {
-    constructor(status, message) {
+    constructor(status, message, 
+    /** Stable machine-readable code from tenant_portal_api's ProviderValidationError, e.g.
+     * `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`,
+     * `unsupported_voice_for_provider`. Undefined for non-provider-validation errors (auth
+     * failures, 404s, etc.), which only ever carry a plain string detail. */
+    code) {
         super(message);
         this.status = status;
+        this.code = code;
         this.name = 'AwaazLabsUvaAgentsError';
     }
 }
@@ -131,10 +137,24 @@ export class AwaazLabsUvaAgentsClient {
         const text = await res.text();
         const parsed = text ? JSON.parse(text) : null;
         if (!res.ok) {
-            const detail = parsed?.detail ?? res.statusText;
-            throw new AwaazLabsUvaAgentsError(res.status, String(detail));
+            const detail = parsed?.detail;
+            // tenant_portal_api's ProviderValidationError path raises HTTPException(detail={"code":
+            // ..., "reason": ...}) (app.py::_resolve_provider_fields) - every other error path (auth
+            // failures, 404s) raises a plain string detail. Without this branch, `String(detail)` on
+            // the object case produced the literal text "[object Object]", silently discarding the
+            // one piece of information (the stable `code`) API consumers need to branch on.
+            if (detail && typeof detail === 'object' && typeof detail.reason === 'string') {
+                throw new AwaazLabsUvaAgentsError(res.status, detail.reason, detail.code);
+            }
+            throw new AwaazLabsUvaAgentsError(res.status, String(detail ?? res.statusText));
         }
         return parsed;
+    }
+    /** GET /machine/provider-capabilities (Phase 4, ADR-036) - which (language, layer, provider)
+     * combinations are currently `enabled` and selectable, plus each TTS provider's own voice IDs.
+     * Use this to build cascading provider/model/voice pickers instead of hardcoding options. */
+    async getProviderCapabilities() {
+        return this.request('GET', '/machine/provider-capabilities', 'provider_capabilities.get', {});
     }
 }
 export { AwaazLabsUvaAgentsClient as UvaAgentsClient };

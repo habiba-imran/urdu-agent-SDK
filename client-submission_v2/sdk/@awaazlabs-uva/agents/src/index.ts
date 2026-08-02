@@ -77,10 +77,39 @@ export interface UpdateAgentParams {
   ttsOptions?: Record<string, unknown>;
 }
 
+/** Shape returned by GET /machine/provider-capabilities (== GET /portal/provider-capabilities),
+ * see tenant_portal_api/provider_capabilities.py::get_public_capabilities. Only ever contains
+ * `enabled` combinations - a provider absent from a language's entry is either unsupported for
+ * that language or not yet enabled; both cases are represented the same way here (absence), so
+ * always check for key presence before offering it as an option. */
+export interface ProviderCapabilityEntry {
+  state: 'enabled';
+  models?: string[];
+  defaultModel?: string;
+  voices?: string[];
+  defaultVoice?: string | null;
+}
+
+export interface LanguageCapabilities {
+  label: string;
+  stt?: Record<string, ProviderCapabilityEntry>;
+  llm?: Record<string, ProviderCapabilityEntry>;
+  tts?: Record<string, ProviderCapabilityEntry>;
+}
+
+export interface ProviderCapabilities {
+  languages: Record<string, LanguageCapabilities>;
+}
+
 export class AwaazLabsUvaAgentsError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** Stable machine-readable code from tenant_portal_api's ProviderValidationError, e.g.
+     * `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`,
+     * `unsupported_voice_for_provider`. Undefined for non-provider-validation errors (auth
+     * failures, 404s, etc.), which only ever carry a plain string detail. */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = 'AwaazLabsUvaAgentsError';
@@ -192,10 +221,30 @@ export class AwaazLabsUvaAgentsClient {
     const text = await res.text();
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      const detail = parsed?.detail ?? res.statusText;
-      throw new AwaazLabsUvaAgentsError(res.status, String(detail));
+      const detail = parsed?.detail;
+      // tenant_portal_api's ProviderValidationError path raises HTTPException(detail={"code":
+      // ..., "reason": ...}) (app.py::_resolve_provider_fields) - every other error path (auth
+      // failures, 404s) raises a plain string detail. Without this branch, `String(detail)` on
+      // the object case produced the literal text "[object Object]", silently discarding the
+      // one piece of information (the stable `code`) API consumers need to branch on.
+      if (detail && typeof detail === 'object' && typeof detail.reason === 'string') {
+        throw new AwaazLabsUvaAgentsError(res.status, detail.reason, detail.code);
+      }
+      throw new AwaazLabsUvaAgentsError(res.status, String(detail ?? res.statusText));
     }
     return parsed as TResponse;
+  }
+
+  /** GET /machine/provider-capabilities (Phase 4, ADR-036) - which (language, layer, provider)
+   * combinations are currently `enabled` and selectable, plus each TTS provider's own voice IDs.
+   * Use this to build cascading provider/model/voice pickers instead of hardcoding options. */
+  async getProviderCapabilities(): Promise<ProviderCapabilities> {
+    return this.request<ProviderCapabilities>(
+      'GET',
+      '/machine/provider-capabilities',
+      'provider_capabilities.get',
+      {},
+    );
   }
 }
 
