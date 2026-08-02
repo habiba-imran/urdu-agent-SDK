@@ -53,6 +53,7 @@ async function api(method, path, body) {
     error.status = response.status;
     error.code = payload?.code || payload?.detail?.error?.code;
     error.detail = payload?.detail;
+    error.payload = payload;
     throw error;
   }
   return payload;
@@ -240,6 +241,63 @@ function renderReadiness(data) {
         <div><div class="readiness-label">${escHtml(reason)}</div></div>
       </div>
     `).join('')}
+  `;
+}
+
+function renderTelephonyDiagnostics(detail, toNumber = '') {
+  const diagnostics = detail?.diagnostics || null;
+  const upstreamProbe = detail?.upstreamProbe || null;
+  const readiness = diagnostics?.readiness || null;
+  const selectedNumber = diagnostics?.selectedNumber || null;
+  const assignedAgent = diagnostics?.assignedAgent || null;
+  const notes = diagnostics?.notes || [];
+  const likelyCauses = upstreamProbe?.likelyCauses || [];
+
+  return `
+    <div class="card" style="border-color: var(--yellow)">
+      <div class="card-title">Outbound diagnostics</div>
+      <div class="readiness-item fail">
+        <span class="readiness-icon">ERR</span>
+        <div>
+          <div class="readiness-label">${escHtml(upstreamProbe?.status ? `Upstream status ${upstreamProbe.status}` : 'No structured upstream response')}</div>
+          <div class="readiness-detail">
+            ${escHtml(upstreamProbe?.responseKind || 'unknown')} response
+            ${upstreamProbe?.contentType ? `, content-type ${upstreamProbe.contentType}` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="readiness-item ${readiness?.is_ready ? 'pass' : 'fail'}">
+        <span class="readiness-icon">${readiness?.is_ready ? 'OK' : 'ERR'}</span>
+        <div>
+          <div class="readiness-label">Platform readiness: ${escHtml(String(readiness?.is_ready ?? 'unknown'))}</div>
+          <div class="readiness-detail">Selected number ${escHtml(selectedNumber?.e164Number || selectedNumber?.id || 'not found')} -> ${escHtml(assignedAgent?.name || selectedNumber?.assignedAgentId || 'unassigned')}</div>
+        </div>
+      </div>
+      ${toNumber ? `
+        <div class="readiness-item pending">
+          <span class="readiness-icon">INFO</span>
+          <div>
+            <div class="readiness-label">Requested destination</div>
+            <div class="readiness-detail">${escHtml(toNumber)}</div>
+          </div>
+        </div>
+      ` : ''}
+      ${upstreamProbe?.payloadPreview ? `
+        <div class="code-block">${escHtml(upstreamProbe.payloadPreview)}</div>
+      ` : ''}
+      ${(likelyCauses.length ? likelyCauses : ['No likely cause was inferred from the upstream probe.']).map((item) => `
+        <div class="readiness-item pending">
+          <span class="readiness-icon">INFO</span>
+          <div><div class="readiness-label">${escHtml(item)}</div></div>
+        </div>
+      `).join('')}
+      ${notes.map((item) => `
+        <div class="readiness-item pending">
+          <span class="readiness-icon">NOTE</span>
+          <div><div class="readiness-label">${escHtml(item)}</div></div>
+        </div>
+      `).join('')}
+    </div>
   `;
 }
 
@@ -824,6 +882,46 @@ async function simulateInbound() {
   }
 }
 
+async function runTelephonyDiagnostics() {
+  const fromNumberId = $('call-from-id')?.value || $('pt-number-id')?.value || '';
+  const agentId = $('call-agent-id')?.value || $('pt-agent-id')?.value || '';
+  const toNumber = $('call-to-number')?.value.trim() || '';
+  const button = $('btn-run-call-diagnostics');
+  const resultBox = $('call-result');
+  setLoading(button, true, 'Diagnosing...');
+  try {
+    const params = new URLSearchParams();
+    if (fromNumberId) params.set('numberId', fromNumberId);
+    if (agentId) params.set('agentId', agentId);
+    if (toNumber) params.set('toNumber', toNumber);
+    const result = await api('GET', `/api/telephony/diagnostics?${params.toString()}`);
+    if (resultBox) {
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = renderTelephonyDiagnostics({ diagnostics: result.diagnostics }, toNumber);
+    }
+    toast('info', 'Diagnostics loaded');
+  } catch (error) {
+    if (resultBox) {
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = `
+        <div class="card" style="border-color: var(--red)">
+          <div class="card-title">Diagnostics failed</div>
+          <div class="readiness-item fail">
+            <span class="readiness-icon">ERR</span>
+            <div>
+              <div class="readiness-label">${escHtml(error.message)}</div>
+              <div class="readiness-detail">The backend could not assemble the telephony diagnostics bundle.</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    toast('error', 'Diagnostics failed', error.message);
+  } finally {
+    setLoading(button, false);
+  }
+}
+
 async function createOutboundCall() {
   const selectedAgentId = $('call-agent-id')?.value;
   const fromNumberId = $('call-from-id')?.value;
@@ -869,6 +967,25 @@ async function createOutboundCall() {
     syncAgentSelections(assignedAgentId);
     toast('success', 'Outbound call placed', toNumber);
   } catch (error) {
+    if (resultBox) {
+      resultBox.style.display = 'block';
+      if (error.detail?.upstreamProbe || error.detail?.diagnostics) {
+        resultBox.innerHTML = renderTelephonyDiagnostics(error.detail, toNumber);
+      } else {
+        resultBox.innerHTML = `
+          <div class="card" style="border-color: var(--red)">
+            <div class="card-title">Outbound call failed</div>
+            <div class="readiness-item fail">
+              <span class="readiness-icon">ERR</span>
+              <div>
+                <div class="readiness-label">${escHtml(error.message)}</div>
+                <div class="readiness-detail">No additional diagnostics were returned by the backend for this failure.</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
     toast('error', 'Outbound call failed', error.message);
   } finally {
     setLoading(button, false);
@@ -1040,6 +1157,7 @@ function registerEvents() {
   on('btn-configure-trunk', 'click', configureOutboundTrunk);
   on('btn-simulate-inbound', 'click', simulateInbound);
   on('btn-make-call', 'click', createOutboundCall);
+  on('btn-run-call-diagnostics', 'click', runTelephonyDiagnostics);
   on('btn-refresh-calls', 'click', loadCallLog);
   on('calllog-limit', 'change', loadCallLog);
   on('btn-voice-connect', 'click', connectVoice);
