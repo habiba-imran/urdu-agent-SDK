@@ -9,7 +9,6 @@ os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 from tenant_portal_api.telephony_routes import router as telephony_router
 

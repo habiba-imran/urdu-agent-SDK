@@ -2108,6 +2108,59 @@ test_injection_live.py::run_attack()` (the compliance-check logic itself, confir
 privilege scope, unchanged by this correction); ADR-032 (the entry this corrects).
 
 ---
+## ADR-036 Provider/language registry — STT/LLM/TTS made dynamic behind a per-agent config, Urdu default preserved   [ACCEPTED, scoped]
+**Context:** `worker/factories.py` hardcodes the pipeline to `ur + gladia + gemini + uplift`
+(`make_stt()` takes no args and hardcodes `languages=["ur"]`; `make_tts()` is Uplift-only;
+`agents`/`voices` tables have no language/provider columns). Need to support `en` (and later
+languages) with additional STT/LLM/TTS vendors, driven per-agent, without breaking the existing
+Urdu path or the telephony workstream's dependency on this same worker code
+(`docs/TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md` names `worker/config.py::AgentConfig`
+directly). Full plan: `docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md`, itself following
+`docs/UKASHA_MULTIPLE_PROVIDERS_GUIDE.md` and `docs/.clauderules`.
+**Decision:**
+1. Move provider selection out of ad hoc branches in `factories.py` into a `worker/providers/`
+   registry (`AgentRuntimeConfig` -> `build_components()` -> stt/llm/tts), called from
+   `worker/main.py::build_session()`. `AgentConfig`/`load_agent_config`/`build_session`/
+   `build_agent`/`entrypoint`'s existing external shape stays additive-only — frozen contract for
+   telephony's parallel work, per the workload-division doc's boundary rule.
+2. New DB columns on `agents` (`agent_language`, `stt_provider`, `stt_model`, `stt_options`,
+   `llm_provider`, `llm_options`, `tts_provider`, `tts_voice_id`, `tts_options`) and `voices`
+   (`provider`, `provider_voice_id`, `language`, `rollout_state`), all additive, all backfilled to
+   `ur + gladia + gemini + uplift` for every existing row. `voice_id` kept as a backward-compatible
+   alias, synchronized to `tts_voice_id`; the existing `agents_voice_enabled_check` trigger
+   (0006) stays authoritative since writes still go through `voice_id`.
+3. Migration numbers `0016+` — `0012`-`0015` are reserved for Habiba's telephony migrations
+   (`docs/TELEPHONY_WORKLOAD_AND_RESPONSIBILITY_DIVISION.md`), confirmed against the live
+   `supabase/migrations/` directory before allocating.
+4. Release scope for this pass: **`ur` + `en` only**, matching
+   `UKASHA_MULTIPLE_PROVIDERS_GUIDE.md`'s explicit "Release Provider Rules." Spanish/Hindi/etc.
+   deliberately deferred to a later ADR/phase, not assumed into this one, despite being raised in
+   earlier discussion — human-confirmed 2026-07-31.
+5. Capabilities endpoint exposed as `/portal/provider-capabilities` + `/machine/provider-capabilities`
+   (tenant JWT / tenant HMAC), **not** the guide's literal unauthenticated `GET
+   /api/provider-capabilities` — matches this repo's existing dual-route auth pattern for `agents`
+   rather than introducing a new unauthenticated route shape. Human-confirmed 2026-07-31.
+6. No silent provider fallback. A failed/unsupported provider returns a typed error
+   (`unsupported_language`, `provider_not_enabled`, etc.), never a silent swap.
+7. Every new vendor (ElevenLabs/Fish Audio/Cartesia/Rime for TTS, Deepgram for STT, Groq for LLM)
+   is verified against real docs/PyPI before any adapter is written — none of their package names
+   were verified as part of this ADR, per anti-hallucination discipline
+   (`docs/.clauderules`, this repo's "verify, don't assume"). Rolled out `planned` -> `testing` ->
+   `enabled`, `enabled` only after a human-approved live smoke test per provider. Groq explicitly
+   never selectable for `ur`.
+**Consequences:** `factories.py`'s existing callers (`worker/main.py`,
+`scripts/probe_soniox_402.py`, `scratch/test_tts_resilient.py`, the dead `tests/test_tts.py`) get
+resolved in the registry phase, not silently left dangling. `sdk-server/src/index.ts` and
+`client-submission_v2/sdk/@awaazlabs-uva/agents/src/index.ts` are hand-duplicated with no existing
+parity check — a parity test is added, not assumed to stay in sync on its own (this exact class of
+bug already hit the machine-agent HMAC canonicalization once, ADR-035/Session 13).
+**Evidence:** live code read, not the guide's prose taken on faith — `worker/factories.py`,
+`worker/config.py`, `worker/main.py`, `tenant_portal_api/app.py`+`queries.py`, both SDK packages,
+`requirements.txt` (confirms `deepgram`/`soniox` branches exist in code but their packages are
+NOT installed — pre-existing gap, not introduced here), `supabase/migrations/0001`-`0011` +
+`0006`'s trigger, `docs/TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md`. Full audit table:
+`docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` §0.
+
 ## ADR-035 Existing-tenant machine-auth agent management — `/machine/agents` + `@awaazlabs-uva/agents`   [ACCEPTED, scoped]
 Date: 2026-07-23 | Planned in `EnterPlanMode`, human-approved before implementation | New:
 `tenant_portal_api/machine_auth.py`, `/machine/agents` routes in `tenant_portal_api/app.py`,

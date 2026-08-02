@@ -19,7 +19,8 @@ import os
 from typing import Any
 
 from .config import AgentConfig, load_agent_config
-from .factories import make_llm, make_stt, make_tts
+from .providers.registry import build_components
+from .providers.types import AgentRuntimeConfig
 from .tools import FIXED_TOOLS, AgentUserdata
 
 # OUR fixed operating instructions. The tenant prompt is NEVER concatenated into this string.
@@ -56,6 +57,35 @@ def build_agent(cfg: AgentConfig) -> Any:
     )
 
 
+def _resolve_provider_voice_id(internal_voice_id: str) -> str:
+    """Translate OUR internal `voices.id` slug (e.g. "cartesia-sonic-default") to the vendor's own
+    voice ID (`voices.provider_voice_id`) — the value a TTS adapter must actually send to its API.
+
+    Found while wiring Cartesia (Phase 6c, ADR-036): the registry previously passed
+    `tts_voice_id`/`voice_id` straight into every TTS adapter unresolved. That happened to work for
+    Uplift only because Phase 1's backfill set `provider_voice_id = id` for every Uplift row — a
+    coincidence, not a guarantee. Any vendor whose real voice ID differs from our internal slug
+    (Cartesia's is a UUID) would otherwise get OUR id sent to THEIR API. Falls back to the internal
+    id itself if no matching row exists (defensive — keeps existing behavior for any edge case
+    rather than crashing the session)."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+    try:
+        from scripts.dbconn import conn_kwargs
+    except ImportError:
+        from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
+    import psycopg
+
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        row = conn.execute(
+            "select provider_voice_id from voices where id = %s", (internal_voice_id,)
+        ).fetchone()
+    return row[0] if row and row[0] else internal_voice_id
+
+
 async def build_session(md: dict[str, str], room_name: str) -> tuple[Any, AgentConfig]:
     """Load config and construct the session pipeline (stt/llm/tts/vad). Does not start it."""
     cfg = await asyncio.to_thread(load_agent_config, md["agent_id"], md["tenant_id"])
@@ -63,10 +93,31 @@ async def build_session(md: dict[str, str], room_name: str) -> tuple[Any, AgentC
     from livekit.agents import AgentSession  # lazy: needs the livekit runtime
     from livekit.agents.log import logger
 
+    # tts_voice_id can be NULL for an agent created after migration 0016 but before Phase 3's
+    # app-layer sync ships (docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md Phase 1 finding,
+    # ADR-036) — resolve the fallback ONCE here, so every adapter downstream can trust it's set.
+    internal_voice_id = cfg.tts_voice_id or cfg.voice_id
+    provider_voice_id = await asyncio.to_thread(
+        _resolve_provider_voice_id, internal_voice_id
+    )
+    runtime_cfg = AgentRuntimeConfig(
+        agent_language=cfg.agent_language,
+        stt_provider=cfg.stt_provider,
+        stt_model=cfg.stt_model,
+        stt_options=cfg.stt_options,
+        llm_provider=cfg.llm_provider,
+        llm_model=cfg.llm_model,
+        llm_options=cfg.llm_options,
+        tts_provider=cfg.tts_provider,
+        tts_voice_id=provider_voice_id,
+        tts_options=cfg.tts_options,
+    )
+    components = build_components(runtime_cfg)
+
     session = AgentSession(
-        stt=make_stt(),
-        llm=make_llm(cfg.llm_model),
-        tts=make_tts(cfg.voice_id),
+        stt=components.stt,
+        llm=components.llm,
+        tts=components.tts,
         vad=_load_vad(),
         # Per-session context for the fixed tools (worker/tools.py) via RunContext.userdata --
         # populated from RLS-verified AgentConfig fields, never from tenant prompt text.
@@ -387,19 +438,64 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
 
     imported = ["livekit.plugins.google", "livekit.plugins.silero"]
 
+    # groq is a real, per-agent-selectable LLM provider now (enabled for `en` since Phase 6b,
+    # ADR-036) — prewarmed unconditionally for the same reason gladia/deepgram are below: provider
+    # selection is per-agent (DB), not a worker-level env var, so every registry-reachable plugin
+    # must be registered on the main thread before any job thread/process exists.
+    from livekit.plugins import groq  # noqa: F401
+
+    imported.append("livekit.plugins.groq")
+
+    # gladia + deepgram are both real, per-agent-selectable STT providers now (Phase 2's registry
+    # dispatches on each agent's own `stt_provider` DB column, not a worker-level env var; deepgram
+    # enabled for `en` since Phase 6a, ADR-036) — both must be prewarmed unconditionally. Gating
+    # either one behind STT_PROVIDER (the old, pre-registry assumption) would mean the first live
+    # session needing the ungated one imports its plugin for the first time OUTSIDE the main
+    # thread, hitting the exact `Plugin.register_plugin()` crash this function exists to prevent
+    # (see ADR-007's own account, above).
+    from livekit.plugins import deepgram, gladia  # noqa: F401
+
+    imported += ["livekit.plugins.deepgram", "livekit.plugins.gladia"]
+
+    # cartesia is a real, per-agent-selectable TTS provider now (enabled for `en` since Phase 6c,
+    # ADR-036) — prewarmed unconditionally, same reasoning as groq/gladia/deepgram above. Unlike
+    # uplift below, cartesia has no fixture-mode branch that avoids the real plugin class, so it
+    # must always be imported, not gated on any mode/env var.
+    from livekit.plugins import cartesia  # noqa: F401
+
+    imported.append("livekit.plugins.cartesia")
+
+    # elevenlabs is a real, per-agent-selectable TTS provider (rollout_state=`testing` for `en`
+    # since Phase 6d, ADR-036) — prewarmed unconditionally for the same reason: a throwaway test
+    # tenant can select it via a direct DB write (bypassing tenant-facing validation, same pattern
+    # as every other Phase 6 subphase's live test) before it's ever promoted to `enabled`, so it
+    # must already be registered on the main thread by then.
+    from livekit.plugins import elevenlabs  # noqa: F401
+
+    imported.append("livekit.plugins.elevenlabs")
+
+    # fishaudio is a real, per-agent-selectable TTS provider (rollout_state=`testing` for `en`
+    # since Phase 6e, ADR-036) — prewarmed unconditionally, same reasoning as elevenlabs above.
+    from livekit.plugins import fishaudio  # noqa: F401
+
+    imported.append("livekit.plugins.fishaudio")
+
+    # rime is a real, per-agent-selectable TTS provider (rollout_state=`testing` for `en` since
+    # Phase 6f, ADR-036) — prewarmed unconditionally, same reasoning as elevenlabs/fishaudio above.
+    from livekit.plugins import rime  # noqa: F401
+
+    imported.append("livekit.plugins.rime")
+
+    # Soniox stays STT_PROVIDER-gated: still blocked on funding (ADR-002) and not wired into any
+    # language's capability entry in worker/providers/capabilities.py, so the per-agent registry
+    # can never dispatch to it — only worker/factories.py's legacy wrapper (for
+    # scripts/probe_soniox_402.py) can ever select it, and only via this same env var, so gating
+    # its import here is still correct.
     stt_provider = os.getenv("STT_PROVIDER", "gladia").lower()
     if stt_provider == "soniox":
         from livekit.plugins import soniox  # noqa: F401
 
         imported.append("livekit.plugins.soniox")
-    elif stt_provider == "deepgram":
-        from livekit.plugins import deepgram  # noqa: F401
-
-        imported.append("livekit.plugins.deepgram")
-    else:
-        from livekit.plugins import gladia  # noqa: F401
-
-        imported.append("livekit.plugins.gladia")
 
     if os.getenv("UPLIFT_MODE", "fixture") in ("record", "live"):
         from livekit.plugins import upliftai  # noqa: F401

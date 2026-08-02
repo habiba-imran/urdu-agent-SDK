@@ -10,7 +10,6 @@ os.environ.pop("TELNYX_PUBLIC_KEY", None)
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 from tenant_portal_api.telephony_health import check_global_telephony_health
 from tenant_portal_api.telephony_reconcile import reconcile_telephony_state

@@ -3,7 +3,6 @@
 Phase 2 verification suite.
 """
 
-import pytest
 from tenant_portal_api.telephony_errors import (
     TelephonyError,
     TelephonyErrorCode,
@@ -12,7 +11,6 @@ from tenant_portal_api.telephony_errors import (
 from tenant_portal_api.telephony_models import (
     ConnectTelnyxBody,
     CreateOutboundCallBody,
-    ManagedNumberResponse,
     SearchAvailableNumbersBody,
 )
 from tenant_portal_api.telephony_status import (

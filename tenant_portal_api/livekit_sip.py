@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import threading
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, TypeVar
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode, redact_sensitive_string

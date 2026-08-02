@@ -47,7 +47,7 @@ def reconcile_telephony_state(
 
             if not dry_run and rows:
                 for r in rows:
-                    call_id, tenant_id = r[0], r[1]
+                    call_id = r[0]
                     db_conn.execute(
                         """
                         update telephony_calls

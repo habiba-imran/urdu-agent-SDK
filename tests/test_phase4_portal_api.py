@@ -254,3 +254,128 @@ def test_portal_create_and_update_agent():
         assert updated.json()["name"] == "Updated Support Agent"
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields():
+    """Backward compat (Phase 3, ADR-036): a payload with ONLY voice_id/llm_model — exactly what
+    every pre-Phase-3 integration still sends — must keep working unchanged AND now also populate
+    every new field to the ur+gladia+gemini+uplift defaults, with tts_voice_id synced to voice_id
+    (closing the gap Phase 1/2 flagged: a plain old-style create used to leave tts_voice_id NULL)."""
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        created = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Old Style Agent",
+                "prompt": "Answer politely",
+                "voice_id": voice_id,
+                "llm_model": "gemini-2.5-flash",
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert body["agent_language"] == "ur"
+        assert body["stt_provider"] == "gladia"
+        assert body["llm_provider"] == "gemini"
+        assert body["tts_provider"] == "uplift"
+        assert body["tts_voice_id"] == voice_id == body["voice_id"]
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_rejects_unsupported_provider_combo():
+    """Guide's explicit example: ur+groq must be rejected with a stable, typed error code, before
+    any DB write — not a generic 500 or a silent fallback to a supported provider."""
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        res = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Bad Combo Agent",
+                "prompt": "x",
+                "voice_id": voice_id,
+                "llm_provider": "groq",
+            },
+        )
+        assert res.status_code == 422
+        assert res.json()["detail"]["code"] == "unsupported_provider_for_language"
+
+        # confirm nothing was written — the rejected create must not leave a partial row
+        agents = client.get("/portal/agents", headers=headers)
+        assert all(a["name"] != "Bad Combo Agent" for a in agents.json())
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_provider_capabilities_requires_auth_and_returns_ur():
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        no_auth = client.get("/portal/provider-capabilities")
+        assert no_auth.status_code == 401
+
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+        res = client.get("/portal/provider-capabilities", headers=headers)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["languages"]["ur"]["tts"]["uplift"]["state"] == "enabled"
+        # Updated 2026-08-01 (Phase 5): en+gladia/gemini are now enabled — see
+        # tests/test_english_language.py for the full gate.
+        assert body["languages"]["en"]["stt"]["gladia"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6c): cartesia is now en's first enabled TTS vendor — see
+        # tests/test_cartesia_tts.py.
+        assert body["languages"]["en"]["tts"]["cartesia"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6d): elevenlabs is now enabled too — see
+        # tests/test_elevenlabs_tts.py.
+        assert body["languages"]["en"]["tts"]["elevenlabs"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6f): rime is now enabled too — see tests/test_rime_tts.py.
+        assert body["languages"]["en"]["tts"]["rime"]["state"] == "enabled"
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_with_explicit_new_fields():
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        created = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Explicit Fields Agent",
+                "prompt": "x",
+                "voice_id": voice_id,
+                "agent_language": "ur",
+                "stt_provider": "gladia",
+                "stt_model": "default",
+                "llm_provider": "gemini",
+                "llm_model": "gemini-2.5-flash",
+                "tts_provider": "uplift",
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["agent_language"] == "ur"
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)

@@ -10,11 +10,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 
 import psycopg
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from tenant_portal_api.auth import TenantAuthError, verify_tenant_jwt
 from tenant_portal_api.machine_auth import (
@@ -28,12 +27,7 @@ from tenant_portal_api.telephony_models import (
     ConfigureOutboundTrunkBody,
     ConnectTelnyxBody,
     CreateOutboundCallBody,
-    GetCallStatusBody,
-    GetNumberOrderStatusBody,
     ImportTelnyxNumberBody,
-    ListCallRecordsBody,
-    ListManagedNumbersBody,
-    ListTelnyxOwnedNumbersBody,
     PurchaseNumberBody,
     ReserveNumberBody,
     RotateTelnyxBody,

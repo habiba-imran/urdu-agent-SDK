@@ -34,9 +34,19 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | voice_id | text | NO |  |
 | llm_model | text | NO | 'gemini-2.5-flash'::text |
 | created_at | timestamp with time zone | NO | now() |
+| agent_language | text | NO | 'ur'::text |
+| stt_provider | text | NO | 'gladia'::text |
+| stt_model | text | NO | 'default'::text |
+| stt_options | jsonb | NO | '{}'::jsonb |
+| llm_provider | text | NO | 'gemini'::text |
+| llm_options | jsonb | NO | '{}'::jsonb |
+| tts_provider | text | NO | 'uplift'::text |
+| tts_voice_id | text | YES |  |
+| tts_options | jsonb | NO | '{}'::jsonb |
 - FK: tenant_id -> tenants(id)
 - FK: voice_id -> voices(id)
 - index: agents_pkey
+- index: agents_tenant_id_id_unique
 
 ## table: escalations
 | column | type | nullable | default |
@@ -49,6 +59,129 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | requested_at | timestamp with time zone | NO | now() |
 | status | text | NO | 'pending'::text |
 - index: escalations_pkey
+
+## table: livekit_inbound_trunks
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| phone_number_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| telnyx_sip_connection_id | uuid | NO |  |
+| livekit_inbound_trunk_id | text | YES |  |
+| platform_status | text | NO | 'draft'::text |
+| provider_status | text | YES |  |
+| last_reconciled_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(tenant_id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> telephony_phone_numbers(tenant_id)
+- FK: tenant_id -> telephony_phone_numbers(id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> telnyx_sip_connections(tenant_id)
+- index: idx_livekit_inbound_trunks_provider_id
+- index: idx_livekit_inbound_trunks_status_reconciled
+- index: livekit_inbound_trunks_one_active_per_number_uidx
+- index: livekit_inbound_trunks_pkey
+- index: livekit_inbound_trunks_tenant_id_id_unique
+
+## table: livekit_outbound_trunks
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| telnyx_sip_connection_id | uuid | NO |  |
+| outbound_voice_profile_record_id | uuid | NO |  |
+| livekit_outbound_trunk_id | text | YES |  |
+| platform_status | text | NO | 'draft'::text |
+| provider_status | text | YES |  |
+| last_reconciled_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: outbound_voice_profile_record_id -> telnyx_outbound_voice_profiles(id)
+- FK: outbound_voice_profile_record_id -> telnyx_outbound_voice_profiles(id)
+- FK: outbound_voice_profile_record_id -> telnyx_outbound_voice_profiles(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(tenant_id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> telnyx_sip_connections(tenant_id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> telnyx_outbound_voice_profiles(id)
+- FK: tenant_id -> telnyx_outbound_voice_profiles(tenant_id)
+- FK: tenant_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- index: idx_livekit_outbound_trunks_provider_id
+- index: idx_livekit_outbound_trunks_status_reconciled
+- index: livekit_outbound_trunks_one_active_per_connection_uidx
+- index: livekit_outbound_trunks_pkey
+- index: livekit_outbound_trunks_tenant_id_id_unique
+
+## table: livekit_sip_dispatch_rules
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| phone_number_id | uuid | NO |  |
+| inbound_trunk_record_id | uuid | NO |  |
+| livekit_sip_dispatch_rule_id | text | YES |  |
+| platform_status | text | NO | 'draft'::text |
+| provider_status | text | YES |  |
+| last_reconciled_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(id)
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(id)
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(tenant_id)
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(tenant_id)
+- FK: tenant_id -> telephony_phone_numbers(id)
+- FK: tenant_id -> telephony_phone_numbers(tenant_id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> livekit_inbound_trunks(tenant_id)
+- FK: tenant_id -> livekit_inbound_trunks(id)
+- index: idx_livekit_sip_dispatch_rules_provider_id
+- index: idx_livekit_sip_dispatch_rules_status_reconciled
+- index: livekit_sip_dispatch_rules_one_active_per_number_uidx
+- index: livekit_sip_dispatch_rules_pkey
+- index: livekit_sip_dispatch_rules_tenant_id_id_unique
 
 ## table: mint_rejections
 | column | type | nullable | default |
@@ -88,7 +221,370 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 - FK: tenant_id -> tenants(id)
 - index: sessions_pkey
 - index: sessions_room_name_key
+- index: sessions_tenant_id_id_unique
 - index: sessions_tenant_started_idx
+
+## table: telephony_audit_log
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| actor_type | text | NO |  |
+| actor_id | text | YES |  |
+| action | text | NO |  |
+| target_type | text | NO |  |
+| target_id | text | YES |  |
+| detail | jsonb | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+| request_id | text | YES |  |
+| access_reason | text | YES |  |
+| export_id | text | YES |  |
+| restricted_target | boolean | NO | false |
+| detail_redacted_at | timestamp with time zone | YES |  |
+| detail_redaction_reason | text | YES |  |
+- FK: tenant_id -> tenants(id)
+- index: idx_telephony_audit_log_tenant_created
+- index: telephony_audit_log_pkey
+
+## table: telephony_call_events
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telephony_call_id | uuid | NO |  |
+| source | text | NO |  |
+| event_type | text | NO |  |
+| provider_event_id | text | YES |  |
+| internal_stage | text | YES |  |
+| payload | jsonb | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+| payload_access_scope | text | NO | 'restricted_diagnostic'::text |
+| payload_redacted_at | timestamp with time zone | YES |  |
+| payload_redaction_reason | text | YES |  |
+- FK: telephony_call_id -> telephony_calls(id)
+- FK: telephony_call_id -> telephony_calls(id)
+- FK: telephony_call_id -> telephony_calls(tenant_id)
+- FK: tenant_id -> telephony_calls(id)
+- FK: tenant_id -> telephony_calls(tenant_id)
+- FK: tenant_id -> tenants(id)
+- index: idx_telephony_call_events_provider_event_id
+- index: idx_telephony_call_events_tenant_created
+- index: telephony_call_events_pkey
+- index: telephony_call_events_provider_event_dedupe_uidx
+
+## table: telephony_calls
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| session_id | uuid | YES |  |
+| agent_id | uuid | YES |  |
+| phone_number_id | uuid | YES |  |
+| direction | text | NO |  |
+| room_name | text | YES |  |
+| from_number | text | YES |  |
+| to_number | text | YES |  |
+| recipient | text | YES |  |
+| call_context | jsonb | NO | '{}'::jsonb |
+| external_customer_ref | text | YES |  |
+| external_workflow_ref | text | YES |  |
+| inbound_trunk_record_id | uuid | YES |  |
+| outbound_trunk_record_id | uuid | YES |  |
+| sip_dispatch_rule_record_id | uuid | YES |  |
+| livekit_agent_dispatch_id | text | YES |  |
+| livekit_sip_call_id | text | YES |  |
+| livekit_sip_call_id_full | text | YES |  |
+| sip_trunk_phone_number | text | YES |  |
+| raw_livekit_sip_participant_status | text | YES |  |
+| platform_status | text | NO | 'queued'::text |
+| provider_status | text | YES |  |
+| outcome | text | YES |  |
+| error_code | text | YES |  |
+| error_message | text | YES |  |
+| quota_reserved_at | timestamp with time zone | YES |  |
+| quota_released_at | timestamp with time zone | YES |  |
+| usage_recorded_at | timestamp with time zone | YES |  |
+| started_at | timestamp with time zone | YES |  |
+| answered_at | timestamp with time zone | YES |  |
+| ended_at | timestamp with time zone | YES |  |
+| duration_sec | integer | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+| export_requested_at | timestamp with time zone | YES |  |
+| export_completed_at | timestamp with time zone | YES |  |
+| last_access_audited_at | timestamp with time zone | YES |  |
+- FK: agent_id -> agents(id)
+- FK: agent_id -> agents(id)
+- FK: agent_id -> agents(tenant_id)
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(id)
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(id)
+- FK: inbound_trunk_record_id -> livekit_inbound_trunks(tenant_id)
+- FK: outbound_trunk_record_id -> livekit_outbound_trunks(id)
+- FK: outbound_trunk_record_id -> livekit_outbound_trunks(tenant_id)
+- FK: outbound_trunk_record_id -> livekit_outbound_trunks(id)
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(id)
+- FK: phone_number_id -> telephony_phone_numbers(tenant_id)
+- FK: session_id -> sessions(id)
+- FK: session_id -> sessions(id)
+- FK: session_id -> sessions(tenant_id)
+- FK: sip_dispatch_rule_record_id -> livekit_sip_dispatch_rules(id)
+- FK: sip_dispatch_rule_record_id -> livekit_sip_dispatch_rules(tenant_id)
+- FK: sip_dispatch_rule_record_id -> livekit_sip_dispatch_rules(id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> sessions(id)
+- FK: tenant_id -> sessions(tenant_id)
+- FK: tenant_id -> livekit_sip_dispatch_rules(id)
+- FK: tenant_id -> livekit_sip_dispatch_rules(tenant_id)
+- FK: tenant_id -> livekit_inbound_trunks(tenant_id)
+- FK: tenant_id -> livekit_outbound_trunks(tenant_id)
+- FK: tenant_id -> livekit_outbound_trunks(id)
+- FK: tenant_id -> livekit_inbound_trunks(id)
+- FK: tenant_id -> agents(tenant_id)
+- FK: tenant_id -> agents(id)
+- FK: tenant_id -> telephony_phone_numbers(id)
+- FK: tenant_id -> telephony_phone_numbers(tenant_id)
+- index: idx_telephony_calls_created_at
+- index: idx_telephony_calls_livekit_sip_call_id
+- index: idx_telephony_calls_livekit_sip_call_id_full
+- index: idx_telephony_calls_platform_status
+- index: idx_telephony_calls_room_name
+- index: telephony_calls_pkey
+- index: telephony_calls_tenant_id_id_unique
+
+## table: telephony_idempotency_keys
+| column | type | nullable | default |
+|---|---|---|---|
+| tenant_id | uuid | NO |  |
+| idempotency_key | text | NO |  |
+| action | text | NO |  |
+| request_hash | text | NO |  |
+| response_body | jsonb | YES |  |
+| platform_status | text | NO | 'pending'::text |
+| created_at | timestamp with time zone | NO | now() |
+| completed_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: tenant_id -> tenants(id)
+- index: telephony_idempotency_keys_pkey
+
+## table: telephony_number_orders
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| idempotency_key | text | NO |  |
+| provider_order_id | text | YES |  |
+| selected_e164_number | text | NO |  |
+| country | text | YES |  |
+| area_code | text | YES |  |
+| number_type | text | YES |  |
+| features | ARRAY | NO | '{}'::text[] |
+| price_amount | numeric | YES |  |
+| price_currency | text | YES |  |
+| provider_status | text | YES |  |
+| platform_status | text | NO | 'pending'::text |
+| raw_provider_status | text | YES |  |
+| provider_error_payload | jsonb | YES |  |
+| error_code | text | YES |  |
+| error_message | text | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+| provider_error_payload_access_scope | text | NO | 'restricted_diagnostic'::text |
+| provider_error_payload_redacted_at | timestamp with time zone | YES |  |
+| provider_error_payload_redaction_reason | text | YES |  |
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> tenants(id)
+- index: idx_telephony_number_orders_status_created
+- index: telephony_number_orders_idempotency_key_unique
+- index: telephony_number_orders_pkey
+- index: telephony_number_orders_tenant_id_id_unique
+
+## table: telephony_phone_numbers
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| telnyx_sip_connection_id | uuid | YES |  |
+| provider_number_id | text | YES |  |
+| e164_number | text | NO |  |
+| country | text | YES |  |
+| number_type | text | YES |  |
+| features | ARRAY | NO | '{}'::text[] |
+| provisioning_status | text | NO | 'discovered'::text |
+| routing_status | text | NO | 'not_configured'::text |
+| provider_status | text | YES |  |
+| assigned_agent_id | uuid | YES |  |
+| external_customer_ref | text | YES |  |
+| last_synced_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: assigned_agent_id -> agents(id)
+- FK: assigned_agent_id -> agents(id)
+- FK: assigned_agent_id -> agents(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(tenant_id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> agents(tenant_id)
+- FK: tenant_id -> agents(id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> telnyx_sip_connections(tenant_id)
+- index: idx_telephony_phone_numbers_assigned_agent_id
+- index: idx_telephony_phone_numbers_e164_number
+- index: idx_telephony_phone_numbers_status_synced
+- index: telephony_phone_numbers_one_active_e164_per_tenant_uidx
+- index: telephony_phone_numbers_pkey
+- index: telephony_phone_numbers_provider_number_per_tenant_key
+- index: telephony_phone_numbers_tenant_id_id_unique
+
+## table: telnyx_outbound_voice_profiles
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| telnyx_sip_connection_id | uuid | YES |  |
+| provider_outbound_voice_profile_id | text | YES |  |
+| platform_status | text | NO | 'not_configured'::text |
+| provider_status | text | YES |  |
+| allowed_destinations | ARRAY | NO | '{}'::text[] |
+| concurrency_limit | integer | YES |  |
+| channel_limit | integer | YES |  |
+| daily_spending_limit | numeric | YES |  |
+| last_verified_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(tenant_id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: telnyx_sip_connection_id -> telnyx_sip_connections(id)
+- FK: tenant_id -> tenants(id)
+- FK: tenant_id -> telnyx_sip_connections(tenant_id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> telnyx_sip_connections(id)
+- index: idx_telnyx_outbound_voice_profiles_status_verified
+- index: telnyx_outbound_voice_profiles_pkey
+- index: telnyx_outbound_voice_profiles_tenant_id_id_unique
+
+## table: telnyx_sip_connections
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| telnyx_connection_id | uuid | NO |  |
+| provider_sip_connection_id | text | YES |  |
+| sip_fqdn | text | YES |  |
+| sip_username | text | YES |  |
+| encrypted_sip_secret_ref | text | YES |  |
+| platform_status | text | NO | 'draft'::text |
+| provider_status | text | YES |  |
+| last_verified_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(id)
+- FK: telnyx_connection_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> tenant_telnyx_connections(id)
+- FK: tenant_id -> tenant_telnyx_connections(tenant_id)
+- FK: tenant_id -> tenants(id)
+- index: idx_telnyx_sip_connections_status_verified
+- index: telnyx_sip_connections_one_active_per_connection_uidx
+- index: telnyx_sip_connections_pkey
+- index: telnyx_sip_connections_tenant_id_id_unique
+
+## table: tenant_telnyx_connections
+| column | type | nullable | default |
+|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() |
+| tenant_id | uuid | NO |  |
+| label | text | YES |  |
+| platform_status | text | NO | 'not_connected'::text |
+| provider_status | text | YES |  |
+| encrypted_api_key_ref | text | YES |  |
+| key_fingerprint | text | YES |  |
+| telnyx_account_id | text | YES |  |
+| last_verified_at | timestamp with time zone | YES |  |
+| permission_last_checked_at | timestamp with time zone | YES |  |
+| created_at | timestamp with time zone | NO | now() |
+| updated_at | timestamp with time zone | NO | now() |
+| disabled_at | timestamp with time zone | YES |  |
+| disconnected_at | timestamp with time zone | YES |  |
+| compromised_at | timestamp with time zone | YES |  |
+| retention_until | timestamp with time zone | YES |  |
+| deletion_requested_at | timestamp with time zone | YES |  |
+| deleted_at | timestamp with time zone | YES |  |
+| offboarded_at | timestamp with time zone | YES |  |
+| redacted_at | timestamp with time zone | YES |  |
+| redaction_reason | text | YES |  |
+- FK: tenant_id -> tenants(id)
+- index: idx_tenant_telnyx_connections_status_verified
+- index: tenant_telnyx_connections_one_active_per_tenant_uidx
+- index: tenant_telnyx_connections_pkey
+- index: tenant_telnyx_connections_tenant_id_id_unique
 
 ## table: tenants
 | column | type | nullable | default |
@@ -137,5 +633,9 @@ Read-only mirror of the live dev schema (public). Regenerate: `make db-inspect`.
 | preview_url | text | YES |  |
 | artwork_url | text | YES |  |
 | enabled | boolean | NO | true |
+| provider | text | NO | 'uplift'::text |
+| provider_voice_id | text | YES |  |
+| language | text | NO | 'ur'::text |
+| rollout_state | text | NO | 'enabled'::text |
 - index: voices_pkey
 

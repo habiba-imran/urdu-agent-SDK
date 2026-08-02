@@ -31,6 +31,16 @@ export interface AgentRecord {
   llm_model: string;
   created_at: string | null;
   total_agent_sec?: number;
+  // Provider/language fields are additive and optional for existing tenants.
+  agent_language: string;
+  stt_provider: string;
+  stt_model: string;
+  stt_options: Record<string, unknown>;
+  llm_provider: string;
+  llm_options: Record<string, unknown>;
+  tts_provider: string;
+  tts_voice_id: string | null;
+  tts_options: Record<string, unknown>;
 }
 
 export interface CreateAgentParams {
@@ -38,6 +48,17 @@ export interface CreateAgentParams {
   prompt: string;
   voiceId: string;
   llmModel?: string;
+  /** Optional provider/language fields. Omitting them keeps the hosted platform defaults.
+   * ttsVoiceId takes priority over voiceId when both are given. */
+  agentLanguage?: string;
+  sttProvider?: string;
+  sttModel?: string;
+  sttOptions?: Record<string, unknown>;
+  llmProvider?: string;
+  llmOptions?: Record<string, unknown>;
+  ttsProvider?: string;
+  ttsVoiceId?: string;
+  ttsOptions?: Record<string, unknown>;
 }
 
 export interface UpdateAgentParams {
@@ -45,6 +66,15 @@ export interface UpdateAgentParams {
   prompt?: string;
   voiceId?: string;
   llmModel?: string;
+  agentLanguage?: string;
+  sttProvider?: string;
+  sttModel?: string;
+  sttOptions?: Record<string, unknown>;
+  llmProvider?: string;
+  llmOptions?: Record<string, unknown>;
+  ttsProvider?: string;
+  ttsVoiceId?: string;
+  ttsOptions?: Record<string, unknown>;
 }
 
 export class AwaazLabsUvaAgentsError extends Error {
@@ -91,34 +121,52 @@ export class AwaazLabsUvaAgentsClient {
   }
 
   async createAgent(params: CreateAgentParams): Promise<AgentRecord> {
-    const body = {
+    const body: Record<string, unknown> = {
       name: params.name,
       prompt: params.prompt,
       voice_id: params.voiceId,
       llm_model: params.llmModel ?? 'gemini-2.5-flash',
     };
-    return this.request('POST', '/machine/agents', 'agent.create', body);
+    if (params.agentLanguage !== undefined) body.agent_language = params.agentLanguage;
+    if (params.sttProvider !== undefined) body.stt_provider = params.sttProvider;
+    if (params.sttModel !== undefined) body.stt_model = params.sttModel;
+    if (params.sttOptions !== undefined) body.stt_options = params.sttOptions;
+    if (params.llmProvider !== undefined) body.llm_provider = params.llmProvider;
+    if (params.llmOptions !== undefined) body.llm_options = params.llmOptions;
+    if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
+    if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
+    if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
+    return this.request<AgentRecord>('POST', '/machine/agents', 'agent.create', body);
   }
 
   async listAgents(): Promise<AgentRecord[]> {
-    return this.request('GET', '/machine/agents', 'agent.list', {});
+    return this.request<AgentRecord[]>('GET', '/machine/agents', 'agent.list', {});
   }
 
   async updateAgent(agentId: string, params: UpdateAgentParams): Promise<AgentRecord> {
-    const body: Record<string, string> = {};
+    const body: Record<string, unknown> = {};
     if (params.name !== undefined) body.name = params.name;
     if (params.prompt !== undefined) body.prompt = params.prompt;
     if (params.voiceId !== undefined) body.voice_id = params.voiceId;
     if (params.llmModel !== undefined) body.llm_model = params.llmModel;
-    return this.request('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
+    if (params.agentLanguage !== undefined) body.agent_language = params.agentLanguage;
+    if (params.sttProvider !== undefined) body.stt_provider = params.sttProvider;
+    if (params.sttModel !== undefined) body.stt_model = params.sttModel;
+    if (params.sttOptions !== undefined) body.stt_options = params.sttOptions;
+    if (params.llmProvider !== undefined) body.llm_provider = params.llmProvider;
+    if (params.llmOptions !== undefined) body.llm_options = params.llmOptions;
+    if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
+    if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
+    if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
+    return this.request<AgentRecord>('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
   }
 
-  private async request(
+  private async request<TResponse>(
     method: 'GET' | 'POST' | 'PATCH',
     path: string,
     action: string,
     body: Record<string, unknown>,
-  ): Promise<any> {
+  ): Promise<TResponse> {
     const ts = Math.floor(Date.now() / 1000).toString();
     const nonce = randomUUID();
     const bodyHash = await sha256Hex(canonicalJson(body));
@@ -147,7 +195,7 @@ export class AwaazLabsUvaAgentsClient {
       const detail = parsed?.detail ?? res.statusText;
       throw new AwaazLabsUvaAgentsError(res.status, String(detail));
     }
-    return parsed;
+    return parsed as TResponse;
   }
 }
 

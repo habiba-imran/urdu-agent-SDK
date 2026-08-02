@@ -55,6 +55,24 @@ export class AwaazLabsUvaAgentsClient {
             voice_id: params.voiceId,
             llm_model: params.llmModel ?? 'gemini-2.5-flash',
         };
+        if (params.agentLanguage !== undefined)
+            body.agent_language = params.agentLanguage;
+        if (params.sttProvider !== undefined)
+            body.stt_provider = params.sttProvider;
+        if (params.sttModel !== undefined)
+            body.stt_model = params.sttModel;
+        if (params.sttOptions !== undefined)
+            body.stt_options = params.sttOptions;
+        if (params.llmProvider !== undefined)
+            body.llm_provider = params.llmProvider;
+        if (params.llmOptions !== undefined)
+            body.llm_options = params.llmOptions;
+        if (params.ttsProvider !== undefined)
+            body.tts_provider = params.ttsProvider;
+        if (params.ttsVoiceId !== undefined)
+            body.tts_voice_id = params.ttsVoiceId;
+        if (params.ttsOptions !== undefined)
+            body.tts_options = params.ttsOptions;
         return this.request('POST', '/machine/agents', 'agent.create', body);
     }
     async listAgents() {
@@ -70,6 +88,24 @@ export class AwaazLabsUvaAgentsClient {
             body.voice_id = params.voiceId;
         if (params.llmModel !== undefined)
             body.llm_model = params.llmModel;
+        if (params.agentLanguage !== undefined)
+            body.agent_language = params.agentLanguage;
+        if (params.sttProvider !== undefined)
+            body.stt_provider = params.sttProvider;
+        if (params.sttModel !== undefined)
+            body.stt_model = params.sttModel;
+        if (params.sttOptions !== undefined)
+            body.stt_options = params.sttOptions;
+        if (params.llmProvider !== undefined)
+            body.llm_provider = params.llmProvider;
+        if (params.llmOptions !== undefined)
+            body.llm_options = params.llmOptions;
+        if (params.ttsProvider !== undefined)
+            body.tts_provider = params.ttsProvider;
+        if (params.ttsVoiceId !== undefined)
+            body.tts_voice_id = params.ttsVoiceId;
+        if (params.ttsOptions !== undefined)
+            body.tts_options = params.ttsOptions;
         return this.request('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
     }
     async request(method, path, action, body) {

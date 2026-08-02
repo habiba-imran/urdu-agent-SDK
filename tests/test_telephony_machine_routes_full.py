@@ -14,7 +14,6 @@ import os
 os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
 
 from fastapi.testclient import TestClient
-import pytest
 
 import tenant_portal_api.telephony_routes as telephony_routes
 

@@ -38,12 +38,18 @@ try {
     prompt: 'Answer customer questions clearly and helpfully.',
     voiceId: 'voice_id_from_catalog',
     llmModel: 'gemini-2.5-flash',
+    agentLanguage: 'ur',
+    sttProvider: 'gladia',
+    llmProvider: 'gemini',
+    ttsProvider: 'uplift',
   });
 
   const agents = await client.listAgents();
 
   await client.updateAgent(agent.id, {
     prompt: 'Use a friendly, professional tone.',
+    ttsProvider: 'rime',
+    ttsVoiceId: 'voice_id_from_catalog',
   });
 } catch (error) {
   if (error instanceof AwaazLabsUvaAgentsError) {
@@ -58,9 +64,49 @@ try {
 ```ts
 new AwaazLabsUvaAgentsClient({ baseUrl, tenantId, tenantSecret, extraHeaders? })
 
-client.createAgent({ name, prompt, voiceId, llmModel? })
+client.createAgent({
+  name,
+  prompt,
+  voiceId,
+  llmModel?,
+  agentLanguage?,
+  sttProvider?,
+  sttModel?,
+  sttOptions?,
+  llmProvider?,
+  llmOptions?,
+  ttsProvider?,
+  ttsVoiceId?,
+  ttsOptions?,
+})
+
 client.listAgents()
-client.updateAgent(agentId, { name?, prompt?, voiceId?, llmModel? })
+
+client.updateAgent(agentId, {
+  name?,
+  prompt?,
+  voiceId?,
+  llmModel?,
+  agentLanguage?,
+  sttProvider?,
+  sttModel?,
+  sttOptions?,
+  llmProvider?,
+  llmOptions?,
+  ttsProvider?,
+  ttsVoiceId?,
+  ttsOptions?,
+})
 ```
 
-`tenantSecret` must never be sent to the browser, stored in client-side state, or printed in logs.
+All provider/language/model fields are optional. Omitting them keeps the platform defaults. When both `voiceId` and `ttsVoiceId` are provided, the backend resolves the provider-specific TTS voice selection.
+
+## Errors
+
+Failed calls throw `AwaazLabsUvaAgentsError` with `status` and `message`. Common cases include authentication failures, suspended tenants, missing agents, rate limits, and unsupported provider/language/model/voice combinations.
+
+## Security notes
+
+- `tenantSecret` must never be sent to the browser, stored in client-side state, or printed in logs.
+- This package intentionally has no browser build target.
+- `extraHeaders` is for non-auth transport headers only; it cannot override tenant or signature headers.

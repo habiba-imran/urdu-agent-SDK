@@ -23,12 +23,6 @@ from tenant_portal_api.telephony_credentials import (
     encrypt_provider_secret,
 )
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
-from tenant_portal_api.telephony_models import (
-    ManagedNumberResponse,
-    NumberOrderResponse,
-    OutboundCallResponse,
-    TelnyxConnectionResponse,
-)
 from tenant_portal_api.telephony_status import (
     CallPublicStatus,
     ConnectionPlatformStatus,

@@ -28,6 +28,8 @@ except ImportError:
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .machine_auth import MachineAuthError, verify_machine_request
+from .provider_capabilities import get_public_capabilities
+from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
 from . import queries
 from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
@@ -90,6 +92,19 @@ class CreateAgentBody(BaseModel):
     prompt: str = Field(..., min_length=1)
     voice_id: str = Field(..., min_length=1)
     llm_model: str = Field(default="gemini-2.5-flash", min_length=1)
+    # Additive, Phase 3 of docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md (ADR-036). All
+    # optional — omitting them keeps the exact pre-Phase-3 behavior (ur+gladia+gemini+uplift).
+    # tts_voice_id takes priority over voice_id when both are given (guide's explicit rule),
+    # resolved in resolve_agent_provider_fields, never here.
+    agent_language: str | None = Field(default=None, min_length=1)
+    stt_provider: str | None = Field(default=None, min_length=1)
+    stt_model: str | None = Field(default=None, min_length=1)
+    stt_options: dict | None = Field(default=None)
+    llm_provider: str | None = Field(default=None, min_length=1)
+    llm_options: dict | None = Field(default=None)
+    tts_provider: str | None = Field(default=None, min_length=1)
+    tts_voice_id: str | None = Field(default=None, min_length=1)
+    tts_options: dict | None = Field(default=None)
 
 
 class UpdateAgentBody(BaseModel):
@@ -97,10 +112,50 @@ class UpdateAgentBody(BaseModel):
     prompt: str | None = Field(default=None, min_length=1)
     voice_id: str | None = Field(default=None, min_length=1)
     llm_model: str | None = Field(default=None, min_length=1)
+    agent_language: str | None = Field(default=None, min_length=1)
+    stt_provider: str | None = Field(default=None, min_length=1)
+    stt_model: str | None = Field(default=None, min_length=1)
+    stt_options: dict | None = Field(default=None)
+    llm_provider: str | None = Field(default=None, min_length=1)
+    llm_options: dict | None = Field(default=None)
+    tts_provider: str | None = Field(default=None, min_length=1)
+    tts_voice_id: str | None = Field(default=None, min_length=1)
+    tts_options: dict | None = Field(default=None)
 
 
 def _conn() -> psycopg.Connection:
     return psycopg.connect(**conn_kwargs(), connect_timeout=10)
+
+
+def _resolve_provider_fields(
+    conn: psycopg.Connection,
+    body: CreateAgentBody | UpdateAgentBody,
+    *,
+    current: dict | None,
+) -> dict:
+    """Wraps resolve_agent_provider_fields with the HTTP error mapping every route needs —
+    ProviderValidationError -> 422 with its stable code, same pattern TenantAuthError/
+    MachineAuthError already use below for their own exception types."""
+    try:
+        return resolve_agent_provider_fields(
+            conn,
+            agent_language=body.agent_language,
+            stt_provider=body.stt_provider,
+            stt_model=body.stt_model,
+            stt_options=body.stt_options,
+            llm_provider=body.llm_provider,
+            llm_model=body.llm_model,
+            llm_options=body.llm_options,
+            tts_provider=body.tts_provider,
+            tts_voice_id=body.tts_voice_id,
+            tts_options=body.tts_options,
+            voice_id=body.voice_id,
+            current=current,
+        )
+    except ProviderValidationError as e:
+        raise HTTPException(
+            status_code=e.status, detail={"code": e.code, "reason": e.reason}
+        ) from e
 
 
 def _require_tenant(authorization: str | None) -> dict:
@@ -172,13 +227,23 @@ def create_agent_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
+        resolved = _resolve_provider_fields(conn, body, current=None)
         created = queries.create_agent(
             conn,
             claims["sub"],
             name=body.name,
             prompt=body.prompt,
-            voice_id=body.voice_id,
-            llm_model=body.llm_model,
+            voice_id=resolved["voice_id"],
+            llm_model=resolved["llm_model"],
+            agent_language=resolved["agent_language"],
+            stt_provider=resolved["stt_provider"],
+            stt_model=resolved["stt_model"],
+            stt_options=resolved["stt_options"],
+            llm_provider=resolved["llm_provider"],
+            llm_options=resolved["llm_options"],
+            tts_provider=resolved["tts_provider"],
+            tts_voice_id=resolved["tts_voice_id"],
+            tts_options=resolved["tts_options"],
         )
         conn.commit()
         return created
@@ -192,6 +257,10 @@ def update_agent_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
+        current = queries.get_agent(conn, claims["sub"], agent_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        resolved = _resolve_provider_fields(conn, body, current=current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -199,13 +268,32 @@ def update_agent_route(
                 agent_id,
                 name=body.name,
                 prompt=body.prompt,
-                voice_id=body.voice_id,
-                llm_model=body.llm_model,
+                voice_id=resolved["voice_id"],
+                llm_model=resolved["llm_model"],
+                agent_language=resolved["agent_language"],
+                stt_provider=resolved["stt_provider"],
+                stt_model=resolved["stt_model"],
+                stt_options=resolved["stt_options"],
+                llm_provider=resolved["llm_provider"],
+                llm_options=resolved["llm_options"],
+                tts_provider=resolved["tts_provider"],
+                tts_voice_id=resolved["tts_voice_id"],
+                tts_options=resolved["tts_options"],
             )
             conn.commit()
             return updated
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.get("/portal/provider-capabilities")
+def provider_capabilities_route(authorization: str | None = Header(default=None)):
+    """Phase 4, ADR-036. Tenant JWT required (Phase 0's decision: matches the existing dual-route
+    auth pattern for /portal + /machine rather than a new unauthenticated route). Only `enabled`
+    combinations are ever returned — see provider_capabilities.py's own docstring."""
+    _require_tenant(authorization)
+    with _conn() as conn:
+        return get_public_capabilities(conn)
 
 
 @app.get("/portal/credentials")
@@ -271,18 +359,56 @@ def machine_create_agent_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="agent.create",
-            body=body.model_dump(),
+            # exclude_none=True (matches agent.update below): CreateAgentBody now has optional
+            # provider/language fields (Phase 3, ADR-036) that default to None when omitted.
+            # model_dump() without this would include those None-valued keys in the signed
+            # payload, but the signing client (sdk-server, this file's own test suite) only ever
+            # signs the fields it explicitly set — the mismatch silently broke every create-agent
+            # HMAC signature the moment the first optional field was added. Caught by re-running
+            # the existing machine-auth test suite, not assumed safe.
+            body=body.model_dump(exclude_none=True),
         )
+        resolved = _resolve_provider_fields(conn, body, current=None)
         created = queries.create_agent(
             conn,
             x_tenant_id,
             name=body.name,
             prompt=body.prompt,
-            voice_id=body.voice_id,
-            llm_model=body.llm_model,
+            voice_id=resolved["voice_id"],
+            llm_model=resolved["llm_model"],
+            agent_language=resolved["agent_language"],
+            stt_provider=resolved["stt_provider"],
+            stt_model=resolved["stt_model"],
+            stt_options=resolved["stt_options"],
+            llm_provider=resolved["llm_provider"],
+            llm_options=resolved["llm_options"],
+            tts_provider=resolved["tts_provider"],
+            tts_voice_id=resolved["tts_voice_id"],
+            tts_options=resolved["tts_options"],
         )
         conn.commit()
         return created
+
+
+@app.get("/machine/provider-capabilities")
+def machine_provider_capabilities_route(
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    """Phase 4, ADR-036 — machine-auth mirror of /portal/provider-capabilities, same content."""
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="provider_capabilities.get",
+            body={},
+        )
+        return get_public_capabilities(conn)
 
 
 @app.get("/machine/agents")
@@ -324,6 +450,10 @@ def machine_update_agent_route(
             action="agent.update",
             body=body.model_dump(exclude_none=True),
         )
+        current = queries.get_agent(conn, x_tenant_id, agent_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        resolved = _resolve_provider_fields(conn, body, current=current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -331,8 +461,17 @@ def machine_update_agent_route(
                 agent_id,
                 name=body.name,
                 prompt=body.prompt,
-                voice_id=body.voice_id,
-                llm_model=body.llm_model,
+                voice_id=resolved["voice_id"],
+                llm_model=resolved["llm_model"],
+                agent_language=resolved["agent_language"],
+                stt_provider=resolved["stt_provider"],
+                stt_model=resolved["stt_model"],
+                stt_options=resolved["stt_options"],
+                llm_provider=resolved["llm_provider"],
+                llm_options=resolved["llm_options"],
+                tts_provider=resolved["tts_provider"],
+                tts_voice_id=resolved["tts_voice_id"],
+                tts_options=resolved["tts_options"],
             )
             conn.commit()
             return updated

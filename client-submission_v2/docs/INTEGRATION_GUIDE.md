@@ -1,4 +1,4 @@
-﻿# AwaazLabs UVA Integration Guide
+# AwaazLabs UVA Integration Guide
 
 This guide covers browser voice, backend agent management, and backend telephony management using the packages in `client-submission_v2/sdk`.
 
@@ -68,17 +68,24 @@ const agent = await agents.createAgent({
   prompt: 'Answer customer questions in a concise and helpful way.',
   voiceId: 'voice_id_from_catalog',
   llmModel: 'gemini-2.5-flash',
+  agentLanguage: 'ur',
+  sttProvider: 'gladia',
+  llmProvider: 'gemini',
+  ttsProvider: 'uplift',
 });
 
 const allAgents = await agents.listAgents();
 
 await agents.updateAgent(agent.id, {
   prompt: 'Use a friendly, professional tone.',
+  ttsProvider: 'rime',
+  ttsVoiceId: 'voice_id_from_catalog',
 });
 ```
 
-Agent records include `id`, `name`, `prompt`, `voice_id`, `llm_model`, `created_at`, and optional usage metadata.
+Agent records include `id`, `name`, `prompt`, `voice_id`, `llm_model`, `created_at`, optional usage metadata, and provider fields such as `agent_language`, `stt_provider`, `stt_model`, `llm_provider`, `tts_provider`, and `tts_voice_id`.
 
+Provider/language/model fields are optional. Omitting them keeps the hosted platform defaults. Set them only when your tenant has the requested provider and language combination enabled.
 ## 6. Browser voice sessions
 
 ```ts

@@ -4,16 +4,10 @@ Phase 6 verification suite.
 """
 
 from unittest.mock import MagicMock
-import pytest
 from tenant_portal_api.telephony_queries import (
     assign_number_to_agent,
-    disconnect_telnyx_connection,
     get_active_telnyx_connection,
-    get_idempotency_key,
-    list_managed_numbers,
-    release_call_quota_once,
     reserve_call_quota,
-    save_idempotency_key,
     upsert_telnyx_connection_verifying,
 )
 
