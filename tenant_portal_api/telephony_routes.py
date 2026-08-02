@@ -20,7 +20,7 @@ from tenant_portal_api.machine_auth import (
     MachineAuthError,
     verify_machine_request,
 )
-from tenant_portal_api.telephony_errors import TelephonyError
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 from tenant_portal_api.telephony_models import (
     AssignAgentBody,
     ConfigureNumberRoutingBody,
@@ -433,6 +433,14 @@ def portal_create_outbound_call(
         )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
+    except Exception as e:
+        logger.exception("Unhandled outbound call setup failure for tenant %s", tenant_id)
+        err = TelephonyError(
+            status=502,
+            code=TelephonyErrorCode.CALL_SETUP_FAILED,
+            message=f"Outbound call setup failed: {e}",
+        )
+        raise HTTPException(status_code=err.status, detail=err.to_dict())
 
 
 @router.get("/portal/telephony/calls")
@@ -875,6 +883,14 @@ async def machine_create_outbound_call(
         )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
+    except Exception as e:
+        logger.exception("Unhandled machine outbound call setup failure for tenant %s", x_tenant_id)
+        err = TelephonyError(
+            status=502,
+            code=TelephonyErrorCode.CALL_SETUP_FAILED,
+            message=f"Outbound call setup failed: {e}",
+        )
+        raise HTTPException(status_code=err.status, detail=err.to_dict())
 
 
 @router.post("/machine/telephony/calls/get")
