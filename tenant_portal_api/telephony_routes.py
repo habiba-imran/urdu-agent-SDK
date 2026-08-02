@@ -58,15 +58,45 @@ TENANT_PORTAL_JWT_SECRET = os.environ.get("TENANT_PORTAL_JWT_SECRET", "mock_jwt_
 
 
 def get_current_tenant_id(authorization: str | None = Header(None, alias="Authorization")) -> str:
-    """Extract tenant_id from bearer token or default to mock tenant in test mode."""
+    """Extract tenant_id from a required bearer tenant-portal JWT.
+
+    Missing/invalid tokens are rejected (401). Explicit mock portal auth is only
+    available when TELEPHONY_ALLOW_MOCK_PORTAL_AUTH=1 for offline unit tests.
+    """
     if not authorization or not authorization.startswith("Bearer "):
-        return "tenant_test_123"
+        if os.environ.get("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH") == "1":
+            return "tenant_test_123"
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "code": "telephony_auth_failed",
+                    "message": "Authorization Bearer token is required",
+                    "status": 401,
+                }
+            },
+        )
     token = authorization[len("Bearer ") :].strip()
     try:
         claims = verify_tenant_jwt(token, TENANT_PORTAL_JWT_SECRET)
-        return claims.get("sub", "tenant_test_123")
+        tenant_id = claims.get("sub")
+        if not tenant_id:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": {
+                        "code": "telephony_auth_failed",
+                        "message": "Token is missing tenant subject",
+                        "status": 401,
+                    }
+                },
+            )
+        return str(tenant_id)
     except TenantAuthError as e:
-        raise HTTPException(status_code=401, detail={"error": {"code": "telephony_auth_failed", "message": e.reason, "status": 401}}) from e
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "telephony_auth_failed", "message": e.reason, "status": 401}},
+        ) from e
 
 
 def get_db():
@@ -134,6 +164,18 @@ def _verify_machine_with_db(
     with _open_db() as conn:
         _verify_machine(conn, tenant_id, ts, nonce, action, body, signature)
         conn.commit()
+
+
+# ==========================================
+# HEALTH (unauthenticated diagnostics)
+# ==========================================
+
+@router.get("/portal/telephony/health")
+def portal_telephony_health():
+    """Global telephony readiness for operators (no tenant secrets)."""
+    from tenant_portal_api.telephony_health import check_global_telephony_health
+
+    return check_global_telephony_health()
 
 
 # ==========================================

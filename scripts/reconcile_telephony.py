@@ -11,11 +11,18 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add project root to path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from tenant_portal_api.telephony_reconcile import reconcile_telephony_state
+
+try:
+    from scripts.dbconn import conn_kwargs
+except ImportError:
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
+
+import psycopg
 
 
 def main():
@@ -30,7 +37,11 @@ def main():
     dry_run = not args.apply
     print(f"Running Telephony Reconciler (dry_run={dry_run})...")
 
-    results = reconcile_telephony_state(db_conn=None, dry_run=dry_run)
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        results = reconcile_telephony_state(db_conn=conn, dry_run=dry_run)
+        if not dry_run:
+            conn.commit()
+
     print("Reconciliation Complete:")
     print(f"  Stale Orders Found:    {results['stale_orders_found']}")
     print(f"  Stale Calls Repaired:  {results['stale_calls_cleaned']}")

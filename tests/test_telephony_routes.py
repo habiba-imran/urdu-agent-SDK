@@ -6,6 +6,8 @@ Phase 7 & 8 verification suite.
 import os
 
 os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
+os.environ["TELEPHONY_ALLOW_MOCK_PORTAL_AUTH"] = "1"
+os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

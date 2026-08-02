@@ -19,7 +19,10 @@ Supabase Postgres + RLS | LiveKit Cloud Build (free) | Node 20 for SDK/admin
    scoped to one room + one identity.
 5. Quotas enforced in the TOKEN MINT. Never in the client.
 6. RLS on every table. No exceptions. Gate-verified.
-7. TELEPHONY IS OUT OF SCOPE. No SIP code. No SIP deps.
+7. RLS on every table. No exceptions. Gate-verified.
+7b. Telephony is in-scope via Telnyx BYO key + LiveKit SIP (see
+    `docs/TELEPHONY_TRANSITION_AND_ARCHITECTURE_GUIDE.md`). Provider keys stay
+    server-side; client submission uses machine HMAC `@awaazlabs-uva/telephony`.
 8. DEV IS FREE-TIER ONLY. Never call a paid API. Fixtures first: docs/30-GUIDE-FREE-TIER.md
 
 ## The loop — every task, no exceptions
