@@ -473,6 +473,49 @@ class TelnyxClient:
                 message="Failed to create Telnyx Outbound Voice Profile.",
             ) from e
 
+    def assign_phone_number_to_connection(
+        self, provider_number_id: str, connection_id: str
+    ) -> dict[str, Any]:
+        """Attach a Telnyx-owned phone number to the tenant SIP/FQDN connection."""
+        if self.mock_mode:
+            return {
+                "provider_number_id": provider_number_id,
+                "connection_id": connection_id,
+                "status": "active",
+            }
+
+        if not provider_number_id or not connection_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_number_id and connection_id are required to bind a Telnyx number.",
+            )
+
+        try:
+            resp = self.client.patch(
+                f"{TELNYX_API_BASE_URL}/phone_numbers/{provider_number_id}",
+                headers=self._headers(),
+                json={"connection_id": connection_id},
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_number_id": data.get("id") or provider_number_id,
+                "connection_id": data.get("connection_id") or connection_id,
+                "status": data.get("status", "active"),
+            }
+        except httpx.HTTPError as e:
+            logger.error(
+                "Telnyx number bind failed for %s: %s",
+                provider_number_id,
+                redact_sensitive_string(str(e)),
+            )
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to assign Telnyx phone number to SIP connection.",
+            ) from e
+
     def close(self):
         if self._owned_client:
             self.client.close()

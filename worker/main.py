@@ -167,14 +167,72 @@ def _load_vad() -> Any:
 async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     """LiveKit job entrypoint.
 
-    {tenant_id, agent_id} is read from the JOINING PARTICIPANT's metadata — that is where the Phase-2
-    mint puts it (the participant JWT `metadata` claim, via AccessToken.with_metadata), NOT room
-    metadata. (Earlier this read ctx.room.metadata, which the mint never sets — the room would have
-    been empty. Verified against the mint + livekit.agents JobContext API.)
+    Session identity resolution order:
+    1. Explicit agent-dispatch job metadata (telephony outbound / pre-bound inbound)
+    2. SIP participant attributes → telephony DB lookup (inbound PSTN)
+    3. Joining participant JWT metadata from Phase-2 mint (browser WebRTC)
     """
     await ctx.connect()
     participant = await ctx.wait_for_participant()
-    md = json.loads(participant.metadata or "{}")
+
+    job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
+    md: dict[str, Any] = {}
+    telephony_info: dict[str, Any] | None = None
+
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        import psycopg
+
+        from worker.telephony_runtime import resolve_session_metadata
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+        try:
+            from scripts.dbconn import conn_kwargs as _conn_kwargs
+        except ImportError:
+            from dbconn import conn_kwargs as _conn_kwargs  # type: ignore # noqa: E402
+
+        # Prefer a real DB connection for inbound SIP resolution; fall back to
+        # mock-mode resolver when credentials are unavailable (local tests).
+        db_conn = None
+        try:
+            db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=5)
+        except Exception:
+            db_conn = None
+        try:
+            resolved = resolve_session_metadata(
+                job_metadata=job_metadata,
+                participant=participant,
+                db_conn=db_conn,
+            )
+            md = {
+                "tenant_id": resolved.get("tenant_id", ""),
+                "agent_id": resolved.get("agent_id", ""),
+            }
+            telephony_info = resolved.get("telephony")
+        finally:
+            if db_conn is not None:
+                db_conn.close()
+    except Exception as resolve_exc:
+        from livekit.agents.log import logger as _logger
+
+        _logger.warning("telephony session resolve failed, falling back to participant metadata: %s", resolve_exc)
+        try:
+            md = json.loads(participant.metadata or "{}")
+        except Exception:
+            md = {}
+
+    if not md.get("tenant_id") or not md.get("agent_id"):
+        try:
+            fallback = json.loads(participant.metadata or "{}")
+        except Exception:
+            fallback = {}
+        md = {
+            "tenant_id": md.get("tenant_id") or fallback.get("tenant_id", ""),
+            "agent_id": md.get("agent_id") or fallback.get("agent_id", ""),
+        }
+
     session, cfg = await build_session(md, ctx.room.name)
     agent = build_agent(cfg)
 

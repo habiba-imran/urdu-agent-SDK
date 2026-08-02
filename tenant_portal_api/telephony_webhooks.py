@@ -8,14 +8,24 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import sys
 import time
+from pathlib import Path
+from typing import Any
 
+import psycopg
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode, telnyx_public_key
 from tenant_portal_api.telephony_errors import TelephonyErrorCode
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+try:
+    from scripts.dbconn import conn_kwargs
+except ImportError:
+    from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +80,55 @@ def verify_telnyx_webhook_signature(
     return True
 
 
+def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> None:
+    """Best-effort durable updates for number-order and call webhook events."""
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    event_payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
+    provider_order_id = event_payload.get("order_id") or event_payload.get("id") or data.get("id")
+    provider_status = str(event_payload.get("status") or "").lower()
+
+    if event_type.startswith("number_order.") and provider_order_id:
+        platform_status = "purchased" if provider_status in {"success", "completed"} else "pending"
+        if provider_status in {"failure", "failed"}:
+            platform_status = "failed"
+        conn.execute(
+            """
+            update telephony_number_orders
+            set provider_status = %s,
+                platform_status = %s,
+                raw_provider_status = %s,
+                updated_at = now()
+            where provider_order_id = %s
+            """,
+            (provider_status or None, platform_status, provider_status or None, str(provider_order_id)),
+        )
+
+    if event_type.startswith("call."):
+        call_control_id = str(
+            event_payload.get("call_control_id")
+            or event_payload.get("call_session_id")
+            or ""
+        )
+        if call_control_id:
+            mapped = {
+                "call.initiated": "dialing",
+                "call.answered": "in_progress",
+                "call.hangup": "completed",
+                "call.bridged": "in_progress",
+            }.get(event_type)
+            if mapped:
+                conn.execute(
+                    """
+                    update telephony_calls
+                    set platform_status = %s,
+                        provider_status = %s,
+                        updated_at = now()
+                    where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
+                    """,
+                    (mapped, event_type, call_control_id, call_control_id),
+                )
+
+
 @router.post("/webhooks/telephony/telnyx")
 async def telnyx_webhook_endpoint(
     request: Request,
@@ -112,6 +171,49 @@ async def telnyx_webhook_endpoint(
     if event_id in _seen_webhook_event_ids:
         return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
     _seen_webhook_event_ids.add(event_id)
+
+    if not is_mock_provider_mode():
+        try:
+            with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+                existing = conn.execute(
+                    """
+                    select 1 from telephony_call_events
+                    where source = 'telnyx' and provider_event_id = %s
+                    limit 1
+                    """,
+                    (str(event_id),),
+                ).fetchone()
+                if existing:
+                    conn.commit()
+                    return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
+
+                # Attach to a matching call when possible; otherwise skip event insert
+                # (provider_event_id uniqueness still guarded by process-local set).
+                matched = conn.execute(
+                    """
+                    select id, tenant_id from telephony_calls
+                    where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
+                    order by created_at desc limit 1
+                    """,
+                    (
+                        str(data.get("data", {}).get("payload", {}).get("call_control_id") or ""),
+                        str(data.get("data", {}).get("payload", {}).get("call_control_id") or ""),
+                    ),
+                ).fetchone()
+                if matched:
+                    conn.execute(
+                        """
+                        insert into telephony_call_events (
+                            tenant_id, telephony_call_id, source, event_type, provider_event_id, payload
+                        ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
+                        on conflict do nothing
+                        """,
+                        (matched[1], matched[0], event_type, str(event_id), json.dumps(data)),
+                    )
+                _apply_webhook_side_effects(conn, event_type, data)
+                conn.commit()
+        except Exception as exc:
+            logger.warning("Telnyx webhook durable processing failed: %s", exc.__class__.__name__)
 
     logger.info("Received Telnyx webhook event: %s (id: %s)", event_type, event_id)
     return {"status": "accepted", "event_id": event_id, "event_type": event_type}

@@ -6,6 +6,8 @@ Phase 7 & 8 verification suite.
 import os
 
 os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
+os.environ["TELEPHONY_ALLOW_MOCK_PORTAL_AUTH"] = "1"
+os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -53,14 +55,27 @@ def test_portal_search_and_purchase():
 
 
 def test_portal_outbound_readiness_and_call():
+    num = client.post(
+        "/portal/telephony/numbers/import",
+        json={"e164_number": "+15557650001"},
+    ).json()
+    num_id = num["id"]
+
+    assign_resp = client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": "agent_123"},
+    )
+    assert assign_resp.status_code == 200
+
+    route_resp = client.post(
+        f"/portal/telephony/numbers/{num_id}/routing/configure",
+        json={"inbound_agent_id": "agent_123"},
+    )
+    assert route_resp.status_code == 200
+
     readiness = client.get("/portal/telephony/outbound-readiness")
     assert readiness.status_code == 200
     assert readiness.json()["is_ready"] is True
-
-    # Get list of numbers to fetch num_id
-    num_list = client.get("/portal/telephony/numbers")
-    assert num_list.status_code == 200
-    num_id = num_list.json()[0]["id"]
 
     call_resp = client.post(
         "/portal/telephony/outbound-calls",
@@ -75,6 +90,35 @@ def test_portal_outbound_readiness_and_call():
     call_data = call_resp.json()
     assert call_data["platform_status"] == "dialing"
     assert call_data["direction"] == "outbound"
+
+
+def test_portal_outbound_call_rejects_number_bound_to_another_agent():
+    num = client.post(
+        "/portal/telephony/numbers/import",
+        json={"e164_number": "+15557650002"},
+    ).json()
+    num_id = num["id"]
+
+    client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": "agent_bound"},
+    )
+    client.post(
+        f"/portal/telephony/numbers/{num_id}/routing/configure",
+        json={"inbound_agent_id": "agent_bound"},
+    )
+
+    call_resp = client.post(
+        "/portal/telephony/outbound-calls",
+        json={
+            "agent_id": "agent_other",
+            "from_number_id": num_id,
+            "to_number": "+15557654321",
+            "idempotency_key": "call_idemp_wrong_agent",
+        },
+    )
+    assert call_resp.status_code == 409
+    assert call_resp.json()["detail"]["error"]["code"] == "number_not_assigned"
 
 
 def test_portal_disconnect():
