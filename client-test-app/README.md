@@ -1,67 +1,79 @@
 # UVA Client Test App
 
-A standalone client integration test app for the AwaazLabs UVA SDK. Acts as a real client to test:
-- Connecting your Telnyx account
-- Searching and purchasing phone numbers
-- Creating agents with different STT/LLM/TTS provider combinations
-- Testing outbound call readiness
-- Viewing call logs
+Local test harness for the packages in `client-submission_v2`.
+
+This app intentionally keeps the same boundary as the client handoff docs:
+
+- Browser imports only `@awaazlabs-uva/voice`.
+- Local Express backend imports `@awaazlabs-uva/agents` and `@awaazlabs-uva/telephony`.
+- Tenant HMAC, Telnyx API keys, and SIP secrets stay out of the browser bundle.
 
 ## Prerequisites
 
 - Node.js 20+
-- The `tenant_portal_api` Python backend running at `http://localhost:8000`
+- A running tenant portal API URL
+- A running control-plane session URL for browser voice sessions
+- Tenant ID, tenant HMAC secret, and publishable key
 
-## Quick Start
+## Setup
 
-```bash
-# 1. From this directory, install dependencies
-cd client-test-app
+```powershell
+Set-Location C:\Users\habib\Desktop\SDK\sdk-agent\client-test-app
 npm install
-
-# 2. Install the SDK tarballs from the handover folder
 npm run install:sdks
+Copy-Item backend\.env.example backend\.env
+Copy-Item frontend\.env.example frontend\.env
+```
 
-# 3. Copy and edit the backend env file
-cp backend/.env.example backend/.env
-# Edit backend/.env — only UVA_API_BASE_URL is required to start.
-# You can enter Tenant ID, HMAC Secret, and Telnyx Key from the UI.
+Edit `backend/.env`:
 
-# 4. Start the backend (port 3001)
+```env
+UVA_API_BASE_URL=https://<tenant-api-service>
+UVA_TELEPHONY_API_URL=https://<tenant-api-service>
+UVA_SESSION_UPSTREAM_URL=https://<control-plane-service>
+UVA_PUBLISHABLE_KEY=<publishable-key>
+UVA_TENANT_ID=<tenant-id>
+UVA_HMAC_SECRET=<tenant-hmac-secret>
+PORT=3001
+PUBLIC_BASE_URL=http://localhost:3001
+ALLOWED_ORIGINS=http://localhost:3000
+ALLOW_PAID_TELEPHONY_ACTIONS=0
+```
+
+Edit `frontend/.env`:
+
+```env
+VITE_TEST_BACKEND_URL=http://localhost:3001
+VITE_UVA_PUBLISHABLE_KEY=<publishable-key>
+VITE_UVA_SESSION_ENDPOINT=http://localhost:3001/api/voice/session
+VITE_UVA_REFRESH_ENDPOINT=http://localhost:3001/api/voice/session/refresh
+```
+
+## Run
+
+Terminal 1:
+
+```powershell
+Set-Location C:\Users\habib\Desktop\SDK\sdk-agent\client-test-app
 npm run backend
+```
 
-# 5. In a new terminal, serve the frontend (port 3000)
+Terminal 2:
+
+```powershell
+Set-Location C:\Users\habib\Desktop\SDK\sdk-agent\client-test-app
 npm run frontend
-
-# Or run both together:
-npm run dev
 ```
 
-## Open the app
+Open `http://localhost:3000`.
 
-Navigate to: **http://localhost:3000**
+## Safe Test Order
 
-## Usage Flow
+1. Setup: confirm backend health, tenant config, and provider capabilities.
+2. Agents: list existing agents or create an agent with a real voice ID from the hosted voice catalog.
+3. Phone Numbers: connect Telnyx from the Setup tab, then sync/list owned or managed numbers.
+4. Provider Test: assign a managed number to an agent, configure routing/SIP/profile/trunk, then check readiness.
+5. Browser Voice: select an agent and connect through the browser SDK.
+6. Call Log: list recent call records.
 
-1. **Setup tab** — Enter your API base URL, Tenant ID, HMAC Secret, and Telnyx API key. Click "Save Config" then "Connect Telnyx Account".
-2. **Phone Numbers tab** — Search for available numbers by country + area code. Reserve or purchase. Sync your existing Telnyx-owned numbers.
-3. **Agents tab** — List, create, and update agents. Use the provider dropdowns to test different STT/LLM/TTS combinations.
-4. **Provider Test tab** — Assign a number to an agent, run the outbound readiness checklist, and make a test outbound call.
-5. **Call Log tab** — Browse recent call records and their statuses.
-
-## Architecture
-
-```
-client-test-app/
-  backend/server.js     ← Express.js, uses @awaazlabs-uva/agents + @awaazlabs-uva/telephony SDKs
-  frontend/index.html   ← Single-page app
-  frontend/style.css    ← Premium dark-mode styling
-  frontend/app.js       ← All frontend logic
-  package.json
-```
-
-## Security Notes
-
-- Backend secrets (Tenant ID, HMAC Secret, Telnyx API Key) are stored only in the backend process memory and in `backend/.env`.
-- The frontend never receives or stores secrets — it only calls your local backend at port 3001.
-- **Never commit `backend/.env`** — it is in `.gitignore`.
+Reserve, purchase, and outbound-call routes are blocked unless `ALLOW_PAID_TELEPHONY_ACTIONS=1` is set in `backend/.env`. Leave it as `0` for normal SDK smoke testing.

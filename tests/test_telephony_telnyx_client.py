@@ -55,3 +55,58 @@ def test_telnyx_client_real_mode_requires_api_key(monkeypatch):
 
     assert exc_info.value.code == "provider_credentials_missing"
     assert exc_info.value.status == 503
+
+class FakeTelnyxResponse:
+    status_code = 200
+
+    def json(self):
+        return {
+            "data": [
+                {
+                    "phone_number": "+12125550123",
+                    "country_code": "US",
+                    "region": "US-NY",
+                    "phone_number_type": "local",
+                    "features": [{"name": "voice"}, {"name": "sms"}],
+                    "cost_information": {
+                        "upfront_cost": "1.00",
+                        "monthly_cost": "1.00",
+                        "currency": "USD",
+                    },
+                }
+            ]
+        }
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeTelnyxHttpClient:
+    def __init__(self):
+        self.requests = []
+
+    def get(self, url, headers=None, params=None):
+        self.requests.append({"url": url, "headers": headers, "params": params})
+        return FakeTelnyxResponse()
+
+
+def test_telnyx_client_real_search_normalizes_feature_arrays():
+    http_client = FakeTelnyxHttpClient()
+    client = TelnyxClient(api_key="real-shaped-test-key", http_client=http_client, mock_mode=False)
+
+    results = client.search_available_numbers(country="US", area_code="212", features=["voice"])
+
+    assert results == [
+        {
+            "e164_number": "+12125550123",
+            "country": "US",
+            "region": "US-NY",
+            "number_type": "local",
+            "features": ["voice", "sms"],
+            "upfront_cost": "1.00",
+            "monthly_cost": "1.00",
+            "currency": "USD",
+        }
+    ]
+    assert http_client.requests[0]["params"]["filter[national_destination_code]"] == "212"
+    assert http_client.requests[0]["params"]["filter[features][voice]"] == "true"

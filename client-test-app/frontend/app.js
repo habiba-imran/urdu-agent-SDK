@@ -4,7 +4,7 @@
  */
 import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
-const API = 'http://localhost:3001';
+const API = import.meta.env.VITE_TEST_BACKEND_URL || 'http://localhost:3001';
 
 // ─── Utility: API fetch ──────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -117,6 +117,8 @@ async function checkConfig() {
         `Tenant: ${cfg.tenantId.slice(0, 12)}…`);
       // pre-fill fields
       document.getElementById('cfg-api-url').value = cfg.apiBaseUrl || '';
+      document.getElementById('cfg-telephony-url').value = cfg.telephonyApiUrl || cfg.apiBaseUrl || '';
+      document.getElementById('cfg-session-url').value = cfg.sessionUpstreamUrl || '';
       document.getElementById('cfg-tenant-id').value = cfg.tenantId || '';
     } else {
       updateStatusItem('status-config', 'fail', 'Tenant credentials missing',
@@ -128,10 +130,10 @@ async function checkConfig() {
 async function checkTelnyxStatus() {
   try {
     const status = await api('GET', '/api/telnyx/status');
-    const connected = status.connected || status.status === 'connected';
+    const connected = status.platform_status === 'active' || status.provider_status === 'active' || status.status === 'connected';
     updateStatusItem('status-telnyx', connected ? 'pass' : 'fail',
       connected ? 'Telnyx account connected' : 'Telnyx not connected',
-      status.label || status.account_id || '');
+      status.label || status.telnyx_account_id || status.platform_status || '');
     document.getElementById('header-connection-badge').innerHTML =
       `<span class="dot ${connected ? 'pulse' : ''}" style="background:${connected ? 'var(--green)' : 'var(--red)'}"></span> ${connected ? 'Telnyx connected' : 'Telnyx disconnected'}`;
     document.getElementById('header-connection-badge').className = `badge ${connected ? 'badge-green' : 'badge-red'}`;
@@ -158,14 +160,25 @@ document.getElementById('btn-save-config').addEventListener('click', async () =>
   const btn = document.getElementById('btn-save-config');
   setLoading(btn, true, 'Saving…');
   try {
+    const apiInput = document.getElementById('cfg-api-url').value.trim();
+    const telephonyInput = document.getElementById('cfg-telephony-url').value.trim();
+    const apiLooksLocalPlaceholder = /^https?:\/\/(localhost|127\.0\.0\.1):8000\/?$/i.test(apiInput);
+    const telephonyLooksRemote = /^https:\/\//i.test(telephonyInput) && !/\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(telephonyInput);
+    const resolvedApiBaseUrl = apiLooksLocalPlaceholder && telephonyLooksRemote
+      ? telephonyInput
+      : (apiInput || telephonyInput || undefined);
+
     const body = {
-      apiBaseUrl: document.getElementById('cfg-api-url').value.trim() || undefined,
-      telephonyApiUrl: document.getElementById('cfg-api-url').value.trim() || undefined,
+      apiBaseUrl: resolvedApiBaseUrl,
+      telephonyApiUrl: telephonyInput || resolvedApiBaseUrl,
+      sessionUpstreamUrl: document.getElementById('cfg-session-url').value.trim() || undefined,
+      publishableKey: document.getElementById('cfg-publishable-key').value.trim() || undefined,
       tenantId: document.getElementById('cfg-tenant-id').value.trim() || undefined,
       hmacSecret: document.getElementById('cfg-hmac-secret').value.trim() || undefined,
       telnyxApiKey: document.getElementById('cfg-telnyx-key').value.trim() || undefined,
     };
     await api('POST', '/api/config', body);
+    voiceClient = null;
     toast('success', 'Configuration saved', 'Credentials stored in backend memory.');
     await checkConfig();
   } catch (e) {
@@ -220,11 +233,7 @@ document.getElementById('btn-load-caps').addEventListener('click', async () => {
     const caps = await api('GET', '/api/capabilities');
     const summary = document.getElementById('caps-summary');
     summary.textContent = JSON.stringify(caps, null, 2);
-    if (caps._fallback) {
-      toast('warning', 'Using fallback capabilities', 'Could not reach portal API. Showing defaults.');
-    } else {
-      toast('success', 'Provider capabilities loaded', '');
-    }
+    toast('success', 'Provider capabilities loaded', '');
   } catch (e) {
     toast('error', 'Failed to load capabilities', e.message);
   } finally {
@@ -463,8 +472,9 @@ document.getElementById('btn-create-agent').addEventListener('click', async () =
   const btn = document.getElementById('btn-create-agent');
   const name = document.getElementById('agent-name').value.trim();
   const prompt = document.getElementById('agent-prompt').value.trim();
-  if (!name || !prompt) {
-    toast('warning', 'Name and prompt are required', '');
+  const voiceId = document.getElementById('agent-voice-id').value.trim();
+  if (!name || !prompt || !voiceId) {
+    toast('warning', 'Name, prompt, and voice ID are required', 'Use a real enabled voice ID from the hosted voice catalog.');
     return;
   }
   setLoading(btn, true, 'Creating…');
@@ -477,8 +487,8 @@ document.getElementById('btn-create-agent').addEventListener('click', async () =
       sttProvider: document.getElementById('agent-stt').value || undefined,
       llmProvider: document.getElementById('agent-llm').value || undefined,
       ttsProvider: document.getElementById('agent-tts').value || undefined,
-      ttsVoiceId: document.getElementById('agent-voice-id').value.trim() || undefined,
-      voiceId: document.getElementById('agent-voice-id').value.trim() || 'default',
+      ttsVoiceId: voiceId,
+      voiceId,
     };
     // Remove undefined keys
     Object.keys(body).forEach(k => body[k] === undefined && delete body[k]);
@@ -813,21 +823,26 @@ document.getElementById('calllog-limit').addEventListener('change', loadCallLog)
 // ─── BROWSER VOICE SESSION ────────────────────────────────────────────────────
 
 let voiceClient = null;
+let audioNeedsUnlock = false;
+
+function getPublishableKey() {
+  return document.getElementById('cfg-publishable-key')?.value.trim() || import.meta.env.VITE_UVA_PUBLISHABLE_KEY || '';
+}
 
 function getVoiceClient() {
   if (voiceClient) return voiceClient;
 
-  // Uses the environment variables from frontend/.env
   voiceClient = new AwaazLabsUvaVoice({
-    publishableKey: import.meta.env.VITE_PUBLIC_UVA_PUBLISHABLE_KEY || import.meta.env.PUBLIC_UVA_PUBLISHABLE_KEY,
-    sessionEndpoint: import.meta.env.VITE_PUBLIC_UVA_SESSION_ENDPOINT || import.meta.env.PUBLIC_UVA_SESSION_ENDPOINT,
-    refreshEndpoint: import.meta.env.VITE_PUBLIC_UVA_REFRESH_ENDPOINT || import.meta.env.PUBLIC_UVA_REFRESH_ENDPOINT,
+    publishableKey: getPublishableKey(),
+    sessionEndpoint: import.meta.env.VITE_UVA_SESSION_ENDPOINT || `${API}/api/voice/session`,
+    refreshEndpoint: import.meta.env.VITE_UVA_REFRESH_ENDPOINT || `${API}/api/voice/session/refresh`,
   });
 
   voiceClient.on('connected', () => {
     document.getElementById('voice-status-badge').className = 'badge badge-green';
     document.getElementById('voice-status-badge').innerHTML = '<span class="dot pulse"></span> Connected';
     document.getElementById('btn-voice-connect').style.display = 'none';
+    document.getElementById('btn-voice-unlock').style.display = audioNeedsUnlock ? 'block' : 'none';
     document.getElementById('btn-voice-disconnect').style.display = 'block';
     
     document.getElementById('voice-transcript-log').innerHTML = 
@@ -837,7 +852,9 @@ function getVoiceClient() {
   voiceClient.on('disconnected', () => {
     document.getElementById('voice-status-badge').className = 'badge badge-gray';
     document.getElementById('voice-status-badge').textContent = 'Disconnected';
+    audioNeedsUnlock = false;
     document.getElementById('btn-voice-connect').style.display = 'block';
+    document.getElementById('btn-voice-unlock').style.display = 'none';
     document.getElementById('btn-voice-disconnect').style.display = 'none';
   });
 
@@ -868,9 +885,11 @@ function getVoiceClient() {
   });
 
   voiceClient.on('audio_blocked', async (blocked) => {
+    audioNeedsUnlock = Boolean(blocked);
+    document.getElementById('btn-voice-unlock').style.display = audioNeedsUnlock ? 'block' : 'none';
     if (blocked) {
-      toast('warning', 'Audio Blocked', 'Browser requires interaction. Click Connect again.');
-      document.getElementById('voice-status-badge').textContent = 'Audio Blocked - Interaction Required';
+      toast('warning', 'Audio blocked', 'Click Unlock Audio to start playback.');
+      document.getElementById('voice-status-badge').textContent = 'Audio blocked - unlock required';
     }
   });
 
@@ -888,18 +907,27 @@ document.getElementById('btn-voice-connect').addEventListener('click', async () 
   document.getElementById('voice-status-badge').textContent = 'Minting token...';
 
   try {
+    voiceClient = null;
     const vc = getVoiceClient();
-    if (vc.state === 'audio_blocked') {
-      await vc.startAudio();
-    } else {
-      await vc.connect({ agentId });
-    }
+    await vc.connect({ agentId });
   } catch (e) {
     toast('error', 'Voice connection failed', e.message);
     document.getElementById('voice-status-badge').className = 'badge badge-red';
     document.getElementById('voice-status-badge').textContent = 'Error connecting';
   } finally {
     setLoading(btn, false);
+  }
+});
+
+document.getElementById('btn-voice-unlock').addEventListener('click', async () => {
+  if (!voiceClient) return;
+  try {
+    await voiceClient.startAudio();
+    audioNeedsUnlock = false;
+    document.getElementById('btn-voice-unlock').style.display = 'none';
+    toast('success', 'Audio unlocked', '');
+  } catch (e) {
+    toast('error', 'Audio unlock failed', e.message);
   }
 });
 

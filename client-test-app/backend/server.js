@@ -9,25 +9,47 @@
  * The frontend only calls this local server on port 3001.
  */
 
-import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
-import { randomUUID, createHmac } from 'crypto';
-import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
+import { randomUUID, createHmac, createHash } from 'crypto';
+import { AwaazLabsUvaAgentsClient, AwaazLabsUvaAgentsError } from '@awaazlabs-uva/agents';
 import { TelephonyClient, AwaazLabsUvaTelephonyError } from '@awaazlabs-uva/telephony';
 
-const app = express();
-app.use(cors({ origin: '*' }));
-app.use(express.json());
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '.env') });
+
+function csv(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 // ─── Runtime config (can be overridden via POST /api/config) ────────────────
 let config = {
   apiBaseUrl: process.env.UVA_API_BASE_URL || 'http://localhost:8000',
   telephonyApiUrl: process.env.UVA_TELEPHONY_API_URL || 'http://localhost:8000',
+  sessionUpstreamUrl: process.env.UVA_SESSION_UPSTREAM_URL || process.env.UVA_API_BASE_URL || 'http://localhost:7860',
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
+  publishableKey: process.env.UVA_PUBLISHABLE_KEY || '',
+  allowedOrigins: csv(process.env.ALLOWED_ORIGINS || 'http://localhost:3000'),
   tenantId: process.env.UVA_TENANT_ID || '',
   hmacSecret: process.env.UVA_HMAC_SECRET || '',
-  telnyxApiKey: process.env.TELNYX_API_KEY || '',
+  telnyxApiKey: '',  // entered at runtime only - never in .env
+  allowPaidTelephonyActions: process.env.ALLOW_PAID_TELEPHONY_ACTIONS === '1',
 };
+
+const app = express();
+app.use(cors({
+  origin(origin, cb) {
+    const allowed = !origin || config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin);
+    cb(null, allowed);
+  },
+}));
+app.use(express.json());
 
 // ─── SDK client factory helpers ─────────────────────────────────────────────
 function getAgentsClient() {
@@ -68,15 +90,83 @@ function createControlPlaneHeaders(tenantId, secret, agentId) {
   };
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function createMachineHeaders(action, body = {}) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomUUID();
+  const payloadHash = createHash('sha256').update(canonicalJson(body)).digest('hex');
+  const signature = createHmac('sha256', config.hmacSecret)
+    .update(`${config.tenantId}.${timestamp}.${nonce}.${action}.${payloadHash}`)
+    .digest('hex');
+
+  return {
+    'Content-Type': 'application/json',
+    'X-Tenant-Id': config.tenantId,
+    'X-Timestamp': timestamp,
+    'X-Nonce': nonce,
+    'X-Signature': signature,
+  };
+}
+
+async function readJsonSafely(response) {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function normalizeSessionFailure(upstreamStatus, payload) {
+  const detail = String(payload?.detail || payload?.error || '').toLowerCase();
+  if (upstreamStatus === 429) return { status: 429, body: { error: 'quota_exceeded' } };
+  if (upstreamStatus === 404 || detail.includes('agent') || detail.includes('not found')) {
+    return { status: 404, body: { error: 'agent_not_found' } };
+  }
+  return { status: 502, body: { error: 'session_failed' } };
+}
+
+function resolveRefreshUrl(req) {
+  if (config.publicBaseUrl) return `${config.publicBaseUrl.replace(/\/$/, '')}/api/voice/session/refresh`;
+  return `${req.protocol}://${req.get('host')}/api/voice/session/refresh`;
+}
+
+function requirePaidTelephonyActions(res) {
+  if (config.allowPaidTelephonyActions) return false;
+  res.status(403).json({
+    ok: false,
+    code: 'paid_action_disabled',
+    message: 'Set ALLOW_PAID_TELEPHONY_ACTIONS=1 in backend/.env before reserve, purchase, or outbound-call tests.',
+  });
+  return true;
+}
+
 // ─── Error helpers ───────────────────────────────────────────────────────────
 function handleError(res, error) {
   console.error('[UVA Test App Error]', error?.message || error);
   if (error instanceof AwaazLabsUvaTelephonyError) {
+    const signatureMessage = String(error.message || '').toLowerCase().includes('bad signature')
+      ? 'Bad signature: the Tenant ID and HMAC Secret loaded in this local backend do not match the target API.'
+      : error.message;
     return res.status(error.status || 500).json({
       ok: false,
       code: error.code,
-      message: error.message,
+      message: signatureMessage,
       detail: error.detail,
+    });
+  }
+  if (error instanceof AwaazLabsUvaAgentsError) {
+    return res.status(error.status || 500).json({
+      ok: false,
+      code: 'agents_request_failed',
+      message: error.message,
     });
   }
   const status = error?.status || 500;
@@ -95,6 +185,9 @@ app.get('/api/health', (_req, res) => {
     service: 'uva-client-test-app-backend',
     configuredTenantId: config.tenantId ? `${config.tenantId.slice(0, 8)}...` : '(not set)',
     apiBaseUrl: config.apiBaseUrl,
+    telephonyApiUrl: config.telephonyApiUrl,
+    sessionUpstreamUrl: config.sessionUpstreamUrl,
+    paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
   });
 });
 
@@ -105,79 +198,71 @@ app.get('/api/config', (_req, res) => {
   res.json({
     apiBaseUrl: config.apiBaseUrl,
     telephonyApiUrl: config.telephonyApiUrl,
+    sessionUpstreamUrl: config.sessionUpstreamUrl,
     tenantId: config.tenantId,
-    // Never return secrets — just presence flags
+    allowedOrigins: config.allowedOrigins,
     hmacSecretSet: !!config.hmacSecret,
     telnyxApiKeySet: !!config.telnyxApiKey,
+    publishableKeySet: !!config.publishableKey,
+    paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
   });
 });
 
 app.post('/api/config', (req, res) => {
-  const { apiBaseUrl, telephonyApiUrl, tenantId, hmacSecret, telnyxApiKey } = req.body;
+  const {
+    apiBaseUrl,
+    telephonyApiUrl,
+    sessionUpstreamUrl,
+    publishableKey,
+    tenantId,
+    hmacSecret,
+    telnyxApiKey,
+    allowPaidTelephonyActions,
+  } = req.body;
   if (apiBaseUrl) config.apiBaseUrl = apiBaseUrl;
   if (telephonyApiUrl) config.telephonyApiUrl = telephonyApiUrl;
+  if (sessionUpstreamUrl) config.sessionUpstreamUrl = sessionUpstreamUrl;
+  if (publishableKey) config.publishableKey = publishableKey;
   if (tenantId) config.tenantId = tenantId;
   if (hmacSecret) config.hmacSecret = hmacSecret;
   if (telnyxApiKey) config.telnyxApiKey = telnyxApiKey;
+  if (allowPaidTelephonyActions !== undefined) {
+    config.allowPaidTelephonyActions = allowPaidTelephonyActions === true || allowPaidTelephonyActions === '1';
+  }
   console.log('[Config] Updated:', {
     apiBaseUrl: config.apiBaseUrl,
+    telephonyApiUrl: config.telephonyApiUrl,
+    sessionUpstreamUrl: config.sessionUpstreamUrl,
     tenantId: config.tenantId ? `${config.tenantId.slice(0, 8)}...` : '(not set)',
     hmacSecretSet: !!config.hmacSecret,
     telnyxApiKeySet: !!config.telnyxApiKey,
+    publishableKeySet: !!config.publishableKey,
+    paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
   });
   res.json({ ok: true, message: 'Configuration saved (in-memory only).' });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// PROVIDER CAPABILITIES
-// ────────────────────────────────────────────────────────────────────────────
+// Provider capabilities
 app.get('/api/capabilities', async (_req, res) => {
   try {
-    // Fetch directly from the portal API (no SDK wrapper needed for this public endpoint)
-    const agents = getAgentsClient();
-    // Use the agents client's underlying fetch or call the portal directly
-    const response = await fetch(`${config.apiBaseUrl}/portal/provider-capabilities`, {
-      headers: {
-        'Content-Type': 'application/json',
-        // We piggyback on portal login token if we had one, but machine auth also works
-        // For simplicity in test app: use a portal login if credentials allow, otherwise
-        // fall back to direct call (the server may accept it in dev mode)
-      },
-    });
-    if (!response.ok) {
-      // Try machine auth path
-      const telephony = getTelephonyClient();
-      const caps = await telephony.getProviderCapabilities?.();
-      return res.json(caps || { languages: {} });
+    if (!config.tenantId || !config.hmacSecret) {
+      return res.status(401).json({ ok: false, message: 'Tenant ID and HMAC Secret are required.' });
     }
-    const data = await response.json();
+    const response = await fetch(`${config.apiBaseUrl.replace(/\/$/, '')}/machine/provider-capabilities`, {
+      method: 'GET',
+      headers: createMachineHeaders('provider_capabilities.get', {}),
+    });
+    const data = await readJsonSafely(response);
+    if (!response.ok) {
+      return res.status(response.status).json({ ok: false, message: data?.detail || data?.error || response.statusText });
+    }
     return res.json(data);
   } catch (error) {
-    // Return a minimal fallback so the UI still loads
-    console.warn('[Capabilities] Could not fetch from API, using fallback:', error.message);
-    return res.json({
-      languages: {
-        ur: {
-          label: 'Urdu',
-          stt: { gladia: { state: 'enabled', models: ['solaria-1'], defaultModel: 'solaria-1' } },
-          llm: { gemini: { state: 'enabled', models: ['gemini-2.5-flash', 'gemini-2.0-flash'], defaultModel: 'gemini-2.5-flash' } },
-          tts: { uplift: { state: 'enabled', voices: [], defaultVoice: null }, rime: { state: 'enabled', voices: [], defaultVoice: null } },
-        },
-        en: {
-          label: 'English',
-          stt: { gladia: { state: 'enabled', models: ['solaria-1'], defaultModel: 'solaria-1' } },
-          llm: { gemini: { state: 'enabled', models: ['gemini-2.5-flash'], defaultModel: 'gemini-2.5-flash' } },
-          tts: { uplift: { state: 'enabled', voices: [], defaultVoice: null } },
-        },
-      },
-      _fallback: true,
-    });
+    handleError(res, error);
   }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// AGENTS
-// ────────────────────────────────────────────────────────────────────────────
+// Agents
 app.get('/api/agents', async (_req, res) => {
   try {
     const agents = getAgentsClient();
@@ -197,14 +282,14 @@ app.post('/api/agents', async (req, res) => {
       llmProvider, ttsProvider, ttsVoiceId,
     } = req.body;
 
-    if (!name || !prompt) {
-      return res.status(400).json({ ok: false, message: 'name and prompt are required' });
+    if (!name || !prompt || !voiceId) {
+      return res.status(400).json({ ok: false, message: 'name, prompt, and voiceId are required' });
     }
 
     const agent = await agents.createAgent({
       name,
       prompt,
-      voiceId: voiceId || 'default',
+      voiceId,
       llmModel: llmModel || 'gemini-2.5-flash',
       agentLanguage,
       sttProvider,
@@ -243,30 +328,37 @@ app.patch('/api/agents/:agentId', async (req, res) => {
 // ─── BROWSER VOICE SESSION ENDPOINTS ──────────────────────────────────────────
 
 app.post('/api/voice/session', async (req, res) => {
-  const { agentId } = req.body || {};
-  if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+  const { publishableKey, agentId } = req.body || {};
+  if (!publishableKey || !agentId) return res.status(400).json({ error: 'publishableKey and agentId are required' });
+  if (!config.publishableKey) return res.status(500).json({ error: 'publishable_key_not_configured' });
+  if (publishableKey !== config.publishableKey) return res.status(401).json({ error: 'unknown publishable key' });
   if (!config.tenantId || !config.hmacSecret) return res.status(401).json({ error: 'Tenant credentials not set' });
 
   try {
     const headers = createControlPlaneHeaders(config.tenantId, config.hmacSecret, agentId);
-    const upstream = await fetch(`${config.apiBaseUrl}/v1/session`, {
+    if (req.get('origin')) headers.Origin = req.get('origin');
+    const upstream = await fetch(`${config.sessionUpstreamUrl.replace(/\/$/, '')}/v1/session`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ agent_id: agentId }),
     });
 
-    let payload;
-    try { payload = await upstream.json(); } catch { payload = {}; }
+    const payload = await readJsonSafely(upstream);
 
-    if (!upstream.ok || !payload?.token || !payload?.wsUrl || !payload?.roomName) {
-      return res.status(502).json({ error: 'session_failed', detail: payload });
+    if (!upstream.ok) {
+      const failure = normalizeSessionFailure(upstream.status, payload);
+      return res.status(failure.status).json(failure.body);
+    }
+
+    if (!payload?.token || !payload?.wsUrl || !payload?.roomName) {
+      return res.status(502).json({ error: 'session_failed' });
     }
 
     res.json({
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,
-      refreshUrl: `http://localhost:${process.env.PORT || 3001}/api/voice/session/refresh`,
+      refreshUrl: resolveRefreshUrl(req),
       expiresIn: payload.expiresIn || 120,
     });
   } catch (error) {
@@ -288,24 +380,23 @@ app.post('/api/voice/session/refresh', async (req, res) => {
       headers['Content-Type'] = 'application/json';
     }
 
-    const upstream = await fetch(`${config.apiBaseUrl}/v1/session/refresh`, {
+    const upstream = await fetch(`${config.sessionUpstreamUrl.replace(/\/$/, '')}/v1/session/refresh`, {
       method: 'POST',
       headers,
       body: bearer?.startsWith('Bearer ') ? undefined : JSON.stringify({ token }),
     });
 
-    let payload;
-    try { payload = await upstream.json(); } catch { payload = {}; }
+    const payload = await readJsonSafely(upstream);
 
     if (!upstream.ok || !payload?.token || !payload?.wsUrl || !payload?.roomName) {
-      return res.status(502).json({ error: 'session_failed', detail: payload });
+      return res.status(502).json({ error: 'session_failed' });
     }
 
     res.json({
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,
-      refreshUrl: `http://localhost:${process.env.PORT || 3001}/api/voice/session/refresh`,
+      refreshUrl: resolveRefreshUrl(req),
       expiresIn: payload.expiresIn || 120,
     });
   } catch (error) {
@@ -408,6 +499,7 @@ app.post('/api/telnyx/numbers/sync', async (_req, res) => {
 
 app.post('/api/telnyx/numbers/reserve', async (req, res) => {
   try {
+    if (requirePaidTelephonyActions(res)) return;
     const { e164Number } = req.body;
     if (!e164Number) return res.status(400).json({ ok: false, message: 'e164Number required' });
     const telephony = getTelephonyClient();
@@ -423,6 +515,7 @@ app.post('/api/telnyx/numbers/reserve', async (req, res) => {
 
 app.post('/api/telnyx/numbers/purchase', async (req, res) => {
   try {
+    if (requirePaidTelephonyActions(res)) return;
     const { e164Number } = req.body;
     if (!e164Number) return res.status(400).json({ ok: false, message: 'e164Number required' });
     const telephony = getTelephonyClient();
@@ -565,6 +658,7 @@ app.get('/api/readiness', async (_req, res) => {
 
 app.post('/api/outbound-call', async (req, res) => {
   try {
+    if (requirePaidTelephonyActions(res)) return;
     const { agentId, fromNumberId, toNumber, recipient, context } = req.body;
     if (!agentId || !fromNumberId || !toNumber) {
       return res.status(400).json({ ok: false, message: 'agentId, fromNumberId, and toNumber are required' });
@@ -626,6 +720,11 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`\n🚀 UVA Client Test App Backend running on http://localhost:${PORT}`);
   console.log(`   API Base URL: ${config.apiBaseUrl}`);
-  console.log(`   Tenant ID:    ${config.tenantId ? config.tenantId.slice(0, 8) + '...' : '(not set — use /api/config or Setup tab)'}`);
-  console.log(`\n   Open the frontend at http://localhost:3000\n`);
+  console.log(`   Telephony URL: ${config.telephonyApiUrl}`);
+  console.log(`   Session URL:   ${config.sessionUpstreamUrl}`);
+  console.log(`   Tenant ID:    ${config.tenantId ? config.tenantId.slice(0, 8) + '...' : '(not set - use /api/config or Setup tab)'}`);
+  console.log(`   Paid actions: ${config.allowPaidTelephonyActions ? 'enabled' : 'disabled'}`);
+  console.log(`
+   Open the frontend at http://localhost:3000
+`);
 });

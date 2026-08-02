@@ -11,5 +11,5 @@ export default defineConfig({
     outDir: '../dist',
     emptyOutDir: true
   },
-  envDir: '.', // this tells vite to look in the root folder /frontend for .env files
+  envDir: 'frontend'
 });

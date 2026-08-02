@@ -23,6 +23,30 @@ logger = logging.getLogger(__name__)
 TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
 
 
+def _normalize_features(raw: Any) -> list[str]:
+    """Normalize Telnyx feature shapes into public SDK strings.
+
+    Telnyx v2 can return features as an array of objects/strings, while older
+    fixtures used a boolean map. Keep both shapes valid so real provider
+    responses do not crash the route.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [str(key) for key, enabled in raw.items() if enabled]
+    if isinstance(raw, list):
+        values: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                values.append(item)
+            elif isinstance(item, dict):
+                value = item.get("name") or item.get("feature") or item.get("type")
+                if value:
+                    values.append(str(value))
+        return values
+    return []
+
+
 class TelnyxClient:
     """Backend client for Telnyx REST v2 APIs."""
 
@@ -215,9 +239,7 @@ class TelnyxClient:
                         "country": item.get("country_code", country.upper()),
                         "region": item.get("region"),
                         "number_type": item.get("phone_number_type"),
-                        "features": [
-                            k for k, v in item.get("features", {}).items() if v
-                        ],
+                        "features": _normalize_features(item.get("features")) or ["voice"],
                         "upfront_cost": str(cost.get("upfront_cost", "1.00")),
                         "monthly_cost": str(cost.get("monthly_cost", "1.00")),
                         "currency": cost.get("currency", "USD"),
