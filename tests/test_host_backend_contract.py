@@ -65,7 +65,9 @@ def test_session_endpoint_contract_success(monkeypatch):
         "Origin": "https://host.example.com",
     }
 
-    response = client.post("/v1/session", json={"agent_id": "agent-123"}, headers=headers)
+    response = client.post(
+        "/v1/session", json={"agent_id": "agent-123"}, headers=headers
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -97,7 +99,9 @@ def test_session_endpoint_contract_error_mapping(monkeypatch):
         "X-Signature": "signed-request",
     }
 
-    response = client.post("/v1/session", json={"agent_id": "agent-123"}, headers=headers)
+    response = client.post(
+        "/v1/session", json={"agent_id": "agent-123"}, headers=headers
+    )
 
     assert response.status_code == 429
     assert response.json() == {"error": "concurrent cap reached"}

@@ -1447,7 +1447,7 @@ New files/modules to create:
 
 Inputs and outputs:
 
-- Inputs: process environment variables, secret store config, LiveKit credentials, Telnyx webhook signing secret, encryption key/reference.
+- Inputs: process environment variables, secret store config, LiveKit credentials, Telnyx API v2 webhook public key, encryption key/reference.
 - Outputs: validated backend config object or startup/runtime error with redacted details.
 
 Dependencies:
@@ -1459,7 +1459,7 @@ Dependencies:
 Required environment variable names to define, subject to final architecture decision:
 
 - `TELEPHONY_CREDENTIAL_ENCRYPTION_KEY` or secret-store/KMS reference.
-- `TELNYX_WEBHOOK_SIGNING_SECRET`.
+- `TELNYX_PUBLIC_KEY`.
 - `TELEPHONY_WEBHOOK_PUBLIC_BASE_URL` if provider configuration needs callback URLs.
 - `TELEPHONY_PROVIDER_HTTP_TIMEOUT_SEC`.
 - `TELEPHONY_RECONCILE_INTERVAL_SEC`.

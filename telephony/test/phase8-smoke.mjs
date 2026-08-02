@@ -159,6 +159,27 @@ async function testRestrictedResponseFieldsAreDropped() {
   });
 }
 
+async function testArrayResponsesAreAcceptedAndSanitized() {
+  const client = new TelephonyClient({
+    tenantId: 'tenant-id',
+    tenantSecret: 'tenant-secret',
+    baseUrl: 'https://api.example.test',
+    nowSeconds: () => 1700000000,
+    nonceFactory: () => 'nonce-id',
+    fetch: async () =>
+      jsonResponse([
+        { id: 'number-id', e164_number: '<E164_NUMBER>', provider_error_payload: { diagnostic: true } },
+        { id: 'number-id-2', nested: { payload: { hidden: true }, safe: true } },
+      ]),
+  });
+
+  const result = await client.listManagedPhoneNumbers({ limit: 5 });
+
+  assert.deepEqual(result, [
+    { id: 'number-id', e164_number: '<E164_NUMBER>' },
+    { id: 'number-id-2', nested: { safe: true } },
+  ]);
+}
 async function testErrorMappingRedactsDetails() {
   const client = new TelephonyClient({
     tenantId: 'tenant-id',
@@ -198,6 +219,7 @@ await testFixedOperationsStayMachineScoped();
 await testSnakeCaseBodiesAndHeaderProtection();
 await testTelnyxKeyIsNotRetained();
 await testRestrictedResponseFieldsAreDropped();
+await testArrayResponsesAreAcceptedAndSanitized();
 await testErrorMappingRedactsDetails();
 
 console.log('telephony phase8 smoke passed');

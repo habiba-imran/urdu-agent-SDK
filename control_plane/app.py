@@ -10,12 +10,12 @@ this keeps blocking DB work off the event loop without an async driver.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import os
 import sys
 import time
-import asyncio
 from collections import defaultdict
 from pathlib import Path
 
@@ -26,6 +26,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from pydantic import BaseModel
+
+try:
+    import sentry_sdk  # type: ignore
+except ImportError:
+    sentry_sdk = None
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 try:
@@ -78,13 +84,24 @@ def _require_env() -> None:
 
 _require_env()
 
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-_CORS_ORIGINS_RAW = (
-    os.environ.get("CP_ALLOWED_ORIGINS")
-    or _ENV.get("CP_ALLOWED_ORIGINS", "")
+_CORS_ORIGINS_RAW = os.environ.get("CP_ALLOWED_ORIGINS") or _ENV.get(
+    "CP_ALLOWED_ORIGINS", ""
 )
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN") or _ENV.get("SENTRY_DSN", "")
+if _SENTRY_DSN and sentry_sdk is not None:
+    try:
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=0.1,
+            environment=os.environ.get("ENVIRONMENT", "production"),
+        )
+    except Exception:
+        pass
+
 
 app = FastAPI(
     title="UVA Control Plane",
@@ -93,7 +110,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
-
 
 
 app.add_middleware(
@@ -109,6 +125,34 @@ app.add_middleware(
 def health_check():
     """Minimal liveness probe — does not verify DB/LK connectivity, just confirms the process is up."""
     return {"status": "ok", "service": "uva-control-plane"}
+
+
+@app.get("/healthz/deep")
+def deep_health_check():
+    """Deep readiness probe — verifies live PostgreSQL DB connectivity and LiveKit credentials configuration."""
+    health = {
+        "status": "healthy",
+        "service": "uva-control-plane",
+        "database": "unknown",
+        "livekit": "configured",
+    }
+
+    # 1. Verify DB
+    try:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
+            conn.execute("SELECT 1").fetchone()
+            health["database"] = "connected"
+    except Exception as e:
+        health["database"] = f"failed: {e}"
+        health["status"] = "unhealthy"
+
+    # 2. Verify LiveKit env configuration
+    if not _LK_URL or not _LK_KEY or not _LK_SECRET:
+        health["livekit"] = "missing_credentials"
+        health["status"] = "unhealthy"
+
+    status_code = 200 if health["status"] == "healthy" else 503
+    return JSONResponse(status_code=status_code, content=health)
 
 
 @app.get("/v1/voices")
@@ -141,18 +185,51 @@ def list_voices():
 
     # Fallback default catalog if DB query fails or unpopulated
     return [
-        {"id": "v_meklc281", "displayName": "Demo Voice (Default)", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "helpdesk-agent", "displayName": "Helpdesk Agent", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "street-vendor", "displayName": "Street Vendor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "prime-time-anchor", "displayName": "Prime Time Anchor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "nosey-aunty", "displayName": "Nosey Aunty", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {
+            "id": "v_meklc281",
+            "displayName": "Demo Voice (Default)",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "helpdesk-agent",
+            "displayName": "Helpdesk Agent",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "street-vendor",
+            "displayName": "Street Vendor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "prime-time-anchor",
+            "displayName": "Prime Time Anchor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "nosey-aunty",
+            "displayName": "Nosey Aunty",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
     ]
-
 
 
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _hits: dict[str, list[float]] = defaultdict(list)
-
 
 
 class SessionBody(BaseModel):
@@ -202,7 +279,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
     tenant_id = metadata.get("tenant_id")
     agent_id = metadata.get("agent_id")
     if not tenant_id or not agent_id:
-        raise HTTPException(status_code=401, detail="token metadata missing tenant or agent")
+        raise HTTPException(
+            status_code=401, detail="token metadata missing tenant or agent"
+        )
 
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
@@ -215,7 +294,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
                 room=room,
                 can_publish=claims.video.can_publish if claims.video else True,
                 can_subscribe=claims.video.can_subscribe if claims.video else True,
-                can_publish_data=claims.video.can_publish_data if claims.video else True,
+                can_publish_data=claims.video.can_publish_data
+                if claims.video
+                else True,
             )
         )
         .to_jwt()
@@ -326,7 +407,11 @@ def _dev_mint_session(
                 origin=request.headers.get("origin"),
             )
         except MintError as e:
-            if auto_reset_quota and e.status == 429 and e.reason == "concurrent cap reached":
+            if (
+                auto_reset_quota
+                and e.status == 429
+                and e.reason == "concurrent cap reached"
+            ):
                 _dev_reset_concurrency(conn, tenant_id)
                 res = mint_session(
                     conn=conn,

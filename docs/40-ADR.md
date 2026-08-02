@@ -850,7 +850,7 @@ guessed:**
 - **P4-T04 (error taxonomy).** HTTP `429` from `sessionEndpoint` → `quota_exceeded`; `404` →
   `agent_not_found`; anything else non-2xx, a network/fetch failure, an incomplete JSON response,
   or a LiveKit connect failure → `session_failed`. Raw error text/exceptions are never attached to
-  the thrown `UvaError` for any of the internal-failure paths (network, JSON parse, LiveKit
+  the thrown `AwaazLabsUvaVoiceError` for any of the internal-failure paths (network, JSON parse, LiveKit
   connect) — only `MediaDevicesError`'s message is passed through, deliberately, since that's the
   end user's own local browser/device error, not something about our infrastructure, and is
   actionable for the host app to display ("please allow microphone access").
@@ -2106,6 +2106,147 @@ free-tier 5 req/min, reported not hidden; second: complete, all 4 attacks resist
 test_injection_live.py::run_attack()` (the compliance-check logic itself, confirming no real
 `delete_all_tenant_data` function exists to execute in any scenario); ADR-029 (FIXED_TOOLS'
 privilege scope, unchanged by this correction); ADR-032 (the entry this corrects).
+
+---
+## ADR-036 Provider/language registry — STT/LLM/TTS made dynamic behind a per-agent config, Urdu default preserved   [ACCEPTED, scoped]
+**Context:** `worker/factories.py` hardcodes the pipeline to `ur + gladia + gemini + uplift`
+(`make_stt()` takes no args and hardcodes `languages=["ur"]`; `make_tts()` is Uplift-only;
+`agents`/`voices` tables have no language/provider columns). Need to support `en` (and later
+languages) with additional STT/LLM/TTS vendors, driven per-agent, without breaking the existing
+Urdu path or the telephony workstream's dependency on this same worker code
+(`docs/TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md` names `worker/config.py::AgentConfig`
+directly). Full plan: `docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md`, itself following
+`docs/UKASHA_MULTIPLE_PROVIDERS_GUIDE.md` and `docs/.clauderules`.
+**Decision:**
+1. Move provider selection out of ad hoc branches in `factories.py` into a `worker/providers/`
+   registry (`AgentRuntimeConfig` -> `build_components()` -> stt/llm/tts), called from
+   `worker/main.py::build_session()`. `AgentConfig`/`load_agent_config`/`build_session`/
+   `build_agent`/`entrypoint`'s existing external shape stays additive-only — frozen contract for
+   telephony's parallel work, per the workload-division doc's boundary rule.
+2. New DB columns on `agents` (`agent_language`, `stt_provider`, `stt_model`, `stt_options`,
+   `llm_provider`, `llm_options`, `tts_provider`, `tts_voice_id`, `tts_options`) and `voices`
+   (`provider`, `provider_voice_id`, `language`, `rollout_state`), all additive, all backfilled to
+   `ur + gladia + gemini + uplift` for every existing row. `voice_id` kept as a backward-compatible
+   alias, synchronized to `tts_voice_id`; the existing `agents_voice_enabled_check` trigger
+   (0006) stays authoritative since writes still go through `voice_id`.
+3. Migration numbers `0016+` — `0012`-`0015` are reserved for Habiba's telephony migrations
+   (`docs/TELEPHONY_WORKLOAD_AND_RESPONSIBILITY_DIVISION.md`), confirmed against the live
+   `supabase/migrations/` directory before allocating.
+4. Release scope for this pass: **`ur` + `en` only**, matching
+   `UKASHA_MULTIPLE_PROVIDERS_GUIDE.md`'s explicit "Release Provider Rules." Spanish/Hindi/etc.
+   deliberately deferred to a later ADR/phase, not assumed into this one, despite being raised in
+   earlier discussion — human-confirmed 2026-07-31.
+5. Capabilities endpoint exposed as `/portal/provider-capabilities` + `/machine/provider-capabilities`
+   (tenant JWT / tenant HMAC), **not** the guide's literal unauthenticated `GET
+   /api/provider-capabilities` — matches this repo's existing dual-route auth pattern for `agents`
+   rather than introducing a new unauthenticated route shape. Human-confirmed 2026-07-31.
+6. No silent provider fallback. A failed/unsupported provider returns a typed error
+   (`unsupported_language`, `provider_not_enabled`, etc.), never a silent swap.
+7. Every new vendor (ElevenLabs/Fish Audio/Cartesia/Rime for TTS, Deepgram for STT, Groq for LLM)
+   is verified against real docs/PyPI before any adapter is written — none of their package names
+   were verified as part of this ADR, per anti-hallucination discipline
+   (`docs/.clauderules`, this repo's "verify, don't assume"). Rolled out `planned` -> `testing` ->
+   `enabled`, `enabled` only after a human-approved live smoke test per provider. Groq explicitly
+   never selectable for `ur`.
+**Consequences:** `factories.py`'s existing callers (`worker/main.py`,
+`scripts/probe_soniox_402.py`, `scratch/test_tts_resilient.py`, the dead `tests/test_tts.py`) get
+resolved in the registry phase, not silently left dangling. `sdk-server/src/index.ts` and
+`client-submission_v2/sdk/@awaazlabs-uva/agents/src/index.ts` are hand-duplicated with no existing
+parity check — a parity test is added, not assumed to stay in sync on its own (this exact class of
+bug already hit the machine-agent HMAC canonicalization once, ADR-035/Session 13).
+**Evidence:** live code read, not the guide's prose taken on faith — `worker/factories.py`,
+`worker/config.py`, `worker/main.py`, `tenant_portal_api/app.py`+`queries.py`, both SDK packages,
+`requirements.txt` (confirms `deepgram`/`soniox` branches exist in code but their packages are
+NOT installed — pre-existing gap, not introduced here), `supabase/migrations/0001`-`0011` +
+`0006`'s trigger, `docs/TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md`. Full audit table:
+`docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` §0.
+
+## ADR-035 Existing-tenant machine-auth agent management — `/machine/agents` + `@awaazlabs-uva/agents`   [ACCEPTED, scoped]
+Date: 2026-07-23 | Planned in `EnterPlanMode`, human-approved before implementation | New:
+`tenant_portal_api/machine_auth.py`, `/machine/agents` routes in `tenant_portal_api/app.py`,
+`sdk-server/` (`@awaazlabs-uva/agents`), `docs/MACHINE_AGENT_API_CONTRACT.md`,
+`tests/test_machine_agent_api.py`, one new isolation test in `tests/test_admin.py`.
+
+**Context.** Product direction: `@awaazlabs-uva/voice`-integrating clients should be able to create agents
+programmatically instead of depending on the tenant dashboard's human-login flow
+(`/portal/login` + `/portal/agents`, JWT-authenticated). Scoped explicitly to **existing tenants
+only** — a tenant with a `tenant_id`/`hmac_secret` already provisioned. Tenant bootstrap/onboarding
+is out of scope and untouched.
+
+**Decision — auth model.** Reuse the tenant's existing `hmac_secret` rather than introduce a second
+credential (a second credential would touch tenant provisioning, explicitly out of scope). To avoid
+letting a captured signature be replayed against a different action or against `/v1/session`, the
+signed message binds a server-derived `action` string (`agent.create`/`agent.list`/`agent.update`
+— never client-supplied) and a hash of the exact request payload:
+`HMAC-SHA256(secret, "tenant_id.ts.nonce.action.payload_hash")`
+(`tenant_portal_api/machine_auth.py::expected_signature`). **Residual, accepted risk, not solved
+here:** the raw secret still grants both session-mint and agent-management power if it leaks — true
+separation needs a second, narrower-scoped credential, deferred as a future enhancement since it
+touches provisioning.
+
+**Decision — route location.** New routes live in `tenant_portal_api`, beside the existing
+JWT-authenticated `/portal/*` routes, calling the exact same `queries.create_agent`/
+`update_agent`/`list_agents` functions unchanged. Not added to `control_plane`, whose own docstring
+scopes it to "the only endpoint that matters" (session mint) — diluting that would be a regression,
+not an improvement. `control_plane.secrets.DbSecretProvider` is reused for the raw-secret lookup
+(precedent: `tenant_portal_api/auth.py` already imports `control_plane.secrets.secret_hash`), and
+the existing `used_nonces` table is reused for single-use nonce enforcement (nonces are single-use
+per tenant, not per-endpoint — the action+payload binding already prevents cross-purpose replay).
+A new in-memory per-tenant rate limiter (`MACHINE_RATE_LIMIT_PER_MIN = 30`, same
+`defaultdict(list)` shape as `control_plane/app.py::_rate_limited`) covers all three routes —
+stricter than session-mint's 120/min since this is config mutation, not session-connect traffic;
+flagged as a tunable default, not load-tested.
+
+**Decision — SDK shape.** A new, separate npm package, `sdk-server/` (`@awaazlabs-uva/agents`) — not a
+subpath of `@awaazlabs-uva/voice` — so an accidental browser import is a loud unresolved-import failure
+rather than a silent secret leak. Zero runtime dependencies (Node 20's built-in `crypto`/`fetch`
+cover signing + HTTP). `AwaazLabsUvaAgentsClient.{createAgent,listAgents,updateAgent}` sign their own
+requests client-side. A new isolation test
+(`tests/test_admin.py::test_sdk_bundle_never_references_agents_server`) asserts `sdk/src`/`sdk/dist`
+never reference `sdk-server`/`@awaazlabs-uva/agents`/`AwaazLabsUvaAgentsClient` — mirrors the existing
+`test_sdk_bundle_never_references_admin` pattern.
+
+**A real cross-language correctness risk found and fixed before it shipped.** The signature covers
+`sha256(canonical_json(body))`. Canonical JSON must be byte-identical between the Python server
+(`machine_auth.py::payload_hash`) and the TypeScript client (`sdk-server/src/index.ts::
+canonicalJson`) or every signature silently fails to verify. Python's `json.dumps` **escapes
+non-ASCII characters by default** (`ensure_ascii=True`); JS's `JSON.stringify` never does. Since
+agent prompts are Urdu-script text — this product's whole point — leaving Python's default on
+would have broken signature verification for almost every real agent, only working by accident on
+ASCII-only test bodies. Fixed by setting `ensure_ascii=False` and encoding as UTF-8 on the Python
+side. **Verified concretely, not assumed:** ran both implementations (Python via a local script, JS
+via a standalone Node script mirroring `canonicalJson` verbatim) against three shared bodies,
+including one with real Urdu text — all three canonical strings and their SHA-256 hex digests
+matched byte-for-byte across languages.
+
+**What was and wasn't verified live.** No live Postgres/Supabase project was available in this
+environment (no `.env.local`/`SUPABASE_DB_URL` configured, no local Docker/Postgres either) — every
+DB-touching test in `tests/test_machine_agent_api.py` (11 cases: happy-path create/list/update,
+wrong signature, replay-window, nonce replay, tampered-payload, suspended tenant, cross-tenant IDOR
+on update, rate limit, missing headers) **skips cleanly** via the same `_kw()` pattern
+`tests/test_mint.py` already uses in this environment — confirmed `test_mint.py`/
+`test_phase4_portal_api.py` skip identically here, so this is a pre-existing environment gap, not a
+new one. What *was* verified for real: `tenant_portal_api.app`/`machine_auth` import cleanly and
+register the 3 new routes correctly (checked via direct Python import + route introspection); the
+cross-language canonicalization match above; `ruff check`/`ruff format --check` clean on every
+new/touched Python file; `sdk-server`'s `tsc` build and `tsc --noEmit` type-check both pass; the
+built `dist/index.js` imports and constructs correctly under Node. **The full
+`tests/test_machine_agent_api.py` suite genuinely running green against a live dev DB is still an
+open verification step** — the next person with `.env.local`/`SUPABASE_DB_URL` access should run it
+before treating this as production-verified, per this repo's own "verify, don't assume" rule.
+
+**Consequences.** No change to `control_plane`, `worker`, or the admin app. The dashboard is
+unaffected (still uses `/portal/*` unchanged) and can be re-pointed to `/machine/*` later with no
+business-logic change, since both route families call the identical `queries.*` functions. Formal
+phase-number assignment in `docs/00-INDEX.md`'s routing table is left to whoever maintains that
+table — not guessed here.
+
+**Evidence.** `tenant_portal_api/machine_auth.py`, `tenant_portal_api/app.py`'s new routes,
+`sdk-server/src/index.ts`, `docs/MACHINE_AGENT_API_CONTRACT.md`; `tests/test_machine_agent_api.py`
+run (`2 passed, 24 skipped` alongside `test_mint.py`/`test_phase4_portal_api.py` in the same
+environment); `ruff check`/`ruff format --check` clean; `sdk-server`: `npm run build` and
+`npm run lint` (`tsc --noEmit`) both clean; the standalone Python/Node canonicalization
+cross-check (three bodies, byte-identical output including one with Urdu-script text).
 
 ---
 ## Ported DECISIONS.md entries (from old Pipecat repo — D1 through D42)

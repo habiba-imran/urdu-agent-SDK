@@ -25,8 +25,9 @@ except ImportError:
     from scripts.dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 
-
-def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict[str, int]:
+def reconcile_sessions(
+    max_age_minutes: int = 30, dry_run: bool = False
+) -> dict[str, int]:
     """Reconcile stale sessions and synchronize quota_state.concurrent_now.
 
     Returns summary stats dict.
@@ -37,7 +38,9 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
         "total_open_sessions_remaining": 0,
     }
 
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=not dry_run) as conn:
+    with psycopg.connect(
+        **conn_kwargs(), connect_timeout=10, autocommit=not dry_run
+    ) as conn:
         with conn.cursor() as cur:
             # 1. Close stale open sessions
             cur.execute(
@@ -53,9 +56,13 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
             stats["stale_sessions_closed"] = len(stale_rows)
 
             if stale_rows:
-                print(f"[reconcile] Found {len(stale_rows)} stale session(s) > {max_age_minutes}m old:")
+                print(
+                    f"[reconcile] Found {len(stale_rows)} stale session(s) > {max_age_minutes}m old:"
+                )
                 for s_id, t_id, r_name, s_at in stale_rows:
-                    print(f"  - Session {s_id} (tenant {t_id}, room {r_name}, started {s_at})")
+                    print(
+                        f"  - Session {s_id} (tenant {t_id}, room {r_name}, started {s_at})"
+                    )
 
                 if not dry_run:
                     cur.execute(
@@ -69,7 +76,9 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
                         """,
                         (max_age_minutes,),
                     )
-                    print(f"[reconcile] Marked {cur.rowcount} session(s) as closed ('reconciled_stale').")
+                    print(
+                        f"[reconcile] Marked {cur.rowcount} session(s) as closed ('reconciled_stale')."
+                    )
             else:
                 print(f"[reconcile] No stale sessions > {max_age_minutes}m old found.")
 
@@ -99,9 +108,13 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
             stats["total_open_sessions_remaining"] = sum(r[1] for r in tenant_rows)
 
             if to_update:
-                print(f"[reconcile] Found {len(to_update)} tenant(s) with mismatched concurrency counts:")
+                print(
+                    f"[reconcile] Found {len(to_update)} tenant(s) with mismatched concurrency counts:"
+                )
                 for t_id, true_open, current_val in to_update:
-                    print(f"  - Tenant {t_id}: quota_state={current_val} -> corrected to {true_open}")
+                    print(
+                        f"  - Tenant {t_id}: quota_state={current_val} -> corrected to {true_open}"
+                    )
 
                 if not dry_run:
                     for t_id, true_open, _ in to_update:
@@ -114,9 +127,13 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
                             """,
                             (t_id, true_open),
                         )
-                    print(f"[reconcile] Successfully updated {len(to_update)} quota_state record(s).")
+                    print(
+                        f"[reconcile] Successfully updated {len(to_update)} quota_state record(s)."
+                    )
             else:
-                print("[reconcile] All tenant quota_state.concurrent_now values are up to date.")
+                print(
+                    "[reconcile] All tenant quota_state.concurrent_now values are up to date."
+                )
 
     if dry_run:
         print("[reconcile] DRY RUN complete — no changes were committed.")
@@ -127,7 +144,9 @@ def reconcile_sessions(max_age_minutes: int = 30, dry_run: bool = False) -> dict
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Reconcile stale sessions and quota_state concurrent_now.")
+    parser = argparse.ArgumentParser(
+        description="Reconcile stale sessions and quota_state concurrent_now."
+    )
     parser.add_argument(
         "--max-age-minutes",
         type=int,

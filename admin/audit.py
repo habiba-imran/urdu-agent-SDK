@@ -1,6 +1,6 @@
 """Write-side audit helpers.
 
-`record_mint_rejection` is called from the control-plane request path (control_plane/app.py) at
+`record_mint_rejection` is called from the session-service request path (control_plane/app.py) at
 the moment a request is rejected — i.e. potentially from inside/just after a `MintError` raised
 out of `mint.py`'s `with conn.transaction():` block, which rolls back everything in it (nonce
 insert included — pre-existing behavior, untouched here). A rejection must be recorded regardless

@@ -47,31 +47,39 @@ export function createInvalidResponseError(): AwaazLabsUvaTelephonyError {
   );
 }
 
+type ErrorEnvelope = {
+  error: { code?: unknown; message?: unknown; status?: unknown; detail?: unknown };
+};
+
 export function errorFromResponse(
   status: number,
   statusText: string | undefined,
   body: unknown,
 ): AwaazLabsUvaTelephonyError {
   const fallbackMessage = statusText?.trim() || 'Telephony API request failed.';
-  if (!isErrorEnvelope(body)) {
+  const envelope = resolveErrorEnvelope(body);
+  if (!envelope) {
     return new AwaazLabsUvaTelephonyError(status, 'telephony_request_failed', fallbackMessage);
   }
 
-  const code = isErrorCode(body.error.code) ? body.error.code : 'telephony_request_failed';
-  const message = typeof body.error.message === 'string' ? body.error.message : fallbackMessage;
-  const errorStatus = typeof body.error.status === 'number' ? body.error.status : status;
-  const detail = sanitizeErrorDetail(body.error.detail);
+  const code = isErrorCode(envelope.error.code) ? envelope.error.code : 'telephony_request_failed';
+  const message = typeof envelope.error.message === 'string' ? envelope.error.message : fallbackMessage;
+  const errorStatus = typeof envelope.error.status === 'number' ? envelope.error.status : status;
+  const detail = sanitizeErrorDetail(envelope.error.detail);
 
   return new AwaazLabsUvaTelephonyError(errorStatus, code, message, detail);
 }
 
-function isErrorEnvelope(value: unknown): value is {
-  error: { code?: unknown; message?: unknown; status?: unknown; detail?: unknown };
-} {
+function resolveErrorEnvelope(value: unknown): ErrorEnvelope | null {
+  if (isErrorEnvelope(value)) return value;
+  if (!isRecord(value)) return null;
+  return isErrorEnvelope(value.detail) ? value.detail : null;
+}
+
+function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   if (!isRecord(value)) return false;
   return isRecord(value.error);
 }
-
 function isErrorCode(value: unknown): value is TelephonyErrorCode {
   return typeof value === 'string' && value.trim().length > 0;
 }

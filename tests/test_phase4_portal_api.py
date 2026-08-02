@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
@@ -11,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from control_plane.secrets import secret_hash
-from dbconn import conn_kwargs
-from tenant_portal_api.app import app
+from control_plane.secrets import secret_hash  # noqa: E402
+from dbconn import conn_kwargs  # noqa: E402
+from tenant_portal_api.app import app  # noqa: E402
 
 
 def _seed_portal_tenant():
@@ -113,6 +114,108 @@ def test_portal_login_and_scoped_routes():
         usage_json = usage.json()
         assert usage_json["quota"]["minutes_this_month"] == 12.0
         assert any(row["kind"] == "agent_sec" for row in usage_json["totals"])
+
+        # Calendar-month bounds, not a rolling "last N days" window (regression: this endpoint
+        # used to take ?days=30 and had no notion of a calendar month at all).
+        today = date.today()
+        assert usage_json["period_start"] == today.replace(day=1).isoformat()
+        next_month = today.replace(day=28) + timedelta(days=4)
+        expected_end = next_month.replace(day=1)
+        assert usage_json["period_end"] == expected_end.isoformat()
+        # the seeded session's usage_events row (inserted `now()` above) must fall inside it
+        assert (
+            usage_json["period_start"] <= today.isoformat() < usage_json["period_end"]
+        )
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_credentials_secret_reveal():
+    """The credentials-tab 'view/copy HMAC secret' action returns the tenant's OWN raw secret.
+
+    Scoped by claims["sub"] from the caller's own verified portal JWT — same boundary as every
+    other /portal/* route, just returning the real value instead of get_credentials' masked one.
+    """
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        token = login.json()["token"]
+
+        revealed = client.get(
+            "/portal/credentials/secret", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert revealed.status_code == 200
+        assert revealed.json()["hmac_secret"] == secret
+
+        no_auth = client.get("/portal/credentials/secret")
+        assert no_auth.status_code == 401
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_stale_open_session_is_not_reported_live():
+    """An open session past the staleness bound must NOT read as live.
+
+    Regression: the dashboard showed "13 live calls" for a tenant whose oldest open session was
+    96 hours old. `sessions` rows are opened by the mint and closed only by worker/main.py's
+    shutdown callback, so any ungraceful worker exit leaks a row with ended_at IS NULL forever.
+    `live` used to be exactly `ended_at is None`, which reported every leaked row as an active
+    call. Asserts all three states off ONE query, so a regression in any direction fails.
+    """
+    tenant_id, secret, voice_id, agent_id = _seed_portal_tenant()
+    fresh_id, stale_id = str(uuid.uuid4()), str(uuid.uuid4())
+
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        # open, started 2 min ago -> genuinely live
+        conn.execute(
+            """
+            insert into sessions (id, tenant_id, agent_id, room_name, started_at)
+            values (%s, %s, %s, %s, now() - interval '2 minutes')
+            """,
+            (fresh_id, tenant_id, agent_id, f"room-{uuid.uuid4()}"),
+        )
+        # open, started 96 h ago -> leaked, must not be live (the exact production shape)
+        conn.execute(
+            """
+            insert into sessions (id, tenant_id, agent_id, room_name, started_at)
+            values (%s, %s, %s, %s, now() - interval '96 hours')
+            """,
+            (stale_id, tenant_id, agent_id, f"room-{uuid.uuid4()}"),
+        )
+
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        token = login.json()["token"]
+        rows = client.get(
+            "/portal/sessions", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert rows.status_code == 200
+        by_id = {r["id"]: r for r in rows.json()}
+
+        fresh = by_id[fresh_id]
+        assert fresh["live"] is True, "a 2-minute-old open session must be live"
+        assert fresh["stale"] is False
+
+        stale = by_id[stale_id]
+        assert stale["live"] is False, "a 96-hour-old open session must NOT be live"
+        assert stale["stale"] is True, (
+            "it must be surfaced as stale, not silently 'ended'"
+        )
+
+        # the pre-seeded cleanly-ended session is neither live nor stale
+        ended = next(r for r in by_id.values() if r["ended_at"] is not None)
+        assert ended["live"] is False
+        assert ended["stale"] is False
+
+        # and the count the Overview card renders is now 1, not 2
+        assert sum(1 for r in by_id.values() if r["live"]) == 1
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)
 
@@ -149,5 +252,130 @@ def test_portal_create_and_update_agent():
         )
         assert updated.status_code == 200
         assert updated.json()["name"] == "Updated Support Agent"
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields():
+    """Backward compat (Phase 3, ADR-036): a payload with ONLY voice_id/llm_model — exactly what
+    every pre-Phase-3 integration still sends — must keep working unchanged AND now also populate
+    every new field to the ur+gladia+gemini+uplift defaults, with tts_voice_id synced to voice_id
+    (closing the gap Phase 1/2 flagged: a plain old-style create used to leave tts_voice_id NULL)."""
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        created = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Old Style Agent",
+                "prompt": "Answer politely",
+                "voice_id": voice_id,
+                "llm_model": "gemini-2.5-flash",
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert body["agent_language"] == "ur"
+        assert body["stt_provider"] == "gladia"
+        assert body["llm_provider"] == "gemini"
+        assert body["tts_provider"] == "uplift"
+        assert body["tts_voice_id"] == voice_id == body["voice_id"]
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_rejects_unsupported_provider_combo():
+    """Guide's explicit example: ur+groq must be rejected with a stable, typed error code, before
+    any DB write — not a generic 500 or a silent fallback to a supported provider."""
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        res = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Bad Combo Agent",
+                "prompt": "x",
+                "voice_id": voice_id,
+                "llm_provider": "groq",
+            },
+        )
+        assert res.status_code == 422
+        assert res.json()["detail"]["code"] == "unsupported_provider_for_language"
+
+        # confirm nothing was written — the rejected create must not leave a partial row
+        agents = client.get("/portal/agents", headers=headers)
+        assert all(a["name"] != "Bad Combo Agent" for a in agents.json())
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_provider_capabilities_requires_auth_and_returns_ur():
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        no_auth = client.get("/portal/provider-capabilities")
+        assert no_auth.status_code == 401
+
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+        res = client.get("/portal/provider-capabilities", headers=headers)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["languages"]["ur"]["tts"]["uplift"]["state"] == "enabled"
+        # Updated 2026-08-01 (Phase 5): en+gladia/gemini are now enabled — see
+        # tests/test_english_language.py for the full gate.
+        assert body["languages"]["en"]["stt"]["gladia"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6c): cartesia is now en's first enabled TTS vendor — see
+        # tests/test_cartesia_tts.py.
+        assert body["languages"]["en"]["tts"]["cartesia"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6d): elevenlabs is now enabled too — see
+        # tests/test_elevenlabs_tts.py.
+        assert body["languages"]["en"]["tts"]["elevenlabs"]["state"] == "enabled"
+        # Updated 2026-08-02 (Phase 6f): rime is now enabled too — see tests/test_rime_tts.py.
+        assert body["languages"]["en"]["tts"]["rime"]["state"] == "enabled"
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_create_agent_with_explicit_new_fields():
+    tenant_id, secret, voice_id, _ = _seed_portal_tenant()
+    client = TestClient(app)
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+        created = client.post(
+            "/portal/agents",
+            headers=headers,
+            json={
+                "name": "Explicit Fields Agent",
+                "prompt": "x",
+                "voice_id": voice_id,
+                "agent_language": "ur",
+                "stt_provider": "gladia",
+                "stt_model": "default",
+                "llm_provider": "gemini",
+                "llm_model": "gemini-2.5-flash",
+                "tts_provider": "uplift",
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["agent_language"] == "ur"
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)

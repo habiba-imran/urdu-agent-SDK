@@ -3,14 +3,13 @@
 **Read first:** 31-GUIDE-SECURITY.md
 **Gate:** `pytest tests/test_mint.py -q`
 
-## The only endpoint that matters
+## The backend-only session service boundary
 ```
 POST /v1/session
-Headers: X-Tenant-Id, X-Timestamp, X-Nonce, X-Signature
 Body:    {agent_id}
-Sig:     HMAC-SHA256(tenant_secret, f"{tenant_id}.{ts}.{nonce}.{agent_id}")
+Auth:    backend-only session adapter credentials
 
-1. verify HMAC              -> 401
+1. verify backend service authentication -> 401
 2. |now-ts| <= 60s          -> 401  (replay window)
 3. nonce unused             -> 401  (replay)
 4. tenant active            -> 403

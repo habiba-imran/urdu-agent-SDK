@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "@awaazlabs-uva/voice",
   "version": "1.0.0",
   "private": true,
@@ -18,7 +18,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build"
   },
   "dependencies": {
     "livekit-client": "^2.0.0"

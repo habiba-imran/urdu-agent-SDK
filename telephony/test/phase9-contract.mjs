@@ -207,6 +207,43 @@ async function testStableErrorMappingAndRedaction() {
   }
 }
 
+async function testNestedFastApiErrorMappingAndRedaction() {
+  const client = new TelephonyClient({
+    tenantId,
+    tenantSecret,
+    baseUrl,
+    nowSeconds: () => Number(timestamp),
+    nonceFactory: () => nonce,
+    fetch: async () => jsonResponse({
+      detail: {
+        error: {
+          code: 'telephony_auth_failed',
+          status: 401,
+          message: `bad signature ${fakeApiLikeToken}`,
+          detail: {
+            signature: 'hidden-signature-value',
+            safe_field: 'kept',
+          },
+        },
+      },
+    }, 401),
+  });
+
+  await assert.rejects(
+    () => client.getConnectionStatus(),
+    (error) => {
+      assert.equal(error instanceof AwaazLabsUvaTelephonyError, true);
+      assert.equal(error.status, 401);
+      assert.equal(error.code, 'telephony_auth_failed');
+      assert.equal(error.message.includes(fakeApiLikeToken), false);
+      assert.deepEqual(error.detail, {
+        safe_field: 'kept',
+        signature: '[REDACTED]',
+      });
+      return true;
+    },
+  );
+}
 async function testSecretsAreNotLeakedBeyondRequiredWireFields() {
   for (const [name, , , , call] of routeCases) {
     const { client, seen } = createCapturedClient({ ok: true });
@@ -248,6 +285,7 @@ async function testGetAndIdentifierBodiesAreSigned() {
 await testAllSdkMethodsMatchFrozenContract();
 await testRestrictedResponseSanitization();
 await testStableErrorMappingAndRedaction();
+await testNestedFastApiErrorMappingAndRedaction();
 await testSecretsAreNotLeakedBeyondRequiredWireFields();
 await testGetAndIdentifierBodiesAreSigned();
 

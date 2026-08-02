@@ -1,319 +1,279 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import useSWR from 'swr';
+import { Check, Copy, Download } from 'lucide-react';
 
-type VoiceOption = {
-  id: string;
-  name: string;
-  gender: string;
-};
+import { createAgent } from '@/lib/portalApi';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
+import { toCsv, downloadCsv } from '@/lib/csv';
+import { PageHeader } from '@/components/ui/page-header';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Modal } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
+import { DataTableSkeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import { RowOpenButton } from '@/components/ui/table';
 
-const ALL_82_URDU_VOICES: VoiceOption[] = [
-  { id: 'v_meklc281', name: 'Demo Voice (Default)', gender: 'Female' },
-  { id: 'jinn', name: 'Jinn', gender: 'Male' },
-  { id: 'sindhi-patriarch', name: 'Sindhi Patriarch', gender: 'Male' },
-  { id: 'punjabi-masi', name: 'Punjabi Masi', gender: 'Female' },
-  { id: 'cricket-commentator', name: 'Cricket Commentator', gender: 'Female' },
-  { id: 'pashtun-pensioner', name: 'Pashtun Pensioner', gender: 'Male' },
-  { id: 'crime-don', name: 'Crime Don', gender: 'Male' },
-  { id: 'schoolgirl', name: 'Schoolgirl', gender: 'Female' },
-  { id: 'bengali-grandfather', name: 'Bengali Grandfather', gender: 'Male' },
-  { id: 'churail', name: 'Churail', gender: 'Female' },
-  { id: 'balochi-seamstress', name: 'Balochi Seamstress', gender: 'Female' },
-  { id: 'iqbalian-shayar', name: 'Iqbalian Shayar', gender: 'Male' },
-  { id: 'late-night-rj', name: 'Late Night RJ', gender: 'Female' },
-  { id: 'dha-matriarch', name: 'DHA Matriarch', gender: 'Female' },
-  { id: 'bihari-organizer', name: 'Bihari Organizer', gender: 'Female' },
-  { id: 'memon-organizer', name: 'Memon Organizer', gender: 'Female' },
-  { id: 'crisp-storyteller', name: 'Crisp Storyteller', gender: 'Male' },
-  { id: 'qissa-khawan', name: 'Qissa Khawan', gender: 'Male' },
-  { id: 'female-narrator', name: 'Female Narrator', gender: 'Female' },
-  { id: 'male-narrator', name: 'Male Narrator', gender: 'Male' },
-  { id: 'podcast-host', name: 'Podcast Host', gender: 'Male' },
-  { id: 'horror-narrator', name: 'Horror Narrator', gender: 'Male' },
-  { id: 'prime-time-anchor', name: 'Prime Time Anchor', gender: 'Male' },
-  { id: 'senior-anchor', name: 'Senior Anchor', gender: 'Male' },
-  { id: 'news-anchor', name: 'News Anchor', gender: 'Female' },
-  { id: 'news-reader', name: 'News Reader', gender: 'Female' },
-  { id: 'field-correspondent', name: 'Field Correspondent', gender: 'Male' },
-  { id: 'paediatrician', name: 'Paediatrician', gender: 'Female' },
-  { id: 'diabetologist', name: 'Diabetologist', gender: 'Male' },
-  { id: 'family-lawyer', name: 'Family Lawyer', gender: 'Female' },
-  { id: 'defense-advocate', name: 'Defense Advocate', gender: 'Male' },
-  { id: 'navy-officer', name: 'Navy Officer', gender: 'Male' },
-  { id: 'stock-analyst', name: 'Stock Analyst', gender: 'Male' },
-  { id: 'helpdesk-agent', name: 'Helpdesk Agent', gender: 'Female' },
-  { id: 'broadband-support', name: 'Broadband Support', gender: 'Male' },
-  { id: 'montessori-teacher', name: 'Montessori Teacher', gender: 'Female' },
-  { id: 'urdu-professor', name: 'Urdu Professor', gender: 'Male' },
-  { id: 'washroom-singer', name: 'Washroom Singer', gender: 'Male' },
-  { id: 'khateeb', name: 'Khateeb', gender: 'Male' },
-  { id: 'seerah-scholar', name: 'Seerah Scholar', gender: 'Male' },
-  { id: 'hadith-narrator', name: 'Hadith Narrator', gender: 'Female' },
-  { id: 'seerah-educator', name: 'Seerah Educator', gender: 'Male' },
-  { id: 'dawah-youtuber', name: 'Dawah YouTuber', gender: 'Male' },
-  { id: 'nosey-aunty', name: 'Nosey Aunty', gender: 'Female' },
-  { id: 'orangi-khala', name: 'Orangi Khala', gender: 'Female' },
-  { id: 'rohtaki-aunty', name: 'Rohtaki Aunty', gender: 'Female' },
-  { id: 'dua-uncle', name: 'Dua Uncle', gender: 'Male' },
-  { id: 'bus-conductor', name: 'Bus Conductor', gender: 'Male' },
-  { id: 'lahori-barber', name: 'Lahori Barber', gender: 'Male' },
-  { id: 'shopkeeper', name: 'Shopkeeper', gender: 'Male' },
-  { id: 'street-vendor', name: 'Street Vendor', gender: 'Male' },
-  { id: 'traffic-cop', name: 'Traffic Cop', gender: 'Male' },
-  { id: 'khwajasara', name: 'Khwajasara', gender: 'Third-Gender' },
-  { id: 'dha-teen-girl', name: 'DHA Teen Girl', gender: 'Female' },
-  { id: 'dha-fitness-devotee', name: 'DHA Fitness Devotee', gender: 'Female' },
-  { id: 'dha-hostess', name: 'DHA Hostess', gender: 'Female' },
-  { id: 'nazimabad-boy', name: 'Nazimabad Boy', gender: 'Male' },
-  { id: 'karachi-romeo', name: 'Karachi Romeo', gender: 'Male' },
-  { id: 'wholesale-trader', name: 'Wholesale Trader', gender: 'Male' },
-  { id: 'college-girl', name: 'College Girl', gender: 'Female' },
-  { id: 'gaming-kid', name: 'Gaming Kid', gender: 'Male' },
-  { id: 'udaas-aashiq', name: 'Udaas Aashiq', gender: 'Male' },
-  { id: 'heartbroken', name: 'Heartbroken', gender: 'Male' },
-  { id: 'udaas-philosopher', name: 'Udaas Philosopher', gender: 'Male' },
-  { id: 'mohalla-storyteller', name: 'Mohalla Storyteller', gender: 'Male' },
-  { id: 'mohalla-patriarch', name: 'Mohalla Patriarch', gender: 'Male' },
-  { id: 'balochi-elder', name: 'Balochi Elder', gender: 'Male' },
-  { id: 'bengali-businesswoman', name: 'Bengali Businesswoman', gender: 'Female' },
-  { id: 'punjabi-manager', name: 'Punjabi Manager', gender: 'Male' },
-  { id: 'lahori-story-uncle', name: 'Lahori Story Uncle', gender: 'Male' },
-  { id: 'pashtun-teen', name: 'Pashtun Teen', gender: 'Male' },
-  { id: 'pashtun-woman', name: 'Pashtun Woman', gender: 'Female' },
-  { id: 'pashtun-navigator', name: 'Pashtun Navigator', gender: 'Male' },
-  { id: 'sindhi-professional', name: 'Sindhi Professional', gender: 'Female' },
-  { id: 'sindhi-networker', name: 'Sindhi Networker', gender: 'Male' },
-  { id: 'sindhi-navigator', name: 'Sindhi Navigator', gender: 'Male' },
-  { id: 'memon-trader', name: 'Memon Trader', gender: 'Male' },
-  { id: 'headmaster', name: 'Headmaster', gender: 'Male' },
-  { id: 'jalsa-mimic', name: 'Jalsa Mimic', gender: 'Male' },
-  { id: 'street-vlogger', name: 'Street Vlogger', gender: 'Female' },
-  { id: 'biryani-reviewer', name: 'Biryani Reviewer', gender: 'Male' },
-  { id: 'female-debater', name: 'Female Debater', gender: 'Female' },
-  { id: 'male-debater', name: 'Male Debater', gender: 'Male' },
-];
+function capitalize(value: string): string {
+  return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
 
 export default function AgentsPage() {
+  const router = useRouter();
+  const {
+    data: agents,
+    isLoading: agentsLoading,
+    error: agentsSWRError,
+    mutate: mutateAgents,
+  } = useSWR(swrKeys.agents, swrFetchers.agents);
+  const { data: voices } = useSWR(swrKeys.voices, swrFetchers.voices);
+
+  const [agentName, setAgentName] = useState('New Portal Agent');
+  const [systemPrompt, setSystemPrompt] = useState(
+    'You are a polite Urdu customer support voice assistant.',
+  );
   const [selectedVoice, setSelectedVoice] = useState('v_meklc281');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [genderFilter, setGenderFilter] = useState('All');
-  const [agentName, setAgentName] = useState('Customer Care Agent');
-  const [systemPrompt, setSystemPrompt] = useState('You are a polite Urdu customer support voice assistant.');
-  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
   const [showModal, setShowModal] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filteredVoices = ALL_82_URDU_VOICES.filter((v) => {
-    const matchesSearch = v.name.toLowerCase().includes(searchQuery.toLowerCase()) || v.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesGender = genderFilter === 'All' || v.gender.toLowerCase() === genderFilter.toLowerCase();
-    return matchesSearch && matchesGender;
-  });
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
-  const handlePlayAudio = (voiceId: string, e: React.MouseEvent) => {
+  const handleCopyAgentId = (agentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setPlayingVoice(voiceId);
-    setTimeout(() => {
-      setPlayingVoice(null);
-    }, 2000);
+    navigator.clipboard.writeText(agentId);
+    setCopiedAgentId(agentId);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopiedAgentId((current) => (current === agentId ? null : current));
+    }, 1500);
   };
 
-  const handleSave = () => {
-    setShowModal(false);
-    setSaveSuccessMessage(true);
-    setTimeout(() => setSaveSuccessMessage(false), 3000);
+  const openCreateModal = () => {
+    setAgentName('New Portal Agent');
+    setSystemPrompt('You are a polite Urdu customer support voice assistant.');
+    setSelectedVoice('v_meklc281');
+    setLlmModel('gemini-2.5-flash');
+    setShowModal(true);
+  };
+
+  const handleCreate = async () => {
+    try {
+      setSaving(true);
+      const created = await createAgent({
+        name: agentName,
+        prompt: systemPrompt,
+        voice_id: selectedVoice,
+        llm_model: llmModel,
+      });
+      await mutateAgents((current) => [created, ...(current ?? [])], { revalidate: false });
+
+      setShowModal(false);
+      setSaveSuccessMessage(true);
+      setSaveError(null);
+      setTimeout(() => setSaveSuccessMessage(false), 3000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to create agent');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputClassName =
+    'w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+  const handleExportAgents = () => {
+    const csv = toCsv(
+      ['Agent ID', 'Agent Name', 'Voice', 'Minutes Used', 'Created At'],
+      (agents ?? []).map((agent) => [
+        agent.id,
+        agent.name,
+        agent.voice_id,
+        ((agent.total_agent_sec ?? 0) / 60).toFixed(1),
+        agent.created_at ?? '',
+      ]),
+    );
+    downloadCsv('agents.csv', csv);
   };
 
   return (
     <div>
-      {saveSuccessMessage && (
-        <div style={{
-          background: 'rgba(16, 185, 129, 0.15)', border: '1px solid var(--primary)',
-          color: '#34d399', padding: '0.9rem 1.25rem', borderRadius: 'var(--radius-md)',
-          marginBottom: '1.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem'
-        }}>
-          <span>✓</span> Agent configuration and voice selection updated successfully!
+      <PageHeader
+        title="Manage Agent Configurations"
+        description="Configure LLM system instructions, assigned Urdu voices, and connection settings."
+        actions={
+          <>
+            <Button variant="secondary" onClick={handleExportAgents}>
+              <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              Export CSV
+            </Button>
+            <Button onClick={openCreateModal}>+ Configure Agent</Button>
+          </>
+        }
+      />
+
+      {agentsSWRError || saveError ? (
+        <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <strong>Backend connection error:</strong>{' '}
+          {saveError ??
+            (agentsSWRError instanceof Error ? agentsSWRError.message : 'Failed to load agents')}
         </div>
-      )}
+      ) : null}
 
-      <div className="glass-card" style={{ marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <div>
-            <h2>Manage Agent Configurations</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Configure LLM system instructions, assigned Urdu voices, and connection settings.</p>
-          </div>
-          <button onClick={() => setShowModal(true)} className="btn-primary">
-            + Configure Agent
-          </button>
+      {saveSuccessMessage ? (
+        <div className="mb-6 rounded-md border border-border bg-muted px-4 py-3 text-sm font-medium text-foreground">
+          Agent created successfully.
         </div>
+      ) : null}
 
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Agent ID</th>
-              <th>Agent Name</th>
-              <th>Assigned Voice</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td style={{ fontFamily: 'monospace', color: 'var(--accent-cyan)' }}>3b5b7720-4cce-4ac0-a765</td>
-              <td style={{ fontWeight: 600 }}>{agentName}</td>
-              <td><span className="badge badge-green">{selectedVoice}</span></td>
-              <td><span className="badge badge-green">Active</span></td>
-              <td>
-                <button onClick={() => setShowModal(true)} className="btn-secondary" style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem' }}>
-                  Edit Settings & Voice
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Voice Selection & Search Section */}
-      <div className="glass-card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
-          <div>
-            <h2>Complete Uplift Urdu Voice Catalogue ({ALL_82_URDU_VOICES.length} Primary Voices)</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginTop: '0.2rem' }}>
-              Select an Urdu voice entry for your AI agent. Pre-rendered CDN previews ensure <strong>zero proxy TTS billing</strong> while browsing.
-            </p>
-          </div>
-          <div className="badge badge-purple" style={{ padding: '0.4rem 0.8rem' }}>
-            Zero-Proxy TTS Active
-          </div>
-        </div>
-
-        {/* Filter Controls */}
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="🔍 Search 82 Urdu voices (e.g. Anchor, Masi, Vendor)..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              flex: 1, minWidth: '240px', padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)',
-              border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)', color: '#fff', fontSize: '0.95rem'
-            }}
-          />
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {['All', 'Male', 'Female'].map((g) => (
-              <button
-                key={g}
-                onClick={() => setGenderFilter(g)}
-                className={genderFilter === g ? 'btn-primary' : 'btn-secondary'}
-                style={{ padding: '0.6rem 1rem', fontSize: '0.85rem' }}
-              >
-                {g} Voices
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Voice Grid */}
-        <div className="voice-grid" style={{ maxHeight: '520px', overflowY: 'auto', paddingRight: '0.5rem' }}>
-          {filteredVoices.map((v) => {
-            const isSelected = selectedVoice === v.id;
-            const isPlaying = playingVoice === v.id;
-
-            return (
-              <div
-                key={v.id}
-                className={`voice-card ${isSelected ? 'selected' : ''}`}
-                onClick={() => setSelectedVoice(v.id)}
-              >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
-                    <div className="voice-title">{v.name}</div>
-                    <span className={`badge ${v.gender === 'Female' ? 'badge-purple' : 'badge-blue'}`}>{v.gender}</span>
-                  </div>
-                  <div className="voice-meta" style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--accent-cyan)' }}>
-                    ID: {v.id}
-                  </div>
+      <Card>
+        <CardContent className="pt-6">
+          {agentsLoading ? (
+            <DataTableSkeleton rows={4} />
+          ) : (agents ?? []).length === 0 ? (
+            <EmptyState
+              title="No agents found yet"
+              description="Create one to begin."
+            />
+          ) : (
+            <div className="w-full text-sm">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2.5rem] border-b border-border">
+                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+                  Agent Name
                 </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-                  <button
-                    onClick={(e) => handlePlayAudio(v.id, e)}
-                    className="btn-secondary"
-                    style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
-                  >
-                    {isPlaying ? '⏸️ Playing...' : '🔊 Play Sample'}
-                  </button>
-
-                  {isSelected && (
-                    <span style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '0.85rem' }}>✓ Selected</span>
-                  )}
+                <div className="h-10 py-2 pl-20 pr-3 text-left align-middle font-medium text-muted-foreground">
+                  Assigned Voice
+                </div>
+                <div className="h-10 px-3 text-center align-middle font-medium text-muted-foreground">
+                  Minutes Used
+                </div>
+                <div className="h-10 px-1 align-middle">
+                  <span className="sr-only">Copy ID</span>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
 
-      {/* Configuration Modal */}
-      {showModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100
-        }}>
-          <div className="glass-card" style={{ width: '550px', background: '#0b1120' }}>
-            <h2 style={{ marginBottom: '1rem' }}>Edit Agent Configuration</h2>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>Agent Display Name</label>
-              <input
-                type="text"
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.7rem', background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)', color: '#fff'
-                }}
-              />
+              <div className="divide-y divide-border">
+                {(agents ?? []).map((agent) => {
+                  const isCopied = copiedAgentId === agent.id;
+                  return (
+                    <div
+                      key={agent.id}
+                      onClick={() => router.push(`/agents/${agent.id}`)}
+                      className="group grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2.5rem] items-center transition-colors hover:bg-muted/30"
+                    >
+                      <div className="truncate p-3 text-left align-middle font-medium">
+                        <RowOpenButton
+                          onClick={() => router.push(`/agents/${agent.id}`)}
+                          ariaLabel={`Edit settings and voice for ${agent.name}`}
+                        >
+                          {agent.name}
+                        </RowOpenButton>
+                      </div>
+                      <div className="truncate py-3 pl-20 pr-3 text-left align-middle">
+                        <Badge>{agent.voice_id}</Badge>
+                      </div>
+                      <div className="truncate p-3 text-center align-middle">
+                        {((agent.total_agent_sec ?? 0) / 60).toFixed(1)} min
+                      </div>
+                      <div className="flex items-center justify-center p-1 align-middle">
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopyAgentId(agent.id, e)}
+                          aria-label={
+                            isCopied ? `Copied ID for ${agent.name}` : `Copy ID for ${agent.name}`
+                          }
+                          title={isCopied ? 'Copied' : 'Copy ID'}
+                          className={cn(
+                            'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100',
+                            isCopied && 'opacity-100',
+                          )}
+                        >
+                          {isCopied ? (
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
+          )}
+        </CardContent>
+      </Card>
 
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>System Prompt (Urdu Instructions)</label>
-              <textarea
-                rows={3}
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.7rem', background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)', color: '#fff'
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>Assigned Urdu Voice</label>
-              <select
-                value={selectedVoice}
-                onChange={(e) => setSelectedVoice(e.target.value)}
-                style={{
-                  width: '100%', padding: '0.7rem', background: '#1e293b',
-                  border: '1px solid var(--border-card)', borderRadius: 'var(--radius-md)', color: '#fff'
-                }}
-              >
-                {ALL_82_URDU_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
-              <button onClick={handleSave} className="btn-primary">Save Changes</button>
+      <Modal
+        open={showModal}
+        onOpenChange={setShowModal}
+        title="Create Agent"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleCreate()} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-muted-foreground">Status</label>
+            <div className={cn(inputClassName, 'cursor-not-allowed bg-muted text-muted-foreground')}>
+              Active
             </div>
           </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-muted-foreground">Agent Display Name</label>
+            <input
+              type="text"
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              className={inputClassName}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
+            <textarea
+              rows={4}
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              className={inputClassName}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-muted-foreground">Assigned Urdu Voice</label>
+            <Select
+              value={selectedVoice}
+              onValueChange={setSelectedVoice}
+              options={(voices ?? []).map((voice) => ({
+                value: voice.id,
+                label: `${voice.displayName} (${capitalize(voice.gender)})`,
+              }))}
+              className="w-full"
+            />
+          </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

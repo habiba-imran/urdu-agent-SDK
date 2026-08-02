@@ -5,6 +5,8 @@ import type {
   JsonInputObject,
   JsonInputValue,
   JsonObject,
+  JsonValue,
+  JsonResponse,
   TelephonyFetch,
   TelephonyFetchInit,
   TelephonyFetchResponse,
@@ -98,7 +100,13 @@ export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function sanitizePublicResponse(value: JsonObject): JsonObject {
+export function isJsonResponse(value: unknown): value is JsonResponse {
+  return isJsonObject(value) || Array.isArray(value);
+}
+
+export function sanitizePublicResponse(value: JsonResponse): JsonResponse {
+  if (Array.isArray(value)) return value.map((item) => sanitizePublicValue(item) ?? null);
+
   const output: JsonObject = {};
   for (const [key, item] of Object.entries(value)) {
     if (RESTRICTED_RESPONSE_KEYS.has(key)) continue;
@@ -123,7 +131,7 @@ function toSnakeCaseKey(key: string): string {
   return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
-function sanitizePublicValue(value: JsonObject[string]): JsonObject[string] {
+function sanitizePublicValue(value: JsonValue | undefined): JsonValue | undefined {
   if (value === undefined || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((item) => sanitizePublicValue(item) ?? null);
 

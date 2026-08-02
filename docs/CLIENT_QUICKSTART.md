@@ -1,40 +1,43 @@
 # Client Quickstart
 
-This guide is the fastest supported path for a client team integrating the Urdu Voice Agent SDK.
+This guide is the fastest supported path for a client team integrating the AwaazLabs-UVA-Voice SDK.
+
+For the full client handoff package, including what AwaazLabs-UVA provides, which values go where, and the
+exact onboarding checklist, see `docs/CLIENT_HANDOFF_GUIDE.md`.
 
 It assumes you are using the reference materials already present in this repo:
 
-- browser app: `examples/basic-web-client/`
-- host-owned backend: `examples/host-backend-node/`
+- browser app: `examples/web-client/`
+- host-owned backend: `examples/host-backend/`
 - SDK package: `sdk/`
 
 ## What the client receives
 
-A client integration needs these values from the UVA team:
+A client integration needs these values from the AwaazLabs-UVA team:
 
 - `publishableKey`
 - `tenantId`
 - raw tenant HMAC secret
 - `agentId`
-- control-plane base URL
+- backend-only session upstream configuration
 
 The HMAC secret belongs on the client's backend only. Never put it in browser code.
 
 ## Architecture in one sentence
 
-Browser SDK -> host backend -> UVA control plane -> LiveKit worker.
+Browser SDK -> host backend -> AwaazLabs-UVA session service -> LiveKit worker.
 
-The browser never signs control-plane requests itself.
+The browser never signs requests or calls AwaazLabs-UVA upstream services itself.
 
 ## Step 1: install the SDK
 
 ```bash
-npm install @uva/voice
+npm install @awaazlabs-uva/voice
 ```
 
 ## Step 2: run the host backend starter
 
-Use `examples/host-backend-node/`.
+Use `examples/host-backend/`.
 
 Copy:
 
@@ -44,7 +47,7 @@ cp .env.example .env
 
 Set:
 
-- `UVA_CONTROL_PLANE_URL`
+- backend-only session upstream configuration supplied through the secure onboarding channel
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`
@@ -63,7 +66,7 @@ By default it listens on `http://localhost:3000`.
 
 ## Step 3: configure the browser example or your own app
 
-If you are using `examples/basic-web-client/`, copy `.env.example` to `.env` and set:
+If you are using `examples/web-client/`, copy `.env.example` to `.env` and set:
 
 - `VITE_UVA_PUBLISHABLE_KEY`
 - `VITE_UVA_SESSION_ENDPOINT=http://localhost:3000/api/voice/session`
@@ -80,9 +83,9 @@ npm run dev
 ## Step 4: minimal integration code
 
 ```ts
-import { UrduVoiceAgent } from '@uva/voice';
+import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
-const agent = new UrduVoiceAgent({
+const agent = new AwaazLabsUvaVoice({
   publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY,
   sessionEndpoint: 'http://localhost:3000/api/voice/session',
   refreshEndpoint: 'http://localhost:3000/api/voice/session/refresh',
@@ -99,7 +102,7 @@ await agent.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 
 Successful integration means:
 
-- the browser calls the host backend, not the control plane directly
+- the browser calls the host backend, not AwaazLabs-UVA upstream services directly
 - `POST /api/voice/session` returns `token`, `wsUrl`, and `roomName`
 - the browser connects to LiveKit
 - voice transcript events appear
@@ -108,9 +111,9 @@ Successful integration means:
 ## Common mistakes
 
 - putting the raw HMAC secret in frontend code
-- sending `agentId` directly to `/v1/session` from the browser
-- forgetting to forward the browser `Origin` header from the host backend to the control plane
-- using `agentId` instead of `agent_id` in the host-backend request body to the control plane
+- calling the AwaazLabs-UVA session service directly from the browser
+- forgetting to forward the browser `Origin` header from the host backend to the session upstream
+- exposing backend-only upstream URLs or signing details in frontend docs/code
 - setting different session and refresh routes than the SDK expects
 
 ## Browser-facing error meanings
@@ -119,7 +122,7 @@ Successful integration means:
 |---|---|
 | `quota_exceeded` | tenant cap reached |
 | `agent_not_found` | wrong `agentId` or wrong tenant |
-| `session_failed` | host backend misconfiguration, signing issue, refresh issue, or upstream failure |
+| `session_failed` | host backend misconfiguration, refresh issue, or upstream failure |
 
 ## Files to hand to a client team
 
@@ -128,5 +131,5 @@ For a real onboarding handoff, send:
 - `sdk/README.md`
 - `docs/CLIENT_QUICKSTART.md`
 - `docs/HOST_BACKEND_CONTRACT.md`
-- `examples/host-backend-node/`
-- `examples/basic-web-client/`
+- `examples/host-backend/`
+- `examples/web-client/`
