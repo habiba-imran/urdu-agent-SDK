@@ -314,7 +314,7 @@
   <!-- ══════════════════════════════════════ TAB: PROVIDER TEST -->
   <section id="tab-providertest" class="tab-panel">
     <h1 class="section-title">Provider Test</h1>
-    <p class="section-sub">Assign a managed phone number to an agent, verify outbound readiness, and place a test call.</p>
+    <p class="section-sub">Bind a managed number to the agent you want, configure inbound routing, simulate inbound dispatch, and then place outbound calls from that same agent-bound number.</p>
 
     <div class="grid-2">
       <!-- Assign Number -->
@@ -356,6 +356,31 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-title">Inbound Test</div>
+      <div class="info-box">
+        Validate which agent an inbound call would reach. This is a local routing simulation. A real inbound call still requires dialing the number from an external phone.
+      </div>
+      <div class="grid-2" style="gap:1rem">
+        <div class="form-group">
+          <label class="form-label">Inbound Number</label>
+          <select id="inbound-number-id" class="form-select">
+            <option value="">-- select a managed number --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Expected Agent</label>
+          <select id="inbound-agent-id" class="form-select">
+            <option value="">-- select an agent --</option>
+          </select>
+        </div>
+      </div>
+      <button id="btn-simulate-inbound" class="btn btn-primary">
+        <span>Sim</span> Simulate Inbound Dispatch
+      </button>
+      <div id="inbound-result" style="display:none; margin-top:1rem"></div>
     </div>
 
     <!-- SIP Setup -->

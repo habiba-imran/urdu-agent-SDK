@@ -338,12 +338,33 @@ def test_machine_get_outbound_readiness():
 
 
 def test_machine_create_outbound_call():
+    imp = client.post(
+        "/machine/telephony/numbers/import",
+        headers=HEADERS,
+        json={"e164_number": "+15557650003"},
+    ).json()
+    num_id = imp["id"]
+
+    assign_resp = client.patch(
+        f"/machine/telephony/numbers/{num_id}/assignment",
+        headers=HEADERS,
+        json={"number_id": num_id, "agent_id": "agent_123"},
+    )
+    assert assign_resp.status_code == 200
+
+    route_resp = client.post(
+        f"/machine/telephony/numbers/{num_id}/routing/configure",
+        headers=HEADERS,
+        json={"inbound_agent_id": "agent_123"},
+    )
+    assert route_resp.status_code == 200
+
     resp = client.post(
         "/machine/telephony/outbound-calls",
         headers=HEADERS,
         json={
             "agent_id": "agent_123",
-            "from_number_id": "num_123",
+            "from_number_id": num_id,
             "to_number": "+15557654321",
             "idempotency_key": "idemp_call_999",
         },

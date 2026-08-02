@@ -145,6 +145,32 @@ class TelephonyService:
         ).fetchall()
         return [row[0] for row in rows if row and row[0]]
 
+    def _assert_number_bound_to_agent(
+        self,
+        phone: dict[str, Any],
+        agent_id: str,
+        require_ready_routing: bool = True,
+    ) -> None:
+        assigned_agent_id = phone.get("assigned_agent_id")
+        if not assigned_agent_id:
+            raise TelephonyError(
+                status=409,
+                code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
+                message="Phone number is not assigned to an agent.",
+            )
+        if assigned_agent_id != agent_id:
+            raise TelephonyError(
+                status=409,
+                code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
+                message="Phone number is assigned to a different agent.",
+            )
+        if require_ready_routing and phone.get("routing_status") != NumberRoutingStatus.READY.value:
+            raise TelephonyError(
+                status=409,
+                code=TelephonyErrorCode.NUMBER_NOT_ROUTING_READY,
+                message="Phone number routing is not ready for this agent.",
+            )
+
 
     def connect_telnyx_account(
         self, tenant_id: str, api_key: str, label: str | None = None
@@ -421,7 +447,10 @@ class TelephonyService:
                 nums = self._numbers.get(tenant_id, [])
                 sip_active = is_conn_active and bool(nums)
                 profile_active = sip_active
-                assigned_ready_numbers = nums
+                assigned_ready_numbers = [
+                    n for n in nums
+                    if n.get("routing_status") == NumberRoutingStatus.READY.value and n.get("assigned_agent_id")
+                ]
             else:
                 nums = queries.list_managed_numbers(conn, tenant_id)
                 assigned_ready_numbers = [
@@ -495,8 +524,19 @@ class TelephonyService:
                 return self._idempotency[idemp_id]
 
             if conn is None:
+                phone = next(
+                    (n for n in self._numbers.get(tenant_id, []) if n["id"] == from_number_id),
+                    None,
+                )
+                if not phone:
+                    raise TelephonyError(
+                        status=404,
+                        code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                        message=f"Number {from_number_id} not found for tenant.",
+                    )
+                self._assert_number_bound_to_agent(phone, agent_id)
                 outbound_trunk_id = "lk_tr_out_mock_123"
-                phone_e164 = "+15551234567"
+                phone_e164 = phone["e164_number"]
                 outbound_trunk_record_id = None
             else:
                 number_row = conn.execute(
@@ -512,6 +552,7 @@ class TelephonyService:
                 if not number_row:
                     raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {from_number_id} not found for tenant.")
                 phone = self._number_from_row(number_row)
+                self._assert_number_bound_to_agent(phone, agent_id)
                 phone_e164 = phone["e164_number"]
                 trunk_row = conn.execute(
                     """

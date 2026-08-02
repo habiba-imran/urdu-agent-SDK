@@ -148,6 +148,26 @@ function requirePaidTelephonyActions(res) {
   return true;
 }
 
+function normalizeCollection(result, fallbackKeys = []) {
+  if (Array.isArray(result)) return result;
+  for (const key of fallbackKeys) {
+    if (Array.isArray(result?.[key])) return result[key];
+  }
+  return [];
+}
+
+async function listManagedNumbers() {
+  const telephony = getTelephonyClient();
+  const result = await telephony.listManagedPhoneNumbers();
+  return normalizeCollection(result, ['data', 'numbers', 'items']);
+}
+
+async function listAgents() {
+  const agents = getAgentsClient();
+  const result = await agents.listAgents();
+  return normalizeCollection(result, ['agents', 'data', 'items']);
+}
+
 // ─── Error helpers ───────────────────────────────────────────────────────────
 function handleError(res, error) {
   console.error('[UVA Test App Error]', error?.message || error);
@@ -576,8 +596,64 @@ app.post('/api/telnyx/numbers/:numberId/assign-agent', async (req, res) => {
 app.post('/api/telnyx/numbers/:numberId/configure-routing', async (req, res) => {
   try {
     const telephony = getTelephonyClient();
+    const { agentId } = req.body || {};
+    if (agentId) {
+      await telephony.assignAgentToNumber(req.params.numberId, agentId);
+    }
     const result = await telephony.configureNumberRouting(req.params.numberId);
     res.json({ ok: true, ...result });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+app.post('/api/inbound/simulate', async (req, res) => {
+  try {
+    const { numberId, agentId } = req.body || {};
+    if (!numberId) {
+      return res.status(400).json({ ok: false, message: 'numberId is required' });
+    }
+
+    const [numbers, agents] = await Promise.all([listManagedNumbers(), listAgents()]);
+    const number = numbers.find((item) => item.id === numberId);
+    if (!number) {
+      return res.status(404).json({ ok: false, message: `Managed number ${numberId} was not found.` });
+    }
+
+    if (!number.assigned_agent_id) {
+      return res.status(409).json({ ok: false, code: 'number_not_assigned', message: 'Assign this number to an agent before simulating inbound.' });
+    }
+
+    if (agentId && number.assigned_agent_id !== agentId) {
+      return res.status(409).json({
+        ok: false,
+        code: 'number_not_assigned',
+        message: 'This number is currently attached to a different agent.',
+        assignedAgentId: number.assigned_agent_id,
+      });
+    }
+
+    if (number.routing_status !== 'ready') {
+      return res.status(409).json({
+        ok: false,
+        code: 'number_not_routing_ready',
+        message: 'Configure routing before simulating inbound.',
+        routingStatus: number.routing_status,
+      });
+    }
+
+    const agent = agents.find((item) => item.id === number.assigned_agent_id) || null;
+    res.json({
+      ok: true,
+      mode: 'simulated_inbound_dispatch',
+      message: 'Inbound dispatch would resolve to the assigned agent.',
+      numberId: number.id,
+      e164Number: number.e164_number || number.phone_number || null,
+      agentId: number.assigned_agent_id,
+      agentName: agent?.name || null,
+      routingStatus: number.routing_status,
+      providerStatus: number.provider_status || null,
+    });
   } catch (error) {
     handleError(res, error);
   }
