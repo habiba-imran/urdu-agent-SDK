@@ -163,6 +163,11 @@ function handleNumberSelection(numberId) {
   if (number.assigned_agent_id) syncAgentSelections(number.assigned_agent_id);
 }
 
+function getAssignedAgentIdForNumber(numberId) {
+  const number = state.numbers.find((item) => item.id === numberId);
+  return number?.assigned_agent_id || '';
+}
+
 function renderNumberOptions(selectId) {
   const select = $(selectId);
   if (!select) return;
@@ -820,21 +825,29 @@ async function simulateInbound() {
 }
 
 async function createOutboundCall() {
-  const agentId = $('call-agent-id')?.value;
+  const selectedAgentId = $('call-agent-id')?.value;
   const fromNumberId = $('call-from-id')?.value;
   const toNumber = $('call-to-number')?.value.trim();
   const recipient = $('call-recipient')?.value.trim();
-  if (!agentId || !fromNumberId || !toNumber) {
+  if (!selectedAgentId || !fromNumberId || !toNumber) {
     toast('warning', 'Agent, from number, and destination are required');
     return;
   }
+  await refreshNumbersAndAgents();
+  populateProviderTestSelects();
+  const assignedAgentId = getAssignedAgentIdForNumber(fromNumberId);
+  if (!assignedAgentId) {
+    toast('warning', 'Attach the selected number to an agent before placing an outbound call');
+    return;
+  }
+  syncAgentSelections(assignedAgentId);
   if (!window.confirm(`Place a real outbound call to ${toNumber}?`)) return;
   const button = $('btn-make-call');
   const resultBox = $('call-result');
   setLoading(button, true, 'Calling...');
   try {
     const result = await api('POST', '/api/outbound-call', {
-      agentId,
+      agentId: assignedAgentId,
       fromNumberId,
       toNumber,
       recipient,
@@ -853,7 +866,7 @@ async function createOutboundCall() {
       `;
     }
     handleNumberSelection(fromNumberId);
-    syncAgentSelections(agentId);
+    syncAgentSelections(assignedAgentId);
     toast('success', 'Outbound call placed', toNumber);
   } catch (error) {
     toast('error', 'Outbound call failed', error.message);
