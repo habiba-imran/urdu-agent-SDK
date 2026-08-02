@@ -76,7 +76,12 @@ class LiveKitSipClient:
         return self._run(op(), TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit inbound trunk.")
 
     def create_or_get_outbound_trunk(
-        self, telnyx_connection_id: str, sip_fqdn: str, trunk_numbers: list[str]
+        self,
+        telnyx_connection_id: str,
+        sip_fqdn: str,
+        trunk_numbers: list[str],
+        sip_username: str | None = None,
+        sip_secret: str | None = None,
     ) -> dict[str, Any]:
         """Configure or retrieve a reusable long-lived LiveKit outbound trunk for a Telnyx connection."""
         numbers = sorted({number.strip() for number in trunk_numbers if number and number.strip().startswith("+")})
@@ -105,11 +110,22 @@ class LiveKitSipClient:
                 for item in listed.items:
                     if item.name == name:
                         current_numbers = sorted(set(item.numbers))
-                        if current_numbers != numbers or item.address != sip_fqdn:
+                        current_username = getattr(item, "auth_username", "")
+                        current_headers = dict(getattr(item, "headers", {}) or {})
+                        expected_headers = {"X-Telnyx-Username": sip_username} if sip_username else {}
+                        if (
+                            current_numbers != numbers
+                            or item.address != sip_fqdn
+                            or current_username != (sip_username or "")
+                            or current_headers != expected_headers
+                        ):
                             item = await api.sip.update_outbound_trunk_fields(
                                 item.sip_trunk_id,
                                 address=sip_fqdn,
                                 numbers=numbers,
+                                auth_username=sip_username or "",
+                                auth_password=sip_secret or "",
+                                headers=expected_headers,
                             )
                         return {
                             "livekit_outbound_trunk_id": item.sip_trunk_id,
@@ -117,7 +133,14 @@ class LiveKitSipClient:
                             "numbers": numbers,
                             "status": "active",
                         }
-                trunk = lk.SIPOutboundTrunkInfo(name=name, address=sip_fqdn, numbers=numbers)
+                trunk = lk.SIPOutboundTrunkInfo(
+                    name=name,
+                    address=sip_fqdn,
+                    numbers=numbers,
+                    auth_username=sip_username or "",
+                    auth_password=sip_secret or "",
+                    headers={"X-Telnyx-Username": sip_username} if sip_username else {},
+                )
                 created = await api.sip.create_outbound_trunk(lk.CreateSIPOutboundTrunkRequest(trunk=trunk))
                 return {
                     "livekit_outbound_trunk_id": created.sip_trunk_id,

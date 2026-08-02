@@ -102,6 +102,7 @@ class OutboundTrunkDb:
             f"provider_sip_{connection_id}",
             "sip.telnyx.example",
             "sip-user",
+            "enc:v1:sip-secret",
             "active",
             "active",
             "2026-08-01T12:00:00Z",
@@ -191,10 +192,19 @@ class CapturingLiveKitClient:
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.mock_mode: bool | None = None
-        self.outbound_calls: list[tuple[str, str, list[str]]] = []
+        self.outbound_calls: list[tuple[str, str, list[str], str | None, str | None]] = []
 
-    def create_or_get_outbound_trunk(self, telnyx_connection_id: str, sip_fqdn: str, trunk_numbers: list[str]):
-        self.outbound_calls.append((telnyx_connection_id, sip_fqdn, list(trunk_numbers)))
+    def create_or_get_outbound_trunk(
+        self,
+        telnyx_connection_id: str,
+        sip_fqdn: str,
+        trunk_numbers: list[str],
+        sip_username: str | None = None,
+        sip_secret: str | None = None,
+    ):
+        self.outbound_calls.append(
+            (telnyx_connection_id, sip_fqdn, list(trunk_numbers), sip_username, sip_secret)
+        )
         if self.fail:
             raise TelephonyError(
                 status=409,
@@ -243,7 +253,9 @@ def test_configure_outbound_trunk_sends_one_eligible_managed_number_to_livekit()
     result = service_for(db, livekit).configure_outbound_trunk(TENANT_A)
 
     assert result["platform_status"] == "active"
-    assert livekit.outbound_calls == [("conn_a", "sip.telnyx.example", ["+14402248161"])]
+    assert livekit.outbound_calls == [
+        ("conn_a", "sip.telnyx.example", ["+14402248161"], "sip-user", "sip-secret")
+    ]
     assert len(db.trunks) == 1
 
 
@@ -256,7 +268,15 @@ def test_configure_outbound_trunk_sends_multiple_eligible_numbers_to_livekit():
 
     service_for(db, livekit).configure_outbound_trunk(TENANT_A)
 
-    assert livekit.outbound_calls == [("conn_a", "sip.telnyx.example", ["+14155550123", "+14402248161"])]
+    assert livekit.outbound_calls == [
+        (
+            "conn_a",
+            "sip.telnyx.example",
+            ["+14155550123", "+14402248161"],
+            "sip-user",
+            "sip-secret",
+        )
+    ]
 
 
 def test_configure_outbound_trunk_fails_closed_when_no_eligible_numbers():

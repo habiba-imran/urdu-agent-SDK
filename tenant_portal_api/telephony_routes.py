@@ -347,7 +347,9 @@ def portal_upsert_sip_connection(
 ):
     """Upsert Telnyx SIP/FQDN connection."""
     try:
-        return _service.upsert_telnyx_sip_connection(tenant_id, body.sip_fqdn, body.sip_username)
+        return _service.upsert_telnyx_sip_connection(
+            tenant_id, body.sip_fqdn, body.sip_username, body.sip_secret
+        )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
 
@@ -750,7 +752,12 @@ async def machine_upsert_sip_connection(
     body = await request.json()
     _verify_machine_with_db(x_tenant_id, x_timestamp, x_nonce, "telephony.telnyx_sip_connection.upsert", body, x_signature)
     try:
-        return _service.upsert_telnyx_sip_connection(x_tenant_id, body.get("sip_fqdn"), body.get("sip_username"))
+        return _service.upsert_telnyx_sip_connection(
+            x_tenant_id,
+            body.get("sip_fqdn"),
+            body.get("sip_username"),
+            body.get("sip_secret"),
+        )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
 

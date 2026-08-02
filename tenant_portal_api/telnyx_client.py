@@ -400,7 +400,11 @@ class TelnyxClient:
             ) from e
 
     def create_or_get_fqdn_connection(
-        self, connection_name: str, fqdn: str
+        self,
+        connection_name: str,
+        fqdn: str,
+        sip_username: str | None = None,
+        sip_secret: str | None = None,
     ) -> dict[str, Any]:
         """Create or get a Telnyx FQDN/SIP connection."""
         if self.mock_mode:
@@ -417,6 +421,10 @@ class TelnyxClient:
                 "fqdn": fqdn,
                 "transport_protocol": "UDP",
             }
+            if sip_username:
+                payload["user_name"] = sip_username
+            if sip_secret:
+                payload["password"] = sip_secret
             resp = self.client.post(
                 f"{TELNYX_API_BASE_URL}/fqdn_connections",
                 headers=self._headers(),
