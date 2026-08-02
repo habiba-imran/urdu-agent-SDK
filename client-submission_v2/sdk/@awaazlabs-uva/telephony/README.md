@@ -1,53 +1,25 @@
-# @awaazlabs-uva/telephony
+﻿# @awaazlabs-uva/telephony
 
-Backend-only Node SDK for signed AwaazLabs UVA machine telephony API calls.
+Backend-only TypeScript SDK for AwaazLabs UVA telephony management.
 
-This package is not a browser SDK. It stores the tenant HMAC secret only on the
-backend client instance for request signing, never sends that secret, and
-accepts Telnyx API keys only as transient method parameters for connection or
-rotation calls.
-
-## Package Model
-
-| Package | Runtime | Purpose | Secret boundary |
-|---|---|---|---|
-| `@awaazlabs-uva/voice` | Browser/WebRTC | Starts voice sessions and receives realtime events | Zero secrets |
-| `@awaazlabs-uva/agents` | Node backend only | Creates and updates AI agents | Uses backend HMAC secret |
-| `@awaazlabs-uva/telephony` | Node backend only | Manages Telnyx connection, numbers, routing, and calls | Uses backend HMAC secret and transient Telnyx keys |
-
-Never import `@awaazlabs-uva/agents` or `@awaazlabs-uva/telephony` in browser
-code. Your frontend should call your own backend routes.
+Use this package from your backend to connect Telnyx, sync/import numbers, assign numbers to agents, configure routing, check outbound readiness, and start outbound calls through signed machine API requests.
 
 ## Install
 
-From a client handoff tarball:
+```bash
+npm install ./client-submission_v2/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+```
+
+## Runtime
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+UVA_TELEPHONY_API_URL=<TENANT_PORTAL_API_BASE_URL>
+UVA_TENANT_ID=<TENANT_UUID>
+UVA_HMAC_SECRET=<TENANT_HMAC_SECRET>
+TELNYX_API_KEY=<TELNYX_API_KEY>
 ```
 
-If Finova later publishes this package to an approved registry:
-
-```bash
-npm install @awaazlabs-uva/telephony
-```
-
-For the current client handoff, use the local `.tgz` file above.
-
-## Backend Environment
-
-Load these from your backend environment. Do not hardcode them in source code.
-
-```env
-UVA_TENANT_ID=[YOUR_TENANT_ID]
-UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
-UVA_TELEPHONY_API_URL=[YOUR_TELEPHONY_MACHINE_API_URL]
-TELNYX_API_KEY=[YOUR_TELNYX_API_KEY]
-```
-
-`TELNYX_API_KEY` is needed only when connecting or rotating a Telnyx account.
-Do not store it in SDK state, browser storage, logs, prompts, transcripts, or
-fixtures.
+`UVA_HMAC_SECRET`, Telnyx API keys, SIP secrets, and provider credentials must stay on the backend only.
 
 ## Usage
 
@@ -56,37 +28,37 @@ import {
   AwaazLabsUvaTelephonyError,
   TelephonyClient,
 } from '@awaazlabs-uva/telephony';
-import { randomUUID } from 'node:crypto';
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
-
-const telephony = new TelephonyClient({
-  tenantId: requireEnv('UVA_TENANT_ID'),
-  tenantSecret: requireEnv('UVA_HMAC_SECRET'),
-  baseUrl: requireEnv('UVA_TELEPHONY_API_URL'),
+const client = new TelephonyClient({
+  baseUrl: process.env.UVA_TELEPHONY_API_URL!,
+  tenantId: process.env.UVA_TENANT_ID!,
+  tenantSecret: process.env.UVA_HMAC_SECRET!,
 });
 
 try {
-  const status = await telephony.getConnectionStatus();
+  const connection = await client.getConnectionStatus();
 
-  if (status.platform_status !== 'active') {
-    await telephony.connectTelnyxAccount({
-      apiKey: requireEnv('TELNYX_API_KEY'),
+  if (connection.platform_status !== 'active') {
+    await client.connectTelnyxAccount({
+      apiKey: process.env.TELNYX_API_KEY!,
       label: 'primary',
     });
   }
 
-  const order = await telephony.purchaseNumber({
-    e164Number: '<E164_NUMBER>',
-    externalCustomerRef: '<OPAQUE_CUSTOMER_REF>',
-    idempotencyKey: randomUUID(),
-  });
+  await client.syncTelnyxOwnedNumbers();
+  const managedNumbers = await client.listManagedPhoneNumbers({ limit: 25 });
 
-  console.log(order.platform_status);
+  const numberId = '<MANAGED_NUMBER_ID>';
+  const agentId = '<AGENT_ID>';
+
+  await client.assignAgentToNumber(numberId, agentId);
+  await client.configureNumberRouting(numberId);
+  await client.configureOutboundTrunk();
+
+  const readiness = await client.getOutboundReadiness();
+  if (readiness.is_ready !== true) {
+    console.log('outbound not ready', readiness.reasons);
+  }
 } catch (error) {
   if (error instanceof AwaazLabsUvaTelephonyError) {
     console.error(error.status, error.code, error.message);
@@ -95,55 +67,80 @@ try {
 }
 ```
 
-## Method Groups
+## Method summary
 
-- Telnyx account: `connectTelnyxAccount`, `rotateTelnyxAccountKey`,
-  `reverifyTelnyxAccount`, `disconnectTelnyxAccount`, `getConnectionStatus`
-- Number inventory and purchase: `listTelnyxOwnedNumbers`,
-  `listManagedPhoneNumbers`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
-  `getTelnyxNumberDrift`, `searchAvailableNumbers`, `reserveNumber`,
-  `purchaseNumber`, `getNumberOrderStatus`
-- Routing and trunks: `assignAgentToNumber`, `unassignAgentFromNumber`,
-  `upsertTelnyxSipConnection`, `verifyTelnyxSipConnection`,
-  `upsertTelnyxOutboundVoiceProfile`,
-  `verifyTelnyxOutboundVoiceProfile`, `configureNumberRouting`,
-  `configureOutboundTrunk`, `getOutboundReadiness`
-- Calls: `createOutboundCall`, `getCallStatus`, `listCallRecords`,
-  `disableNumber`
+```ts
+new TelephonyClient({ baseUrl, tenantId, tenantSecret, extraHeaders?, fetch?, nowSeconds?, nonceFactory? })
 
-## Stable Error Handling
+client.connectTelnyxAccount({ apiKey, label? })
+client.rotateTelnyxAccountKey({ apiKey })
+client.reverifyTelnyxAccount()
+client.disconnectTelnyxAccount()
+client.getConnectionStatus()
 
-Failed calls throw `AwaazLabsUvaTelephonyError`:
+client.listTelnyxOwnedNumbers({ cursor?, limit?, platformStatus?, providerStatus? })
+client.listManagedPhoneNumbers({ cursor?, limit?, platformStatus?, providerStatus? })
+client.importTelnyxNumber({ e164Number, externalCustomerRef? })
+client.syncTelnyxOwnedNumbers()
+client.getTelnyxNumberDrift()
+client.searchAvailableNumbers({ country, areaCode?, numberType?, features? })
+client.reserveNumber({ e164Number, idempotencyKey })
+client.purchaseNumber({ e164Number, externalCustomerRef?, idempotencyKey })
+client.getNumberOrderStatus(orderId)
+client.disableNumber(numberId)
 
-| Code | Typical handling |
-|---|---|
-| `telnyx_connection_missing` | Ask an operator to connect the Telnyx account in a backend/admin flow. |
-| `number_order_action_required` | Surface the provider action requirement to an operator. |
-| `regulatory_action_required` | Stop automated purchase flow until required documents are approved. |
-| `outbound_not_ready` | Check routing, SIP connection, outbound profile, and number assignment. |
-| `idempotency_payload_mismatch` | Reuse the original payload or generate a new idempotency key. |
-| `number_not_available` | Ask the user to choose another exact number. |
-| `unsupported_number_feature` | Treat reservation or requested feature as unavailable for the selected market. |
-| `telnyx_key_permission_failed` | Rotate the Telnyx key or grant the required provider permissions. |
+client.assignAgentToNumber(numberId, agentId)
+client.unassignAgentFromNumber(numberId)
 
-Public error objects and SDK responses are redacted. Raw provider payloads,
-signatures, Telnyx keys, SIP secrets, and restricted diagnostics are not returned
-by this SDK.
+client.upsertTelnyxSipConnection({ sipFqdn?, sipUsername?, sipSecret?, providerSipConnectionId? })
+client.verifyTelnyxSipConnection()
+client.upsertTelnyxOutboundVoiceProfile({ providerOutboundVoiceProfileId?, telnyxSipConnectionId?, allowedDestinations?, concurrencyLimit?, channelLimit?, dailySpendingLimit? })
+client.verifyTelnyxOutboundVoiceProfile()
+client.configureNumberRouting(numberId)
+client.configureOutboundTrunk()
+client.getOutboundReadiness()
 
-## Security Rules
-
-- Calls only `/machine/telephony/*` routes.
-- Signs canonical JSON request bodies with fixed action strings from the frozen
-  telephony contract.
-- Sends `X-Tenant-Id`, `X-Timestamp`, `X-Nonce`, and `X-Signature`.
-- Blocks `extraHeaders` from overriding auth or JSON body headers.
-- Does not log, persist, cache, return, or browser-expose raw Telnyx API keys.
-- Does not connect directly to Supabase, Telnyx, LiveKit, or dashboard code.
-
-## Build
-
-```bash
-npm run build
-npm run lint
-npm test
+client.createOutboundCall({ agentId, fromNumberId, toNumber, recipient?, context?, externalCustomerRef?, externalWorkflowRef?, idempotencyKey })
+client.getCallStatus(telephonyCallId)
+client.listCallRecords({ cursor?, limit?, platformStatus?, providerStatus? })
 ```
+
+## Inbound setup flow
+
+1. Connect or verify the tenant Telnyx account.
+2. Sync/import tenant-owned numbers.
+3. Assign the managed number to an agent with `assignAgentToNumber(numberId, agentId)`.
+4. Configure number routing with `configureNumberRouting(numberId)`.
+5. Confirm provider-side webhook and SIP settings are configured in the hosted backend environment.
+
+## Outbound setup flow
+
+1. Connect or verify the tenant Telnyx account.
+2. Sync/import tenant-owned numbers.
+3. Configure or verify Telnyx SIP connection and outbound voice profile.
+4. Configure the outbound trunk with `configureOutboundTrunk()`.
+5. Call `getOutboundReadiness()` and require `is_ready === true` before creating an outbound call.
+6. Create a call with a unique `idempotencyKey` only after an approved user/operator action.
+
+## Error handling
+
+```ts
+try {
+  await client.syncTelnyxOwnedNumbers();
+} catch (error) {
+  if (error instanceof AwaazLabsUvaTelephonyError) {
+    console.error(error.status, error.code, error.message);
+  }
+  throw error;
+}
+```
+
+Common error codes include `telephony_auth_failed`, `provider_credentials_missing`, `telnyx_connection_missing`, `telnyx_key_invalid`, `number_not_found`, `number_not_owned_by_tenant`, `number_not_assigned`, `outbound_not_ready`, `regulatory_action_required`, `duplicate_idempotency_key`, and `telephony_request_failed`.
+
+## Security
+
+- Do not import this package in browser code.
+- Do not log raw Telnyx API keys, SIP secrets, tenant HMAC secrets, HMAC signatures, provider webhook bodies, or restricted diagnostic payloads.
+- Use HTTPS endpoints.
+- Use stable idempotency keys for reserve, purchase, and outbound call operations.
+- Validate E.164 phone numbers in your application before requesting outbound calls.

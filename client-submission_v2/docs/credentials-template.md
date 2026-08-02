@@ -1,231 +1,51 @@
-# Credentials Template — AwaazLabs-UVA-Voice SDK
+﻿# Credentials and Environment Template
 
-> **Finova Solutions** — Confidential Onboarding Document
-> This document will be completed by your Finova Solutions account manager
-> and delivered to you through a secure channel.
+Use this template to separate browser-safe configuration from backend-only secrets.
 
----
+## Backend environment
 
-> [!CAUTION]
-> **Never commit this file to version control once it contains real values.**
-> Add `credentials-template.md` to your `.gitignore` if you store filled values here.
-> The recommended practice is to copy each value directly into your `.env` files
-> and keep this file as a blank reference template.
+```bash
+UVA_API_BASE_URL=<TENANT_PORTAL_API_BASE_URL>
+UVA_TELEPHONY_API_URL=<TENANT_PORTAL_API_BASE_URL>
+UVA_TENANT_ID=<TENANT_UUID>
+UVA_HMAC_SECRET=<TENANT_HMAC_SECRET>
 
----
+# Used only by the backend flow that connects or rotates the tenant Telnyx account.
+TELNYX_API_KEY=<TELNYX_API_KEY>
 
-## How to Use This Document
-
-1. Your Finova onboarding contact will **deliver the real values** for each placeholder below through a secure channel (encrypted email, 1Password share, or equivalent)
-2. Copy each value into the corresponding environment variable in your `.env` files
-3. Refer to `docs/INTEGRATION_GUIDE.md` Section 5 for the exact `.env` file structure
-
----
-
-## Part A: Programmatic SDK Credentials
-
-These credentials are loaded by your **backend** at runtime via environment variables.
-They are required to initialise and operate the SDK programmatically.
-
----
-
-### `UVA_TENANT_ID`
-
-| Property | Value |
-|---|---|
-| **Description** | Your unique tenant UUID, issued by Finova during account provisioning |
-| **Format** | UUID v4 (e.g. `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) |
-| **Environment** | Backend `.env` only |
-| **SDK Usage** | Passed as `tenantId` to `AwaazLabsUvaAgentsClient`; included in `X-Tenant-Id` request header |
-| **Sensitivity** | Medium — identifies your tenant, but alone cannot authorise any action |
-
-**Placeholder value (to be filled by Finova):**
-```
-UVA_TENANT_ID=[YOUR_TENANT_ID]
+# Optional values your backend may collect from operations/configuration screens.
+TELNYX_SIP_FQDN=<TELNYX_SIP_FQDN>
+TELNYX_SIP_USERNAME=<TELNYX_SIP_USERNAME>
+TELNYX_SIP_SECRET=<TELNYX_SIP_SECRET>
+TELNYX_OUTBOUND_ALLOWED_DESTINATIONS=<COMMA_SEPARATED_COUNTRY_OR_REGION_CODES>
 ```
 
-**How it connects to your code:**
-```typescript
-// In @awaazlabs-uva/agents initialisation (backend only):
-const agents = new AwaazLabsUvaAgentsClient({
-  tenantId: process.env.UVA_TENANT_ID!,  // ← this credential
-  tenantSecret: process.env.UVA_HMAC_SECRET!,
-  baseUrl: process.env.UVA_PORTAL_API_URL!,
-});
+## Frontend environment
+
+```bash
+PUBLIC_UVA_PUBLISHABLE_KEY=<PUBLIC_TENANT_KEY>
+PUBLIC_UVA_SESSION_ENDPOINT=<YOUR_BACKEND_SESSION_ENDPOINT>
+PUBLIC_UVA_REFRESH_ENDPOINT=<YOUR_BACKEND_SESSION_REFRESH_ENDPOINT>
+PUBLIC_UVA_VOICE_CATALOG_ENDPOINT=<YOUR_BACKEND_VOICE_CATALOG_ENDPOINT>
 ```
 
----
+Only values prefixed here as `PUBLIC_` are intended for browser code. The tenant HMAC secret, Telnyx API key, SIP secret, and any database/provider credentials must stay on the backend.
 
-### `UVA_HMAC_SECRET`
+## Provider configuration checklist
 
-| Property | Value |
-|---|---|
-| **Description** | Your tenant's HMAC-SHA256 signing key. Used only by backend-side AwaazLabs-UVA integrations |
-| **Format** | Base64-encoded or hex string (≥ 32 bytes) |
-| **Environment** | Backend `.env` **ONLY** — **NEVER** expose to the browser |
-| **SDK Usage** | Passed as `tenantSecret` to `AwaazLabsUvaAgentsClient`; used locally to compute `X-Signature` headers |
-| **Sensitivity** | **CRITICAL** — possession of this secret allows signing requests as your tenant |
+| Item | Owned by | Notes |
+| --- | --- | --- |
+| Tenant ID and HMAC secret | AwaazLabs/platform operator | Required for signed backend SDK calls. |
+| Publishable key | AwaazLabs/platform operator | Safe for frontend use; identifies the tenant/app. |
+| Telnyx API key | Client/backend operator | Submit only from a backend flow to `connectTelnyxAccount` or `rotateTelnyxAccountKey`. |
+| Telnyx phone numbers | Client/backend operator | Sync owned numbers or purchase/import numbers through approved backend flows. |
+| Agent ID | Client/backend operator | Create or list agents with `@awaazlabs-uva/agents`; assign phone numbers to agent IDs with `@awaazlabs-uva/telephony`. |
+| SIP and routing settings | Client/backend operator plus platform operator | Configure after Telnyx is connected and numbers are synced. |
+| LiveKit/SIP provider credentials | Platform operator | Required by the hosted backend for real SIP routing. Do not place these in frontend code. |
+| Webhook public key/configuration | Platform operator | Required by the hosted backend to verify provider webhooks. |
 
-> [!WARNING]
-> This is the most sensitive credential in your integration.
-> If this value is ever exposed (committed to Git, logged to stdout, bundled in a frontend), treat it as **compromised** and contact Finova immediately for a rotation.
+## Rotation guidance
 
-**Placeholder value (to be filled by Finova):**
-```
-UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
-```
-
-**How it connects to your code:**
-```typescript
-// In @awaazlabs-uva/agents initialisation (backend only):
-const agents = new AwaazLabsUvaAgentsClient({
-  tenantId: process.env.UVA_TENANT_ID!,
-  tenantSecret: process.env.UVA_HMAC_SECRET!,  // ← this credential
-  baseUrl: process.env.UVA_PORTAL_API_URL!,
-});
-
-// Session minting must use the Finova-provided backend-only session adapter or approved starter.
-// Do not place raw signing code in frontend code, browser bundles, or AI-generated client prompts.
-```
-
----
-
-### `UVA_PUBLISHABLE_KEY`
-
-| Property | Value |
-|---|---|
-| **Description** | Your tenant's public identifier. Safe to embed in browser JavaScript |
-| **Format** | UUID v4 (typically same as `UVA_TENANT_ID` in the current release) |
-| **Environment** | Backend `.env` **and** frontend `.env` |
-| **SDK Usage** | Passed as `publishableKey` to `AwaazLabsUvaVoice` in the browser; also sent in the session-mint request body |
-| **Sensitivity** | **Low** — identifies but never authorises; the SDK is designed so this can be public |
-
-**Placeholder value (to be filled by Finova):**
-```
-UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY]
-```
-
-**How it connects to your code:**
-```typescript
-// In your frontend (browser-safe):
-const agent = new AwaazLabsUvaVoice({
-  publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY,  // ← this credential
-  sessionEndpoint: import.meta.env.VITE_UVA_SESSION_ENDPOINT,
-});
-```
-
----
-
-### Backend-only session upstream configuration
-
-| Property | Value |
-|---|---|
-| **Description** | Backend-only AwaazLabs-UVA session upstream configuration, provided through a secure onboarding channel if your backend starter requires it |
-| **Format** | HTTPS URL or adapter-specific configuration value |
-| **Environment** | Backend `.env` only |
-| **SDK Usage** | Used only by the backend-only session adapter or approved host-backend starter |
-| **Sensitivity** | Medium — keep server-side to avoid exposing infrastructure topology |
-
-**Placeholder value (to be filled by Finova):**
-```
-UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
-```
-
-**How it connects to your code:**
-```typescript
-// In your backend only:
-// Pass this value to the Finova-provided session adapter or approved host-backend starter.
-// Do not expose it in frontend env files or public client documentation.
-```
-
----
-
-### `UVA_PORTAL_API_URL`
-
-| Property | Value |
-|---|---|
-| **Description** | The base URL of the Finova Tenant Portal API. Used by `@awaazlabs-uva/agents` to create, list, and update agents |
-| **Format** | HTTPS URL (e.g. `https://portal-api.finova.io`) |
-| **Environment** | Backend `.env` only |
-| **SDK Usage** | Passed as `baseUrl` to `AwaazLabsUvaAgentsClient` |
-| **Sensitivity** | Low — a URL, not a secret |
-
-**Placeholder value (to be filled by Finova):**
-```
-UVA_PORTAL_API_URL=[YOUR_PORTAL_API_URL]
-```
-
-**How it connects to your code:**
-```typescript
-// In @awaazlabs-uva/agents initialisation (backend only):
-const agents = new AwaazLabsUvaAgentsClient({
-  tenantId: process.env.UVA_TENANT_ID!,
-  tenantSecret: process.env.UVA_HMAC_SECRET!,
-  baseUrl: process.env.UVA_PORTAL_API_URL!,  // ← this URL
-});
-```
-
----
-
-## Part B: Runtime Agent Identifier
-
-### `AGENT_ID` (per-agent, not a global secret)
-
-| Property | Value |
-|---|---|
-| **Description** | The UUID of a specific AI agent within your tenant. You create agents via `@awaazlabs-uva/agents`; this is the ID of the one you want browsers to connect to |
-| **Format** | UUID v4 |
-| **Environment** | Frontend `.env` (safe to expose; identifies an agent, not a secret) |
-| **SDK Usage** | Passed as `agentId` in `agent.connect({ agentId })` |
-| **Sensitivity** | Low — agent IDs are not secret |
-
-**Placeholder value (create your first agent via the SDK or test app UI):**
-```
-VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
-```
-
-**How to obtain:** Use the `AgentManager` UI in the test app, or call `agents.createAgent(...)` from your backend and log the returned `id`.
-
----
-
-## Part C: Dashboard Access Credentials
-
-If your Finova onboarding package includes access to the Finova Operations Dashboard, you will receive separate login credentials. These are **not used in code** — they are for human access to monitoring, usage analytics, and configuration panels only.
-
-| Credential | Description |
-|---|---|
-| `DASHBOARD_URL` | URL of the Finova web dashboard |
-| `DASHBOARD_EMAIL` | Your administrator email address |
-| `DASHBOARD_PASSWORD` | Initial login password (change on first login) |
-
-> [!IMPORTANT]
-> Dashboard credentials are separate from SDK credentials. Rotating the dashboard password does NOT affect SDK operations. Rotating `UVA_HMAC_SECRET` DOES affect all active sessions and must be coordinated with your engineering team.
-
----
-
-## Credential Summary Table
-
-| Credential | Backend `.env` | Frontend `.env` | Sensitivity |
-|---|---|---|---|
-| `UVA_TENANT_ID` | ✅ Required | ❌ Never | Medium |
-| `UVA_HMAC_SECRET` | ✅ Required | ❌ **NEVER** | 🔴 Critical |
-| `UVA_PUBLISHABLE_KEY` | ✅ Required | ✅ Required | 🟢 Low |
-| `UVA_SESSION_UPSTREAM_URL` | If provided | ❌ Never | Medium |
-| `UVA_PORTAL_API_URL` | ✅ Required | ❌ Never | 🟢 Low |
-| `AGENT_ID` | ❌ Optional | ✅ Recommended | 🟢 Low |
-| `DASHBOARD_EMAIL` | ❌ Never | ❌ Never | Medium |
-| `DASHBOARD_PASSWORD` | ❌ Never | ❌ Never | 🟡 High |
-
----
-
-## Credential Rotation
-
-| Credential | How to Rotate | Impact |
-|---|---|---|
-| `UVA_HMAC_SECRET` | Contact Finova support → coordinate a rotation window | All in-flight HMAC-signed requests will fail until the new secret is deployed |
-| `DASHBOARD_PASSWORD` | Self-service via dashboard settings | No SDK impact |
-| `UVA_PUBLISHABLE_KEY` | Contact Finova (rare — tied to tenant ID) | Requires frontend redeployment |
-
----
-
-*Delivered by Finova Solutions. Questions? Contact your account manager.*
+- Rotate `UVA_HMAC_SECRET` in a coordinated maintenance window because backend SDK requests signed with the old secret will stop working.
+- Rotate the Telnyx API key by calling `rotateTelnyxAccountKey({ apiKey })` from backend code.
+- Do not print, return, or store raw provider credentials in application logs.
