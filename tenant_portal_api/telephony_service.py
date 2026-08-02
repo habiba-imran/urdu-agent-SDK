@@ -1056,7 +1056,11 @@ class TelephonyService:
                 "created_at": None,
             }
     def upsert_telnyx_sip_connection(
-        self, tenant_id: str, sip_fqdn: str | None = None, sip_username: str | None = None
+        self,
+        tenant_id: str,
+        sip_fqdn: str | None = None,
+        sip_username: str | None = None,
+        sip_secret: str | None = None,
     ) -> dict[str, Any]:
         """Configure or update tenant Telnyx SIP/FQDN connection."""
         with self._connection() as conn:
@@ -1072,11 +1076,14 @@ class TelephonyService:
                     "platform_status": "active",
                     "provider_status": "active",
                 }
+            encrypted_sip_secret_ref = (
+                None if not sip_secret or is_mock_provider_mode() else encrypt_provider_secret(sip_secret)
+            )
 
             existing = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                       sip_username, platform_status, provider_status, last_verified_at
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 from telnyx_sip_connections
                 where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                   and platform_status in ('pending_verification', 'testing', 'active')
@@ -1085,18 +1092,36 @@ class TelephonyService:
                 (tenant_id, conn_data["id"]),
             ).fetchone()
             if existing:
-                return self._sip_from_row(existing)
+                updated = conn.execute(
+                    """
+                    update telnyx_sip_connections
+                    set sip_fqdn = coalesce(%s, sip_fqdn),
+                        sip_username = coalesce(%s, sip_username),
+                        encrypted_sip_secret_ref = coalesce(%s, encrypted_sip_secret_ref),
+                        updated_at = now()
+                    where tenant_id = %s and id = %s
+                    returning id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
+                              sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
+                    """,
+                    (sip_fqdn, sip_username, encrypted_sip_secret_ref, tenant_id, existing[0]),
+                ).fetchone()
+                return self._sip_from_row(updated or existing)
 
             fqdn = sip_fqdn or require_livekit_sip_uri()
-            provider = client.create_or_get_fqdn_connection(f"tenant-{tenant_id}", fqdn)
+            provider = client.create_or_get_fqdn_connection(
+                f"tenant-{tenant_id}",
+                fqdn,
+                sip_username=sip_username,
+                sip_secret=sip_secret,
+            )
             row = conn.execute(
                 """
                 insert into telnyx_sip_connections (
                     tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                    sip_username, platform_status, provider_status, last_verified_at
-                ) values (%s, %s, %s, %s, %s, 'active', %s, now())
+                    sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
+                ) values (%s, %s, %s, %s, %s, %s, 'active', %s, now())
                 returning id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                          sip_username, platform_status, provider_status, last_verified_at
+                          sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 """,
                 (
                     tenant_id,
@@ -1104,6 +1129,7 @@ class TelephonyService:
                     provider.get("provider_sip_connection_id"),
                     provider.get("sip_fqdn") or fqdn,
                     sip_username,
+                    encrypted_sip_secret_ref,
                     provider.get("status", "active"),
                 ),
             ).fetchone()
@@ -1117,7 +1143,7 @@ class TelephonyService:
             row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                       sip_username, platform_status, provider_status, last_verified_at
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 from telnyx_sip_connections
                 where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                   and platform_status in ('pending_verification', 'testing', 'active')
@@ -1173,7 +1199,7 @@ class TelephonyService:
             sip_row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                       sip_username, platform_status, provider_status, last_verified_at
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 from telnyx_sip_connections
                 where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                   and platform_status in ('pending_verification', 'testing', 'active')
@@ -1280,7 +1306,7 @@ class TelephonyService:
             sip_row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                       sip_username, platform_status, provider_status, last_verified_at
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 from telnyx_sip_connections
                 where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                   and platform_status in ('pending_verification', 'testing', 'active')
@@ -1384,7 +1410,7 @@ class TelephonyService:
             sip_row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
-                       sip_username, platform_status, provider_status, last_verified_at
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                 from telnyx_sip_connections
                 where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                   and platform_status in ('pending_verification', 'testing', 'active')
@@ -1430,7 +1456,11 @@ class TelephonyService:
                 (tenant_id, profile["id"]),
             ).fetchone()
             created = self._get_livekit_sip_client().create_or_get_outbound_trunk(
-                conn_data["id"], telnyx_sip_outbound_address(), trunk_numbers
+                conn_data["id"],
+                telnyx_sip_outbound_address(),
+                trunk_numbers,
+                sip_username=sip.get("sip_username"),
+                sip_secret=decrypt_provider_secret(sip.get("encrypted_sip_secret_ref")),
             )
             if existing:
                 row = conn.execute(
@@ -1571,9 +1601,10 @@ class TelephonyService:
             "provider_sip_connection_id": row[3],
             "sip_fqdn": row[4],
             "sip_username": row[5],
-            "platform_status": row[6],
-            "provider_status": row[7],
-            "last_verified_at": str(row[8]) if row[8] else None,
+            "encrypted_sip_secret_ref": row[6] if len(row) > 9 else None,
+            "platform_status": row[7] if len(row) > 9 else row[6],
+            "provider_status": row[8] if len(row) > 9 else row[7],
+            "last_verified_at": str(row[9]) if len(row) > 9 and row[9] else (str(row[8]) if len(row) > 8 and row[8] else None),
         }
 
     def _outbound_profile_from_row(self, row: Any) -> dict[str, Any]:

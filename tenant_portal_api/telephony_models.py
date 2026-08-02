@@ -104,6 +104,7 @@ class ManagedNumberResponse(BaseModel):
 class UpsertSipConnectionBody(BaseModel):
     sip_fqdn: str | None = None
     sip_username: str | None = None
+    sip_secret: str | None = None
 
 
 class UpsertOutboundVoiceProfileBody(BaseModel):

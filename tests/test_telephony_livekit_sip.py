@@ -15,7 +15,13 @@ def test_livekit_sip_client_mock():
     assert inbound["status"] == "active"
     assert "lk_tr_in_mock_" in inbound["livekit_inbound_trunk_id"]
 
-    outbound = client.create_or_get_outbound_trunk("telnyx_12345678", "sip.telnyx.com", ["+15551234567"])
+    outbound = client.create_or_get_outbound_trunk(
+        "telnyx_12345678",
+        "sip.telnyx.com",
+        ["+15551234567"],
+        sip_username="telnyx-user",
+        sip_secret="telnyx-secret",
+    )
     assert outbound["status"] == "active"
     assert "lk_tr_out_mock_" in outbound["livekit_outbound_trunk_id"]
     assert outbound["numbers"] == ["+15551234567"]
