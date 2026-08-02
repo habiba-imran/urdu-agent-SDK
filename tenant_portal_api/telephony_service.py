@@ -535,8 +535,7 @@ class TelephonyService:
                         message="Tenant outbound concurrency limit is reached.",
                     )
 
-            call_id = f"call_{uuid.uuid4().hex[:12]}"
-            session_id = f"sess_{uuid.uuid4().hex[:12]}"
+            call_id = str(uuid.uuid4())
             room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
             sip_part = self._get_livekit_sip_client().create_sip_participant(
                 room_name=room_name,
@@ -546,7 +545,7 @@ class TelephonyService:
 
             res = {
                 "telephony_call_id": call_id,
-                "session_id": session_id,
+                "session_id": None,
                 "room_name": room_name,
                 "platform_status": CallPublicStatus.DIALING.value,
                 "direction": "outbound",

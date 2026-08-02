@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# path: scripts/create_new_client.py
 """Provision a new Client Tenant for Finova Solutions Urdu Voice Agent Platform.
 
 Usage:

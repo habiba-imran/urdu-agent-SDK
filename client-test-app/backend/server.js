@@ -143,7 +143,7 @@ function requirePaidTelephonyActions(res) {
   res.status(403).json({
     ok: false,
     code: 'paid_action_disabled',
-    message: 'Set ALLOW_PAID_TELEPHONY_ACTIONS=1 in backend/.env before reserve, purchase, or outbound-call tests.',
+    message: 'Set ALLOW_PAID_TELEPHONY_ACTIONS=1 in backend/.env before purchase or outbound-call tests.',
   });
   return true;
 }

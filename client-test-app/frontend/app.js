@@ -289,7 +289,6 @@ function renderSearchResults(data) {
           </div>
         </div>
         <div class="number-actions">
-          <button class="btn btn-secondary btn-sm" onclick="openReserveModal('${escHtml(num)}')">Reserve</button>
           <button class="btn btn-primary btn-sm" onclick="openPurchaseModal('${escHtml(num)}')">Buy</button>
         </div>
       </div>
@@ -360,7 +359,7 @@ window.disableNumber = async (numberId) => {
   }
 };
 
-// ─── Purchase / Reserve Modals ────────────────────────────────────────────────
+// ─── Purchase Modal ────────────────────────────────────────────────
 let _pendingNumber = null;
 
 window.openPurchaseModal = (num) => {
@@ -369,11 +368,6 @@ window.openPurchaseModal = (num) => {
   document.getElementById('modal-purchase').classList.remove('hidden');
 };
 
-window.openReserveModal = (num) => {
-  _pendingNumber = num;
-  document.getElementById('modal-reserve-number').textContent = num;
-  document.getElementById('modal-reserve').classList.remove('hidden');
-};
 
 document.getElementById('modal-purchase-cancel').addEventListener('click', () => {
   document.getElementById('modal-purchase').classList.add('hidden');
@@ -396,28 +390,8 @@ document.getElementById('modal-purchase-confirm').addEventListener('click', asyn
   }
 });
 
-document.getElementById('modal-reserve-cancel').addEventListener('click', () => {
-  document.getElementById('modal-reserve').classList.add('hidden');
-  _pendingNumber = null;
-});
-
-document.getElementById('modal-reserve-confirm').addEventListener('click', async () => {
-  const btn = document.getElementById('modal-reserve-confirm');
-  setLoading(btn, true, 'Reserving…');
-  try {
-    const result = await api('POST', '/api/telnyx/numbers/reserve', { e164Number: _pendingNumber });
-    document.getElementById('modal-reserve').classList.add('hidden');
-    toast('success', 'Number reserved!', _pendingNumber);
-    _pendingNumber = null;
-  } catch (e) {
-    toast('error', 'Reserve failed', e.message);
-  } finally {
-    setLoading(btn, false);
-  }
-});
-
 // Close modals on overlay click
-['modal-purchase', 'modal-reserve', 'modal-update-agent'].forEach(id => {
+['modal-purchase', 'modal-update-agent'].forEach(id => {
   document.getElementById(id).addEventListener('click', (e) => {
     if (e.target.id === id) {
       document.getElementById(id).classList.add('hidden');

@@ -110,3 +110,56 @@ def test_telnyx_client_real_search_normalizes_feature_arrays():
     ]
     assert http_client.requests[0]["params"]["filter[national_destination_code]"] == "212"
     assert http_client.requests[0]["params"]["filter[features][voice]"] == "true"
+
+
+class FakeTelnyxOrderErrorResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        raise AssertionError("purchase_number should map order errors before raise_for_status")
+
+
+class FakeTelnyxOrderHttpClient:
+    def __init__(self, response):
+        self.response = response
+        self.requests = []
+
+    def post(self, url, headers=None, json=None):
+        self.requests.append({"url": url, "headers": headers, "json": json})
+        return self.response
+
+
+def test_purchase_number_maps_insufficient_balance_response():
+    response = FakeTelnyxOrderErrorResponse(
+        402,
+        {"errors": [{"title": "Payment required", "detail": "Insufficient balance for number order."}]},
+    )
+    http_client = FakeTelnyxOrderHttpClient(response)
+    client = TelnyxClient(api_key="real-shaped-test-key", http_client=http_client, mock_mode=False)
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.purchase_number("+14155550123")
+
+    assert exc_info.value.status == 402
+    assert exc_info.value.code == "insufficient_telnyx_balance"
+    assert "real-shaped-test-key" not in exc_info.value.message
+    assert http_client.requests[0]["json"] == {"phone_numbers": [{"phone_number": "+14155550123"}]}
+
+
+def test_purchase_number_maps_regulatory_or_verification_response():
+    response = FakeTelnyxOrderErrorResponse(
+        422,
+        {"errors": [{"title": "Regulatory requirements missing", "detail": "Verified address is required."}]},
+    )
+    client = TelnyxClient(api_key="real-shaped-test-key", http_client=FakeTelnyxOrderHttpClient(response), mock_mode=False)
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.purchase_number("+14155550123")
+
+    assert exc_info.value.status == 409
+    assert exc_info.value.code == "regulatory_action_required"

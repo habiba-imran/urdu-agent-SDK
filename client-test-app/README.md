@@ -76,4 +76,4 @@ Open `http://localhost:3000`.
 5. Browser Voice: select an agent and connect through the browser SDK.
 6. Call Log: list recent call records.
 
-Reserve, purchase, and outbound-call routes are blocked unless `ALLOW_PAID_TELEPHONY_ACTIONS=1` is set in `backend/.env`. Leave it as `0` for normal SDK smoke testing.
+Purchase and outbound-call routes are blocked unless `ALLOW_PAID_TELEPHONY_ACTIONS=1` is set in `backend/.env`. Leave it as `0` for normal SDK smoke testing.
