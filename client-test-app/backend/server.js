@@ -26,7 +26,7 @@ let config = {
   telephonyApiUrl: process.env.UVA_TELEPHONY_API_URL || 'http://localhost:8000',
   tenantId: process.env.UVA_TENANT_ID || '',
   hmacSecret: process.env.UVA_HMAC_SECRET || '',
-  telnyxApiKey: '',  // entered at runtime only — never in .env
+  telnyxApiKey: process.env.TELNYX_API_KEY || '',
 };
 
 // ─── SDK client factory helpers ─────────────────────────────────────────────
