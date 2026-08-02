@@ -168,6 +168,149 @@ async function listAgents() {
   return normalizeCollection(result, ['agents', 'data', 'items']);
 }
 
+function toSnakeCaseValue(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => toSnakeCaseValue(item));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+      toSnakeCaseValue(item),
+    ]),
+  );
+}
+
+function previewText(value, limit = 360) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function detectResponseKind(contentType, text) {
+  const normalizedType = String(contentType || '').toLowerCase();
+  const trimmed = String(text || '').trim().toLowerCase();
+  if (normalizedType.includes('application/json')) return 'json';
+  if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) return 'html';
+  if (!trimmed) return 'empty';
+  return 'text';
+}
+
+function inferLikelyCauses({ responseKind, status, payloadPreview, parsedBody }) {
+  const hints = [];
+  const detailText = JSON.stringify(parsedBody || payloadPreview || '').toLowerCase();
+  if (responseKind === 'html' && status === 502) {
+    hints.push('The hosted telephony API or its upstream service returned an HTML 502 page.');
+  }
+  if (detailText.includes('insufficient') || detailText.includes('balance')) {
+    hints.push('The upstream response mentions balance or insufficient funds.');
+  }
+  if (detailText.includes('verified number') || detailText.includes('trial')) {
+    hints.push('The upstream response mentions trial-account or verified-number restrictions.');
+  }
+  if (detailText.includes('caller') || detailText.includes('origination') || detailText.includes('d35')) {
+    hints.push('The upstream response suggests caller ID / origination number validation failed.');
+  }
+  if (detailText.includes('livekit') || detailText.includes('sip')) {
+    hints.push('The upstream response points at LiveKit or SIP setup.');
+  }
+  if (!hints.length) {
+    hints.push('No structured provider error was returned; inspect the hosted telephony API logs for the same timestamp.');
+  }
+  return hints;
+}
+
+async function probeTelephonyUpstream({ action, path, body = {}, method = 'POST' }) {
+  const url = `${config.telephonyApiUrl.replace(/\/$/, '')}${path}`;
+  const response = await fetch(url, {
+    method,
+    headers: createMachineHeaders(action, body),
+    body: method === 'GET' ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+  let parsedBody = null;
+  try {
+    parsedBody = text ? JSON.parse(text) : null;
+  } catch {
+    parsedBody = null;
+  }
+  const payloadPreview = previewText(text);
+  const responseKind = detectResponseKind(contentType, text);
+  return {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    url,
+    contentType,
+    responseKind,
+    payloadPreview,
+    parsedBody,
+    likelyCauses: inferLikelyCauses({ responseKind, status: response.status, payloadPreview, parsedBody }),
+  };
+}
+
+async function collectTelephonyDiagnostics({ fromNumberId = '', requestedAgentId = '', toNumber = '' }) {
+  const [numbers, agents, readiness, connectionProbe] = await Promise.all([
+    listManagedNumbers(),
+    listAgents(),
+    getTelephonyClient().getOutboundReadiness().catch((error) => ({
+      ok: false,
+      error: error?.message || String(error),
+      code: error?.code || null,
+    })),
+    probeTelephonyUpstream({
+      action: 'telephony.telnyx_connection.status',
+      path: '/machine/telephony/telnyx/connection',
+      body: {},
+      method: 'GET',
+    }).catch((error) => ({
+      ok: false,
+      status: 0,
+      statusText: 'probe_failed',
+      responseKind: 'text',
+      payloadPreview: previewText(error?.message || String(error)),
+      parsedBody: null,
+      likelyCauses: ['The local backend could not complete a signed probe to the telephony API.'],
+    })),
+  ]);
+
+  const selectedNumber = numbers.find((item) => item.id === fromNumberId) || null;
+  const assignedAgent = selectedNumber
+    ? agents.find((item) => item.id === selectedNumber.assigned_agent_id) || null
+    : null;
+
+  return {
+    telephonyApiUrl: config.telephonyApiUrl,
+    paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
+    readiness,
+    connectionProbe,
+    requested: {
+      fromNumberId,
+      requestedAgentId,
+      toNumber,
+    },
+    selectedNumber: selectedNumber
+      ? {
+          id: selectedNumber.id,
+          e164Number: selectedNumber.e164_number || selectedNumber.phone_number || null,
+          assignedAgentId: selectedNumber.assigned_agent_id || null,
+          routingStatus: selectedNumber.routing_status || null,
+          provisioningStatus: selectedNumber.provisioning_status || null,
+        }
+      : null,
+    assignedAgent: assignedAgent
+      ? {
+          id: assignedAgent.id,
+          name: assignedAgent.name || null,
+        }
+      : null,
+    notes: [
+      'Inbound simulation only proves assignment and routing state inside the platform.',
+      'Real PSTN inbound/outbound still depends on the hosted telephony API, LiveKit, and Telnyx provider behavior.',
+      'Trial-account or verified-number restrictions can only be confirmed when the upstream provider returns a structured error.',
+    ],
+  };
+}
+
 // ─── Error helpers ───────────────────────────────────────────────────────────
 function handleError(res, error) {
   console.error('[UVA Test App Error]', error?.message || error);
@@ -739,7 +882,6 @@ app.post('/api/outbound-call', async (req, res) => {
     if (!agentId || !fromNumberId || !toNumber) {
       return res.status(400).json({ ok: false, message: 'agentId, fromNumberId, and toNumber are required' });
     }
-    // E.164 validation
     if (!/^\+[1-9]\d{6,14}$/.test(toNumber)) {
       return res.status(400).json({ ok: false, message: 'toNumber must be in E.164 format (e.g. +12125551234)' });
     }
@@ -782,6 +924,59 @@ app.post('/api/outbound-call', async (req, res) => {
       agentName: selectedAgent?.name || null,
       requestedAgentId: agentId,
     });
+  } catch (error) {
+    if (error instanceof AwaazLabsUvaTelephonyError && (error.code === 'telephony_invalid_response' || error.status === 502)) {
+      const diagnosticBody = {
+        agent_id: req.body?.agentId || '',
+        from_number_id: req.body?.fromNumberId || '',
+        to_number: req.body?.toNumber || '',
+        recipient: req.body?.recipient || 'Test Recipient',
+        context: toSnakeCaseValue(req.body?.context || { source: 'uva-client-test-app' }),
+        idempotency_key: randomUUID(),
+      };
+      const [upstreamProbe, diagnostics] = await Promise.all([
+        probeTelephonyUpstream({
+          action: 'telephony.outbound_calls.create',
+          path: '/machine/telephony/outbound-calls',
+          body: diagnosticBody,
+          method: 'POST',
+        }).catch((probeError) => ({
+          ok: false,
+          status: 0,
+          statusText: 'probe_failed',
+          responseKind: 'text',
+          payloadPreview: previewText(probeError?.message || String(probeError)),
+          parsedBody: null,
+          likelyCauses: ['The local backend could not complete the raw outbound diagnostic probe.'],
+        })),
+        collectTelephonyDiagnostics({
+          fromNumberId: req.body?.fromNumberId || '',
+          requestedAgentId: req.body?.agentId || '',
+          toNumber: req.body?.toNumber || '',
+        }).catch(() => null),
+      ]);
+      return res.status(502).json({
+        ok: false,
+        code: error.code,
+        message: 'Telephony API returned a non-JSON or gateway response during outbound call setup.',
+        detail: {
+          diagnostics,
+          upstreamProbe,
+        },
+      });
+    }
+    handleError(res, error);
+  }
+});
+
+app.get('/api/telephony/diagnostics', async (req, res) => {
+  try {
+    const diagnostics = await collectTelephonyDiagnostics({
+      fromNumberId: String(req.query.numberId || ''),
+      requestedAgentId: String(req.query.agentId || ''),
+      toNumber: String(req.query.toNumber || ''),
+    });
+    res.json({ ok: true, diagnostics });
   } catch (error) {
     handleError(res, error);
   }
