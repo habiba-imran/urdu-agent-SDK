@@ -162,7 +162,8 @@ def list_voices():
         with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
             rows = conn.execute(
                 """
-                SELECT id, display_name, gender, preview_url, artwork_url, enabled
+                SELECT id, display_name, gender, preview_url, artwork_url, enabled,
+                       provider, language
                 FROM voices
                 WHERE enabled = true
                 ORDER BY display_name ASC
@@ -177,6 +178,11 @@ def list_voices():
                         "previewUrl": r[3],
                         "artworkUrl": r[4],
                         "enabled": bool(r[5]),
+                        # Additive (ADR-036 voice-catalogue expansion): lets multi-provider
+                        # consumers group/filter voices by provider+language client-side. Existing
+                        # consumers (e.g. awaaz-labs-voice-catalogue) ignore unknown fields.
+                        "provider": r[6],
+                        "language": r[7],
                     }
                     for r in rows
                 ]

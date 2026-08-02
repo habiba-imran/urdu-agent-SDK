@@ -59,9 +59,40 @@ export interface UpdateAgentParams {
     ttsVoiceId?: string;
     ttsOptions?: Record<string, unknown>;
 }
+/** Shape returned by GET /machine/provider-capabilities (== GET /portal/provider-capabilities),
+ * see tenant_portal_api/provider_capabilities.py::get_public_capabilities. Only ever contains
+ * `enabled` combinations - a provider absent from a language's entry is either unsupported for
+ * that language or not yet enabled; both cases are represented the same way here (absence), so
+ * always check for key presence before offering it as an option. */
+export interface ProviderCapabilityEntry {
+    state: 'enabled';
+    models?: string[];
+    defaultModel?: string;
+    voices?: string[];
+    defaultVoice?: string | null;
+}
+export interface LanguageCapabilities {
+    label: string;
+    stt?: Record<string, ProviderCapabilityEntry>;
+    llm?: Record<string, ProviderCapabilityEntry>;
+    tts?: Record<string, ProviderCapabilityEntry>;
+}
+export interface ProviderCapabilities {
+    languages: Record<string, LanguageCapabilities>;
+}
 export declare class AwaazLabsUvaAgentsError extends Error {
     readonly status: number;
-    constructor(status: number, message: string);
+    /** Stable machine-readable code from tenant_portal_api's ProviderValidationError, e.g.
+     * `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`,
+     * `unsupported_voice_for_provider`. Undefined for non-provider-validation errors (auth
+     * failures, 404s, etc.), which only ever carry a plain string detail. */
+    readonly code?: string | undefined;
+    constructor(status: number, message: string, 
+    /** Stable machine-readable code from tenant_portal_api's ProviderValidationError, e.g.
+     * `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`,
+     * `unsupported_voice_for_provider`. Undefined for non-provider-validation errors (auth
+     * failures, 404s, etc.), which only ever carry a plain string detail. */
+    code?: string | undefined);
 }
 export { AwaazLabsUvaAgentsError as UvaAgentsError };
 export declare class AwaazLabsUvaAgentsClient {
@@ -71,5 +102,9 @@ export declare class AwaazLabsUvaAgentsClient {
     listAgents(): Promise<AgentRecord[]>;
     updateAgent(agentId: string, params: UpdateAgentParams): Promise<AgentRecord>;
     private request;
+    /** GET /machine/provider-capabilities (Phase 4, ADR-036) - which (language, layer, provider)
+     * combinations are currently `enabled` and selectable, plus each TTS provider's own voice IDs.
+     * Use this to build cascading provider/model/voice pickers instead of hardcoding options. */
+    getProviderCapabilities(): Promise<ProviderCapabilities>;
 }
 export { AwaazLabsUvaAgentsClient as UvaAgentsClient };
