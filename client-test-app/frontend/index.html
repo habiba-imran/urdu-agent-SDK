@@ -3,610 +3,587 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UVA Client Test App - AwaazLabs</title>
-  <meta name="description" content="Test the AwaazLabs UVA SDK - Telnyx number management, agent creation, and provider testing." />  <link rel="stylesheet" href="style.css" />
+  <title>UVA Client Test App</title>
+  <meta
+    name="description"
+    content="Agent-first Telnyx and UVA telephony test app for assigning numbers to agents and validating call flows."
+  />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
-<!-- ═══════════════════════════════════════════════════════════ HEADER -->
-<header class="app-header">
-  <div class="app-logo">
-    <div class="app-logo-icon">🎙️</div>
-    <div>
-      <div class="app-logo-text">UVA Client Test App</div>
-      <span class="app-logo-sub">AwaazLabs SDK Integration</span>
-    </div>
-  </div>
-  <div class="header-status">
-    <span id="header-connection-badge" class="badge badge-gray">
-      <span class="dot"></span> Not configured
-    </span>
-    <span id="header-backend-badge" class="badge badge-gray" style="margin-left:0.5rem">
-      <span class="dot"></span> Backend�
-    </span>
-  </div>
-</header>
-
-<!-- ═══════════════════════════════════════════════════════ TAB NAV -->
-<nav class="tab-nav">
-  <button class="tab-btn active" data-tab="setup">
-    <span class="tab-icon">⚙️</span> Setup &amp; Config
-  </button>
-  <button class="tab-btn" data-tab="numbers">
-    <span class="tab-icon">📞</span> Phone Numbers
-  </button>
-  <button class="tab-btn" data-tab="agents">
-    <span class="tab-icon">🤖</span> Agents
-  </button>
-  <button class="tab-btn" data-tab="providertest">
-    <span class="tab-icon">🧪</span> Provider Test
-  </button>
-  <button class="tab-btn" data-tab="voice">
-    <span class="tab-icon">🎤</span> Browser Voice
-  </button>
-  <button class="tab-btn" data-tab="calllog">
-    <span class="tab-icon">📋</span> Call Log
-  </button>
-</nav>
-
-<!-- ═══════════════════════════════════════════════════ MAIN CONTENT -->
-<main class="main-content">
-
-  <!-- ══════════════════════════════════════════ TAB: SETUP -->
-  <section id="tab-setup" class="tab-panel active">
-    <h1 class="section-title">Setup &amp; Configuration</h1>
-    <p class="section-sub">Configure your tenant credentials and Telnyx API key. Secrets stay in the backend � this form just sends them to your local server.</p>
-
-    <div class="grid-2">
-      <!-- Config Card -->
-      <div class="card">
-        <div class="card-title">🔑 Backend Configuration</div>
-        <div class="info-box">
-          ℹ️ These values are sent to your local backend at <strong>localhost:3001</strong> and stored in memory only. They are never sent to the browser again.
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Tenant Portal API URL</label>
-          <input type="url" id="cfg-api-url" class="form-input" placeholder="http://localhost:8000" value="http://localhost:8000" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Telephony API URL</label>
-          <input type="url" id="cfg-telephony-url" class="form-input" placeholder="http://localhost:8000" value="http://localhost:8000" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Control Plane Session URL</label>
-          <input type="url" id="cfg-session-url" class="form-input" placeholder="http://localhost:7860" value="http://localhost:7860" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Publishable Key</label>
-          <input type="text" id="cfg-publishable-key" class="form-input" placeholder="pk_..." />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Tenant ID</label>
-          <input type="text" id="cfg-tenant-id" class="form-input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">HMAC Secret</label>
-          <input type="password" id="cfg-hmac-secret" class="form-input" placeholder="Your tenant HMAC secret" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Telnyx API Key</label>
-          <input type="password" id="cfg-telnyx-key" class="form-input" placeholder="<telnyx-api-key>" />
-        </div>
-        <div class="flex gap-1 mt-2">
-          <button id="btn-save-config" class="btn btn-primary w-full">
-            <span>💾</span> Save Configuration
-          </button>
-        </div>
-      </div>
-
-      <!-- Status Card -->
-      <div class="card">
-        <div class="card-title">📡 Connection Status</div>
-
-        <div class="readiness-list" id="setup-status-list">
-          <div class="readiness-item pending" id="status-backend">
-            <span class="readiness-icon">⏳</span>
-            <div>
-              <div class="readiness-label">Backend server (localhost:3001)</div>
-              <div class="readiness-detail">Checking�</div>
-            </div>
-          </div>
-          <div class="readiness-item pending" id="status-config">
-            <span class="readiness-icon">⏳</span>
-            <div>
-              <div class="readiness-label">Tenant credentials</div>
-              <div class="readiness-detail">Not configured</div>
-            </div>
-          </div>
-          <div class="readiness-item pending" id="status-telnyx">
-            <span class="readiness-icon">⏳</span>
-            <div>
-              <div class="readiness-label">Telnyx account connection</div>
-              <div class="readiness-detail">Not checked</div>
-            </div>
-          </div>
-          <div class="readiness-item pending" id="status-portal">
-            <span class="readiness-icon">⏳</span>
-            <div>
-              <div class="readiness-label">Portal API reachable</div>
-              <div class="readiness-detail">Not checked</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex gap-1 mt-3">
-          <button id="btn-check-status" class="btn btn-secondary" style="flex:1">
-            <span>🔄</span> Check Status
-          </button>
-          <button id="btn-connect-telnyx" class="btn btn-primary" style="flex:1">
-            <span>🔗</span> Connect Telnyx
-          </button>
-        </div>
-
-        <div class="mt-2">
-          <div class="card-title" style="font-size:0.78rem; margin-bottom:0.5rem">Capabilities endpoint</div>
-          <div id="caps-summary" class="code-block" style="font-size:0.73rem; max-height:120px; overflow-y:auto">
-            (load after configuring)
-          </div>
-          <button id="btn-load-caps" class="btn btn-secondary btn-sm mt-1 w-full">Load Provider Capabilities</button>
-        </div>
+  <header class="app-header">
+    <div class="app-logo">
+      <div class="app-logo-icon">UVA</div>
+      <div>
+        <div class="app-logo-text">Client Test Workspace</div>
+        <span class="app-logo-sub">Agent-specific number assignment, inbound routing, and outbound calling</span>
       </div>
     </div>
-  </section>
-
-  <!-- ════════════════════════════════════════ TAB: PHONE NUMBERS -->
-  <section id="tab-numbers" class="tab-panel">
-    <h1 class="section-title">Phone Numbers</h1>
-    <p class="section-sub">Search for available numbers, purchase them, and manage your Telnyx-owned numbers.</p>
-
-    <div class="grid-2">
-      <!-- Search -->
-      <div class="card">
-        <div class="card-title">🔍 Search Available Numbers</div>
-        <div class="form-group">
-          <label class="form-label">Country</label>
-          <select id="num-country" class="form-select">
-            <option value="US">🇺🇸 United States (US)</option>
-            <option value="GB">🇬🇧 United Kingdom (GB)</option>
-            <option value="CA">🇨🇦 Canada (CA)</option>
-            <option value="AU">🇦🇺 Australia (AU)</option>
-            <option value="PK">🇵🇰 Pakistan (PK)</option>
-            <option value="IN">🇮🇳 India (IN)</option>
-            <option value="AE">🇦🇪 UAE (AE)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Area Code <span style="color:var(--text-muted)">(optional)</span></label>
-          <input type="text" id="num-area-code" class="form-input" placeholder="e.g. 415, 212, 650" maxlength="6" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Result Limit</label>
-          <select id="num-limit" class="form-select">
-            <option value="5">5 results</option>
-            <option value="10" selected>10 results</option>
-            <option value="25">25 results</option>
-          </select>
-        </div>
-        <button id="btn-search-numbers" class="btn btn-primary w-full">
-          <span>🔍</span> Search Numbers
-        </button>
-      </div>
-
-      <!-- Managed Numbers -->
-      <div class="card">
-        <div class="card-title">📱 My Managed Numbers</div>
-        <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:1rem">Numbers imported or synced into the UVA platform.</p>
-        <div class="flex gap-1 mb-2">
-          <button id="btn-sync-numbers" class="btn btn-secondary btn-sm" style="flex:1">
-            <span>🔄</span> Sync from Telnyx
-          </button>
-          <button id="btn-refresh-managed" class="btn btn-secondary btn-sm" style="flex:1">
-            <span>📋</span> List Managed
-          </button>
-        </div>
-        <div id="managed-numbers-list">
-          <div class="empty-state">
-            <div class="empty-state-icon">📭</div>
-            <div class="empty-state-title">No managed numbers</div>
-            <div class="empty-state-text">Sync from Telnyx or purchase a number</div>
-          </div>
-        </div>
-      </div>
+    <div class="header-status">
+      <span id="header-connection-badge" class="badge badge-gray">
+        <span class="dot"></span> Telnyx not configured
+      </span>
+      <span id="header-backend-badge" class="badge badge-gray">
+        <span class="dot"></span> Backend offline
+      </span>
     </div>
+  </header>
 
-    <!-- Search results -->
-    <div id="search-results-section" style="display:none; margin-top:1.5rem;">
-      <div class="flex justify-between items-center mb-1">
-        <h2 class="section-title" style="font-size:1rem; margin-bottom:0">Available Numbers</h2>
-        <span id="search-result-count" class="badge badge-blue"></span>
-      </div>
-      <div class="number-grid" id="search-results-grid"></div>
-    </div>
-  </section>
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="setup">1. Setup</button>
+    <button class="tab-btn" data-tab="workspace">2. Agent Workspace</button>
+    <button class="tab-btn" data-tab="activity">3. Activity</button>
+  </nav>
 
-  <!-- ══════════════════════════════════════════ TAB: AGENTS -->
-  <section id="tab-agents" class="tab-panel">
-    <h1 class="section-title">Agents</h1>
-    <p class="section-sub">Create and manage voice agents with custom STT / LLM / TTS provider combinations.</p>
-
-    <div class="grid-2">
-      <!-- Create Agent -->
-      <div class="card">
-        <div class="card-title">➕ Create Agent</div>
-        <div class="form-group">
-          <label class="form-label">Agent Name</label>
-          <input type="text" id="agent-name" class="form-input" placeholder="e.g. Support Agent" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">System Prompt</label>
-          <textarea id="agent-prompt" class="form-input" placeholder="Answer customer questions in a concise, helpful way."></textarea>
-        </div>
-        <div class="grid-2" style="gap:0.75rem">
-          <div class="form-group">
-            <label class="form-label">Language</label>
-            <select id="agent-language" class="form-select">
-              <option value="">Platform default</option>
-              <option value="ur">Urdu (ur)</option>
-              <option value="en">English (en)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">LLM Model</label>
-            <select id="agent-llm-model" class="form-select">
-              <option value="">Platform default</option>
-              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid-3" style="gap:0.75rem">
-          <div class="form-group">
-            <label class="form-label">STT Provider</label>
-            <select id="agent-stt" class="form-select">
-              <option value="">Default</option>
-              <option value="gladia">Gladia</option>
-              <option value="deepgram">Deepgram</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">LLM Provider</label>
-            <select id="agent-llm" class="form-select">
-              <option value="">Default</option>
-              <option value="gemini">Gemini</option>
-              <option value="groq">Groq</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">TTS Provider</label>
-            <select id="agent-tts" class="form-select">
-              <option value="">Default</option>
-              <option value="uplift">Uplift</option>
-              <option value="cartesia">Cartesia</option>
-              <option value="elevenlabs">ElevenLabs</option>
-              <option value="rime">Rime</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">TTS Voice ID <span style="color:var(--text-muted)">(optional)</span></label>
-          <input type="text" id="agent-voice-id" class="form-input" placeholder="voice_id from catalog" />
-        </div>
-        <button id="btn-create-agent" class="btn btn-primary w-full mt-1">
-          <span>➕</span> Create Agent
-        </button>
-      </div>
-
-      <!-- Agents List -->
-      <div class="card">
-        <div class="flex justify-between items-center mb-2">
-          <div class="card-title" style="margin-bottom:0">🤖 My Agents</div>
-          <button id="btn-refresh-agents" class="btn btn-secondary btn-sm">🔄 Refresh</button>
-        </div>
-        <div id="agents-list">
-          <div class="loading-row"><div class="spinner"></div><br/>Loading agents�</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ══════════════════════════════════════ TAB: PROVIDER TEST -->
-  <section id="tab-providertest" class="tab-panel">
-    <h1 class="section-title">Provider Test</h1>
-    <p class="section-sub">Bind a managed number to the agent you want, configure inbound routing, simulate inbound dispatch, and then place outbound calls from that same agent-bound number.</p>
-
-    <div class="grid-2">
-      <!-- Assign Number -->
-      <div class="card">
-        <div class="card-title">🔗 Assign Number to Agent</div>
-        <div class="form-group">
-          <label class="form-label">Managed Number ID</label>
-          <select id="pt-number-id" class="form-select">
-            <option value="">� select a managed number �</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Agent ID</label>
-          <select id="pt-agent-id" class="form-select">
-            <option value="">� select an agent �</option>
-          </select>
-        </div>
-        <button id="btn-assign-number" class="btn btn-primary w-full">
-          <span>🔗</span> Assign Number
-        </button>
-        <div class="mt-2">
-          <button id="btn-configure-routing" class="btn btn-secondary w-full">
-            <span>🗺️</span> Configure Number Routing
-          </button>
-        </div>
-      </div>
-
-      <!-- Outbound Readiness -->
-      <div class="card">
-        <div class="flex justify-between items-center mb-2">
-          <div class="card-title" style="margin-bottom:0">✅ Outbound Readiness</div>
-          <button id="btn-check-readiness" class="btn btn-secondary btn-sm">🔍 Check</button>
-        </div>
-        <div id="readiness-results">
-          <div class="empty-state">
-            <div class="empty-state-icon">🔍</div>
-            <div class="empty-state-title">Not checked yet</div>
-            <div class="empty-state-text">Click "Check" to run readiness verification</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card mt-3">
-      <div class="card-title">Inbound Test</div>
-      <div class="info-box">
-        Validate which agent an inbound call would reach. This is a local routing simulation. A real inbound call still requires dialing the number from an external phone.
-      </div>
-      <div class="grid-2" style="gap:1rem">
-        <div class="form-group">
-          <label class="form-label">Inbound Number</label>
-          <select id="inbound-number-id" class="form-select">
-            <option value="">-- select a managed number --</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Expected Agent</label>
-          <select id="inbound-agent-id" class="form-select">
-            <option value="">-- select an agent --</option>
-          </select>
-        </div>
-      </div>
-      <button id="btn-simulate-inbound" class="btn btn-primary">
-        <span>Sim</span> Simulate Inbound Dispatch
-      </button>
-      <div id="inbound-result" style="display:none; margin-top:1rem"></div>
-    </div>
-
-    <!-- SIP Setup -->
-    <div class="card mt-3">
-      <div class="card-title">🔧 SIP & Outbound Voice Profile Setup</div>
-      <div class="info-box">
-        ℹ️ These advanced settings are optional for testing. Configure SIP when you need inbound call routing through the platform's SIP infrastructure.
-      </div>
-      <div class="grid-2" style="gap:1rem">
+  <main class="main-content">
+    <section id="tab-setup" class="tab-panel active">
+      <div class="hero-card">
         <div>
-          <h3 style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-bottom:0.75rem">SIP Connection</h3>
+          <p class="eyebrow">Step 1</p>
+          <h1 class="hero-title">Connect the tenant and Telnyx account</h1>
+          <p class="hero-copy">
+            This app keeps secrets in the local backend only. Once the tenant and Telnyx key are set,
+            the rest of the workspace is centered on attaching numbers to a specific agent.
+          </p>
+        </div>
+        <div class="journey">
+          <div class="journey-step is-active">Save tenant credentials</div>
+          <div class="journey-step">Connect Telnyx</div>
+          <div class="journey-step">Move to agent workspace</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Backend Configuration</div>
+          <div class="info-box">
+            Values are posted to <strong>localhost:3001</strong> and stored in backend memory only.
+          </div>
+
           <div class="form-group">
-            <label class="form-label">SIP FQDN</label>
-            <input type="text" id="sip-fqdn" class="form-input" placeholder="sip.example.com" />
+            <label class="form-label">Tenant Portal API URL</label>
+            <input type="url" id="cfg-api-url" class="form-input" placeholder="http://localhost:8000" value="http://localhost:8000" />
           </div>
           <div class="form-group">
-            <label class="form-label">SIP Username</label>
-            <input type="text" id="sip-username" class="form-input" placeholder="sipuser" />
+            <label class="form-label">Telephony API URL</label>
+            <input type="url" id="cfg-telephony-url" class="form-input" placeholder="http://localhost:8000" value="http://localhost:8000" />
           </div>
           <div class="form-group">
-            <label class="form-label">SIP Secret</label>
-            <input type="password" id="sip-secret" class="form-input" placeholder="��������" />
+            <label class="form-label">Control Plane Session URL</label>
+            <input type="url" id="cfg-session-url" class="form-input" placeholder="http://localhost:7860" value="http://localhost:7860" />
           </div>
-          <div class="flex gap-1">
-            <button id="btn-upsert-sip" class="btn btn-secondary btn-sm" style="flex:1">💾 Save SIP</button>
-            <button id="btn-verify-sip" class="btn btn-secondary btn-sm" style="flex:1">✅ Verify</button>
+          <div class="form-group">
+            <label class="form-label">Publishable Key</label>
+            <input type="text" id="cfg-publishable-key" class="form-input" placeholder="pk_..." />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tenant ID</label>
+            <input type="text" id="cfg-tenant-id" class="form-input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">HMAC Secret</label>
+            <input type="password" id="cfg-hmac-secret" class="form-input" placeholder="Tenant HMAC secret" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Telnyx API Key</label>
+            <input type="password" id="cfg-telnyx-key" class="form-input" placeholder="telnyx key" />
+          </div>
+          <button id="btn-save-config" class="btn btn-primary w-full">Save Configuration</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Readiness</div>
+          <div class="readiness-list" id="setup-status-list">
+            <div class="readiness-item pending" id="status-backend">
+              <span class="readiness-icon">...</span>
+              <div>
+                <div class="readiness-label">Local backend</div>
+                <div class="readiness-detail">Checking localhost:3001</div>
+              </div>
+            </div>
+            <div class="readiness-item pending" id="status-config">
+              <span class="readiness-icon">...</span>
+              <div>
+                <div class="readiness-label">Tenant credentials</div>
+                <div class="readiness-detail">Not configured</div>
+              </div>
+            </div>
+            <div class="readiness-item pending" id="status-telnyx">
+              <span class="readiness-icon">...</span>
+              <div>
+                <div class="readiness-label">Telnyx connection</div>
+                <div class="readiness-detail">Not checked</div>
+              </div>
+            </div>
+            <div class="readiness-item pending" id="status-portal">
+              <span class="readiness-icon">...</span>
+              <div>
+                <div class="readiness-label">Portal reachability</div>
+                <div class="readiness-detail">Not checked</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="button-row mt-3">
+            <button id="btn-check-status" class="btn btn-secondary">Check Status</button>
+            <button id="btn-connect-telnyx" class="btn btn-primary">Connect Telnyx</button>
+          </div>
+
+          <div class="card mt-3 compact-card">
+            <div class="card-title">Provider Capabilities</div>
+            <div id="caps-summary" class="code-block">(load after configuring)</div>
+            <button id="btn-load-caps" class="btn btn-secondary w-full">Load Capabilities</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section id="tab-workspace" class="tab-panel">
+      <div class="hero-card">
         <div>
-          <h3 style="font-size:0.85rem; font-weight:600; color:var(--text-secondary); margin-bottom:0.75rem">Outbound Voice Profile</h3>
+          <p class="eyebrow">Step 2</p>
+          <h1 class="hero-title">Attach a number to the exact agent you want</h1>
+          <p class="hero-copy">
+            Numbers are still part of the tenant inventory, but this workspace is built around the
+            agent assignment that makes inbound routing and outbound calls usable.
+          </p>
+        </div>
+        <div class="journey">
+          <div class="journey-step">Buy or sync number</div>
+          <div class="journey-step is-active">Attach number to agent</div>
+          <div class="journey-step">Test inbound and outbound</div>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="stack">
+          <div class="card">
+            <div class="card-title">Phone Numbers</div>
+            <p class="section-sub">Search, purchase, sync, and review managed numbers before assigning them.</p>
+            <div class="split-fields">
+              <div class="form-group">
+                <label class="form-label">Country</label>
+                <select id="num-country" class="form-select">
+                  <option value="US">United States (US)</option>
+                  <option value="GB">United Kingdom (GB)</option>
+                  <option value="CA">Canada (CA)</option>
+                  <option value="AU">Australia (AU)</option>
+                  <option value="PK">Pakistan (PK)</option>
+                  <option value="IN">India (IN)</option>
+                  <option value="AE">UAE (AE)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Area Code</label>
+                <input type="text" id="num-area-code" class="form-input" placeholder="415, 212, 650" maxlength="6" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Result Limit</label>
+                <select id="num-limit" class="form-select">
+                  <option value="5">5</option>
+                  <option value="10" selected>10</option>
+                  <option value="25">25</option>
+                </select>
+              </div>
+            </div>
+            <div class="button-row">
+              <button id="btn-search-numbers" class="btn btn-primary">Search Numbers</button>
+              <button id="btn-sync-numbers" class="btn btn-secondary">Sync from Telnyx</button>
+              <button id="btn-refresh-managed" class="btn btn-secondary">Refresh Managed</button>
+            </div>
+            <div id="search-results-section" class="mt-3" style="display:none;">
+              <div class="flex justify-between items-center mb-1">
+                <h2 class="section-title section-title-sm">Available Numbers</h2>
+                <span id="search-result-count" class="badge badge-blue"></span>
+              </div>
+              <div class="number-grid" id="search-results-grid"></div>
+            </div>
+            <div class="mt-3">
+              <div class="flex justify-between items-center mb-1">
+                <h2 class="section-title section-title-sm">Managed Numbers</h2>
+                <span class="badge badge-gray">Tenant inventory</span>
+              </div>
+              <div id="managed-numbers-list">
+                <div class="empty-state">
+                  <div class="empty-state-title">No managed numbers yet</div>
+                  <div class="empty-state-text">Sync existing Telnyx numbers or purchase a new one first.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Agents</div>
+            <p class="section-sub">Create the target agent first, then bind a number directly to that agent.</p>
+            <div class="grid-2">
+              <div>
+                <div class="form-group">
+                  <label class="form-label">Agent Name</label>
+                  <input type="text" id="agent-name" class="form-input" placeholder="Support agent" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">System Prompt</label>
+                  <textarea id="agent-prompt" class="form-input" placeholder="Answer clearly, stay concise, and help the caller."></textarea>
+                </div>
+                <div class="split-fields">
+                  <div class="form-group">
+                    <label class="form-label">Language</label>
+                    <select id="agent-language" class="form-select">
+                      <option value="">Platform default</option>
+                      <option value="ur">Urdu (ur)</option>
+                      <option value="en">English (en)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">LLM Model</label>
+                    <select id="agent-llm-model" class="form-select">
+                      <option value="">Platform default</option>
+                      <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                      <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-3">
+                  <div class="form-group">
+                    <label class="form-label">STT Provider</label>
+                    <select id="agent-stt" class="form-select">
+                      <option value="">Default</option>
+                      <option value="gladia">Gladia</option>
+                      <option value="deepgram">Deepgram</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">LLM Provider</label>
+                    <select id="agent-llm" class="form-select">
+                      <option value="">Default</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="groq">Groq</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">TTS Provider</label>
+                    <select id="agent-tts" class="form-select">
+                      <option value="">Default</option>
+                      <option value="uplift">Uplift</option>
+                      <option value="cartesia">Cartesia</option>
+                      <option value="elevenlabs">ElevenLabs</option>
+                      <option value="rime">Rime</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">TTS Voice ID</label>
+                  <input type="text" id="agent-voice-id" class="form-input" placeholder="required by current test flow" />
+                </div>
+                <button id="btn-create-agent" class="btn btn-primary w-full">Create Agent</button>
+              </div>
+              <div>
+                <div class="flex justify-between items-center mb-2">
+                  <div class="card-title flush-title">Current Agents</div>
+                  <button id="btn-refresh-agents" class="btn btn-secondary btn-sm">Refresh</button>
+                </div>
+                <div id="agents-list">
+                  <div class="loading-row"><div class="spinner"></div><br/>Loading agents...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="card accent-card">
+            <div class="card-title">Agent Number Attachment</div>
+            <p class="section-sub">
+              This is the main flow: select a managed number, select an agent, attach them, then configure routing.
+            </p>
+            <div class="form-group">
+              <label class="form-label">Managed Number</label>
+              <select id="pt-number-id" class="form-select">
+                <option value="">-- select a managed number --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Target Agent</label>
+              <select id="pt-agent-id" class="form-select">
+                <option value="">-- select an agent --</option>
+              </select>
+            </div>
+            <div class="button-row">
+              <button id="btn-assign-number" class="btn btn-primary">Attach to Agent</button>
+              <button id="btn-configure-routing" class="btn btn-secondary">Configure Routing</button>
+              <button id="btn-check-readiness" class="btn btn-secondary">Check Readiness</button>
+            </div>
+            <div id="readiness-results" class="mt-3">
+              <div class="empty-state">
+                <div class="empty-state-title">No readiness check yet</div>
+                <div class="empty-state-text">Attach a number, configure routing, then check readiness.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Inbound Test</div>
+            <div class="info-box">
+              This validates which agent the current managed number would resolve to. It is a local routing simulation, not a paid PSTN call.
+            </div>
+            <div class="split-fields">
+              <div class="form-group">
+                <label class="form-label">Inbound Number</label>
+                <select id="inbound-number-id" class="form-select">
+                  <option value="">-- select a managed number --</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Expected Agent</label>
+                <select id="inbound-agent-id" class="form-select">
+                  <option value="">-- select an agent --</option>
+                </select>
+              </div>
+            </div>
+            <button id="btn-simulate-inbound" class="btn btn-primary">Simulate Inbound</button>
+            <div id="inbound-result" style="display:none; margin-top:1rem"></div>
+          </div>
+
+          <details class="details-card">
+            <summary>Advanced telephony infrastructure</summary>
+            <div class="details-body">
+              <div class="grid-2">
+                <div class="card compact-card">
+                  <div class="card-title">SIP Connection</div>
+                  <div class="form-group">
+                    <label class="form-label">SIP FQDN</label>
+                    <input type="text" id="sip-fqdn" class="form-input" placeholder="sip.example.com" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">SIP Username</label>
+                    <input type="text" id="sip-username" class="form-input" placeholder="sipuser" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">SIP Secret</label>
+                    <input type="password" id="sip-secret" class="form-input" placeholder="secret" />
+                  </div>
+                  <div class="button-row">
+                    <button id="btn-upsert-sip" class="btn btn-secondary">Save SIP</button>
+                    <button id="btn-verify-sip" class="btn btn-secondary">Verify SIP</button>
+                  </div>
+                </div>
+
+                <div class="card compact-card">
+                  <div class="card-title">Outbound Voice Profile</div>
+                  <div class="form-group">
+                    <label class="form-label">Allowed Destinations</label>
+                    <input type="text" id="ovp-destinations" class="form-input" placeholder="US, GB, CA" value="US" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Concurrency Limit</label>
+                    <input type="number" id="ovp-concurrency" class="form-input" placeholder="2" value="2" min="1" max="100" />
+                  </div>
+                  <div class="button-row">
+                    <button id="btn-upsert-ovp" class="btn btn-secondary">Save Profile</button>
+                    <button id="btn-verify-ovp" class="btn btn-secondary">Verify Profile</button>
+                    <button id="btn-configure-trunk" class="btn btn-secondary">Configure Trunk</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div class="card">
+            <div class="card-title">Outbound Call</div>
+            <div class="warning-box">
+              This places a real call when paid telephony actions are enabled. The number selected here must already be attached to the selected agent.
+            </div>
+            <div class="split-fields">
+              <div class="form-group">
+                <label class="form-label">From Number</label>
+                <select id="call-from-id" class="form-select">
+                  <option value="">-- select managed number --</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Agent</label>
+                <select id="call-agent-id" class="form-select">
+                  <option value="">-- select agent --</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">To Number</label>
+                <input type="tel" id="call-to-number" class="form-input" placeholder="+12125551234" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Recipient Name</label>
+                <input type="text" id="call-recipient" class="form-input" placeholder="Test Recipient" />
+              </div>
+            </div>
+            <button id="btn-make-call" class="btn btn-primary">Place Outbound Call</button>
+            <div id="call-result" style="display:none; margin-top:1rem"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-activity" class="tab-panel">
+      <div class="hero-card">
+        <div>
+          <p class="eyebrow">Step 3</p>
+          <h1 class="hero-title">Inspect live activity</h1>
+          <p class="hero-copy">
+            Use browser voice for WebRTC verification and the call log for the current telephony history.
+          </p>
+        </div>
+        <div class="journey">
+          <div class="journey-step">Select agent</div>
+          <div class="journey-step is-active">Connect or review calls</div>
+          <div class="journey-step">Confirm results</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Browser Voice Session</div>
           <div class="form-group">
-            <label class="form-label">Allowed Destinations (comma separated)</label>
-            <input type="text" id="ovp-destinations" class="form-input" placeholder="US, GB, CA" value="US" />
+            <label class="form-label">Agent</label>
+            <select id="voice-agent-id" class="form-select">
+              <option value="">-- select an agent --</option>
+            </select>
           </div>
-          <div class="form-group">
-            <label class="form-label">Concurrency Limit</label>
-            <input type="number" id="ovp-concurrency" class="form-input" placeholder="2" value="2" min="1" max="100" />
+
+          <div class="status-panel" id="voice-connection-status" style="display:none;">
+            <div class="status-panel-label">Status</div>
+            <div id="voice-status-badge" class="badge badge-gray">Disconnected</div>
           </div>
-          <div class="flex gap-1 mt-2">
-            <button id="btn-upsert-ovp" class="btn btn-secondary btn-sm" style="flex:1">💾 Save Profile</button>
-            <button id="btn-verify-ovp" class="btn btn-secondary btn-sm" style="flex:1">✅ Verify</button>
+
+          <div class="button-row mt-2">
+            <button class="btn btn-primary" id="btn-voice-connect">Connect</button>
+            <button class="btn btn-secondary" id="btn-voice-unlock" style="display:none;">Unlock Audio</button>
+            <button class="btn btn-danger" id="btn-voice-disconnect" style="display:none;">Disconnect</button>
           </div>
-          <button id="btn-configure-trunk" class="btn btn-secondary btn-sm w-full mt-1">🔌 Configure Outbound Trunk</button>
+
+          <div class="card compact-card mt-3">
+            <div class="card-title">Live Transcript</div>
+            <div id="voice-transcript-log" class="transcript-log">
+              <div class="transcript-placeholder">Connect to start the browser session.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="flex justify-between items-center mb-2">
+            <div>
+              <div class="card-title flush-title">Call Log</div>
+              <p class="section-sub flush-sub">Recent telephony records for this tenant.</p>
+            </div>
+            <div class="button-row">
+              <select id="calllog-limit" class="form-select select-inline">
+                <option value="10">Last 10</option>
+                <option value="25" selected>Last 25</option>
+                <option value="50">Last 50</option>
+              </select>
+              <button id="btn-refresh-calls" class="btn btn-secondary btn-sm">Refresh</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Call ID</th>
+                  <th>Direction</th>
+                  <th>From</th>
+                  <th>To</th>
+                  <th>Status</th>
+                  <th>Agent</th>
+                  <th>Started</th>
+                </tr>
+              </thead>
+              <tbody id="calllog-tbody">
+                <tr><td colspan="7" class="loading-row"><div class="spinner"></div><br/>Loading calls...</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
+  </main>
 
-    <!-- Outbound Call Test -->
-    <div class="card mt-3">
-      <div class="card-title">📞 Test Outbound Call</div>
-      <div class="warning-box">
-        ⚠️ This places a real phone call. Make sure outbound readiness is confirmed before proceeding.
+  <div id="modal-purchase" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Confirm Number Purchase</div>
+      <div class="modal-body">
+        You are about to purchase this number on the connected Telnyx account:
+        <span id="modal-purchase-number" class="modal-number-highlight"></span>
+        Continue only if paid telephony actions are enabled for this local backend.
       </div>
-      <div class="grid-2" style="gap:1rem">
-        <div class="form-group">
-          <label class="form-label">From Number (Managed Number ID)</label>
-          <select id="call-from-id" class="form-select">
-            <option value="">� select managed number �</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Agent</label>
-          <select id="call-agent-id" class="form-select">
-            <option value="">� select agent �</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">To Number (E.164 format)</label>
-          <input type="tel" id="call-to-number" class="form-input" placeholder="+12125551234" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Recipient Name</label>
-          <input type="text" id="call-recipient" class="form-input" placeholder="Test Recipient" />
-        </div>
+      <div class="modal-actions">
+        <button id="modal-purchase-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="modal-purchase-confirm" class="btn btn-danger">Purchase</button>
       </div>
-      <button id="btn-make-call" class="btn btn-primary">
-        <span>📞</span> Place Outbound Call
-      </button>
-      <div id="call-result" style="display:none; margin-top:1rem"></div>
-    </div>
-  </section>
-
-  <!-- ════════════════════════════════════════════ BROWSER VOICE TAB -->
-  <section class="tab-panel" id="tab-voice">
-    <div class="header-flex mb-2">
-      <h1 class="section-title">Browser Voice Session</h1>
-      <span class="badge badge-purple">WebRTC Web SDK</span>
-    </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-title">Session Setup</div>
-        <div class="form-group">
-          <label class="form-label">Select Agent</label>
-          <select id="voice-agent-id" class="form-select">
-            <option value="">� select an agent �</option>
-          </select>
-        </div>
-        
-        <div class="mt-2" id="voice-connection-status" style="display:none; padding:1rem; border-radius:var(--radius-sm); background:var(--bg-secondary);">
-          <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:0.5rem">Status</div>
-          <div id="voice-status-badge" class="badge badge-gray">Disconnected</div>
-        </div>
-
-        <div class="flex gap-1 mt-2">
-          <button class="btn btn-primary" id="btn-voice-connect" style="flex:1">Connect</button>
-          <button class="btn btn-secondary" id="btn-voice-unlock" style="display:none; flex:1">Unlock Audio</button>
-          <button class="btn btn-danger" id="btn-voice-disconnect" style="display:none; flex:1">Disconnect</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Live Transcript</div>
-        <div id="voice-transcript-log" style="height:250px; overflow-y:auto; background:var(--bg-secondary); border-radius:var(--radius-sm); padding:1rem; font-family:monospace; font-size:0.9rem; display:flex; flex-direction:column; gap:0.5rem;">
-          <div style="color:var(--text-secondary); text-align:center; margin-top:2rem;">Connect to start conversation</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════════════════════════════════ TAB: CALL LOG -->
-  <section id="tab-calllog" class="tab-panel">
-    <h1 class="section-title">Call Log</h1>
-    <p class="section-sub">Recent call records from your Telnyx account.</p>
-
-    <div class="flex justify-between items-center mb-2">
-      <div class="flex gap-1">
-        <select id="calllog-limit" class="form-select" style="width:auto">
-          <option value="10">Last 10</option>
-          <option value="25" selected>Last 25</option>
-          <option value="50">Last 50</option>
-        </select>
-      </div>
-      <button id="btn-refresh-calls" class="btn btn-secondary btn-sm">🔄 Refresh</button>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Call ID</th>
-            <th>Direction</th>
-            <th>From</th>
-            <th>To</th>
-            <th>Status</th>
-            <th>Agent</th>
-            <th>Started</th>
-          </tr>
-        </thead>
-        <tbody id="calllog-tbody">
-          <tr><td colspan="7" class="loading-row"><div class="spinner"></div><br/>Loading calls�</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-</main><!-- /main-content -->
-
-<!-- ═══════════════════════════════════════════════════ MODALS -->
-
-<!-- Purchase Confirmation -->
-<div id="modal-purchase" class="modal-overlay hidden">
-  <div class="modal">
-    <div class="modal-title">⚠️ Confirm Number Purchase</div>
-    <div class="modal-body">
-      You are about to purchase the following phone number. This action will charge your Telnyx account.
-      <span id="modal-purchase-number" class="modal-number-highlight"></span>
-      Are you sure you want to proceed?
-    </div>
-    <div class="modal-actions">
-      <button id="modal-purchase-cancel" class="btn btn-secondary">Cancel</button>
-      <button id="modal-purchase-confirm" class="btn btn-danger">💳 Purchase Number</button>
     </div>
   </div>
-</div>
 
-
-<!-- Update Agent Modal -->
-<div id="modal-update-agent" class="modal-overlay hidden">
-  <div class="modal">
-    <div class="modal-title">✏️ Update Agent</div>
-    <input type="hidden" id="update-agent-id" />
-    <div class="form-group">
-      <label class="form-label">Name</label>
-      <input type="text" id="update-agent-name" class="form-input" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">Prompt</label>
-      <textarea id="update-agent-prompt" class="form-input"></textarea>
-    </div>
-    <div class="grid-3" style="gap:0.75rem">
-      <div class="form-group">
-        <label class="form-label">STT Provider</label>
-        <select id="update-agent-stt" class="form-select">
-          <option value="">Keep current</option>
-          <option value="gladia">Gladia</option>
-          <option value="deepgram">Deepgram</option>
-        </select>
+  <div id="modal-reserve" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Confirm Number Reservation</div>
+      <div class="modal-body">
+        You are about to reserve this number for a follow-up flow:
+        <span id="modal-reserve-number" class="modal-number-highlight"></span>
+        Reservation still requires paid telephony actions to be enabled.
       </div>
-      <div class="form-group">
-        <label class="form-label">LLM Provider</label>
-        <select id="update-agent-llm" class="form-select">
-          <option value="">Keep current</option>
-          <option value="gemini">Gemini</option>
-          <option value="groq">Groq</option>
-        </select>
+      <div class="modal-actions">
+        <button id="modal-reserve-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="modal-reserve-confirm" class="btn btn-primary">Reserve</button>
       </div>
-      <div class="form-group">
-        <label class="form-label">TTS Provider</label>
-        <select id="update-agent-tts" class="form-select">
-          <option value="">Keep current</option>
-          <option value="uplift">Uplift</option>
-          <option value="cartesia">Cartesia</option>
-          <option value="elevenlabs">ElevenLabs</option>
-          <option value="rime">Rime</option>
-        </select>
-      </div>
-    </div>
-    <div class="modal-actions">
-      <button id="modal-update-cancel" class="btn btn-secondary">Cancel</button>
-      <button id="modal-update-confirm" class="btn btn-primary">Save Changes</button>
     </div>
   </div>
-</div>
 
-<!-- ════════════════════════════════════════════ TOAST CONTAINER -->
-<div id="toast-container"></div>
+  <div id="modal-update-agent" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Update Agent</div>
+      <input type="hidden" id="update-agent-id" />
+      <div class="form-group">
+        <label class="form-label">Name</label>
+        <input type="text" id="update-agent-name" class="form-input" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Prompt</label>
+        <textarea id="update-agent-prompt" class="form-input"></textarea>
+      </div>
+      <div class="grid-3">
+        <div class="form-group">
+          <label class="form-label">STT Provider</label>
+          <select id="update-agent-stt" class="form-select">
+            <option value="">Keep current</option>
+            <option value="gladia">Gladia</option>
+            <option value="deepgram">Deepgram</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">LLM Provider</label>
+          <select id="update-agent-llm" class="form-select">
+            <option value="">Keep current</option>
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">TTS Provider</label>
+          <select id="update-agent-tts" class="form-select">
+            <option value="">Keep current</option>
+            <option value="uplift">Uplift</option>
+            <option value="cartesia">Cartesia</option>
+            <option value="elevenlabs">ElevenLabs</option>
+            <option value="rime">Rime</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="modal-update-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="modal-update-confirm" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
 
   <script type="module" src="./app.js"></script>
 </body>
