@@ -23,6 +23,25 @@ logger = logging.getLogger(__name__)
 TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
 
 
+def _validate_telnyx_inbound_fqdn(fqdn: str) -> str:
+    value = str(fqdn or "").strip().lower()
+    if not value:
+        raise TelephonyError(
+            status=400,
+            code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+            message="A Telnyx SIP FQDN is required for inbound routing.",
+        )
+    if value.startswith("sip:"):
+        value = value[4:].strip()
+    if value.startswith("+"):
+        raise TelephonyError(
+            status=400,
+            code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+            message="SIP FQDN cannot be a phone number. Use a Telnyx-reachable SIP hostname such as nyc1.sip.livekit-telnyx.com.",
+        )
+    return value
+
+
 def _normalize_features(raw: Any) -> list[str]:
     """Normalize Telnyx feature shapes into public SDK strings.
 
@@ -303,6 +322,8 @@ class TelnyxClient:
         area_code: str | None = None,
         number_type: str | None = None,
         features: list[str] | None = None,
+        exact_phone_number: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Search available phone numbers for purchase."""
         if self.mock_mode:
@@ -326,6 +347,10 @@ class TelnyxClient:
                 params["filter[national_destination_code]"] = area_code
             if number_type:
                 params["filter[phone_number_type]"] = number_type
+            if exact_phone_number:
+                params["filter[phone_number]"] = exact_phone_number
+            if limit:
+                params["filter[limit]"] = str(limit)
             if features:
                 for f in features:
                     params[f"filter[features][{f}]"] = "true"
@@ -444,6 +469,7 @@ class TelnyxClient:
         sip_secret: str | None = None,
     ) -> dict[str, Any]:
         """Create or get a Telnyx FQDN/SIP connection."""
+        fqdn = _validate_telnyx_inbound_fqdn(fqdn)
         if self.mock_mode:
             return {
                 "provider_sip_connection_id": "fqdn_conn_mock_123",
@@ -455,13 +481,36 @@ class TelnyxClient:
         try:
             payload = {
                 "connection_name": connection_name,
-                "fqdn": fqdn,
-                "transport_protocol": "UDP",
+                "active": True,
+                "anchorsite_override": "Latency",
+                "transport_protocol": "TCP",
+                "inbound": {
+                    "ani_number_format": "+E.164",
+                    "dnis_number_format": "+e164",
+                },
             }
             if sip_username:
                 payload["user_name"] = sip_username
             if sip_secret:
                 payload["password"] = sip_secret
+            existing = self.list_fqdn_connections(connection_name=connection_name)
+            if existing:
+                connection_id = existing[0].get("id")
+                if connection_id:
+                    resp = self.client.patch(
+                        f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json().get("data", {})
+                    self._ensure_fqdn_target(str(connection_id), fqdn)
+                    return {
+                        "provider_sip_connection_id": data.get("id") or str(connection_id),
+                        "connection_name": data.get("connection_name") or connection_name,
+                        "sip_fqdn": fqdn,
+                        "status": "active" if data.get("active", True) else "disabled",
+                    }
             resp = self.client.post(
                 f"{TELNYX_API_BASE_URL}/fqdn_connections",
                 headers=self._headers(),
@@ -469,8 +518,11 @@ class TelnyxClient:
             )
             resp.raise_for_status()
             data = resp.json().get("data", {})
+            connection_id = data.get("id")
+            if connection_id:
+                self._ensure_fqdn_target(str(connection_id), fqdn)
             return {
-                "provider_sip_connection_id": data.get("id"),
+                "provider_sip_connection_id": connection_id,
                 "connection_name": data.get("connection_name"),
                 "sip_fqdn": fqdn,
                 "status": "active" if data.get("active", True) else "disabled",
@@ -481,6 +533,119 @@ class TelnyxClient:
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
                 message="Failed to create/configure Telnyx FQDN connection.",
             ) from e
+
+    def list_fqdn_connections(
+        self,
+        *,
+        connection_name: str | None = None,
+        fqdn: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List Telnyx FQDN connections for reconciliation and diagnostics."""
+        if self.mock_mode:
+            return [
+                {
+                    "id": "fqdn_conn_mock_123",
+                    "connection_name": connection_name or "tenant-mock",
+                    "fqdn": fqdn or "sip.livekit.cloud",
+                    "active": True,
+                    "transport_protocol": "UDP",
+                }
+            ]
+
+        try:
+            params: dict[str, str] = {}
+            if connection_name:
+                params["filter[connection_name]"] = connection_name
+            if fqdn:
+                params["filter[fqdn]"] = fqdn
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/fqdn_connections",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to list Telnyx FQDN connections.",
+            ) from e
+
+    def list_fqdns(
+        self,
+        *,
+        connection_id: str | None = None,
+        fqdn: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List Telnyx FQDN child records attached to FQDN connections."""
+        if self.mock_mode:
+            return [
+                {
+                    "id": "fqdn_record_mock_123",
+                    "connection_id": connection_id or "fqdn_conn_mock_123",
+                    "fqdn": fqdn or "sip.livekit.cloud",
+                    "port": 5060,
+                    "dns_record_type": "a",
+                }
+            ]
+
+        try:
+            params: dict[str, str] = {}
+            if connection_id:
+                params["filter[connection_id]"] = connection_id
+            if fqdn:
+                params["filter[fqdn]"] = fqdn
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/fqdns",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to list Telnyx FQDN targets.",
+            ) from e
+
+    def _ensure_fqdn_target(self, connection_id: str, fqdn: str) -> None:
+        """Ensure the Telnyx FQDN connection has the expected routable target."""
+        existing = self.list_fqdns(connection_id=connection_id)
+        target = next((item for item in existing if str(item.get("fqdn") or "") == fqdn), None)
+        if target:
+            return
+
+        if existing:
+            fqdn_id = existing[0].get("id")
+            if fqdn_id:
+                resp = self.client.patch(
+                    f"{TELNYX_API_BASE_URL}/fqdns/{fqdn_id}",
+                    headers=self._headers(),
+                    json={
+                        "connection_id": connection_id,
+                        "fqdn": fqdn,
+                        "dns_record_type": "a",
+                        "port": 5060,
+                    },
+                )
+                resp.raise_for_status()
+                return
+
+        resp = self.client.post(
+            f"{TELNYX_API_BASE_URL}/fqdns",
+            headers=self._headers(),
+            json={
+                "connection_id": connection_id,
+                "fqdn": fqdn,
+                "dns_record_type": "a",
+                "port": 5060,
+            },
+        )
+        resp.raise_for_status()
 
     def create_or_get_outbound_voice_profile(
         self, name: str, fqdn_connection_id: str

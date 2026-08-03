@@ -33,12 +33,13 @@ let config = {
   apiBaseUrl: process.env.UVA_API_BASE_URL || 'http://localhost:8000',
   telephonyApiUrl: process.env.UVA_TELEPHONY_API_URL || 'http://localhost:8000',
   sessionUpstreamUrl: process.env.UVA_SESSION_UPSTREAM_URL || process.env.UVA_API_BASE_URL || 'http://localhost:7860',
+  livekitSipUri: process.env.LIVEKIT_SIP_URI || '',
   publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
   publishableKey: process.env.UVA_PUBLISHABLE_KEY || '',
   allowedOrigins: csv(process.env.ALLOWED_ORIGINS || 'http://localhost:3000'),
   tenantId: process.env.UVA_TENANT_ID || '',
   hmacSecret: process.env.UVA_HMAC_SECRET || '',
-  telnyxApiKey: '',  // entered at runtime only - never in .env
+  telnyxApiKey: process.env.TELNYX_API_KEY || '',
   allowPaidTelephonyActions: process.env.ALLOW_PAID_TELEPHONY_ACTIONS === '1',
 };
 
@@ -106,6 +107,41 @@ function getTelephonyClient() {
     tenantId: config.tenantId,
     tenantSecret: config.hmacSecret,
   });
+}
+
+function isProviderCredentialError(error) {
+  return error instanceof AwaazLabsUvaTelephonyError && error.code === 'provider_credentials_missing';
+}
+
+async function repairTelephonyCredentials() {
+  if (!config.telnyxApiKey) {
+    throw new Error('Telnyx API key not set in local backend config, so provider credential repair cannot run.');
+  }
+  const telephony = getTelephonyClient();
+  const rotated = await telephony.rotateTelnyxAccountKey({ apiKey: config.telnyxApiKey });
+  recordDebugEvent({
+    scope: 'telephony_credential_repair',
+    route: '/api/_internal/telephony-credential-repair',
+    method: 'POST',
+    status: 200,
+    message: 'Automatically repaired missing tenant provider credential reference by rotating the configured Telnyx key.',
+    detail: {
+      keyFingerprint: rotated?.key_fingerprint || null,
+      platformStatus: rotated?.platform_status || null,
+      providerStatus: rotated?.provider_status || null,
+    },
+  });
+  return rotated;
+}
+
+async function withTelephonyCredentialRepair(operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isProviderCredentialError(error)) throw error;
+    await repairTelephonyCredentials();
+    return operation();
+  }
 }
 
 function createControlPlaneHeaders(tenantId, secret, agentId) {
@@ -191,8 +227,10 @@ function normalizeCollection(result, fallbackKeys = []) {
 }
 
 async function listManagedNumbers() {
-  const telephony = getTelephonyClient();
-  const result = await telephony.listManagedPhoneNumbers();
+  const result = await withTelephonyCredentialRepair(async () => {
+    const telephony = getTelephonyClient();
+    return telephony.listManagedPhoneNumbers();
+  });
   return normalizeCollection(result, ['data', 'numbers', 'items']);
 }
 
@@ -443,6 +481,7 @@ app.get('/api/health', (_req, res) => {
     apiBaseUrl: config.apiBaseUrl,
     telephonyApiUrl: config.telephonyApiUrl,
     sessionUpstreamUrl: config.sessionUpstreamUrl,
+    livekitSipUri: config.livekitSipUri,
     paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
   });
 });
@@ -455,6 +494,7 @@ app.get('/api/config', (_req, res) => {
     apiBaseUrl: config.apiBaseUrl,
     telephonyApiUrl: config.telephonyApiUrl,
     sessionUpstreamUrl: config.sessionUpstreamUrl,
+    livekitSipUri: config.livekitSipUri,
     publishableKey: config.publishableKey,
     tenantId: config.tenantId,
     hmacSecret: config.hmacSecret,
@@ -472,6 +512,7 @@ app.post('/api/config', (req, res) => {
     apiBaseUrl,
     telephonyApiUrl,
     sessionUpstreamUrl,
+    livekitSipUri,
     publishableKey,
     tenantId,
     hmacSecret,
@@ -481,6 +522,7 @@ app.post('/api/config', (req, res) => {
   if (apiBaseUrl) config.apiBaseUrl = apiBaseUrl;
   if (telephonyApiUrl) config.telephonyApiUrl = telephonyApiUrl;
   if (sessionUpstreamUrl) config.sessionUpstreamUrl = sessionUpstreamUrl;
+  if (livekitSipUri) config.livekitSipUri = livekitSipUri;
   if (publishableKey) config.publishableKey = publishableKey;
   if (tenantId) config.tenantId = tenantId;
   if (hmacSecret) config.hmacSecret = hmacSecret;
@@ -492,6 +534,7 @@ app.post('/api/config', (req, res) => {
     apiBaseUrl: config.apiBaseUrl,
     telephonyApiUrl: config.telephonyApiUrl,
     sessionUpstreamUrl: config.sessionUpstreamUrl,
+    livekitSipUri: config.livekitSipUri,
     tenantId: config.tenantId ? `${config.tenantId.slice(0, 8)}...` : '(not set)',
     hmacSecretSet: !!config.hmacSecret,
     telnyxApiKeySet: !!config.telnyxApiKey,
@@ -681,8 +724,10 @@ app.post('/api/voice/session/refresh', async (req, res) => {
 // ────────────────────────────────────────────────────────────────────────────
 app.get('/api/telnyx/status', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const status = await telephony.getConnectionStatus();
+    const status = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.getConnectionStatus();
+    });
     res.json(status);
   } catch (error) {
     handleError(res, error);
@@ -695,11 +740,19 @@ app.post('/api/telnyx/connect', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Telnyx API key not set. Use POST /api/config first.' });
     }
     const telephony = getTelephonyClient();
-    const connection = await telephony.connectTelnyxAccount({
-      apiKey: config.telnyxApiKey,
-      label: 'primary',
-    });
-    res.json(connection);
+    try {
+      const connection = await telephony.connectTelnyxAccount({
+        apiKey: config.telnyxApiKey,
+        label: 'primary',
+      });
+      return res.json(connection);
+    } catch (error) {
+      if (error instanceof AwaazLabsUvaTelephonyError && error.status === 409 && error.code === 'call_state_conflict') {
+        const rotated = await telephony.rotateTelnyxAccountKey({ apiKey: config.telnyxApiKey });
+        return res.json(rotated);
+      }
+      throw error;
+    }
   } catch (error) {
     handleError(res, error);
   }
@@ -842,8 +895,10 @@ app.get('/api/telnyx/numbers/owned', async (req, res) => {
 
 app.post('/api/telnyx/numbers/sync', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const result = await telephony.syncTelnyxOwnedNumbers();
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.syncTelnyxOwnedNumbers();
+    });
     res.json({ ok: true, ...result });
   } catch (error) {
     handleError(res, error);
@@ -937,8 +992,10 @@ app.post('/api/telnyx/numbers/:numberId/assign-agent', async (req, res) => {
   try {
     const { agentId } = req.body;
     if (!agentId) return res.status(400).json({ ok: false, message: 'agentId required' });
-    const telephony = getTelephonyClient();
-    const result = await telephony.assignAgentToNumber(req.params.numberId, agentId);
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.assignAgentToNumber(req.params.numberId, agentId);
+    });
     res.json(result);
   } catch (error) {
     handleError(res, error);
@@ -947,12 +1004,14 @@ app.post('/api/telnyx/numbers/:numberId/assign-agent', async (req, res) => {
 
 app.post('/api/telnyx/numbers/:numberId/configure-routing', async (req, res) => {
   try {
-    const telephony = getTelephonyClient();
     const { agentId } = req.body || {};
-    if (agentId) {
-      await telephony.assignAgentToNumber(req.params.numberId, agentId);
-    }
-    const result = await telephony.configureNumberRouting(req.params.numberId);
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      if (agentId) {
+        await telephony.assignAgentToNumber(req.params.numberId, agentId);
+      }
+      return telephony.configureNumberRouting(req.params.numberId);
+    });
     res.json({ ok: true, ...result });
   } catch (error) {
     handleError(res, error);
@@ -1017,8 +1076,10 @@ app.post('/api/inbound/simulate', async (req, res) => {
 app.post('/api/telnyx/sip-connection', async (req, res) => {
   try {
     const { sipFqdn, sipUsername, sipSecret } = req.body;
-    const telephony = getTelephonyClient();
-    const result = await telephony.upsertTelnyxSipConnection({ sipFqdn, sipUsername, sipSecret });
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.upsertTelnyxSipConnection({ sipFqdn, sipUsername, sipSecret });
+    });
     res.json(result);
   } catch (error) {
     handleError(res, error);
@@ -1027,8 +1088,10 @@ app.post('/api/telnyx/sip-connection', async (req, res) => {
 
 app.post('/api/telnyx/sip-connection/verify', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const result = await telephony.verifyTelnyxSipConnection();
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.verifyTelnyxSipConnection();
+    });
     res.json(result);
   } catch (error) {
     handleError(res, error);
@@ -1038,12 +1101,14 @@ app.post('/api/telnyx/sip-connection/verify', async (_req, res) => {
 app.post('/api/telnyx/outbound-voice-profile', async (req, res) => {
   try {
     const { allowedDestinations, concurrencyLimit, channelLimit, dailySpendingLimit } = req.body;
-    const telephony = getTelephonyClient();
-    const result = await telephony.upsertTelnyxOutboundVoiceProfile({
-      allowedDestinations: allowedDestinations || ['US'],
-      concurrencyLimit: concurrencyLimit || 2,
-      ...(channelLimit ? { channelLimit } : {}),
-      ...(dailySpendingLimit ? { dailySpendingLimit } : {}),
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.upsertTelnyxOutboundVoiceProfile({
+        allowedDestinations: allowedDestinations || ['US'],
+        concurrencyLimit: concurrencyLimit || 2,
+        ...(channelLimit ? { channelLimit } : {}),
+        ...(dailySpendingLimit ? { dailySpendingLimit } : {}),
+      });
     });
     res.json(result);
   } catch (error) {
@@ -1053,8 +1118,10 @@ app.post('/api/telnyx/outbound-voice-profile', async (req, res) => {
 
 app.post('/api/telnyx/outbound-voice-profile/verify', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const result = await telephony.verifyTelnyxOutboundVoiceProfile();
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.verifyTelnyxOutboundVoiceProfile();
+    });
     res.json(result);
   } catch (error) {
     handleError(res, error);
@@ -1063,8 +1130,10 @@ app.post('/api/telnyx/outbound-voice-profile/verify', async (_req, res) => {
 
 app.post('/api/telnyx/outbound-trunk', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const result = await telephony.configureOutboundTrunk();
+    const result = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.configureOutboundTrunk();
+    });
     res.json({ ok: true, ...result });
   } catch (error) {
     handleError(res, error);
@@ -1076,8 +1145,10 @@ app.post('/api/telnyx/outbound-trunk', async (_req, res) => {
 // ────────────────────────────────────────────────────────────────────────────
 app.get('/api/readiness', async (_req, res) => {
   try {
-    const telephony = getTelephonyClient();
-    const readiness = await telephony.getOutboundReadiness();
+    const readiness = await withTelephonyCredentialRepair(async () => {
+      const telephony = getTelephonyClient();
+      return telephony.getOutboundReadiness();
+    });
     res.json(readiness);
   } catch (error) {
     handleError(res, error);

@@ -425,6 +425,7 @@ async function checkConfig() {
     if ($('cfg-tenant-id')) $('cfg-tenant-id').value = config.tenantId || '';
     if ($('cfg-hmac-secret')) $('cfg-hmac-secret').value = config.hmacSecret || '';
     if ($('cfg-telnyx-key')) $('cfg-telnyx-key').value = config.telnyxApiKey || '';
+    if ($('sip-fqdn') && !$('sip-fqdn').value) $('sip-fqdn').value = config.livekitSipUri || '';
     if (config.tenantId && config.hmacSecretSet) {
       updateStatusItem('status-config', 'pass', 'Tenant credentials set', config.tenantId.slice(0, 12) + '...');
     } else {
@@ -897,8 +898,12 @@ async function saveSip() {
   const button = $('btn-upsert-sip');
   setLoading(button, true, 'Saving...');
   try {
+    const sipFqdn = $('sip-fqdn')?.value.trim() || undefined;
+    if (sipFqdn?.startsWith('+')) {
+      throw new Error('SIP FQDN cannot be a phone number. Use a Telnyx-reachable SIP hostname.');
+    }
     await api('POST', '/api/telnyx/sip-connection', {
-      sipFqdn: $('sip-fqdn')?.value.trim() || undefined,
+      sipFqdn,
       sipUsername: $('sip-username')?.value.trim() || undefined,
       sipSecret: $('sip-secret')?.value.trim() || undefined,
     });
@@ -1338,6 +1343,7 @@ async function init() {
   registerEvents();
   await checkBackendHealth();
   await checkConfig();
+  await Promise.all([checkTelnyxStatus(), checkPortalReachable()]);
   await Promise.all([loadAgents(), loadManagedNumbers()]);
   await populateProviderTestSelects();
 }

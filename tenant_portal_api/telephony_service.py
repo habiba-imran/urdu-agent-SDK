@@ -262,7 +262,7 @@ class TelephonyService:
         without provider identity and later let inventory sync attach the real
         `provider_number_id` by matching on E.164.
         """
-        features_json = json.dumps(features if isinstance(features, list) else ["voice"])
+        features_array = features if isinstance(features, list) else ["voice"]
         last_synced_sql = ", last_synced_at = now()" if touch_last_synced_at else ""
 
         if provider_number_id:
@@ -273,7 +273,7 @@ class TelephonyService:
                     provider_number_id = %s,
                     country = %s,
                     number_type = %s,
-                    features = %s::jsonb,
+                    features = %s::text[],
                     provisioning_status = case
                         when disabled_at is not null
                           or provisioning_status in ('released', 'deleted')
@@ -300,7 +300,7 @@ class TelephonyService:
                     provider_number_id,
                     country,
                     number_type,
-                    features_json,
+                    features_array,
                     provisioning_status,
                     routing_status,
                     provider_status,
@@ -319,7 +319,7 @@ class TelephonyService:
                     tenant_id, telnyx_connection_id, provider_number_id, e164_number,
                     country, number_type, features, provisioning_status, routing_status,
                     provider_status, external_customer_ref{", last_synced_at" if touch_last_synced_at else ""}
-                ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s{", now()" if touch_last_synced_at else ""})
+                ) values (%s, %s, %s, %s, %s, %s, %s::text[], %s, %s, %s, %s{", now()" if touch_last_synced_at else ""})
                 on conflict (tenant_id, provider_number_id) do update set
                     telnyx_connection_id = excluded.telnyx_connection_id,
                     e164_number = excluded.e164_number,
@@ -351,7 +351,7 @@ class TelephonyService:
                     e164_number,
                     country,
                     number_type,
-                    features_json,
+                    features_array,
                     provisioning_status,
                     routing_status,
                     provider_status,
@@ -363,10 +363,10 @@ class TelephonyService:
         row = conn.execute(
             """
             update telephony_phone_numbers
-            set telnyx_connection_id = %s,
+                set telnyx_connection_id = %s,
                 country = %s,
                 number_type = %s,
-                features = %s::jsonb,
+                features = %s::text[],
                 provisioning_status = case
                     when disabled_at is not null
                       or provisioning_status in ('released', 'deleted')
@@ -389,7 +389,7 @@ class TelephonyService:
                 telnyx_connection_id,
                 country,
                 number_type,
-                features_json,
+                features_array,
                 provisioning_status,
                 routing_status,
                 provider_status,
@@ -407,7 +407,7 @@ class TelephonyService:
                 tenant_id, telnyx_connection_id, provider_number_id, e164_number,
                 country, number_type, features, provisioning_status, routing_status,
                 provider_status, external_customer_ref
-            ) values (%s, %s, null, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+            ) values (%s, %s, null, %s, %s, %s, %s::text[], %s, %s, %s, %s)
             returning id
             """,
             (
@@ -416,7 +416,7 @@ class TelephonyService:
                 e164_number,
                 country,
                 number_type,
-                features_json,
+                features_array,
                 provisioning_status,
                 routing_status,
                 provider_status,
@@ -617,11 +617,20 @@ class TelephonyService:
         area_code: str | None = None,
         number_type: str | None = None,
         features: list[str] | None = None,
+        exact_phone_number: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Search available numbers via the tenant's Telnyx credential."""
         with self._connection() as conn:
             client, _ = self._tenant_telnyx_client(conn, tenant_id)
-            return client.search_available_numbers(country, area_code, number_type, features)
+            return client.search_available_numbers(
+                country,
+                area_code,
+                number_type,
+                features,
+                exact_phone_number=exact_phone_number,
+                limit=limit,
+            )
     def purchase_number(
         self,
         tenant_id: str,
@@ -801,12 +810,26 @@ class TelephonyService:
             number = self._number_from_row(row)
 
         if agent_id:
+            # Auto-provision tenant SIP/OVP/trunk prerequisites so client integrations
+            # only need to connect Telnyx, sync/buy a number, and assign it to an agent.
             try:
-                self._bind_telnyx_number_to_sip(tenant_id, number)
+                self.ensure_telephony_infrastructure(tenant_id)
             except TelephonyError as exc:
-                logger.warning(
-                    "Telnyx number bind deferred for %s: %s", number_id, exc.code
+                if exc.code not in {
+                    TelephonyErrorCode.OUTBOUND_NOT_READY,
+                    TelephonyErrorCode.NUMBER_NOT_FOUND,
+                }:
+                    raise
+                logger.info(
+                    "Telephony infrastructure partially ready for tenant %s during assign: %s",
+                    tenant_id,
+                    exc.code,
                 )
+
+            # Fail closed here. If the Telnyx number is not actually attached to the
+            # tenant SIP connection, the UI should not show a misleading routed-ready
+            # state while real PSTN inbound calls never reach LiveKit.
+            self._bind_telnyx_number_to_sip(tenant_id, number)
             routing = self.configure_number_routing(
                 tenant_id, number_id, inbound_agent_id=agent_id
             )
@@ -815,7 +838,7 @@ class TelephonyService:
             )
             number["assigned_agent_id"] = agent_id
             try:
-                self.configure_outbound_trunk(tenant_id)
+                self.ensure_telephony_infrastructure(tenant_id)
             except TelephonyError as exc:
                 if exc.code not in {
                     TelephonyErrorCode.OUTBOUND_NOT_READY,
@@ -1327,23 +1350,42 @@ class TelephonyService:
                 """,
                 (tenant_id, conn_data["id"]),
             ).fetchone()
+            fqdn = sip_fqdn or (self._sip_from_row(existing).get("sip_fqdn") if existing else None) or require_livekit_sip_uri()
             if existing:
+                current = self._sip_from_row(existing)
+                provider = client.create_or_get_fqdn_connection(
+                    f"tenant-{tenant_id}",
+                    fqdn,
+                    sip_username=sip_username or current.get("sip_username"),
+                    sip_secret=sip_secret,
+                )
                 updated = conn.execute(
                     """
                     update telnyx_sip_connections
-                    set sip_fqdn = coalesce(%s, sip_fqdn),
+                    set provider_sip_connection_id = %s,
+                        sip_fqdn = %s,
                         sip_username = coalesce(%s, sip_username),
                         encrypted_sip_secret_ref = coalesce(%s, encrypted_sip_secret_ref),
+                        platform_status = 'active',
+                        provider_status = %s,
+                        last_verified_at = now(),
                         updated_at = now()
                     where tenant_id = %s and id = %s
                     returning id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
                               sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
                     """,
-                    (sip_fqdn, sip_username, encrypted_sip_secret_ref, tenant_id, existing[0]),
+                    (
+                        provider.get("provider_sip_connection_id"),
+                        provider.get("sip_fqdn") or fqdn,
+                        sip_username,
+                        encrypted_sip_secret_ref,
+                        provider.get("status", "active"),
+                        tenant_id,
+                        existing[0],
+                    ),
                 ).fetchone()
                 return self._sip_from_row(updated or existing)
 
-            fqdn = sip_fqdn or require_livekit_sip_uri()
             provider = client.create_or_get_fqdn_connection(
                 f"tenant-{tenant_id}",
                 fqdn,
@@ -1376,6 +1418,7 @@ class TelephonyService:
             if conn is None:
                 return {"tenant_id": tenant_id, "is_valid": True, "sip_status": "active", "latency_ms": 42}
             conn_data = self._require_active_connection(conn, tenant_id)
+            client, _ = self._tenant_telnyx_client(conn, tenant_id)
             row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
@@ -1394,7 +1437,28 @@ class TelephonyService:
                     message="Tenant Telnyx SIP connection is not configured.",
                 )
             sip = self._sip_from_row(row)
-            return {"tenant_id": tenant_id, "is_valid": True, "sip_status": sip["platform_status"]}
+            provider_connection = next(
+                (
+                    item
+                    for item in client.list_fqdn_connections(connection_name=f"tenant-{tenant_id}")
+                    if str(item.get("id") or "") == str(sip.get("provider_sip_connection_id") or "")
+                ),
+                None,
+            )
+            provider_fqdns = client.list_fqdns(connection_id=str(sip.get("provider_sip_connection_id") or ""))
+            matched_fqdn = next(
+                (item for item in provider_fqdns if str(item.get("fqdn") or "") == str(sip.get("sip_fqdn") or "")),
+                None,
+            )
+            return {
+                "tenant_id": tenant_id,
+                "is_valid": bool(provider_connection and matched_fqdn),
+                "sip_status": sip["platform_status"] if provider_connection and matched_fqdn else "mismatch",
+                "provider_connection_id": provider_connection.get("id") if provider_connection else None,
+                "provider_fqdn": matched_fqdn.get("fqdn") if matched_fqdn else None,
+                "expected_provider_connection_id": sip.get("provider_sip_connection_id"),
+                "expected_fqdn": sip.get("sip_fqdn"),
+            }
     def upsert_telnyx_outbound_voice_profile(
         self,
         tenant_id: str,
@@ -1696,7 +1760,11 @@ class TelephonyService:
                 telnyx_sip_outbound_address(),
                 trunk_numbers,
                 sip_username=sip.get("sip_username"),
-                sip_secret=decrypt_provider_secret(sip.get("encrypted_sip_secret_ref")),
+                sip_secret=(
+                    decrypt_provider_secret(sip.get("encrypted_sip_secret_ref"))
+                    if sip.get("encrypted_sip_secret_ref")
+                    else None
+                ),
             )
             if existing:
                 row = conn.execute(

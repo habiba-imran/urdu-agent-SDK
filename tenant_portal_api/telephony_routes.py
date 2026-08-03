@@ -663,7 +663,13 @@ async def machine_search_numbers(
     _verify_machine_with_db(x_tenant_id, x_timestamp, x_nonce, "telephony.available_numbers.search", body, x_signature)
     try:
         return _service.search_available_numbers(
-            x_tenant_id, body.get("country", "US"), body.get("area_code"), body.get("number_type"), body.get("features")
+            x_tenant_id,
+            body.get("country", "US"),
+            body.get("area_code"),
+            body.get("number_type"),
+            body.get("features"),
+            body.get("exact_phone_number"),
+            body.get("limit"),
         )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
