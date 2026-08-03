@@ -162,6 +162,43 @@ async function listManagedNumbers() {
   return normalizeCollection(result, ['data', 'numbers', 'items']);
 }
 
+async function recoverAlreadyOwnedNumber(e164Number) {
+  const telephony = getTelephonyClient();
+
+  try {
+    const imported = await telephony.importTelnyxNumber({ e164Number });
+    return {
+      recovered: true,
+      source: 'import',
+      managedNumber: imported,
+    };
+  } catch {
+    // Ignore and fall through to sync/list checks below.
+  }
+
+  try {
+    await telephony.syncTelnyxOwnedNumbers();
+  } catch {
+    // Sync can fail for transient reasons; still try current managed inventory.
+  }
+
+  const managedNumbers = await listManagedNumbers();
+  const managedNumber = managedNumbers.find((item) => item?.e164_number === e164Number) || null;
+  if (managedNumber) {
+    return {
+      recovered: true,
+      source: 'managed_inventory',
+      managedNumber,
+    };
+  }
+
+  return {
+    recovered: false,
+    source: null,
+    managedNumber: null,
+  };
+}
+
 async function listAgents() {
   const agents = getAgentsClient();
   const result = await agents.listAgents();
@@ -318,10 +355,16 @@ function handleError(res, error) {
     const signatureMessage = String(error.message || '').toLowerCase().includes('bad signature')
       ? 'Bad signature: the Tenant ID and HMAC Secret loaded in this local backend do not match the target API.'
       : error.message;
+    const providerMessage = typeof error.detail?.provider_message === 'string'
+      ? error.detail.provider_message
+      : '';
+    const message = providerMessage && !signatureMessage.includes(providerMessage)
+      ? `${signatureMessage} Telnyx said: ${providerMessage}`
+      : signatureMessage;
     return res.status(error.status || 500).json({
       ok: false,
       code: error.code,
-      message: signatureMessage,
+      message,
       detail: error.detail,
     });
   }
@@ -688,6 +731,25 @@ app.post('/api/telnyx/numbers/purchase', async (req, res) => {
     });
     res.json(result);
   } catch (error) {
+    if (error instanceof AwaazLabsUvaTelephonyError && error.code === 'number_not_available') {
+      try {
+        const recovery = await recoverAlreadyOwnedNumber(req.body?.e164Number);
+        if (recovery.recovered && recovery.managedNumber) {
+          return res.json({
+            ok: true,
+            recovered: true,
+            recovery_source: recovery.source,
+            platform_status: 'purchased',
+            provider_status: 'already_owned',
+            selected_e164_number: req.body.e164Number,
+            managed_number_id: recovery.managedNumber.id || null,
+            message: 'That number was already purchased or already present in your Telnyx inventory, so the test app recovered it instead of placing another paid order.',
+          });
+        }
+      } catch (recoveryError) {
+        console.warn('[UVA Test App Recovery] Could not verify already-owned number:', recoveryError?.message || recoveryError);
+      }
+    }
     handleError(res, error);
   }
 });

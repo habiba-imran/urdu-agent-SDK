@@ -93,13 +93,16 @@ class TelephonyError(Exception):
         self.detail = detail
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "error": {
                 "code": self.code,
                 "message": redact_sensitive_string(self.message),
                 "status": self.status,
             }
         }
+        if self.detail is not None:
+            payload["error"]["detail"] = _sanitize_detail(self.detail)
+        return payload
 
 
 _SENSITIVE_PATTERNS = [
@@ -118,3 +121,13 @@ def redact_sensitive_string(text: str) -> str:
     for pat in _SENSITIVE_PATTERNS:
         result = pat.sub("[REDACTED]", result)
     return result
+
+
+def _sanitize_detail(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_sensitive_string(value)
+    if isinstance(value, list):
+        return [_sanitize_detail(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_detail(item) for key, item in value.items()}
+    return value

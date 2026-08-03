@@ -163,6 +163,26 @@ def test_purchase_number_maps_regulatory_or_verification_response():
 
     assert exc_info.value.status == 409
     assert exc_info.value.code == "regulatory_action_required"
+    assert exc_info.value.detail["provider_message"] == "Regulatory requirements missing Verified address is required."
+
+
+def test_purchase_number_maps_generic_422_to_action_required_instead_of_not_available():
+    response = FakeTelnyxOrderErrorResponse(
+        422,
+        {"errors": [{"title": "Order rejected", "detail": "Customer reference is invalid for this order type."}]},
+    )
+    client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderHttpClient(response),
+        mock_mode=False,
+    )
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.purchase_number("+14155550123")
+
+    assert exc_info.value.status == 409
+    assert exc_info.value.code == "number_order_action_required"
+    assert "Customer reference is invalid" in exc_info.value.detail["provider_message"]
 
 
 class FakeTelnyxOrderSuccessResponse:
