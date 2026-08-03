@@ -121,6 +121,21 @@ def _raise_telnyx_number_order_error(response: httpx.Response, e164_number: str)
         message=f"Telnyx rejected the number order: {provider_message}",
     )
 
+
+def _map_number_order_platform_status(provider_status: Any, requirements_met: Any = None) -> str:
+    normalized = str(provider_status or "").strip().lower()
+    if requirements_met is False:
+        return "action_required"
+    if normalized == "success":
+        return "purchased"
+    if normalized in {"failure", "failed"}:
+        return "failed"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized == "deleted":
+        return "deleted"
+    return "pending"
+
 class TelnyxClient:
     """Backend client for Telnyx REST v2 APIs."""
 
@@ -351,13 +366,15 @@ class TelnyxClient:
                 _raise_telnyx_number_order_error(resp, e164_number)
             resp.raise_for_status()
             data = resp.json().get("data", {})
+            provider_status = data.get("status", "pending")
             return {
                 "provider_order_id": data.get("id"),
                 "selected_e164_number": e164_number,
-                "status": data.get("status", "pending"),
-                "provider_status": data.get("status", "pending"),
-                "platform_status": (
-                    "purchased" if data.get("status") == "success" else "pending"
+                "status": provider_status,
+                "provider_status": provider_status,
+                "platform_status": _map_number_order_platform_status(
+                    provider_status,
+                    data.get("requirements_met"),
                 ),
             }
         except httpx.HTTPError as e:
@@ -384,12 +401,14 @@ class TelnyxClient:
             )
             resp.raise_for_status()
             data = resp.json().get("data", {})
+            provider_status = data.get("status", "pending")
             return {
                 "provider_order_id": data.get("id"),
-                "status": data.get("status", "pending"),
-                "provider_status": data.get("status", "pending"),
-                "platform_status": (
-                    "purchased" if data.get("status") == "success" else "pending"
+                "status": provider_status,
+                "provider_status": provider_status,
+                "platform_status": _map_number_order_platform_status(
+                    provider_status,
+                    data.get("requirements_met"),
                 ),
             }
         except httpx.HTTPError as e:

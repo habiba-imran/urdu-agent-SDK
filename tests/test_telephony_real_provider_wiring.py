@@ -58,6 +58,7 @@ class ActiveConnectionDb:
     def __init__(self, encrypted_ref: str | None):
         self.encrypted_ref = encrypted_ref
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.numbers: dict[str, tuple[Any, ...]] = {}
 
     def active_row(self):
         return (
@@ -78,23 +79,27 @@ class ActiveConnectionDb:
         sql = " ".join(query.lower().split())
         if "from tenant_telnyx_connections" in sql:
             return FakeCursor(row=self.active_row())
+        if "update telephony_phone_numbers" in sql:
+            return FakeCursor(row=None)
         if "insert into telephony_phone_numbers" in sql:
-            return FakeCursor(
-                row=(
-                    "num_real_123",
-                    params[0],
-                    params[2],
-                    params[3],
-                    params[4],
-                    params[5],
-                    params[6],
-                    "owned",
-                    "not_configured",
-                    None,
-                    None,
-                    None,
-                )
+            row = (
+                "num_real_123",
+                params[0],
+                params[2],
+                params[3],
+                params[4],
+                params[5],
+                params[6] if not isinstance(params[6], str) else json.loads(params[6]),
+                "owned",
+                "not_configured",
+                None,
+                None,
+                None,
             )
+            self.numbers["num_real_123"] = row
+            return FakeCursor(row=("num_real_123",))
+        if "from telephony_phone_numbers" in sql:
+            return FakeCursor(row=self.numbers.get(params[1]))
         raise AssertionError(f"Unexpected SQL: {query}")
 
 
