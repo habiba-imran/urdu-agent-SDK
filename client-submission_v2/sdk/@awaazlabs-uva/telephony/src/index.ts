@@ -20,6 +20,7 @@ import {
 } from './transport.js';
 import type { OperationName } from './routes.js';
 import type {
+  AvailableNumber,
   ConnectTelnyxAccountParams,
   CreateOutboundCallParams,
   ImportTelnyxNumberParams,
@@ -28,6 +29,7 @@ import type {
   JsonResponse,
   ListTelephonyFilters,
   MachineOperation,
+  NumberOrderResponse,
   OutboundCallResponse,
   PurchaseNumberParams,
   ReserveNumberParams,
@@ -121,9 +123,9 @@ export class TelephonyClient {
     return this.request('getTelnyxNumberDrift');
   }
 
-  searchAvailableNumbers(params: SearchAvailableNumbersParams): Promise<JsonResponse> {
+  searchAvailableNumbers(params: SearchAvailableNumbersParams): Promise<AvailableNumber[]> {
     assertNonEmpty(params.country, 'country');
-    return this.request('searchAvailableNumbers', toSnakeCaseBody(params));
+    return this.request<AvailableNumber[]>('searchAvailableNumbers', toSnakeCaseBody(params));
   }
 
   reserveNumber(params: ReserveNumberParams): Promise<JsonObject> {
@@ -132,15 +134,15 @@ export class TelephonyClient {
     return this.request('reserveNumber', toSnakeCaseBody(params));
   }
 
-  purchaseNumber(params: PurchaseNumberParams): Promise<JsonObject> {
+  purchaseNumber(params: PurchaseNumberParams): Promise<NumberOrderResponse> {
     assertNonEmpty(params.e164Number, 'e164Number');
     assertNonEmpty(params.idempotencyKey, 'idempotencyKey');
-    return this.request('purchaseNumber', toSnakeCaseBody(params));
+    return this.request<NumberOrderResponse>('purchaseNumber', toSnakeCaseBody(params));
   }
 
-  getNumberOrderStatus(orderId: string): Promise<JsonObject> {
+  getNumberOrderStatus(orderId: string): Promise<NumberOrderResponse> {
     assertNonEmpty(orderId, 'orderId');
-    return this.request('getNumberOrderStatus', { order_id: orderId });
+    return this.request<NumberOrderResponse>('getNumberOrderStatus', { order_id: orderId });
   }
 
   assignAgentToNumber(numberId: string, agentId: string): Promise<JsonObject> {

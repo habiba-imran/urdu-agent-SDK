@@ -5,6 +5,8 @@ const state = {
   numbers: [],
   agents: [],
   pendingNumber: null,
+  pendingPurchase: null,
+  pendingReservation: null,
   voiceClient: null,
   audioNeedsUnlock: false,
 };
@@ -139,6 +141,17 @@ function getAgentLabel(agentId) {
 
 function getNumberLabel(number) {
   return number?.e164_number || number?.phone_number || number?.number || number?.id || '';
+}
+
+function getNumberPriceSummary(number) {
+  if (!number) return 'Price unavailable';
+  const upfront = number.upfront_cost ?? null;
+  const monthly = number.monthly_cost ?? null;
+  const currency = number.currency || 'USD';
+  const parts = [];
+  if (upfront) parts.push(`Upfront ${upfront} ${currency}`);
+  if (monthly) parts.push(`Monthly ${monthly} ${currency}`);
+  return parts.length ? parts.join(' • ') : 'Price unavailable';
 }
 
 function syncAgentSelections(agentId) {
@@ -544,10 +557,11 @@ async function searchNumbers() {
         <div>
           <div class="number-display">${escHtml(getNumberLabel(number))}</div>
           <div class="number-meta">${escHtml((number.features || []).join(', ') || number.region || '')}</div>
+          <div class="number-price">${escHtml(getNumberPriceSummary(number))}</div>
         </div>
         <div class="number-actions">
-          <button class="btn btn-secondary btn-sm" onclick="openReserveModal('${escHtml(getNumberLabel(number))}')">Reserve</button>
-          <button class="btn btn-primary btn-sm" onclick="openPurchaseModal('${escHtml(getNumberLabel(number))}')">Buy</button>
+          <button class="btn btn-secondary btn-sm" onclick='openReserveModal(${JSON.stringify(encodeURIComponent(JSON.stringify(number)))})'>Reserve</button>
+          <button class="btn btn-primary btn-sm" onclick='openPurchaseModal(${JSON.stringify(encodeURIComponent(JSON.stringify(number)))})'>Buy</button>
         </div>
       </div>
     `).join('');
@@ -559,46 +573,84 @@ async function searchNumbers() {
   }
 }
 
-function openPurchaseModal(number) {
-  state.pendingNumber = number;
-  if ($('modal-purchase-number')) $('modal-purchase-number').textContent = number;
+window.openPurchaseModal = (encodedNumber) => {
+  const number = JSON.parse(decodeURIComponent(encodedNumber));
+  state.pendingNumber = getNumberLabel(number);
+  state.pendingPurchase = {
+    number,
+    idempotencyKey: crypto.randomUUID(),
+  };
+  if ($('modal-purchase-number')) $('modal-purchase-number').textContent = getNumberLabel(number);
+  if ($('modal-purchase-price')) $('modal-purchase-price').textContent = getNumberPriceSummary(number);
   $('modal-purchase')?.classList.remove('hidden');
-}
+};
 
-function openReserveModal(number) {
-  state.pendingNumber = number;
-  if ($('modal-reserve-number')) $('modal-reserve-number').textContent = number;
+window.openReserveModal = (encodedNumber) => {
+  const number = JSON.parse(decodeURIComponent(encodedNumber));
+  state.pendingNumber = getNumberLabel(number);
+  state.pendingReservation = {
+    number,
+    idempotencyKey: crypto.randomUUID(),
+  };
+  if ($('modal-reserve-number')) $('modal-reserve-number').textContent = getNumberLabel(number);
+  if ($('modal-reserve-price')) $('modal-reserve-price').textContent = getNumberPriceSummary(number);
   $('modal-reserve')?.classList.remove('hidden');
-}
+};
 
 async function confirmPurchase() {
   const button = $('modal-purchase-confirm');
+  if (!state.pendingPurchase?.number) {
+    toast('warning', 'No number selected', 'Search again and choose one number to purchase.');
+    return;
+  }
   setLoading(button, true, 'Purchasing...');
   try {
-    await api('POST', '/api/telnyx/numbers/purchase', { e164Number: state.pendingNumber });
+    const numberLabel = getNumberLabel(state.pendingPurchase.number);
+    const result = await api('POST', '/api/telnyx/numbers/purchase', {
+      e164Number: numberLabel,
+      idempotencyKey: state.pendingPurchase.idempotencyKey,
+      priceSnapshot: {
+        upfrontCost: state.pendingPurchase.number.upfront_cost ?? null,
+        monthlyCost: state.pendingPurchase.number.monthly_cost ?? null,
+        currency: state.pendingPurchase.number.currency || 'USD',
+      },
+    });
     $('modal-purchase')?.classList.add('hidden');
-    toast('success', 'Number purchased', state.pendingNumber);
+    const detail = result.managed_number_id
+      ? `${numberLabel} • managed as ${result.managed_number_id}`
+      : `${numberLabel} • ${result.platform_status || 'submitted'}`;
+    toast('success', 'Number purchased', detail);
     await loadManagedNumbers();
   } catch (error) {
     toast('error', 'Purchase failed', error.message);
   } finally {
     setLoading(button, false);
     state.pendingNumber = null;
+    state.pendingPurchase = null;
   }
 }
 
 async function confirmReserve() {
   const button = $('modal-reserve-confirm');
+  if (!state.pendingReservation?.number) {
+    toast('warning', 'No number selected', 'Search again and choose one number to reserve.');
+    return;
+  }
   setLoading(button, true, 'Reserving...');
   try {
-    await api('POST', '/api/telnyx/numbers/reserve', { e164Number: state.pendingNumber });
+    const numberLabel = getNumberLabel(state.pendingReservation.number);
+    await api('POST', '/api/telnyx/numbers/reserve', {
+      e164Number: numberLabel,
+      idempotencyKey: state.pendingReservation.idempotencyKey,
+    });
     $('modal-reserve')?.classList.add('hidden');
-    toast('success', 'Number reserved', state.pendingNumber);
+    toast('success', 'Number reserved', numberLabel);
   } catch (error) {
     toast('error', 'Reserve failed', error.message);
   } finally {
     setLoading(button, false);
     state.pendingNumber = null;
+    state.pendingReservation = null;
   }
 }
 
@@ -1091,6 +1143,13 @@ async function disconnectVoice() {
 
 function closeModal(id) {
   $(id)?.classList.add('hidden');
+  if (id === 'modal-purchase') {
+    state.pendingPurchase = null;
+  }
+  if (id === 'modal-reserve') {
+    state.pendingReservation = null;
+  }
+  state.pendingNumber = null;
 }
 
 function registerEvents() {
@@ -1174,8 +1233,6 @@ function registerEvents() {
     });
   });
 
-  window.openPurchaseModal = openPurchaseModal;
-  window.openReserveModal = openReserveModal;
 }
 
 async function init() {

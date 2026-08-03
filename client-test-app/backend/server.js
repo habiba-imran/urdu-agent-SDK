@@ -663,12 +663,12 @@ app.post('/api/telnyx/numbers/sync', async (_req, res) => {
 app.post('/api/telnyx/numbers/reserve', async (req, res) => {
   try {
     if (requirePaidTelephonyActions(res)) return;
-    const { e164Number } = req.body;
+    const { e164Number, idempotencyKey } = req.body;
     if (!e164Number) return res.status(400).json({ ok: false, message: 'e164Number required' });
     const telephony = getTelephonyClient();
     const result = await telephony.reserveNumber({
       e164Number,
-      idempotencyKey: randomUUID(),
+      idempotencyKey: idempotencyKey || randomUUID(),
     });
     res.json(result);
   } catch (error) {
@@ -679,12 +679,12 @@ app.post('/api/telnyx/numbers/reserve', async (req, res) => {
 app.post('/api/telnyx/numbers/purchase', async (req, res) => {
   try {
     if (requirePaidTelephonyActions(res)) return;
-    const { e164Number } = req.body;
+    const { e164Number, idempotencyKey } = req.body;
     if (!e164Number) return res.status(400).json({ ok: false, message: 'e164Number required' });
     const telephony = getTelephonyClient();
     const result = await telephony.purchaseNumber({
       e164Number,
-      idempotencyKey: randomUUID(),
+      idempotencyKey: idempotencyKey || randomUUID(),
     });
     res.json(result);
   } catch (error) {

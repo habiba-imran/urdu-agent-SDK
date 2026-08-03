@@ -540,6 +540,13 @@ textarea.form-input {
   font-size: 0.76rem;
 }
 
+.number-price {
+  margin-top: 0.45rem;
+  color: var(--accent-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .number-actions {
   display: flex;
   flex-wrap: wrap;
@@ -756,6 +763,13 @@ tr:last-child td {
   margin-top: 0.6rem;
   color: var(--accent);
   font-family: 'JetBrains Mono', monospace;
+}
+
+.modal-price-highlight {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--accent-2);
+  font-weight: 700;
 }
 
 .modal-actions {

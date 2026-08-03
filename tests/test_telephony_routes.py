@@ -44,6 +44,9 @@ def test_portal_search_and_purchase():
     assert search_resp.status_code == 200
     numbers = search_resp.json()
     assert len(numbers) > 0
+    assert numbers[0]["upfront_cost"] == "1.00"
+    assert numbers[0]["monthly_cost"] == "1.00"
+    assert numbers[0]["currency"] == "USD"
 
     target = numbers[0]["e164_number"]
     purchase_resp = client.post(
@@ -52,6 +55,7 @@ def test_portal_search_and_purchase():
     )
     assert purchase_resp.status_code == 200
     assert purchase_resp.json()["platform_status"] == "purchased"
+    assert purchase_resp.json()["managed_number_id"] is not None
 
 
 def test_portal_outbound_readiness_and_call():

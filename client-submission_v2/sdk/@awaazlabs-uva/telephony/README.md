@@ -83,8 +83,8 @@ client.listManagedPhoneNumbers({ cursor?, limit?, platformStatus?, providerStatu
 client.importTelnyxNumber({ e164Number, externalCustomerRef? })
 client.syncTelnyxOwnedNumbers()
 client.getTelnyxNumberDrift()
-client.searchAvailableNumbers({ country, areaCode?, numberType?, features? })
-client.purchaseNumber({ e164Number, externalCustomerRef?, idempotencyKey })
+client.searchAvailableNumbers({ country, areaCode?, numberType?, features? }) // => AvailableNumber[] with upfront_cost, monthly_cost, currency
+client.purchaseNumber({ e164Number, externalCustomerRef?, idempotencyKey }) // => NumberOrderResponse with platform_status and managed_number_id when available immediately
 client.getNumberOrderStatus(orderId)
 client.disableNumber(numberId)
 
@@ -135,6 +135,12 @@ try {
 ```
 
 Common error codes include `telephony_auth_failed`, `provider_credentials_missing`, `telnyx_connection_missing`, `telnyx_key_invalid`, `number_not_found`, `number_not_owned_by_tenant`, `number_not_assigned`, `outbound_not_ready`, `regulatory_action_required`, `duplicate_idempotency_key`, and `telephony_request_failed`.
+
+## Number search and purchase behavior
+
+- `searchAvailableNumbers()` returns priced Telnyx inventory rows, including `upfront_cost`, `monthly_cost`, and `currency` when available from the provider.
+- `purchaseNumber()` attempts a short post-order reconciliation step so a successful "Buy" action can return `managed_number_id` in the same response when Telnyx has already exposed the purchased number in owned inventory.
+- If Telnyx still has the order in a true pending state, the response may still return `platform_status: 'pending'`; in that case check `getNumberOrderStatus(orderId)` instead of creating a second purchase request.
 
 ## Security
 

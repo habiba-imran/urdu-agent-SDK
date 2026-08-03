@@ -205,6 +205,9 @@ def test_machine_search_available_numbers():
     )
     assert resp.status_code == 200
     assert len(resp.json()) > 0
+    assert resp.json()[0]["upfront_cost"] == "1.00"
+    assert resp.json()[0]["monthly_cost"] == "1.00"
+    assert resp.json()[0]["currency"] == "USD"
 
 
 def test_machine_reserve_number():
@@ -226,6 +229,7 @@ def test_machine_purchase_number():
     )
     assert resp.status_code == 200
     assert resp.json()["platform_status"] == "purchased"
+    assert resp.json()["managed_number_id"] is not None
 
 
 def test_machine_get_number_order_status():

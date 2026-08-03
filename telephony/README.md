@@ -130,6 +130,16 @@ Public error objects and SDK responses are redacted. Raw provider payloads,
 signatures, Telnyx keys, SIP secrets, and restricted diagnostics are not returned
 by this SDK.
 
+## Number Search And Purchase Notes
+
+- `searchAvailableNumbers()` returns priced Telnyx inventory rows, including
+  `upfront_cost`, `monthly_cost`, and `currency` when the provider supplies them.
+- `purchaseNumber()` returns a typed order payload and attempts a short
+  reconciliation pass so a successful buy can also return `managed_number_id`
+  immediately when Telnyx has already materialized the purchased number.
+- If the provider still reports a true pending order, call
+  `getNumberOrderStatus(orderId)` rather than firing a second purchase request.
+
 ## Security Rules
 
 - Calls only `/machine/telephony/*` routes.
