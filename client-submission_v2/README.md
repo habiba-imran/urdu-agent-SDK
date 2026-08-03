@@ -55,3 +55,5 @@ The voice package has a runtime dependency on `livekit-client`; npm installs it 
 ## Start here
 
 Read `docs/INTEGRATION_GUIDE.md` for the full implementation flow. Use `docs/credentials-template.md` to prepare backend and frontend environment variables before writing application code.
+
+If you are integrating telephony, also read `docs/TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md` before building purchase, number-assignment, inbound, or outbound call flows. That note explains the tenant-scoped uniqueness rules, idempotency expectations, backend-only Telnyx key handling, and outbound-readiness constraints that affect production behavior.

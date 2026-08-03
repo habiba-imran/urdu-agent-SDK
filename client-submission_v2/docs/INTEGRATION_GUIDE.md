@@ -86,6 +86,15 @@ await agents.updateAgent(agent.id, {
 Agent records include `id`, `name`, `prompt`, `voice_id`, `llm_model`, `created_at`, optional usage metadata, and provider fields such as `agent_language`, `stt_provider`, `stt_model`, `llm_provider`, `tts_provider`, and `tts_voice_id`.
 
 Provider/language/model fields are optional. Omitting them keeps the hosted platform defaults. Set them only when your tenant has the requested provider and language combination enabled.
+
+Before building provider/model/voice pickers in your own product UI, fetch the currently enabled combinations from the backend:
+
+```ts
+const capabilities = await agents.getProviderCapabilities();
+const urduTtsProviders = Object.keys(capabilities.languages.ur?.tts ?? {});
+```
+
+`getProviderCapabilities()` returns only currently enabled combinations. If a provider is absent for a language/layer, treat it as unavailable and do not offer it in the UI. For provider-validation failures, `AwaazLabsUvaAgentsError` includes a stable `code` for cases such as `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, and `unsupported_voice_for_provider`.
 ## 6. Browser voice sessions
 
 ```ts

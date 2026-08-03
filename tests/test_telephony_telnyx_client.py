@@ -163,3 +163,63 @@ def test_purchase_number_maps_regulatory_or_verification_response():
 
     assert exc_info.value.status == 409
     assert exc_info.value.code == "regulatory_action_required"
+
+
+class FakeTelnyxOrderSuccessResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.status_code = 200
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeTelnyxOrderStatusHttpClient:
+    def __init__(self, response):
+        self.response = response
+
+    def post(self, url, headers=None, json=None):
+        return self.response
+
+    def get(self, url, headers=None):
+        return self.response
+
+
+def test_purchase_number_maps_action_required_when_requirements_not_met():
+    response = FakeTelnyxOrderSuccessResponse(
+        {"data": {"id": "ord_123", "status": "pending", "requirements_met": False}}
+    )
+    client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(response),
+        mock_mode=False,
+    )
+
+    result = client.purchase_number("+14155550123")
+
+    assert result["provider_order_id"] == "ord_123"
+    assert result["provider_status"] == "pending"
+    assert result["platform_status"] == "action_required"
+
+
+def test_get_number_order_status_maps_failure_and_cancelled_states():
+    failed_client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(
+            FakeTelnyxOrderSuccessResponse({"data": {"id": "ord_failed", "status": "failure"}})
+        ),
+        mock_mode=False,
+    )
+    cancelled_client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(
+            FakeTelnyxOrderSuccessResponse({"data": {"id": "ord_cancelled", "status": "cancelled"}})
+        ),
+        mock_mode=False,
+    )
+
+    assert failed_client.get_number_order_status("ord_failed")["platform_status"] == "failed"
+    assert cancelled_client.get_number_order_status("ord_cancelled")["platform_status"] == "cancelled"

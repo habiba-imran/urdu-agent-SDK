@@ -97,9 +97,13 @@ class StatefulTelephonyDb:
             return FakeCursor(row=self._connection_row(params[0]))
         if "update tenant_telnyx_connections" in sql:
             return self._update_connection(params)
+        if "update telephony_phone_numbers" in sql:
+            return self._update_number_by_e164(sql, params)
         if "insert into telephony_phone_numbers" in sql:
             self.last_sync_sql = sql
             return self._upsert_number(params)
+        if "from telephony_phone_numbers" in sql:
+            return self._select_number(params)
         raise AssertionError(f"Unexpected SQL: {query}")
 
     def _connection_row(self, tenant_id: str):
@@ -186,6 +190,80 @@ class StatefulTelephonyDb:
         }
         self.numbers.append(number)
         return FakeCursor(row=self._number_row(number))
+
+    def _update_number_by_e164(self, sql: str, params: tuple[Any, ...]):
+        if "provider_number_id = %s" in sql:
+            connection_id, provider_id, country, number_type, features, provisioning_status, routing_status, provider_status, external_customer_ref, tenant_id, e164, provider_id_match = params
+            existing = next(
+                (
+                    number
+                    for number in self.numbers
+                    if number["tenant_id"] == tenant_id
+                    and number["e164_number"] == e164
+                    and number.get("disabled_at") is None
+                    and (number["provider_number_id"] is None or number["provider_number_id"] == provider_id_match)
+                ),
+                None,
+            )
+            if not existing:
+                return FakeCursor(row=None)
+            if existing.get("disabled_at") or existing.get("provisioning_status") in {"released", "deleted"}:
+                existing["provisioning_status"] = provisioning_status
+                existing["routing_status"] = routing_status
+            existing.update(
+                {
+                    "telnyx_connection_id": connection_id,
+                    "provider_number_id": provider_id,
+                    "country": country,
+                    "number_type": number_type,
+                    "features": json.loads(features) if isinstance(features, str) else features,
+                    "provider_status": provider_status,
+                    "external_customer_ref": external_customer_ref or existing.get("external_customer_ref"),
+                    "disabled_at": None,
+                }
+            )
+            return FakeCursor(row=(existing["id"],))
+
+        connection_id, country, number_type, features, provisioning_status, routing_status, provider_status, external_customer_ref, tenant_id, e164 = params
+        existing = next(
+            (
+                number
+                for number in self.numbers
+                if number["tenant_id"] == tenant_id
+                and number["e164_number"] == e164
+                and number.get("disabled_at") is None
+            ),
+            None,
+        )
+        if not existing:
+            return FakeCursor(row=None)
+        if existing.get("disabled_at") or existing.get("provisioning_status") in {"released", "deleted"}:
+            existing["provisioning_status"] = provisioning_status
+            existing["routing_status"] = routing_status
+        existing.update(
+            {
+                "telnyx_connection_id": connection_id,
+                "country": country,
+                "number_type": number_type,
+                "features": json.loads(features) if isinstance(features, str) else features,
+                "provider_status": provider_status,
+                "external_customer_ref": external_customer_ref or existing.get("external_customer_ref"),
+                "disabled_at": None,
+            }
+        )
+        return FakeCursor(row=(existing["id"],))
+
+    def _select_number(self, params: tuple[Any, ...]):
+        tenant_id, number_id = params
+        existing = next(
+            (
+                number
+                for number in self.numbers
+                if number["tenant_id"] == tenant_id and number["id"] == number_id
+            ),
+            None,
+        )
+        return FakeCursor(row=self._number_row(existing) if existing else None)
 
     def _number_row(self, number: dict[str, Any]):
         return (
@@ -324,6 +402,35 @@ def test_existing_disabled_number_becomes_synchronized_again():
     assert result["items"][0]["provisioning_status"] == "owned"
     assert result["items"][0]["disabled_at"] is None
     assert len(db.numbers) == 1
+
+
+def test_sync_attaches_real_provider_identity_to_existing_e164_row_without_duplication():
+    db = StatefulTelephonyDb()
+    db.numbers.append(
+        {
+            "id": "num_pending",
+            "tenant_id": TENANT_A,
+            "telnyx_connection_id": "conn_a",
+            "provider_number_id": None,
+            "e164_number": "+14155550123",
+            "country": "US",
+            "number_type": "local",
+            "features": ["voice"],
+            "provisioning_status": "purchase_pending",
+            "routing_status": "not_configured",
+            "provider_status": "pending",
+            "assigned_agent_id": None,
+            "external_customer_ref": "cust_123",
+            "disabled_at": None,
+        }
+    )
+
+    result = service_for(db, inventory()).sync_telnyx_owned_numbers(TENANT_A)
+
+    assert len(db.numbers) == 1
+    assert result["items"][0]["id"] == "num_pending"
+    assert result["items"][0]["provider_number_id"] == "pn_real_123"
+    assert result["items"][0]["provisioning_status"] == "purchase_pending"
 
 
 def test_successful_active_connection_key_rotation_preserves_row_and_redacts_secret(caplog):

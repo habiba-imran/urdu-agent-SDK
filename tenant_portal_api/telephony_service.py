@@ -175,6 +175,207 @@ class TelephonyService:
                 message="Phone number routing is not ready for this agent.",
             )
 
+    def _order_platform_status(self, provider_status: str | None, requirements_met: bool | None = None) -> str:
+        normalized = str(provider_status or "").strip().lower()
+        if requirements_met is False:
+            return "action_required"
+        if normalized == "success":
+            return "purchased"
+        if normalized in {"failure", "failed"}:
+            return "failed"
+        if normalized in {"cancelled", "canceled"}:
+            return "cancelled"
+        if normalized == "deleted":
+            return "deleted"
+        return "pending"
+
+    def _materialize_managed_number(
+        self,
+        conn: Any,
+        *,
+        tenant_id: str,
+        telnyx_connection_id: str,
+        e164_number: str,
+        country: str,
+        number_type: str,
+        features: list[str],
+        provisioning_status: str,
+        routing_status: str,
+        provider_status: str | None,
+        external_customer_ref: str | None = None,
+        provider_number_id: str | None = None,
+        touch_last_synced_at: bool = False,
+    ) -> str | None:
+        """Upsert a managed number while reconciling later provider identity arrival.
+
+        Real Telnyx orders can succeed before the purchased number appears in the
+        owned-number inventory response. In that case we store a temporary row
+        without provider identity and later let inventory sync attach the real
+        `provider_number_id` by matching on E.164.
+        """
+        features_json = json.dumps(features if isinstance(features, list) else ["voice"])
+        last_synced_sql = ", last_synced_at = now()" if touch_last_synced_at else ""
+
+        if provider_number_id:
+            row = conn.execute(
+                f"""
+                update telephony_phone_numbers
+                set telnyx_connection_id = %s,
+                    provider_number_id = %s,
+                    country = %s,
+                    number_type = %s,
+                    features = %s::jsonb,
+                    provisioning_status = case
+                        when disabled_at is not null
+                          or provisioning_status in ('released', 'deleted')
+                        then %s
+                        else telephony_phone_numbers.provisioning_status
+                    end,
+                    routing_status = case
+                        when disabled_at is not null
+                        then %s
+                        else telephony_phone_numbers.routing_status
+                    end,
+                    provider_status = %s,
+                    external_customer_ref = coalesce(%s, external_customer_ref),
+                    disabled_at = null,
+                    updated_at = now()
+                    {last_synced_sql}
+                where tenant_id = %s and e164_number = %s
+                  and disabled_at is null
+                  and (provider_number_id is null or provider_number_id = %s)
+                returning id
+                """,
+                (
+                    telnyx_connection_id,
+                    provider_number_id,
+                    country,
+                    number_type,
+                    features_json,
+                    provisioning_status,
+                    routing_status,
+                    provider_status,
+                    external_customer_ref,
+                    tenant_id,
+                    e164_number,
+                    provider_number_id,
+                ),
+            ).fetchone()
+            if row:
+                return str(row[0])
+
+            row = conn.execute(
+                f"""
+                insert into telephony_phone_numbers (
+                    tenant_id, telnyx_connection_id, provider_number_id, e164_number,
+                    country, number_type, features, provisioning_status, routing_status,
+                    provider_status, external_customer_ref{", last_synced_at" if touch_last_synced_at else ""}
+                ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s{", now()" if touch_last_synced_at else ""})
+                on conflict (tenant_id, provider_number_id) do update set
+                    telnyx_connection_id = excluded.telnyx_connection_id,
+                    e164_number = excluded.e164_number,
+                    country = excluded.country,
+                    number_type = excluded.number_type,
+                    features = excluded.features,
+                    provisioning_status = case
+                        when telephony_phone_numbers.disabled_at is not null
+                          or telephony_phone_numbers.provisioning_status in ('released', 'deleted')
+                        then excluded.provisioning_status
+                        else telephony_phone_numbers.provisioning_status
+                    end,
+                    routing_status = case
+                        when telephony_phone_numbers.disabled_at is not null
+                        then excluded.routing_status
+                        else telephony_phone_numbers.routing_status
+                    end,
+                    provider_status = excluded.provider_status,
+                    external_customer_ref = coalesce(excluded.external_customer_ref, telephony_phone_numbers.external_customer_ref),
+                    disabled_at = null,
+                    updated_at = now()
+                    {last_synced_sql}
+                returning id
+                """,
+                (
+                    tenant_id,
+                    telnyx_connection_id,
+                    provider_number_id,
+                    e164_number,
+                    country,
+                    number_type,
+                    features_json,
+                    provisioning_status,
+                    routing_status,
+                    provider_status,
+                    external_customer_ref,
+                ),
+            ).fetchone()
+            return str(row[0]) if row else None
+
+        row = conn.execute(
+            """
+            update telephony_phone_numbers
+            set telnyx_connection_id = %s,
+                country = %s,
+                number_type = %s,
+                features = %s::jsonb,
+                provisioning_status = case
+                    when disabled_at is not null
+                      or provisioning_status in ('released', 'deleted')
+                    then %s
+                    else telephony_phone_numbers.provisioning_status
+                end,
+                routing_status = case
+                    when disabled_at is not null
+                    then %s
+                    else telephony_phone_numbers.routing_status
+                end,
+                provider_status = %s,
+                external_customer_ref = coalesce(%s, external_customer_ref),
+                disabled_at = null,
+                updated_at = now()
+            where tenant_id = %s and e164_number = %s and disabled_at is null
+            returning id
+            """,
+            (
+                telnyx_connection_id,
+                country,
+                number_type,
+                features_json,
+                provisioning_status,
+                routing_status,
+                provider_status,
+                external_customer_ref,
+                tenant_id,
+                e164_number,
+            ),
+        ).fetchone()
+        if row:
+            return str(row[0])
+
+        row = conn.execute(
+            """
+            insert into telephony_phone_numbers (
+                tenant_id, telnyx_connection_id, provider_number_id, e164_number,
+                country, number_type, features, provisioning_status, routing_status,
+                provider_status, external_customer_ref
+            ) values (%s, %s, null, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+            returning id
+            """,
+            (
+                tenant_id,
+                telnyx_connection_id,
+                e164_number,
+                country,
+                number_type,
+                features_json,
+                provisioning_status,
+                routing_status,
+                provider_status,
+                external_customer_ref,
+            ),
+        ).fetchone()
+        return str(row[0]) if row else None
+
 
     def connect_telnyx_account(
         self, tenant_id: str, api_key: str, label: str | None = None
@@ -463,39 +664,28 @@ class TelephonyService:
             managed_number_id = None
             try:
                 owned = client.list_owned_numbers(filter_phone_number=e164_number)
-                provider_number_id = (owned[0].get("provider_number_id") if owned else None) or f"pending:{e164_number}"
+                provider_number_id = owned[0].get("provider_number_id") if owned else None
                 country = (owned[0].get("country") if owned else "US") or "US"
                 number_type = (owned[0].get("number_type") if owned else "local") or "local"
                 features = (owned[0].get("features") if owned else ["voice"]) or ["voice"]
-                managed_row = conn.execute(
-                    """
-                    insert into telephony_phone_numbers (
-                        tenant_id, telnyx_connection_id, provider_number_id, e164_number,
-                        country, number_type, features, provisioning_status, routing_status,
-                        external_customer_ref
-                    ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-                    on conflict (tenant_id, provider_number_id) do update set
-                        e164_number = excluded.e164_number,
-                        provisioning_status = excluded.provisioning_status,
-                        updated_at = now()
-                    returning id
-                    """,
-                    (
-                        tenant_id,
-                        conn_data["id"],
-                        provider_number_id,
-                        e164_number,
-                        country,
-                        number_type,
-                        json.dumps(features if isinstance(features, list) else ["voice"]),
+                managed_number_id = self._materialize_managed_number(
+                    conn,
+                    tenant_id=tenant_id,
+                    telnyx_connection_id=conn_data["id"],
+                    provider_number_id=provider_number_id,
+                    e164_number=e164_number,
+                    country=country,
+                    number_type=number_type,
+                    features=features if isinstance(features, list) else ["voice"],
+                    provisioning_status=(
                         NumberProvisioningStatus.OWNED.value
                         if order_res.get("platform_status") == "purchased"
-                        else NumberProvisioningStatus.PURCHASE_PENDING.value,
-                        NumberRoutingStatus.NOT_CONFIGURED.value,
-                        external_customer_ref,
+                        else NumberProvisioningStatus.PURCHASE_PENDING.value
                     ),
-                ).fetchone()
-                managed_number_id = str(managed_row[0]) if managed_row else None
+                    routing_status=NumberRoutingStatus.NOT_CONFIGURED.value,
+                    provider_status=order_res.get("provider_status"),
+                    external_customer_ref=external_customer_ref,
+                )
             except Exception as exc:
                 logger.warning(
                     "Purchase succeeded but managed number materialization failed for %s: %s",
@@ -962,53 +1152,35 @@ class TelephonyService:
                     logger.warning("Skipping Telnyx number missing provider identity or E.164 value.")
                     continue
                 try:
-                    row = conn.execute(
-                        """
-                        insert into telephony_phone_numbers (
-                            tenant_id, telnyx_connection_id, provider_number_id, e164_number,
-                            country, number_type, features, provisioning_status, routing_status,
-                            provider_status, last_synced_at
-                        ) values (%s, %s, %s, %s, %s, %s, %s, 'owned', 'not_configured', %s, now())
-                        on conflict (tenant_id, provider_number_id) do update set
-                            telnyx_connection_id = excluded.telnyx_connection_id,
-                            e164_number = excluded.e164_number,
-                            country = excluded.country,
-                            number_type = excluded.number_type,
-                            features = excluded.features,
-                            provisioning_status = case
-                                when telephony_phone_numbers.disabled_at is not null
-                                  or telephony_phone_numbers.provisioning_status in ('released', 'deleted')
-                                then excluded.provisioning_status
-                                else telephony_phone_numbers.provisioning_status
-                            end,
-                            routing_status = case
-                                when telephony_phone_numbers.disabled_at is not null
-                                then excluded.routing_status
-                                else telephony_phone_numbers.routing_status
-                            end,
-                            provider_status = excluded.provider_status,
-                            disabled_at = null,
-                            last_synced_at = now(),
-                            updated_at = now()
-                        returning id, tenant_id, provider_number_id, e164_number, country, number_type,
-                                  features, provisioning_status, routing_status, assigned_agent_id,
-                                  external_customer_ref, disabled_at
-                        """,
-                        (
-                            tenant_id,
-                            conn_data["id"],
-                            provider_number_id,
-                            e164_number,
-                            item.get("country"),
-                            item.get("number_type"),
-                            item.get("features") or ["voice"],
-                            item.get("status"),
-                        ),
-                    ).fetchone()
+                    materialized_id = self._materialize_managed_number(
+                        conn,
+                        tenant_id=tenant_id,
+                        telnyx_connection_id=conn_data["id"],
+                        provider_number_id=provider_number_id,
+                        e164_number=e164_number,
+                        country=item.get("country"),
+                        number_type=item.get("number_type"),
+                        features=item.get("features") or ["voice"],
+                        provisioning_status=NumberProvisioningStatus.OWNED.value,
+                        routing_status=NumberRoutingStatus.NOT_CONFIGURED.value,
+                        provider_status=item.get("status"),
+                        touch_last_synced_at=True,
+                    )
                 except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
                     self._raise_database_conflict("sync Telnyx owned numbers", exc)
-                if row:
-                    items.append(self._number_from_row(row))
+                if materialized_id:
+                    row = conn.execute(
+                        """
+                        select id, tenant_id, provider_number_id, e164_number, country, number_type,
+                               features, provisioning_status, routing_status, assigned_agent_id,
+                               external_customer_ref, disabled_at
+                        from telephony_phone_numbers
+                        where tenant_id = %s and id = %s
+                        """,
+                        (tenant_id, materialized_id),
+                    ).fetchone()
+                    if row:
+                        items.append(self._number_from_row(row))
             return {
                 "tenant_id": tenant_id,
                 "synced_count": len(items),
