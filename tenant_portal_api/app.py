@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 import psycopg
-from dotenv import dotenv_values
+from dotenv import dotenv_values, load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -40,6 +40,7 @@ from control_plane.secrets_db import DbSecretProvider  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _ROOT / ".env.local"
+load_dotenv(_ENV_PATH, override=False)
 
 
 def _ensure_portal_jwt_secret() -> str:
