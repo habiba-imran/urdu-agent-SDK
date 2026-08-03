@@ -174,7 +174,7 @@ async def telnyx_webhook_endpoint(
 
     if not is_mock_provider_mode():
         try:
-            with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+            with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
                 existing = conn.execute(
                     """
                     select 1 from telephony_call_events

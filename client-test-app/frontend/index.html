@@ -159,7 +159,7 @@
         <div class="stack">
           <div class="card">
             <div class="card-title">Phone Numbers</div>
-            <p class="section-sub">Search, purchase, sync, and review managed numbers before assigning them.</p>
+            <p class="section-sub">Search, purchase, and review numbers from the connected Telnyx account before assigning them.</p>
             <div class="split-fields">
               <div class="form-group">
                 <label class="form-label">Country</label>
@@ -201,12 +201,27 @@
             <div class="mt-3">
               <div class="flex justify-between items-center mb-1">
                 <h2 class="section-title section-title-sm">Managed Numbers</h2>
-                <span class="badge badge-gray">Tenant inventory</span>
+                <span class="badge badge-gray">Auto-synced from connected Telnyx account</span>
               </div>
               <div id="managed-numbers-list">
                 <div class="empty-state">
                   <div class="empty-state-title">No managed numbers yet</div>
-                  <div class="empty-state-text">Sync existing Telnyx numbers or purchase a new one first.</div>
+                  <div class="empty-state-text">Connect Telnyx, then refresh to pull owned numbers into the workspace.</div>
+                </div>
+              </div>
+            </div>
+            <div class="mt-3">
+              <div class="flex justify-between items-center mb-1">
+                <h2 class="section-title section-title-sm">Debug Log</h2>
+                <div class="button-row">
+                  <button id="btn-refresh-debug-log" class="btn btn-secondary btn-sm">Refresh Logs</button>
+                  <button id="btn-clear-debug-log" class="btn btn-secondary btn-sm">Clear Logs</button>
+                </div>
+              </div>
+              <div id="debug-log-list">
+                <div class="empty-state">
+                  <div class="empty-state-title">No recent backend diagnostics</div>
+                  <div class="empty-state-text">Recent telephony and gateway failures will appear here.</div>
                 </div>
               </div>
             </div>

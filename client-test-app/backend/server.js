@@ -42,6 +42,40 @@ let config = {
   allowPaidTelephonyActions: process.env.ALLOW_PAID_TELEPHONY_ACTIONS === '1',
 };
 
+const MAX_DEBUG_EVENTS = 40;
+const debugEvents = [];
+
+function redactText(value) {
+  return String(value || '')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]')
+    .replace(/KEY[0-9A-Za-z_-]{12,}/g, '[REDACTED]')
+    .replace(/[a-fA-F0-9]{64}/g, '[REDACTED]');
+}
+
+function sanitizeDiagnosticValue(value) {
+  if (value === null || value === undefined) return value ?? null;
+  if (typeof value === 'string') return redactText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeDiagnosticValue(item));
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 30)
+        .map(([key, item]) => [key, sanitizeDiagnosticValue(item)]),
+    );
+  }
+  return String(value);
+}
+
+function recordDebugEvent(event) {
+  debugEvents.unshift({
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    ...sanitizeDiagnosticValue(event),
+  });
+  if (debugEvents.length > MAX_DEBUG_EVENTS) debugEvents.length = MAX_DEBUG_EVENTS;
+}
+
 const app = express();
 app.use(cors({
   origin(origin, cb) {
@@ -351,6 +385,15 @@ async function collectTelephonyDiagnostics({ fromNumberId = '', requestedAgentId
 // ─── Error helpers ───────────────────────────────────────────────────────────
 function handleError(res, error) {
   console.error('[UVA Test App Error]', error?.message || error);
+  const req = res?.req;
+  const baseEvent = {
+    scope: 'backend_error',
+    route: req?.originalUrl || req?.url || '(unknown route)',
+    method: req?.method || '(unknown method)',
+    status: error?.status || 500,
+    errorName: error?.name || 'Error',
+    message: error?.message || String(error),
+  };
   if (error instanceof AwaazLabsUvaTelephonyError) {
     const signatureMessage = String(error.message || '').toLowerCase().includes('bad signature')
       ? 'Bad signature: the Tenant ID and HMAC Secret loaded in this local backend do not match the target API.'
@@ -361,6 +404,12 @@ function handleError(res, error) {
     const message = providerMessage && !signatureMessage.includes(providerMessage)
       ? `${signatureMessage} Telnyx said: ${providerMessage}`
       : signatureMessage;
+    recordDebugEvent({
+      ...baseEvent,
+      scope: 'telephony_error',
+      code: error.code,
+      detail: error.detail || null,
+    });
     return res.status(error.status || 500).json({
       ok: false,
       code: error.code,
@@ -368,6 +417,7 @@ function handleError(res, error) {
       detail: error.detail,
     });
   }
+  recordDebugEvent(baseEvent);
   if (error instanceof AwaazLabsUvaAgentsError) {
     return res.status(error.status || 500).json({
       ok: false,
@@ -405,7 +455,10 @@ app.get('/api/config', (_req, res) => {
     apiBaseUrl: config.apiBaseUrl,
     telephonyApiUrl: config.telephonyApiUrl,
     sessionUpstreamUrl: config.sessionUpstreamUrl,
+    publishableKey: config.publishableKey,
     tenantId: config.tenantId,
+    hmacSecret: config.hmacSecret,
+    telnyxApiKey: config.telnyxApiKey,
     allowedOrigins: config.allowedOrigins,
     hmacSecretSet: !!config.hmacSecret,
     telnyxApiKeySet: !!config.telnyxApiKey,
@@ -446,6 +499,19 @@ app.post('/api/config', (req, res) => {
     paidTelephonyActionsEnabled: config.allowPaidTelephonyActions,
   });
   res.json({ ok: true, message: 'Configuration saved (in-memory only).' });
+});
+
+app.get('/api/debug/errors', (_req, res) => {
+  res.json({
+    ok: true,
+    count: debugEvents.length,
+    items: debugEvents,
+  });
+});
+
+app.post('/api/debug/errors/clear', (_req, res) => {
+  debugEvents.length = 0;
+  res.json({ ok: true });
 });
 
 // Provider capabilities
@@ -675,9 +741,90 @@ app.get('/api/telnyx/numbers/managed', async (req, res) => {
   try {
     const { limit = 25 } = req.query;
     const telephony = getTelephonyClient();
+    let syncWarning = null;
+    try {
+      await telephony.syncTelnyxOwnedNumbers();
+    } catch (error) {
+      syncWarning = error?.message || 'Could not sync owned numbers before listing managed inventory.';
+    }
     const numbers = await telephony.listManagedPhoneNumbers({ limit: parseInt(limit, 10) });
-    res.json(numbers);
+    if (Array.isArray(numbers)) {
+      return res.json(syncWarning ? { items: numbers, sync_warning: syncWarning } : numbers);
+    }
+    res.json(syncWarning ? { ...numbers, sync_warning: syncWarning } : numbers);
   } catch (error) {
+    if (error instanceof AwaazLabsUvaTelephonyError && (error.code === 'telephony_invalid_response' || error.status === 502)) {
+      const syncBody = {};
+      const listBody = { limit: parseInt(req.query.limit || '25', 10) };
+      const [syncProbe, listProbe, connectionProbe] = await Promise.all([
+        probeTelephonyUpstream({
+          action: 'telephony.managed_numbers.sync',
+          path: '/machine/telephony/numbers/sync',
+          body: syncBody,
+          method: 'POST',
+        }).catch((probeError) => ({
+          ok: false,
+          status: 0,
+          statusText: 'probe_failed',
+          responseKind: 'text',
+          payloadPreview: previewText(probeError?.message || String(probeError)),
+          parsedBody: null,
+          likelyCauses: ['The local backend could not complete the raw managed-number sync probe.'],
+        })),
+        probeTelephonyUpstream({
+          action: 'telephony.managed_numbers.list',
+          path: '/machine/telephony/numbers/list',
+          body: listBody,
+          method: 'POST',
+        }).catch((probeError) => ({
+          ok: false,
+          status: 0,
+          statusText: 'probe_failed',
+          responseKind: 'text',
+          payloadPreview: previewText(probeError?.message || String(probeError)),
+          parsedBody: null,
+          likelyCauses: ['The local backend could not complete the raw managed-number list probe.'],
+        })),
+        probeTelephonyUpstream({
+          action: 'telephony.telnyx_connection.status',
+          path: '/machine/telephony/telnyx/connection',
+          body: {},
+          method: 'GET',
+        }).catch((probeError) => ({
+          ok: false,
+          status: 0,
+          statusText: 'probe_failed',
+          responseKind: 'text',
+          payloadPreview: previewText(probeError?.message || String(probeError)),
+          parsedBody: null,
+          likelyCauses: ['The local backend could not complete the Telnyx connection probe.'],
+        })),
+      ]);
+
+      recordDebugEvent({
+        scope: 'managed_numbers_gateway_failure',
+        route: req.originalUrl,
+        method: req.method,
+        status: 502,
+        code: error.code,
+        detail: {
+          connectionProbe,
+          syncProbe,
+          listProbe,
+        },
+      });
+
+      return res.status(502).json({
+        ok: false,
+        code: error.code,
+        message: 'Telephony API returned a non-JSON or gateway response while loading managed numbers.',
+        detail: {
+          connectionProbe,
+          syncProbe,
+          listProbe,
+        },
+      });
+    }
     handleError(res, error);
   }
 });
@@ -1017,6 +1164,17 @@ app.post('/api/outbound-call', async (req, res) => {
           toNumber: req.body?.toNumber || '',
         }).catch(() => null),
       ]);
+      recordDebugEvent({
+        scope: 'outbound_gateway_failure',
+        route: req.originalUrl,
+        method: req.method,
+        status: 502,
+        code: error.code,
+        detail: {
+          diagnostics,
+          upstreamProbe,
+        },
+      });
       return res.status(502).json({
         ok: false,
         code: error.code,

@@ -106,7 +106,7 @@ def get_db():
 
 def _open_db():
     """Open a request-scoped DB connection for deployed machine auth."""
-    return psycopg.connect(**conn_kwargs(), connect_timeout=10)
+    return psycopg.connect(**conn_kwargs(), connect_timeout=3)
 
 
 def _verify_machine(

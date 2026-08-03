@@ -77,7 +77,7 @@ class TelephonyService:
         if is_mock_provider_mode():
             yield None
             return
-        with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
             yield conn
             conn.commit()
 

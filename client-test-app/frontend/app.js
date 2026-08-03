@@ -4,6 +4,7 @@ const API = import.meta.env.VITE_TEST_BACKEND_URL || 'http://localhost:3001';
 const state = {
   numbers: [],
   agents: [],
+  debugEvents: [],
   pendingNumber: null,
   pendingPurchase: null,
   pendingReservation: null,
@@ -314,6 +315,87 @@ function renderTelephonyDiagnostics(detail, toNumber = '') {
   `;
 }
 
+function renderManagedNumberDiagnostics(detail) {
+  const connectionProbe = detail?.connectionProbe || null;
+  const syncProbe = detail?.syncProbe || null;
+  const listProbe = detail?.listProbe || null;
+
+  function renderProbe(title, probe) {
+    if (!probe) return '';
+    const likelyCauses = Array.isArray(probe.likelyCauses) ? probe.likelyCauses : [];
+    return `
+      <div class="readiness-item ${probe.ok ? 'pass' : 'fail'}">
+        <span class="readiness-icon">${probe.ok ? 'OK' : 'ERR'}</span>
+        <div>
+          <div class="readiness-label">${escHtml(title)}: ${escHtml(probe.status ? String(probe.status) : 'no response')}</div>
+          <div class="readiness-detail">
+            ${escHtml(probe.responseKind || 'unknown')} response
+            ${probe.contentType ? `, content-type ${probe.contentType}` : ''}
+          </div>
+        </div>
+      </div>
+      ${probe.payloadPreview ? `<div class="code-block">${escHtml(probe.payloadPreview)}</div>` : ''}
+      ${likelyCauses.map((item) => `
+        <div class="readiness-item pending">
+          <span class="readiness-icon">INFO</span>
+          <div><div class="readiness-label">${escHtml(item)}</div></div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  return `
+    <div class="card" style="border-color: var(--red)">
+      <div class="card-title">Managed Number Diagnostics</div>
+      ${renderProbe('Connection check', connectionProbe)}
+      ${renderProbe('Owned-number sync', syncProbe)}
+      ${renderProbe('Managed-number list', listProbe)}
+    </div>
+  `;
+}
+
+async function loadDebugLog() {
+  const target = $('debug-log-list');
+  if (!target) return;
+  target.innerHTML = '<div class="loading-row"><div class="spinner"></div><br/>Loading logs...</div>';
+  try {
+    const result = await api('GET', '/api/debug/errors');
+    state.debugEvents = normalizeCollection(result, ['items', 'data']);
+    if (!state.debugEvents.length) {
+      target.innerHTML = '<div class="empty-state"><div class="empty-state-title">No recent backend diagnostics</div><div class="empty-state-text">Recent telephony and gateway failures will appear here.</div></div>';
+      return;
+    }
+    target.innerHTML = state.debugEvents.map((item) => `
+      <div class="number-card" style="margin-bottom:0.5rem; border-radius: var(--radius-sm)">
+        <div>
+          <div class="number-display" style="font-size:0.9rem">${escHtml(item.scope || item.code || 'backend_event')}</div>
+          <div class="number-meta flex gap-1 mt-1">
+            ${statusBadge(item.status || 'info')}
+            ${item.code ? `<span class="badge badge-red">${escHtml(item.code)}</span>` : ''}
+            ${item.method ? `<span class="badge badge-gray">${escHtml(item.method)}</span>` : ''}
+            ${item.route ? `<span class="badge badge-gray">${escHtml(item.route)}</span>` : ''}
+          </div>
+          <div class="readiness-detail" style="margin-top:0.5rem">${escHtml(item.createdAt || '')}</div>
+          <div class="readiness-label" style="margin-top:0.35rem">${escHtml(item.message || 'No message')}</div>
+          ${item.detail ? `<div class="code-block">${escHtml(JSON.stringify(item.detail, null, 2))}</div>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    target.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load debug log</div><div class="empty-state-text">${escHtml(error.message)}</div></div>`;
+  }
+}
+
+async function clearDebugLog() {
+  try {
+    await api('POST', '/api/debug/errors/clear');
+    toast('success', 'Debug log cleared');
+    await loadDebugLog();
+  } catch (error) {
+    toast('error', 'Could not clear debug log', error.message);
+  }
+}
+
 async function checkBackendHealth() {
   try {
     const health = await api('GET', '/api/health');
@@ -339,7 +421,10 @@ async function checkConfig() {
     if ($('cfg-api-url')) $('cfg-api-url').value = config.apiBaseUrl || '';
     if ($('cfg-telephony-url')) $('cfg-telephony-url').value = config.telephonyApiUrl || '';
     if ($('cfg-session-url')) $('cfg-session-url').value = config.sessionUpstreamUrl || '';
+    if ($('cfg-publishable-key')) $('cfg-publishable-key').value = config.publishableKey || '';
     if ($('cfg-tenant-id')) $('cfg-tenant-id').value = config.tenantId || '';
+    if ($('cfg-hmac-secret')) $('cfg-hmac-secret').value = config.hmacSecret || '';
+    if ($('cfg-telnyx-key')) $('cfg-telnyx-key').value = config.telnyxApiKey || '';
     if (config.tenantId && config.hmacSecretSet) {
       updateStatusItem('status-config', 'pass', 'Tenant credentials set', config.tenantId.slice(0, 12) + '...');
     } else {
@@ -421,6 +506,9 @@ async function loadManagedNumbers() {
   try {
     const result = await api('GET', '/api/telnyx/numbers/managed');
     state.numbers = normalizeCollection(result, ['data', 'numbers', 'items']);
+    if (result?.sync_warning) {
+      toast('warning', 'Numbers refreshed with warning', result.sync_warning);
+    }
     if (!state.numbers.length) {
       target.innerHTML = '<div class="empty-state"><div class="empty-state-title">No managed numbers</div><div class="empty-state-text">Sync from Telnyx or purchase a number first.</div></div>';
       populateProviderTestSelects();
@@ -448,7 +536,13 @@ async function loadManagedNumbers() {
     }).join('');
     populateProviderTestSelects();
   } catch (error) {
-    target.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load numbers</div><div class="empty-state-text">${escHtml(error.message)}</div></div>`;
+    if (error.detail?.syncProbe || error.detail?.listProbe || error.detail?.connectionProbe) {
+      target.innerHTML = renderManagedNumberDiagnostics(error.detail);
+    } else {
+      target.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load numbers</div><div class="empty-state-text">${escHtml(error.message)}</div></div>`;
+    }
+    console.error('[Managed Number Diagnostics]', error.detail || error);
+    await loadDebugLog();
   }
 }
 
@@ -623,6 +717,7 @@ async function confirmPurchase() {
     await loadManagedNumbers();
   } catch (error) {
     toast('error', 'Purchase failed', error.message);
+    await loadDebugLog();
   } finally {
     setLoading(button, false);
     state.pendingNumber = null;
@@ -647,6 +742,7 @@ async function confirmReserve() {
     toast('success', 'Number reserved', numberLabel);
   } catch (error) {
     toast('error', 'Reserve failed', error.message);
+    await loadDebugLog();
   } finally {
     setLoading(button, false);
     state.pendingNumber = null;
@@ -1158,7 +1254,7 @@ function registerEvents() {
       const tabName = button.dataset.tab;
       activateTab(tabName);
       if (tabName === 'workspace') {
-        await Promise.all([loadManagedNumbers(), loadAgents()]);
+        await Promise.all([loadManagedNumbers(), loadAgents(), loadDebugLog()]);
         await populateProviderTestSelects();
       }
       if (tabName === 'activity') {
@@ -1185,6 +1281,8 @@ function registerEvents() {
   on('btn-load-caps', 'click', loadCapabilities);
   on('btn-search-numbers', 'click', searchNumbers);
   on('btn-refresh-managed', 'click', loadManagedNumbers);
+  on('btn-refresh-debug-log', 'click', loadDebugLog);
+  on('btn-clear-debug-log', 'click', clearDebugLog);
   on('btn-sync-numbers', 'click', async () => {
     const button = $('btn-sync-numbers');
     setLoading(button, true, 'Syncing...');
@@ -1194,6 +1292,7 @@ function registerEvents() {
       await loadManagedNumbers();
     } catch (error) {
       toast('error', 'Sync failed', error.message);
+      await loadDebugLog();
     } finally {
       setLoading(button, false);
     }

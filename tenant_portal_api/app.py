@@ -124,7 +124,9 @@ class UpdateAgentBody(BaseModel):
 
 
 def _conn() -> psycopg.Connection:
-    return psycopg.connect(**conn_kwargs(), connect_timeout=10)
+    # Fail fast on DB stalls so Render workers do not sit blocked long enough for
+    # health checks to start timing out behind queued requests.
+    return psycopg.connect(**conn_kwargs(), connect_timeout=3)
 
 
 def _resolve_provider_fields(
@@ -196,7 +198,7 @@ def _require_machine(
 
 
 @app.get("/healthz")
-def tenant_portal_health():
+async def tenant_portal_health():
     return {"status": "ok", "service": "uva-tenant-portal-api"}
 
 
