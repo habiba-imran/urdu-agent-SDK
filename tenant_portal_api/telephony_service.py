@@ -160,14 +160,14 @@ class TelephonyService:
         agent_id: str,
         require_ready_routing: bool = True,
     ) -> None:
-        assigned_agent_id = phone.get("assigned_agent_id")
+        assigned_agent_id = str(phone.get("assigned_agent_id")) if phone.get("assigned_agent_id") else None
         if not assigned_agent_id:
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
                 message="Phone number is not assigned to an agent.",
             )
-        if assigned_agent_id != agent_id:
+        if str(assigned_agent_id) != str(agent_id):
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
@@ -995,6 +995,21 @@ class TelephonyService:
                     (tenant_id,),
                 ).fetchone()
                 if not trunk_row:
+                    try:
+                        self.configure_outbound_trunk(tenant_id)
+                        trunk_row = conn.execute(
+                            """
+                            select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
+                            from livekit_outbound_trunks
+                            where tenant_id = %s and disabled_at is null
+                              and platform_status in ('pending_verification', 'testing', 'active')
+                            order by created_at desc limit 1
+                            """,
+                            (tenant_id,),
+                        ).fetchone()
+                    except Exception as err:
+                        logger.warning("Auto-configuring outbound trunk deferred: %s", err)
+                if not trunk_row:
                     raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_NOT_READY, message="Tenant outbound trunk is not configured.")
                 trunk = self._outbound_trunk_from_row(trunk_row)
                 outbound_trunk_id = trunk["livekit_outbound_trunk_id"]
@@ -1809,7 +1824,7 @@ class TelephonyService:
             "features": row[6] if row[6] else [],
             "provisioning_status": row[7],
             "routing_status": row[8],
-            "assigned_agent_id": row[9],
+            "assigned_agent_id": str(row[9]) if row[9] else None,
             "external_customer_ref": row[10],
             "disabled_at": str(row[11]) if len(row) > 11 and row[11] else None,
         }
