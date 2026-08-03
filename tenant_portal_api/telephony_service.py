@@ -756,6 +756,21 @@ class TelephonyService:
                     (tenant_id,),
                 ).fetchone()
                 if not trunk_row:
+                    try:
+                        self.configure_outbound_trunk(tenant_id)
+                        trunk_row = conn.execute(
+                            """
+                            select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
+                            from livekit_outbound_trunks
+                            where tenant_id = %s and disabled_at is null
+                              and platform_status in ('pending_verification', 'testing', 'active')
+                            order by created_at desc limit 1
+                            """,
+                            (tenant_id,),
+                        ).fetchone()
+                    except Exception as err:
+                        logger.warning("Auto-configuring outbound trunk deferred: %s", err)
+                if not trunk_row:
                     raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_NOT_READY, message="Tenant outbound trunk is not configured.")
                 trunk = self._outbound_trunk_from_row(trunk_row)
                 outbound_trunk_id = trunk["livekit_outbound_trunk_id"]
