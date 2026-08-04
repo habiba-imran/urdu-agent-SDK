@@ -37,6 +37,71 @@ _seen_webhook_signatures: set[tuple[str, str]] = set()
 _seen_webhook_event_ids: set[str] = set()
 
 
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _extract_call_error_details(event_type: str, payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else {}
+    payload_detail = (
+        payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    )
+    code = _first_non_empty(
+        payload_detail.get("sip_response_code"),
+        payload_detail.get("hangup_cause"),
+        payload_detail.get("hangup_cause_code"),
+        payload_detail.get("failure_code"),
+        payload_detail.get("error_code"),
+        detail.get("code"),
+    )
+    message = _first_non_empty(
+        payload_detail.get("sip_reason"),
+        payload_detail.get("failure_reason"),
+        payload_detail.get("hangup_cause"),
+        payload_detail.get("hangup_source"),
+        payload_detail.get("error_message"),
+        payload_detail.get("detail"),
+        detail.get("message"),
+        detail.get("reason"),
+    )
+    if not code and not message and (
+        ".fail" in event_type or ".failed" in event_type or ".error" in event_type
+    ):
+        message = event_type
+    benign_markers = {"normal_clearing", "normal clearing", "completed", "success", "ok"}
+    if code and code.strip().lower() in benign_markers:
+        code = None
+    if message and message.strip().lower() in benign_markers:
+        message = None
+    return code, message
+
+
+def _map_call_platform_status(event_type: str, provider_status: str, error_code: str | None) -> str | None:
+    normalized_event = event_type.lower()
+    normalized_status = provider_status.lower()
+    if normalized_event == "call.initiated":
+        return "dialing"
+    if normalized_event in {"call.answered", "call.bridged"}:
+        return "in_progress"
+    if "busy" in normalized_event or "busy" in normalized_status:
+        return "busy"
+    if "no_answer" in normalized_event or "no-answer" in normalized_event or "no answer" in normalized_status:
+        return "no_answer"
+    if "cancel" in normalized_event or "cancel" in normalized_status:
+        return "cancelled"
+    if ".fail" in normalized_event or ".error" in normalized_event or error_code:
+        return "failed"
+    if normalized_event == "call.hangup":
+        return "failed" if error_code else "completed"
+    return None
+
+
 def verify_telnyx_webhook_signature(
     payload_body: bytes,
     signature_header: str | None,
@@ -128,22 +193,39 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
             or ""
         )
         if call_control_id:
-            mapped = {
-                "call.initiated": "dialing",
-                "call.answered": "in_progress",
-                "call.hangup": "completed",
-                "call.bridged": "in_progress",
-            }.get(event_type)
+            error_code, error_message = _extract_call_error_details(
+                event_type, event_payload
+            )
+            mapped = _map_call_platform_status(
+                event_type,
+                provider_status or event_type,
+                error_code,
+            )
             if mapped:
+                terminal = mapped in {"completed", "busy", "no_answer", "failed", "cancelled"}
                 conn.execute(
                     """
                     update telephony_calls
                     set platform_status = %s,
                         provider_status = %s,
+                        error_code = coalesce(%s, error_code),
+                        error_message = coalesce(%s, error_message),
+                        ended_at = case
+                            when %s and ended_at is null then now()
+                            else ended_at
+                        end,
                         updated_at = now()
                     where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
                     """,
-                    (mapped, event_type, call_control_id, call_control_id),
+                    (
+                        mapped,
+                        provider_status or event_type,
+                        error_code,
+                        error_message,
+                        terminal,
+                        call_control_id,
+                        call_control_id,
+                    ),
                 )
 
 

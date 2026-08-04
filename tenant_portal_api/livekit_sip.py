@@ -427,9 +427,10 @@ class LiveKitSipClient:
         self, exc: BaseException, code: str, message: str
     ) -> None:
         provider_message = str(exc)
+        sanitized_provider_message = redact_sensitive_string(provider_message)
         logger.error(
             "LiveKit SIP provider operation failed: %s",
-            redact_sensitive_string(provider_message),
+            sanitized_provider_message,
         )
         if (
             code == TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED
@@ -440,4 +441,9 @@ class LiveKitSipClient:
                 code=TelephonyErrorCode.OUTBOUND_NOT_READY,
                 message="Tenant has no eligible managed phone numbers for outbound trunk setup.",
             ) from exc
-        raise TelephonyError(status=502, code=code, message=message) from exc
+        raise TelephonyError(
+            status=502,
+            code=code,
+            message=message,
+            detail={"provider_message": sanitized_provider_message},
+        ) from exc

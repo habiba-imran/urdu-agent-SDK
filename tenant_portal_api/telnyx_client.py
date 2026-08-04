@@ -467,6 +467,7 @@ class TelnyxClient:
         fqdn: str,
         sip_username: str | None = None,
         sip_secret: str | None = None,
+        outbound_voice_profile_id: str | None = None,
     ) -> dict[str, Any]:
         """Create or get a Telnyx FQDN/SIP connection."""
         fqdn = _validate_telnyx_inbound_fqdn(fqdn)
@@ -493,6 +494,10 @@ class TelnyxClient:
                 payload["user_name"] = sip_username
             if sip_secret:
                 payload["password"] = sip_secret
+            if outbound_voice_profile_id:
+                payload["outbound"] = {
+                    "outbound_voice_profile_id": outbound_voice_profile_id
+                }
             existing = self.list_fqdn_connections(connection_name=connection_name)
             if existing:
                 connection_id = existing[0].get("id")
@@ -647,8 +652,43 @@ class TelnyxClient:
         )
         resp.raise_for_status()
 
+    def _outbound_voice_profile_payload(
+        self,
+        *,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": name,
+            "connections": [fqdn_connection_id],
+            "traffic_type": "conversational",
+            "service_plan": "global",
+            "billing_group_id": None,
+        }
+        normalized_destinations = [
+            str(item).strip().upper()
+            for item in (allowed_destinations or [])
+            if str(item).strip()
+        ]
+        if normalized_destinations:
+            payload["whitelisted_destinations"] = sorted(set(normalized_destinations))
+        if concurrency_limit is not None:
+            payload["concurrent_call_limit"] = concurrency_limit
+        if daily_spending_limit is not None:
+            payload["daily_spend_limit"] = str(daily_spending_limit)
+            payload["daily_spend_limit_enabled"] = True
+        return payload
+
     def create_or_get_outbound_voice_profile(
-        self, name: str, fqdn_connection_id: str
+        self,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
     ) -> dict[str, Any]:
         """Create or get an Outbound Voice Profile for SIP calling."""
         if self.mock_mode:
@@ -659,11 +699,13 @@ class TelnyxClient:
             }
 
         try:
-            payload = {
-                "name": name,
-                "connections": [fqdn_connection_id],
-                "billing_group_id": None,
-            }
+            payload = self._outbound_voice_profile_payload(
+                name=name,
+                fqdn_connection_id=fqdn_connection_id,
+                allowed_destinations=allowed_destinations,
+                concurrency_limit=concurrency_limit,
+                daily_spending_limit=daily_spending_limit,
+            )
             resp = self.client.post(
                 f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
                 headers=self._headers(),
@@ -674,13 +716,118 @@ class TelnyxClient:
             return {
                 "provider_outbound_voice_profile_id": data.get("id"),
                 "name": data.get("name"),
-                "status": "active" if data.get("active", True) else "disabled",
+                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                "concurrency_limit": data.get("concurrent_call_limit"),
+                "daily_spending_limit": data.get("daily_spend_limit"),
             }
         except httpx.HTTPError as e:
             raise TelephonyError(
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
                 message="Failed to create Telnyx Outbound Voice Profile.",
+            ) from e
+
+    def update_outbound_voice_profile(
+        self,
+        provider_outbound_voice_profile_id: str,
+        *,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing Telnyx Outbound Voice Profile."""
+        if self.mock_mode:
+            return {
+                "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
+                "name": name,
+                "status": "active",
+                "allowed_destinations": allowed_destinations or [],
+                "concurrency_limit": concurrency_limit,
+                "daily_spending_limit": daily_spending_limit,
+            }
+        if not provider_outbound_voice_profile_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_outbound_voice_profile_id is required to update a Telnyx outbound voice profile.",
+            )
+        try:
+            payload = self._outbound_voice_profile_payload(
+                name=name,
+                fqdn_connection_id=fqdn_connection_id,
+                allowed_destinations=allowed_destinations,
+                concurrency_limit=concurrency_limit,
+                daily_spending_limit=daily_spending_limit,
+            )
+            resp = self.client.patch(
+                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                headers=self._headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_outbound_voice_profile_id": data.get("id") or provider_outbound_voice_profile_id,
+                "name": data.get("name") or name,
+                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                "concurrency_limit": data.get("concurrent_call_limit"),
+                "daily_spending_limit": data.get("daily_spend_limit"),
+            }
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to update Telnyx Outbound Voice Profile.",
+            ) from e
+
+    def get_outbound_voice_profile(
+        self, provider_outbound_voice_profile_id: str
+    ) -> dict[str, Any]:
+        """Fetch a Telnyx Outbound Voice Profile by provider id."""
+        if self.mock_mode:
+            return {
+                "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
+                "name": "mock-outbound-profile",
+                "status": "active",
+                "allowed_destinations": ["US", "CA"],
+                "concurrency_limit": 10,
+                "daily_spending_limit": "100.0",
+                "connections": [],
+            }
+        if not provider_outbound_voice_profile_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_outbound_voice_profile_id is required to fetch a Telnyx outbound voice profile.",
+            )
+        try:
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_outbound_voice_profile_id": data.get("id")
+                or provider_outbound_voice_profile_id,
+                "name": data.get("name"),
+                "status": "active"
+                if data.get("enabled", data.get("active", True))
+                else "disabled",
+                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                "concurrency_limit": data.get("concurrent_call_limit"),
+                "daily_spending_limit": data.get("daily_spend_limit"),
+                "connections": data.get("connections") or [],
+            }
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to fetch Telnyx Outbound Voice Profile.",
             ) from e
 
     def assign_phone_number_to_connection(

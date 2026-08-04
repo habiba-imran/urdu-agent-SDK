@@ -502,6 +502,13 @@ class TelephonyService:
         """Create/reuse Telnyx SIP FQDN (→ LiveKit), outbound voice profile, and LiveKit outbound trunk."""
         sip = self.upsert_telnyx_sip_connection(tenant_id)
         profile = self.upsert_telnyx_outbound_voice_profile(tenant_id, allowed_destinations=["US", "CA"])
+        if profile.get("provider_outbound_voice_profile_id"):
+            sip = self.upsert_telnyx_sip_connection(
+                tenant_id,
+                outbound_voice_profile_provider_id=str(
+                    profile.get("provider_outbound_voice_profile_id")
+                ),
+            )
         trunk: dict[str, Any] | None = None
         try:
             trunk = self.configure_outbound_trunk(tenant_id)
@@ -1077,11 +1084,30 @@ class TelephonyService:
                     "to_number": to_number,
                 },
             )
-            sip_part = lk_client.create_sip_participant(
-                room_name=room_name,
-                outbound_trunk_id=outbound_trunk_id,
-                to_number=to_number,
-            )
+            try:
+                sip_part = lk_client.create_sip_participant(
+                    room_name=room_name,
+                    outbound_trunk_id=outbound_trunk_id,
+                    to_number=to_number,
+                )
+            except TelephonyError as exc:
+                if conn is not None:
+                    queries.release_call_quota(conn, tenant_id, call_id)
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
+                raise TelephonyError(
+                    status=exc.status,
+                    code=exc.code,
+                    message=exc.message,
+                    detail={
+                        **detail,
+                        "from_number": phone_e164,
+                        "to_number": to_number,
+                        "room_name": room_name,
+                        "outbound_trunk_id": outbound_trunk_id,
+                        **({"provider_message": provider_message} if provider_message else {}),
+                    },
+                ) from exc
 
             res = {
                 "telephony_call_id": call_id,
@@ -1336,6 +1362,7 @@ class TelephonyService:
         sip_fqdn: str | None = None,
         sip_username: str | None = None,
         sip_secret: str | None = None,
+        outbound_voice_profile_provider_id: str | None = None,
     ) -> dict[str, Any]:
         """Configure or update tenant Telnyx SIP/FQDN connection."""
         with self._connection() as conn:
@@ -1374,6 +1401,7 @@ class TelephonyService:
                     fqdn,
                     sip_username=sip_username or current.get("sip_username"),
                     sip_secret=sip_secret,
+                    outbound_voice_profile_id=outbound_voice_profile_provider_id,
                 )
                 updated = conn.execute(
                     """
@@ -1407,6 +1435,7 @@ class TelephonyService:
                 fqdn,
                 sip_username=sip_username,
                 sip_secret=sip_secret,
+                outbound_voice_profile_id=outbound_voice_profile_provider_id,
             )
             row = conn.execute(
                 """
@@ -1496,6 +1525,13 @@ class TelephonyService:
                     "platform_status": "active",
                     "provider_status": "active",
                 }
+            effective_allowed_destinations = [
+                str(item).strip().upper()
+                for item in (allowed_destinations or [])
+                if str(item).strip()
+            ]
+            effective_concurrency_limit = concurrency_limit
+            effective_daily_spending_limit = daily_spending_limit
 
             existing = conn.execute(
                 """
@@ -1509,9 +1545,6 @@ class TelephonyService:
                 """,
                 (tenant_id, conn_data["id"]),
             ).fetchone()
-            if existing:
-                return self._outbound_profile_from_row(existing)
-
             sip_row = conn.execute(
                 """
                 select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
@@ -1530,7 +1563,70 @@ class TelephonyService:
                     message="Tenant Telnyx SIP connection is required before outbound voice profile setup.",
                 )
             sip = self._sip_from_row(sip_row)
-            provider = client.create_or_get_outbound_voice_profile(f"tenant-{tenant_id}-outbound", sip["provider_sip_connection_id"])
+            if existing:
+                current = self._outbound_profile_from_row(existing)
+                if not effective_allowed_destinations:
+                    effective_allowed_destinations = [
+                        str(item).strip().upper()
+                        for item in (current.get("allowed_destinations") or [])
+                        if str(item).strip()
+                    ]
+                if effective_concurrency_limit is None:
+                    effective_concurrency_limit = current.get("concurrency_limit")
+                if effective_daily_spending_limit is None:
+                    effective_daily_spending_limit = current.get("daily_spending_limit")
+                provider = client.update_outbound_voice_profile(
+                    str(current.get("provider_outbound_voice_profile_id") or ""),
+                    name=f"tenant-{tenant_id}-outbound",
+                    fqdn_connection_id=str(sip["provider_sip_connection_id"]),
+                    allowed_destinations=effective_allowed_destinations,
+                    concurrency_limit=effective_concurrency_limit,
+                    daily_spending_limit=effective_daily_spending_limit,
+                )
+                updated = conn.execute(
+                    """
+                    update telnyx_outbound_voice_profiles
+                    set provider_outbound_voice_profile_id = %s,
+                        provider_status = %s,
+                        allowed_destinations = %s,
+                        concurrency_limit = %s,
+                        daily_spending_limit = %s,
+                        last_verified_at = now(),
+                        updated_at = now()
+                    where tenant_id = %s and id = %s
+                    returning id, tenant_id, telnyx_connection_id, telnyx_sip_connection_id,
+                              provider_outbound_voice_profile_id, platform_status, provider_status,
+                              allowed_destinations, concurrency_limit, daily_spending_limit
+                    """,
+                    (
+                        provider.get("provider_outbound_voice_profile_id")
+                        or current.get("provider_outbound_voice_profile_id"),
+                        provider.get("status", current.get("provider_status", "active")),
+                        effective_allowed_destinations,
+                        effective_concurrency_limit,
+                        effective_daily_spending_limit,
+                        tenant_id,
+                        existing[0],
+                    ),
+                ).fetchone()
+                synced_profile = self._outbound_profile_from_row(updated or existing)
+                self.upsert_telnyx_sip_connection(
+                    tenant_id,
+                    outbound_voice_profile_provider_id=str(
+                        provider.get("provider_outbound_voice_profile_id")
+                        or current.get("provider_outbound_voice_profile_id")
+                        or ""
+                    ),
+                )
+                return synced_profile
+
+            provider = client.create_or_get_outbound_voice_profile(
+                f"tenant-{tenant_id}-outbound",
+                str(sip["provider_sip_connection_id"]),
+                allowed_destinations=effective_allowed_destinations,
+                concurrency_limit=effective_concurrency_limit,
+                daily_spending_limit=effective_daily_spending_limit,
+            )
             row = conn.execute(
                 """
                 insert into telnyx_outbound_voice_profiles (
@@ -1548,17 +1644,25 @@ class TelephonyService:
                     sip["id"],
                     provider.get("provider_outbound_voice_profile_id"),
                     provider.get("status", "active"),
-                    allowed_destinations or [],
-                    concurrency_limit,
-                    daily_spending_limit,
+                    effective_allowed_destinations,
+                    effective_concurrency_limit,
+                    effective_daily_spending_limit,
                 ),
             ).fetchone()
-            return self._outbound_profile_from_row(row)
+            created_profile = self._outbound_profile_from_row(row)
+            self.upsert_telnyx_sip_connection(
+                tenant_id,
+                outbound_voice_profile_provider_id=str(
+                    provider.get("provider_outbound_voice_profile_id") or ""
+                ),
+            )
+            return created_profile
     def verify_telnyx_outbound_voice_profile(self, tenant_id: str) -> dict[str, Any]:
         """Re-verify outbound voice profile readiness."""
         with self._connection() as conn:
             if conn is None:
                 return {"tenant_id": tenant_id, "is_valid": True, "platform_status": "active"}
+            client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
             conn_data = self._require_active_connection(conn, tenant_id)
             row = conn.execute(
                 """
@@ -1579,7 +1683,75 @@ class TelephonyService:
                     message="Tenant outbound voice profile is not configured.",
                 )
             profile = self._outbound_profile_from_row(row)
-            return {"tenant_id": tenant_id, "is_valid": True, "platform_status": profile["platform_status"]}
+            provider_profile = client.get_outbound_voice_profile(
+                str(profile.get("provider_outbound_voice_profile_id") or "")
+            )
+            expected_destinations = sorted(
+                {
+                    str(item).strip().upper()
+                    for item in (profile.get("allowed_destinations") or [])
+                    if str(item).strip()
+                }
+            )
+            actual_destinations = sorted(
+                {
+                    str(item).strip().upper()
+                    for item in (provider_profile.get("allowed_destinations") or [])
+                    if str(item).strip()
+                }
+            )
+            expected_concurrency = profile.get("concurrency_limit")
+            actual_concurrency = provider_profile.get("concurrency_limit")
+            expected_daily_spending = (
+                None
+                if profile.get("daily_spending_limit") is None
+                else str(profile.get("daily_spending_limit"))
+            )
+            actual_daily_spending = (
+                None
+                if provider_profile.get("daily_spending_limit") is None
+                else str(provider_profile.get("daily_spending_limit"))
+            )
+            expected_connection_id = conn_data["id"]
+            provider_connections = provider_profile.get("connections") or []
+            actual_connection_ids = {
+                str(item.get("id") or item.get("connection_id") or "")
+                for item in provider_connections
+                if isinstance(item, dict)
+            }
+            mismatches = []
+            if provider_profile.get("status") != "active":
+                mismatches.append("Provider outbound voice profile is not active.")
+            if expected_destinations and expected_destinations != actual_destinations:
+                mismatches.append("Provider whitelisted destinations do not match the expected tenant destinations.")
+            if expected_concurrency is not None and expected_concurrency != actual_concurrency:
+                mismatches.append("Provider concurrent call limit does not match the expected tenant limit.")
+            if expected_daily_spending is not None and expected_daily_spending != actual_daily_spending:
+                mismatches.append("Provider daily spend limit does not match the expected tenant limit.")
+            if expected_connection_id and actual_connection_ids and expected_connection_id not in actual_connection_ids:
+                mismatches.append("Provider outbound voice profile is not linked to the expected Telnyx SIP connection.")
+            return {
+                "tenant_id": tenant_id,
+                "is_valid": not mismatches,
+                "platform_status": profile["platform_status"],
+                "provider_status": provider_profile.get("status"),
+                "expected": {
+                    "allowed_destinations": expected_destinations,
+                    "concurrency_limit": expected_concurrency,
+                    "daily_spending_limit": expected_daily_spending,
+                    "connection_id": expected_connection_id,
+                },
+                "provider": {
+                    "allowed_destinations": actual_destinations,
+                    "concurrency_limit": actual_concurrency,
+                    "daily_spending_limit": actual_daily_spending,
+                    "connection_ids": sorted(item for item in actual_connection_ids if item),
+                    "provider_outbound_voice_profile_id": provider_profile.get(
+                        "provider_outbound_voice_profile_id"
+                    ),
+                },
+                "mismatches": mismatches,
+            }
     def configure_number_routing(
         self, tenant_id: str, number_id: str, inbound_agent_id: str | None = None
     ) -> dict[str, Any]:
@@ -1832,7 +2004,8 @@ class TelephonyService:
                 """
                 select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
                        from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at
+                       duration_sec, error_code, error_message, started_at, ended_at,
+                       raw_livekit_sip_participant_status
                 from telephony_calls
                 where tenant_id = %s and id = %s
                 """,
@@ -1854,7 +2027,8 @@ class TelephonyService:
             sql = """
                 select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
                        from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at
+                       duration_sec, error_code, error_message, started_at, ended_at,
+                       raw_livekit_sip_participant_status
                 from telephony_calls
                 where tenant_id = %s
             """
@@ -1991,4 +2165,5 @@ class TelephonyService:
             "error_message": row[15],
             "started_at": str(row[16]) if row[16] else None,
             "ended_at": str(row[17]) if row[17] else None,
+            "raw_livekit_sip_participant_status": row[18] if len(row) > 18 else None,
         }

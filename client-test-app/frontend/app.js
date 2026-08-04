@@ -10,7 +10,10 @@ const state = {
   pendingReservation: null,
   voiceClient: null,
   audioNeedsUnlock: false,
+  activeCallPoll: null,
 };
+
+const TERMINAL_CALL_STATUSES = new Set(['completed', 'busy', 'no_answer', 'failed', 'cancelled']);
 
 function $(id) {
   return document.getElementById(id);
@@ -315,6 +318,56 @@ function renderTelephonyDiagnostics(detail, toNumber = '') {
   `;
 }
 
+function renderCallStatusCard(call, toNumber = '') {
+  const status = String(call?.platform_status || call?.status || 'unknown');
+  const providerStatus = call?.provider_status || call?.raw_livekit_sip_participant_status || '';
+  const errorCode = call?.error_code || '';
+  const errorMessage = call?.error_message || '';
+  const callId = call?.telephony_call_id || call?.id || '';
+  return `
+    <div class="card" style="border-color: ${TERMINAL_CALL_STATUSES.has(status) && status !== 'completed' ? 'var(--red)' : 'var(--green)'}">
+      <div class="card-title">Outbound call status</div>
+      <div class="flex gap-1 mb-1">
+        ${statusBadge(status)}
+        ${callId ? `<span class="badge badge-gray mono">${escHtml(callId)}</span>` : ''}
+        ${providerStatus ? `<span class="badge badge-blue">${escHtml(providerStatus)}</span>` : ''}
+      </div>
+      <div class="readiness-detail">From ${escHtml(call?.from_number || '---')} to ${escHtml(toNumber || call?.to_number || '---')}</div>
+      ${errorCode ? `
+        <div class="readiness-item fail">
+          <span class="readiness-icon">ERR</span>
+          <div>
+            <div class="readiness-label">${escHtml(errorCode)}</div>
+            <div class="readiness-detail">${escHtml(errorMessage || 'Provider rejected the call.')}</div>
+          </div>
+        </div>
+      ` : errorMessage ? `
+        <div class="readiness-item fail">
+          <span class="readiness-icon">ERR</span>
+          <div>
+            <div class="readiness-label">${escHtml(errorMessage)}</div>
+          </div>
+        </div>
+      ` : `
+        <div class="readiness-item pending">
+          <span class="readiness-icon">INFO</span>
+          <div>
+            <div class="readiness-label">Waiting for provider status updates...</div>
+          </div>
+        </div>
+      `}
+      <div class="readiness-detail" style="margin-top:0.5rem">
+        Started: ${escHtml(call?.started_at || 'pending')}
+        ${call?.ended_at ? ` | Ended: ${escHtml(call.ended_at)}` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function renderManagedNumberDiagnostics(detail) {
   const connectionProbe = detail?.connectionProbe || null;
   const syncProbe = detail?.syncProbe || null;
@@ -565,7 +618,11 @@ async function loadCallLog() {
         <td>${escHtml(call.direction || 'outbound')}</td>
         <td class="mono">${escHtml(call.from_number || '---')}</td>
         <td class="mono">${escHtml(call.to_number || '---')}</td>
-        <td>${statusBadge(call.platform_status || call.status || 'unknown')}</td>
+        <td>
+          ${statusBadge(call.platform_status || call.status || 'unknown')}
+          ${call.provider_status ? `<div class="readiness-detail">${escHtml(call.provider_status)}</div>` : ''}
+          ${call.error_code ? `<div class="readiness-detail">${escHtml(call.error_code)}</div>` : ''}
+        </td>
         <td>${escHtml(getAgentLabel(call.agent_id))}</td>
         <td>${escHtml(call.started_at || call.created_at || '---')}</td>
       </tr>
@@ -573,6 +630,49 @@ async function loadCallLog() {
   } catch (error) {
     tbody.innerHTML = `<tr><td colspan="7" class="loading-row">Error: ${escHtml(error.message)}</td></tr>`;
   }
+}
+
+async function watchOutboundCall(callId, toNumber = '') {
+  if (!callId) return;
+  const resultBox = $('call-result');
+  if (state.activeCallPoll) {
+    clearTimeout(state.activeCallPoll);
+    state.activeCallPoll = null;
+  }
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    try {
+      const call = await api('GET', `/api/calls/${encodeURIComponent(callId)}`);
+      if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.innerHTML = renderCallStatusCard(call, toNumber);
+      }
+      if (TERMINAL_CALL_STATUSES.has(String(call.platform_status || '').toLowerCase())) {
+        await loadCallLog();
+        if (String(call.platform_status).toLowerCase() === 'failed') {
+          toast('error', 'Outbound call failed', call.error_message || call.error_code || call.provider_status || 'Provider rejected the call.');
+        }
+        return;
+      }
+    } catch (error) {
+      if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.innerHTML = `
+          <div class="card" style="border-color: var(--yellow)">
+            <div class="card-title">Outbound call polling interrupted</div>
+            <div class="readiness-item pending">
+              <span class="readiness-icon">INFO</span>
+              <div>
+                <div class="readiness-label">${escHtml(error.message)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+      return;
+    }
+    await sleep(3000);
+  }
+  await loadCallLog();
 }
 
 async function saveConfig() {
@@ -1139,6 +1239,8 @@ async function createOutboundCall() {
     handleNumberSelection(fromNumberId);
     syncAgentSelections(assignedAgentId);
     toast('success', 'Outbound call placed', toNumber);
+    await loadCallLog();
+    void watchOutboundCall(result.telephony_call_id || result.id || '', toNumber);
   } catch (error) {
     if (resultBox) {
       resultBox.style.display = 'block';
