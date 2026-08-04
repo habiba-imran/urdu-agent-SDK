@@ -30,7 +30,18 @@ class FakeDbConn:
 def test_get_active_telnyx_connection_found():
     conn = FakeDbConn()
     conn.rows_to_return = [
-        ("conn_123", "tenant_abc", "My Telnyx", "active", "active", "fingerprint_123", "act_999", None, None, "enc_ref_123")
+        (
+            "conn_123",
+            "tenant_abc",
+            "My Telnyx",
+            "active",
+            "active",
+            "fingerprint_123",
+            "act_999",
+            None,
+            None,
+            "enc_ref_123",
+        )
     ]
     res = get_active_telnyx_connection(conn, "tenant_abc")
     assert res is not None
@@ -42,9 +53,18 @@ def test_get_active_telnyx_connection_found():
 def test_upsert_telnyx_connection_verifying():
     conn = FakeDbConn()
     conn.rows_to_return = [
-        ("conn_new", "tenant_abc", "Label", "verifying", "fp_123", "2026-01-01T00:00:00Z")
+        (
+            "conn_new",
+            "tenant_abc",
+            "Label",
+            "verifying",
+            "fp_123",
+            "2026-01-01T00:00:00Z",
+        )
     ]
-    res = upsert_telnyx_connection_verifying(conn, "tenant_abc", "Label", "fp_123", "enc_ref")
+    res = upsert_telnyx_connection_verifying(
+        conn, "tenant_abc", "Label", "fp_123", "enc_ref"
+    )
     assert res["id"] == "conn_new"
     assert res["platform_status"] == "verifying"
 

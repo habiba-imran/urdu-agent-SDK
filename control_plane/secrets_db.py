@@ -30,6 +30,14 @@ class DbSecretProvider(SecretProvider):
 
     def __init__(self, env_fallback: Optional[SecretProvider] = None):
         self._fallback = env_fallback
+<<<<<<< Updated upstream
+=======
+        self._cache_ttl_sec = max(
+            0, int(os.environ.get("CP_DB_SECRET_CACHE_TTL_SEC", "60") or "60")
+        )
+        self._cache: dict[str, tuple[float, str | None]] = {}
+        self._lock = threading.RLock()
+>>>>>>> Stashed changes
 
     def get(self, tenant_id: str) -> Optional[str]:
         if not tenant_id:

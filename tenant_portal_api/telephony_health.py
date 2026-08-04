@@ -36,7 +36,9 @@ def check_global_telephony_health() -> dict[str, Any]:
     return {
         "status": "healthy" if mock_mode or real_ready else "degraded",
         "provider_mode": telephony_provider_mode(),
-        "livekit_configured": has_livekit_url and has_livekit_key and has_livekit_secret,
+        "livekit_configured": has_livekit_url
+        and has_livekit_key
+        and has_livekit_secret,
         "livekit_sip_uri_configured": has_livekit_sip_uri,
         "encryption_configured": has_encryption_key,
         "webhook_public_key_configured": has_telnyx_public_key,

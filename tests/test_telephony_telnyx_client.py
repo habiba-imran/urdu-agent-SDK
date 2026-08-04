@@ -56,6 +56,7 @@ def test_telnyx_client_real_mode_requires_api_key(monkeypatch):
     assert exc_info.value.code == "provider_credentials_missing"
     assert exc_info.value.status == 503
 
+
 class FakeTelnyxResponse:
     status_code = 200
 
@@ -92,9 +93,13 @@ class FakeTelnyxHttpClient:
 
 def test_telnyx_client_real_search_normalizes_feature_arrays():
     http_client = FakeTelnyxHttpClient()
-    client = TelnyxClient(api_key="real-shaped-test-key", http_client=http_client, mock_mode=False)
+    client = TelnyxClient(
+        api_key="real-shaped-test-key", http_client=http_client, mock_mode=False
+    )
 
-    results = client.search_available_numbers(country="US", area_code="212", features=["voice"])
+    results = client.search_available_numbers(
+        country="US", area_code="212", features=["voice"]
+    )
 
     assert results == [
         {
@@ -108,7 +113,9 @@ def test_telnyx_client_real_search_normalizes_feature_arrays():
             "currency": "USD",
         }
     ]
-    assert http_client.requests[0]["params"]["filter[national_destination_code]"] == "212"
+    assert (
+        http_client.requests[0]["params"]["filter[national_destination_code]"] == "212"
+    )
     assert http_client.requests[0]["params"]["filter[features][voice]"] == "true"
 
 
@@ -121,7 +128,9 @@ class FakeTelnyxOrderErrorResponse:
         return self._payload
 
     def raise_for_status(self):
-        raise AssertionError("purchase_number should map order errors before raise_for_status")
+        raise AssertionError(
+            "purchase_number should map order errors before raise_for_status"
+        )
 
 
 class FakeTelnyxOrderHttpClient:
@@ -137,10 +146,19 @@ class FakeTelnyxOrderHttpClient:
 def test_purchase_number_maps_insufficient_balance_response():
     response = FakeTelnyxOrderErrorResponse(
         402,
-        {"errors": [{"title": "Payment required", "detail": "Insufficient balance for number order."}]},
+        {
+            "errors": [
+                {
+                    "title": "Payment required",
+                    "detail": "Insufficient balance for number order.",
+                }
+            ]
+        },
     )
     http_client = FakeTelnyxOrderHttpClient(response)
-    client = TelnyxClient(api_key="real-shaped-test-key", http_client=http_client, mock_mode=False)
+    client = TelnyxClient(
+        api_key="real-shaped-test-key", http_client=http_client, mock_mode=False
+    )
 
     with pytest.raises(TelephonyError) as exc_info:
         client.purchase_number("+14155550123")
@@ -148,18 +166,134 @@ def test_purchase_number_maps_insufficient_balance_response():
     assert exc_info.value.status == 402
     assert exc_info.value.code == "insufficient_telnyx_balance"
     assert "real-shaped-test-key" not in exc_info.value.message
-    assert http_client.requests[0]["json"] == {"phone_numbers": [{"phone_number": "+14155550123"}]}
+    assert http_client.requests[0]["json"] == {
+        "phone_numbers": [{"phone_number": "+14155550123"}]
+    }
 
 
 def test_purchase_number_maps_regulatory_or_verification_response():
     response = FakeTelnyxOrderErrorResponse(
         422,
-        {"errors": [{"title": "Regulatory requirements missing", "detail": "Verified address is required."}]},
+        {
+            "errors": [
+                {
+                    "title": "Regulatory requirements missing",
+                    "detail": "Verified address is required.",
+                }
+            ]
+        },
     )
-    client = TelnyxClient(api_key="real-shaped-test-key", http_client=FakeTelnyxOrderHttpClient(response), mock_mode=False)
+    client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderHttpClient(response),
+        mock_mode=False,
+    )
 
     with pytest.raises(TelephonyError) as exc_info:
         client.purchase_number("+14155550123")
 
     assert exc_info.value.status == 409
     assert exc_info.value.code == "regulatory_action_required"
+<<<<<<< Updated upstream
+=======
+    assert (
+        exc_info.value.detail["provider_message"]
+        == "Regulatory requirements missing Verified address is required."
+    )
+
+
+def test_purchase_number_maps_generic_422_to_action_required_instead_of_not_available():
+    response = FakeTelnyxOrderErrorResponse(
+        422,
+        {
+            "errors": [
+                {
+                    "title": "Order rejected",
+                    "detail": "Customer reference is invalid for this order type.",
+                }
+            ]
+        },
+    )
+    client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderHttpClient(response),
+        mock_mode=False,
+    )
+
+    with pytest.raises(TelephonyError) as exc_info:
+        client.purchase_number("+14155550123")
+
+    assert exc_info.value.status == 409
+    assert exc_info.value.code == "number_order_action_required"
+    assert "Customer reference is invalid" in exc_info.value.detail["provider_message"]
+
+
+class FakeTelnyxOrderSuccessResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.status_code = 200
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeTelnyxOrderStatusHttpClient:
+    def __init__(self, response):
+        self.response = response
+
+    def post(self, url, headers=None, json=None):
+        return self.response
+
+    def get(self, url, headers=None):
+        return self.response
+
+
+def test_purchase_number_maps_action_required_when_requirements_not_met():
+    response = FakeTelnyxOrderSuccessResponse(
+        {"data": {"id": "ord_123", "status": "pending", "requirements_met": False}}
+    )
+    client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(response),
+        mock_mode=False,
+    )
+
+    result = client.purchase_number("+14155550123")
+
+    assert result["provider_order_id"] == "ord_123"
+    assert result["provider_status"] == "pending"
+    assert result["platform_status"] == "action_required"
+
+
+def test_get_number_order_status_maps_failure_and_cancelled_states():
+    failed_client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(
+            FakeTelnyxOrderSuccessResponse(
+                {"data": {"id": "ord_failed", "status": "failure"}}
+            )
+        ),
+        mock_mode=False,
+    )
+    cancelled_client = TelnyxClient(
+        api_key="real-shaped-test-key",
+        http_client=FakeTelnyxOrderStatusHttpClient(
+            FakeTelnyxOrderSuccessResponse(
+                {"data": {"id": "ord_cancelled", "status": "cancelled"}}
+            )
+        ),
+        mock_mode=False,
+    )
+
+    assert (
+        failed_client.get_number_order_status("ord_failed")["platform_status"]
+        == "failed"
+    )
+    assert (
+        cancelled_client.get_number_order_status("ord_cancelled")["platform_status"]
+        == "cancelled"
+    )
+>>>>>>> Stashed changes

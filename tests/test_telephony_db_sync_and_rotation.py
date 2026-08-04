@@ -10,7 +10,10 @@ from typing import Any
 import psycopg
 import pytest
 
-from tenant_portal_api.telephony_credentials import decrypt_provider_secret, encrypt_provider_secret
+from tenant_portal_api.telephony_credentials import (
+    decrypt_provider_secret,
+    encrypt_provider_secret,
+)
 from tenant_portal_api.telephony_errors import TelephonyError
 from tenant_portal_api.telephony_service import TelephonyService
 
@@ -19,8 +22,12 @@ TENANT_B = "b5231868-2f06-426a-b9a5-1081e89554ec"
 OLD_KEY = "KEY01_OLD_REAL_STYLE_SECRET_1234567890"
 NEW_KEY = "KEY01_NEW_REAL_STYLE_SECRET_1234567890"
 ENCRYPTION_KEY = "local-test-encryption-key-for-telephony-db-fixes"
-PARTIAL_MIGRATION_PATH = Path("supabase/migrations/20260801185628_telephony_provider_number_identity.sql")
-NORMAL_UNIQUE_MIGRATION_PATH = Path("supabase/migrations/20260801193716_telephony_provider_number_normal_unique.sql")
+PARTIAL_MIGRATION_PATH = Path(
+    "supabase/migrations/20260801185628_telephony_provider_number_identity.sql"
+)
+NORMAL_UNIQUE_MIGRATION_PATH = Path(
+    "supabase/migrations/20260801193716_telephony_provider_number_normal_unique.sql"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +49,13 @@ class FakeCursor:
 
 
 class MutableTelnyxClient:
-    def __init__(self, api_key: str, mock_mode: bool, inventory: list[dict[str, Any]], fail_verify: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        mock_mode: bool,
+        inventory: list[dict[str, Any]],
+        fail_verify: bool = False,
+    ):
         self.api_key = api_key
         self.mock_mode = mock_mode
         self.inventory = inventory
@@ -50,7 +63,9 @@ class MutableTelnyxClient:
 
     def verify_api_key(self):
         if self.fail_verify:
-            raise TelephonyError(status=401, code="telnyx_key_invalid", message="Invalid Telnyx API key.")
+            raise TelephonyError(
+                status=401, code="telnyx_key_invalid", message="Invalid Telnyx API key."
+            )
         return {
             "telnyx_account_id": "acct_real_123",
             "status": "active",
@@ -58,7 +73,11 @@ class MutableTelnyxClient:
 
     def list_owned_numbers(self, filter_phone_number: str | None = None):
         if filter_phone_number:
-            return [item for item in self.inventory if item.get("e164_number") == filter_phone_number]
+            return [
+                item
+                for item in self.inventory
+                if item.get("e164_number") == filter_phone_number
+            ]
         return list(self.inventory)
 
 
@@ -104,7 +123,11 @@ class StatefulTelephonyDb:
 
     def _connection_row(self, tenant_id: str):
         conn = self.connections.get(tenant_id)
-        if not conn or conn["platform_status"] not in {"verifying", "active", "rotation_required"}:
+        if not conn or conn["platform_status"] not in {
+            "verifying",
+            "active",
+            "rotation_required",
+        }:
             return None
         return (
             conn["id"],
@@ -120,7 +143,15 @@ class StatefulTelephonyDb:
         )
 
     def _update_connection(self, params: tuple[Any, ...]):
-        label, provider_status, fingerprint, encrypted_ref, account_id, tenant_id, connection_id = params
+        (
+            label,
+            provider_status,
+            fingerprint,
+            encrypted_ref,
+            account_id,
+            tenant_id,
+            connection_id,
+        ) = params
         conn = self.connections[tenant_id]
         if conn["id"] != connection_id:
             return FakeCursor(row=None)
@@ -140,7 +171,16 @@ class StatefulTelephonyDb:
         return FakeCursor(row=self._connection_row(tenant_id))
 
     def _upsert_number(self, params: tuple[Any, ...]):
-        tenant_id, connection_id, provider_id, e164, country, number_type, features, provider_status = params
+        (
+            tenant_id,
+            connection_id,
+            provider_id,
+            e164,
+            country,
+            number_type,
+            features,
+            provider_status,
+        ) = params
         existing = next(
             (
                 number
@@ -152,7 +192,10 @@ class StatefulTelephonyDb:
             None,
         )
         if existing:
-            if existing.get("disabled_at") or existing.get("provisioning_status") in {"released", "deleted"}:
+            if existing.get("disabled_at") or existing.get("provisioning_status") in {
+                "released",
+                "deleted",
+            }:
                 existing["provisioning_status"] = "owned"
                 existing["routing_status"] = "not_configured"
             existing.update(
@@ -187,6 +230,122 @@ class StatefulTelephonyDb:
         self.numbers.append(number)
         return FakeCursor(row=self._number_row(number))
 
+<<<<<<< Updated upstream
+=======
+    def _update_number_by_e164(self, sql: str, params: tuple[Any, ...]):
+        if "provider_number_id = %s" in sql:
+            (
+                connection_id,
+                provider_id,
+                country,
+                number_type,
+                features,
+                provisioning_status,
+                routing_status,
+                provider_status,
+                external_customer_ref,
+                tenant_id,
+                e164,
+                provider_id_match,
+            ) = params
+            existing = next(
+                (
+                    number
+                    for number in self.numbers
+                    if number["tenant_id"] == tenant_id
+                    and number["e164_number"] == e164
+                    and number.get("disabled_at") is None
+                    and (
+                        number["provider_number_id"] is None
+                        or number["provider_number_id"] == provider_id_match
+                    )
+                ),
+                None,
+            )
+            if not existing:
+                return FakeCursor(row=None)
+            if existing.get("disabled_at") or existing.get("provisioning_status") in {
+                "released",
+                "deleted",
+            }:
+                existing["provisioning_status"] = provisioning_status
+                existing["routing_status"] = routing_status
+            existing.update(
+                {
+                    "telnyx_connection_id": connection_id,
+                    "provider_number_id": provider_id,
+                    "country": country,
+                    "number_type": number_type,
+                    "features": json.loads(features)
+                    if isinstance(features, str)
+                    else features,
+                    "provider_status": provider_status,
+                    "external_customer_ref": external_customer_ref
+                    or existing.get("external_customer_ref"),
+                    "disabled_at": None,
+                }
+            )
+            return FakeCursor(row=(existing["id"],))
+
+        (
+            connection_id,
+            country,
+            number_type,
+            features,
+            provisioning_status,
+            routing_status,
+            provider_status,
+            external_customer_ref,
+            tenant_id,
+            e164,
+        ) = params
+        existing = next(
+            (
+                number
+                for number in self.numbers
+                if number["tenant_id"] == tenant_id
+                and number["e164_number"] == e164
+                and number.get("disabled_at") is None
+            ),
+            None,
+        )
+        if not existing:
+            return FakeCursor(row=None)
+        if existing.get("disabled_at") or existing.get("provisioning_status") in {
+            "released",
+            "deleted",
+        }:
+            existing["provisioning_status"] = provisioning_status
+            existing["routing_status"] = routing_status
+        existing.update(
+            {
+                "telnyx_connection_id": connection_id,
+                "country": country,
+                "number_type": number_type,
+                "features": json.loads(features)
+                if isinstance(features, str)
+                else features,
+                "provider_status": provider_status,
+                "external_customer_ref": external_customer_ref
+                or existing.get("external_customer_ref"),
+                "disabled_at": None,
+            }
+        )
+        return FakeCursor(row=(existing["id"],))
+
+    def _select_number(self, params: tuple[Any, ...]):
+        tenant_id, number_id = params
+        existing = next(
+            (
+                number
+                for number in self.numbers
+                if number["tenant_id"] == tenant_id and number["id"] == number_id
+            ),
+            None,
+        )
+        return FakeCursor(row=self._number_row(existing) if existing else None)
+
+>>>>>>> Stashed changes
     def _number_row(self, number: dict[str, Any]):
         return (
             number["id"],
@@ -209,7 +368,9 @@ class ConflictTelephonyDb(StatefulTelephonyDb):
         raise psycopg.errors.UniqueViolation("duplicate telephony number")
 
 
-def inventory(provider_id: str = "pn_real_123", e164: str = "+14155550123") -> list[dict[str, Any]]:
+def inventory(
+    provider_id: str = "pn_real_123", e164: str = "+14155550123"
+) -> list[dict[str, Any]]:
     return [
         {
             "provider_number_id": provider_id,
@@ -222,7 +383,9 @@ def inventory(provider_id: str = "pn_real_123", e164: str = "+14155550123") -> l
     ]
 
 
-def service_for(db: StatefulTelephonyDb, items: list[dict[str, Any]], fail_verify: bool = False) -> TelephonyService:
+def service_for(
+    db: StatefulTelephonyDb, items: list[dict[str, Any]], fail_verify: bool = False
+) -> TelephonyService:
     def factory(api_key: str, mock_mode: bool):
         return MutableTelnyxClient(api_key, mock_mode, items, fail_verify=fail_verify)
 
@@ -242,7 +405,10 @@ def test_corrective_provider_number_normal_unique_migration_exists():
 
     assert "having count(*) > 1" in sql
     assert "raise exception" in sql
-    assert "drop index if exists telephony_phone_numbers_provider_number_per_tenant_uidx" in sql
+    assert (
+        "drop index if exists telephony_phone_numbers_provider_number_per_tenant_uidx"
+        in sql
+    )
     assert "telephony_phone_numbers_provider_number_per_tenant_key" in sql
     assert "unique (tenant_id, provider_number_id)" in sql
     assert "nulls not distinct" not in sql
@@ -255,7 +421,9 @@ def test_first_number_synchronization_creates_provider_identity_row():
     assert result["synced_count"] == 1
     assert result["items"][0]["provider_number_id"] == "pn_real_123"
     assert len(db.numbers) == 1
-    assert "on conflict (tenant_id, provider_number_id) do update set" in db.last_sync_sql
+    assert (
+        "on conflict (tenant_id, provider_number_id) do update set" in db.last_sync_sql
+    )
     assert "where provider_number_id is not null do update" not in db.last_sync_sql
 
 
@@ -264,7 +432,9 @@ def test_repeat_synchronization_updates_the_same_provider_number_row():
     service_for(db, inventory()).sync_telnyx_owned_numbers(TENANT_A)
     first_id = db.numbers[0]["id"]
 
-    result = service_for(db, inventory(e164="+14155550124")).sync_telnyx_owned_numbers(TENANT_A)
+    result = service_for(db, inventory(e164="+14155550124")).sync_telnyx_owned_numbers(
+        TENANT_A
+    )
 
     assert result["items"][0]["id"] == first_id
     assert result["items"][0]["e164_number"] == "+14155550124"
@@ -284,18 +454,31 @@ def test_empty_provider_inventory_syncs_zero_numbers():
     db = StatefulTelephonyDb()
     result = service_for(db, []).sync_telnyx_owned_numbers(TENANT_A)
 
-    assert result == {"tenant_id": TENANT_A, "synced_count": 0, "drift_count": 0, "items": []}
+    assert result == {
+        "tenant_id": TENANT_A,
+        "synced_count": 0,
+        "drift_count": 0,
+        "items": [],
+    }
     assert db.numbers == []
 
 
 def test_stateful_normal_unique_model_allows_multiple_null_provider_ids():
     db = StatefulTelephonyDb()
 
-    first = db._upsert_number((TENANT_A, "conn_a", None, "+14155550130", "US", "local", ["voice"], "active")).fetchone()
-    second = db._upsert_number((TENANT_A, "conn_a", None, "+14155550131", "US", "local", ["voice"], "active")).fetchone()
+    first = db._upsert_number(
+        (TENANT_A, "conn_a", None, "+14155550130", "US", "local", ["voice"], "active")
+    ).fetchone()
+    second = db._upsert_number(
+        (TENANT_A, "conn_a", None, "+14155550131", "US", "local", ["voice"], "active")
+    ).fetchone()
 
     assert first[0] != second[0]
-    assert len([number for number in db.numbers if number["provider_number_id"] is None]) == 2
+    assert (
+        len([number for number in db.numbers if number["provider_number_id"] is None])
+        == 2
+    )
+
 
 def test_existing_disabled_number_becomes_synchronized_again():
     db = StatefulTelephonyDb()
@@ -326,7 +509,42 @@ def test_existing_disabled_number_becomes_synchronized_again():
     assert len(db.numbers) == 1
 
 
+<<<<<<< Updated upstream
 def test_successful_active_connection_key_rotation_preserves_row_and_redacts_secret(caplog):
+=======
+def test_sync_attaches_real_provider_identity_to_existing_e164_row_without_duplication():
+    db = StatefulTelephonyDb()
+    db.numbers.append(
+        {
+            "id": "num_pending",
+            "tenant_id": TENANT_A,
+            "telnyx_connection_id": "conn_a",
+            "provider_number_id": None,
+            "e164_number": "+14155550123",
+            "country": "US",
+            "number_type": "local",
+            "features": ["voice"],
+            "provisioning_status": "purchase_pending",
+            "routing_status": "not_configured",
+            "provider_status": "pending",
+            "assigned_agent_id": None,
+            "external_customer_ref": "cust_123",
+            "disabled_at": None,
+        }
+    )
+
+    result = service_for(db, inventory()).sync_telnyx_owned_numbers(TENANT_A)
+
+    assert len(db.numbers) == 1
+    assert result["items"][0]["id"] == "num_pending"
+    assert result["items"][0]["provider_number_id"] == "pn_real_123"
+    assert result["items"][0]["provisioning_status"] == "purchase_pending"
+
+
+def test_successful_active_connection_key_rotation_preserves_row_and_redacts_secret(
+    caplog,
+):
+>>>>>>> Stashed changes
     db = StatefulTelephonyDb()
     service = service_for(db, [])
 
@@ -334,8 +552,13 @@ def test_successful_active_connection_key_rotation_preserves_row_and_redacts_sec
 
     assert response["id"] == "conn_a"
     assert response["platform_status"] == "active"
-    assert response["key_fingerprint"] == hashlib.sha256(NEW_KEY.encode()).hexdigest()[:12]
-    assert decrypt_provider_secret(db.connections[TENANT_A]["encrypted_api_key_ref"]) == NEW_KEY
+    assert (
+        response["key_fingerprint"] == hashlib.sha256(NEW_KEY.encode()).hexdigest()[:12]
+    )
+    assert (
+        decrypt_provider_secret(db.connections[TENANT_A]["encrypted_api_key_ref"])
+        == NEW_KEY
+    )
     assert db.active_connection_count(TENANT_A) == 1
     assert NEW_KEY not in json.dumps(response, default=str)
     assert all(NEW_KEY not in record.getMessage() for record in caplog.records)
@@ -350,7 +573,10 @@ def test_failed_new_key_verification_preserves_old_credential():
 
     assert exc_info.value.code == "telnyx_key_invalid"
     assert db.connection_update_count == 0
-    assert decrypt_provider_secret(db.connections[TENANT_A]["encrypted_api_key_ref"]) == OLD_KEY
+    assert (
+        decrypt_provider_secret(db.connections[TENANT_A]["encrypted_api_key_ref"])
+        == OLD_KEY
+    )
 
 
 def test_repeated_rotation_with_same_key_is_safe_and_keeps_one_active_connection():
@@ -385,13 +611,17 @@ def _postgres_conn_kwargs_or_skip():
 
         return conn_kwargs()
     except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"SUPABASE_DB_URL not configured for real PostgreSQL constraint check: {exc}")
+        pytest.skip(
+            f"SUPABASE_DB_URL not configured for real PostgreSQL constraint check: {exc}"
+        )
 
 
 def test_provider_number_unique_constraint_works_against_real_postgres_schema():
     kwargs = _postgres_conn_kwargs_or_skip()
     try:
-        conn = psycopg.connect(**kwargs, connect_timeout=10, autocommit=True, prepare_threshold=None)
+        conn = psycopg.connect(
+            **kwargs, connect_timeout=10, autocommit=True, prepare_threshold=None
+        )
     except Exception as exc:  # pragma: no cover - environment dependent
         pytest.skip(f"PostgreSQL connection not available for constraint check: {exc}")
 

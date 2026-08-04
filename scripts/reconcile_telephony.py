@@ -15,14 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from tenant_portal_api.telephony_reconcile import reconcile_telephony_state
+from tenant_portal_api.telephony_reconcile import reconcile_telephony_state  # noqa: E402
 
 try:
     from scripts.dbconn import conn_kwargs
 except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
-import psycopg
+import psycopg  # noqa: E402
 
 
 def main():

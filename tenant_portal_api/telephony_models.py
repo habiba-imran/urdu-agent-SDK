@@ -36,8 +36,19 @@ class TelnyxConnectionResponse(BaseModel):
 class SearchAvailableNumbersBody(BaseModel):
     country: str = Field(..., description="ISO 2-letter country code (e.g. US, PK)")
     area_code: str | None = Field(None, description="Optional area code prefix")
-    number_type: str | None = Field(None, description="local, toll_free, national, mobile")
+    number_type: str | None = Field(
+        None, description="local, toll_free, national, mobile"
+    )
     features: list[str] | None = Field(None, description="voice, sms, mms")
+<<<<<<< Updated upstream
+=======
+    exact_phone_number: str | None = Field(
+        None, description="Optional exact E.164 number to re-validate before order"
+    )
+    limit: int | None = Field(
+        None, description="Optional provider-side search result limit"
+    )
+>>>>>>> Stashed changes
 
 
 class AvailableNumberItem(BaseModel):

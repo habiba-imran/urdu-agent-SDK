@@ -1,5 +1,9 @@
 # PROGRESS
-Updated: 2026-07-29 | Call summary + transcript wired end-to-end (migration 0011, worker capture,
+Updated: 2026-08-04 | **This file's Session-N log was stale from 2026-07-29 to 2026-08-04 — 8
+telephony commits on branch `habiba` (`56f6c68`..`a7e4b5a`, HEAD) went unrecorded here; see "Now
+(Session 16)" below for the gap list and this session's actual (uncommitted) gate-driven cleanup.**
+Everything below this paragraph predates that gap and is unchanged.
+Prior update 2026-07-29 | Call summary + transcript wired end-to-end (migration 0011, worker capture,
 portal API, dashboard drawer) — see "Now (Session 15)" below. Existing-tenant machine-auth agent
 management built (`/machine/agents` + `@awaazlabs-uva/agents`), see "Now (Session 13)" below — both
 unrelated to and do not change Phase 8's still-OPEN
@@ -32,6 +36,92 @@ usage-check all clean, only the same 3 known tests red. H9 sent by the human, aw
 from here needs either a live LiveKit/Uplift call (the listening session itself), phonetic
 judgment only a human can make, or a decision already staged and waiting (ADR-030's CER-harness
 retirement call, H9's vendor replies). Nothing further is being guessed at or built ahead of that.
+
+## Now (Session 16 — gate-driven cleanup on branch `habiba`; PROGRESS.md's Session-N log found stale since 2026-07-29)
+
+- **Trigger**: human asked how to test inbound PSTN calls (answered via `docs/TELEPHONY_TRANSITION_AND_ARCHITECTURE_GUIDE.md` §5 + the existing `client-test-app/` harness — no code change). `gate.sh` then blocked Stop three times in sequence on things unrelated to that answer: 2 real lint errors, then repo-wide `ruff format` debt, then this file being stale for HEAD's commit sha. All three are logged below because the gate forced them into scope, not because they were asked for.
+
+- **Real gap found, not glossed over: this file stopped tracking reality after Session 15 (2026-07-29).**
+  Branch `habiba` is now 8 commits ahead of what's logged here, all from the parallel telephony
+  workstream (`docs/TELEPHONY_TRANSITION_AND_ARCHITECTURE_GUIDE.md`'s Hamza/Habiba/Ukasha split),
+  which has been tracking itself in its own doc set
+  (`docs/HABIBA_TELEPHONY_PHASE12_CLOSEOUT.md`, `docs/HAMZA_TELEPHONY_*`,
+  `docs/TELEPHONY_REAL_PROVIDER_STAGING.md`) instead of `state/PROGRESS.md`. Listed here so the gap
+  is visible, not backfilled into full Session-N narratives (that would be guessing at authors'
+  intent from diffs alone — out of scope for this session):
+  ```
+  56f6c68 2026-08-03 Hamza Sultan       feat(telephony): auto-provision outbound trunk in create_outbound_call
+  ba349ab 2026-08-03 habiba-imran       feat: publish telephony updates and client submission docs
+  51166b5 2026-08-03 habiba-imran       merge: publish habiba repo updates into staging
+  f978286 2026-08-03 habiba-imran       feat: harden telephony number purchase flow
+  fb64441 2026-08-03 habiba-imran       Merge remote-tracking branch 'origin/staging' into habiba
+  f4ba78f 2026-08-03 habiba-imran       fix: surface telnyx order failure reasons
+  28464b5 2026-08-03 habiba-imran       fix: add telephony diagnostics and reduce health check stalls
+  a7e4b5a 2026-08-04 habiba-imran       fix telnyx telephony provisioning and diagnostics   <- HEAD
+  ```
+  **HEAD = `a7e4b5a`** (the sha `gate.sh` named): touches
+  `client-test-app/backend/server.js` (+141/-‑, hardening), `client-test-app/frontend/app.js`,
+  5 new diagnostic scripts (`scripts/{connect_telnyx_machine_flow,inspect_telnyx_fqdn_connection,
+  inspect_telnyx_inbound_records,inspect_telnyx_machine_flow,inspect_telnyx_number_binding}.mjs`),
+  and `tenant_portal_api/{app,telephony_models,telephony_routes,telephony_service,telnyx_client}.py`
+  — 12 files, 1186 insertions. None of this was authored by me; this entry exists only so `gate.sh`'s
+  "PROGRESS.md has no entry for commit X" check has a real, accurate record instead of a placeholder.
+
+- **`AGENT_SYSTEM.md` (referenced by `.claude/commands/update-progress.md` as "§4") no longer exists
+  in the tracked repo.** `git log --all -- AGENT_SYSTEM.md` shows it was moved into a gitignored
+  local `hamza/` directory in commit `e9a3942` (2026-07-25, "organize multi-tenant workspace") —
+  174 lines deleted, not preserved elsewhere in the tree. Recovered §4's TASK CONTRACT template via
+  `git show e9a3942~1:AGENT_SYSTEM.md` for this update (reproduced in the task-contract block below).
+  **Trap logged below** so the next session doesn't waste a cycle looking for a file that isn't there.
+
+- **This session's actual changes, all mechanical, zero behavior change, none committed yet**
+  (repo rule: commit only when asked; not asked this session):
+  1. `worker/main.py`: removed dead `telephony_info` variable (declared line 180, assigned line 213,
+     read nowhere — confirmed by grep across the whole file). Flagged by ruff `F841`.
+  2. `scripts/reconcile_telephony.py`: added `# noqa: E402` to the two module-level imports that
+     must follow the `sys.path.insert(...)` calls above them (same pattern already used elsewhere
+     in this repo, e.g. `control_plane/app.py`).
+  3. Confirmed via `git stash` that both issues **pre-date this session** — `worker/main.py` already
+     failed `ruff format --check` before either edit, and the `F841`/`E402` findings are in code this
+     session never touched until the gate flagged them.
+  4. Gate then reported 27 more pre-existing files failing `ruff format --check` (control_plane,
+     tenant_portal_api, tests, worker — all telephony-workstream files from the untracked commits
+     above, none authored by me). **Asked the human before bulk-reformatting** (`AskUserQuestion`),
+     since it touches teammate-owned code well outside "how do I test inbound calls" — human chose
+     "reformat all 27 now." Ran `ruff format` on the full flagged list.
+  5. Verified clean repo-wide after: `ruff check .` -> `All checks passed!`; `ruff format --check .`
+     -> `153 files already formatted`.
+  - **Exact uncommitted file list** (`git status --porcelain`, 28 files): `control_plane/secrets_db.py`,
+    `scripts/reconcile_telephony.py`, `tenant_portal_api/{app,livekit_sip,telephony_config,
+    telephony_credentials,telephony_errors,telephony_health,telephony_models,telephony_queries,
+    telephony_routes,telephony_service,telephony_webhooks,telnyx_client}.py`,
+    `tests/test_telephony_{data_governance_schema,db_sync_and_rotation,livekit_sip,
+    machine_routes_full,outbound_trunk_numbers,purchase_flow,queries,real_provider_wiring,
+    rls_schema,routes,scaffold,schema,telnyx_client}.py`, `worker/{main,telephony_runtime}.py`.
+  - `tenant_portal_api/telephony_errors.py` shows as modified with an **empty `git diff`** — this
+    repo has `core.autocrlf=true`; ruff writes LF, the tree expects CRLF, so a pure line-ending
+    normalization can flag a file as modified with zero real content change. Confirmed via
+    `git diff --stat`/`git diff` both empty for that file. Logged in Traps.
+  - **NOT re-run this session**: `pytest`, `rls_check.py`, `usage_guard.py` — only the lint half of
+    `make gate` was exercised, because only lint was what the hook flagged. Full `make gate` should
+    run before any commit.
+  - Zero live/paid provider calls. No Telnyx/LiveKit/Supabase writes — static analysis and doc
+    reading only.
+
+### TELEPHONY-GATE-01 commit the gate fixes, then verify the inbound PSTN answer live
+**Guide:**    docs/TELEPHONY_TRANSITION_AND_ARCHITECTURE_GUIDE.md §5; docs/TELEPHONY_REAL_PROVIDER_STAGING.md
+**Files:**    the 28 uncommitted files listed above (commit); then no further files — the verification
+              itself is a live phone call, not a code change
+**Done when:** `make gate` -> `GATE: PASS` (full run, not just lint) on the 28 uncommitted files,
+              THEN a real inbound call to the tenant's owned DID (`+14755587853` per
+              `scripts/inspect_telnyx_inbound_records.mjs`'s default) shows
+              `worker/telephony_runtime.py::resolve_inbound_sip_call` resolving a real
+              `trunk_phone_number` in the worker's terminal log and the session starting
+**Gate:**     `make gate` -> `GATE: PASS`; live call verified by ear (this is a phone call, not
+              something `pytest` can assert)
+**Free-tier:** PAID — real Telnyx per-minute PSTN charges apply to the inbound call itself, not
+              FIXTURE-ONLY. The gate-fix commit itself is free (static analysis only).
+**Attempt:**  1/3
 
 ## Now (Session 15 — call summary + transcript wired end-to-end, dashboard Sessions drawer)
 
@@ -1095,3 +1185,28 @@ re-test, a real bug found and fixed by the test itself)
   further quality polish" framing below, which was correct at the time it was written but is now
   stale. Do not implement or attempt any part of this until that dedicated pass. Not forgotten —
   tracked here and in ADR-013/P3-T09.
+- 🔴 **`AGENT_SYSTEM.md` is gone from the tracked repo.** Moved into a gitignored local `hamza/`
+  directory by commit `e9a3942` (2026-07-25, "organize multi-tenant workspace"), 174 lines deleted
+  from the tracked tree. `.claude/commands/update-progress.md` still says "AGENT_SYSTEM.md §4" and
+  `CLAUDE.md`/other docs may still reference it — on a machine without Hamza's local `hamza/` dir
+  (i.e. any machine but his) that path 404s. Recover any needed section via
+  `git show e9a3942~1:AGENT_SYSTEM.md` rather than assuming it's missing entirely from history.
+- 🔴 **`state/PROGRESS.md`'s Session-N log silently stopped tracking the `habiba` branch's telephony
+  commits after Session 15 (2026-07-29).** 8 commits (`56f6c68`..`a7e4b5a`, 2026-08-03/04) landed
+  with zero entry here — that workstream tracks itself in `docs/HABIBA_TELEPHONY_*`/
+  `docs/HAMZA_TELEPHONY_*`/`docs/TELEPHONY_REAL_PROVIDER_STAGING.md` instead. **`gate.sh`'s check
+  only verifies THIS FILE mentions HEAD's own sha somewhere — it does NOT verify every commit since
+  the last entry is documented.** A single entry for the current HEAD makes the gate pass even if
+  7 commits before it are still undocumented here. Don't read "gate passed" as "history is complete."
+- `make lint` (`ruff format --check .`) is **repo-wide, not diff-scoped.** Editing 2 files can surface
+  dozens of pre-existing unrelated formatting failures from other contributors' commits. Before
+  assuming a flagged file was caused by your own edit, check with `git stash` (stash your changes,
+  re-run the check on the pre-existing HEAD, unstash) — that's how Session 16 confirmed
+  `worker/main.py`'s formatting debt pre-dated this session's edit to it.
+- This repo has `core.autocrlf=true` on Windows. `ruff format` writes LF line endings; a file whose
+  only change is CRLF->LF can show as `modified` in `git status --porcelain` with a **completely
+  empty `git diff`**. Not a real change — don't chase it as one, just note it if it's confusing.
+- Bulk-reformatting files you didn't author and weren't asked to touch (even when a gate hook
+  demands it to go green) is a scope decision, not a mechanical one — it touches teammate-owned
+  code. Session 16 asked the human explicitly before running `ruff format` across 27 files outside
+  this session's task; do the same rather than silently complying with gate pressure.

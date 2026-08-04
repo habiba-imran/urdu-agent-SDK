@@ -78,7 +78,9 @@ class TelephonyService:
 
     def _get_telnyx_client(self, api_key: str) -> TelnyxClient:
         if self._telnyx_client_factory:
-            return self._telnyx_client_factory(api_key=api_key, mock_mode=is_mock_provider_mode())
+            return self._telnyx_client_factory(
+                api_key=api_key, mock_mode=is_mock_provider_mode()
+            )
         return TelnyxClient(api_key=api_key, mock_mode=is_mock_provider_mode())
 
     def _get_livekit_sip_client(self) -> LiveKitSipClient:
@@ -87,12 +89,17 @@ class TelephonyService:
         return LiveKitSipClient(mock_mode=is_mock_provider_mode())
 
     def _raise_database_conflict(self, operation: str, exc: Exception) -> None:
-        logger.warning("Telephony database conflict during %s: %s", operation, exc.__class__.__name__)
+        logger.warning(
+            "Telephony database conflict during %s: %s",
+            operation,
+            exc.__class__.__name__,
+        )
         raise TelephonyError(
             status=409,
             code=TelephonyErrorCode.CALL_STATE_CONFLICT,
             message="Telephony resource state changed during the database update. Refresh and retry.",
         ) from exc
+
     def _public_connection(self, conn_data: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": conn_data.get("id"),
@@ -106,17 +113,28 @@ class TelephonyService:
             "permission_last_checked_at": conn_data.get("permission_last_checked_at"),
         }
 
-    def _active_connection(self, conn: Any | None, tenant_id: str) -> dict[str, Any] | None:
+    def _active_connection(
+        self, conn: Any | None, tenant_id: str
+    ) -> dict[str, Any] | None:
         if conn is None:
             data = self._connections.get(tenant_id)
-            if data and data.get("platform_status") != ConnectionPlatformStatus.DISCONNECTED.value:
+            if (
+                data
+                and data.get("platform_status")
+                != ConnectionPlatformStatus.DISCONNECTED.value
+            ):
                 return data
             return None
         return queries.get_active_telnyx_connection(conn, tenant_id)
 
-    def _require_active_connection(self, conn: Any | None, tenant_id: str) -> dict[str, Any]:
+    def _require_active_connection(
+        self, conn: Any | None, tenant_id: str
+    ) -> dict[str, Any]:
         conn_data = self._active_connection(conn, tenant_id)
-        if not conn_data or conn_data.get("platform_status") != ConnectionPlatformStatus.ACTIVE.value:
+        if (
+            not conn_data
+            or conn_data.get("platform_status") != ConnectionPlatformStatus.ACTIVE.value
+        ):
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.TELNYX_CONNECTION_MISSING,
@@ -124,14 +142,18 @@ class TelephonyService:
             )
         return conn_data
 
-    def _tenant_telnyx_client(self, conn: Any | None, tenant_id: str) -> tuple[TelnyxClient, dict[str, Any]]:
+    def _tenant_telnyx_client(
+        self, conn: Any | None, tenant_id: str
+    ) -> tuple[TelnyxClient, dict[str, Any]]:
         conn_data = self._require_active_connection(conn, tenant_id)
         if conn is None:
             return self._get_telnyx_client("mock_key"), conn_data
         api_key = decrypt_provider_secret(conn_data.get("encrypted_api_key_ref"))
         return self._get_telnyx_client(api_key), conn_data
 
-    def _eligible_outbound_trunk_numbers(self, conn: Any, tenant_id: str, telnyx_connection_id: str) -> list[str]:
+    def _eligible_outbound_trunk_numbers(
+        self, conn: Any, tenant_id: str, telnyx_connection_id: str
+    ) -> list[str]:
         rows = conn.execute(
             """
             select distinct e164_number
@@ -155,7 +177,11 @@ class TelephonyService:
         agent_id: str,
         require_ready_routing: bool = True,
     ) -> None:
-        assigned_agent_id = str(phone.get("assigned_agent_id")) if phone.get("assigned_agent_id") else None
+        assigned_agent_id = (
+            str(phone.get("assigned_agent_id"))
+            if phone.get("assigned_agent_id")
+            else None
+        )
         if not assigned_agent_id:
             raise TelephonyError(
                 status=409,
@@ -168,13 +194,278 @@ class TelephonyService:
                 code=TelephonyErrorCode.NUMBER_NOT_ASSIGNED,
                 message="Phone number is assigned to a different agent.",
             )
-        if require_ready_routing and phone.get("routing_status") != NumberRoutingStatus.READY.value:
+        if (
+            require_ready_routing
+            and phone.get("routing_status") != NumberRoutingStatus.READY.value
+        ):
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.NUMBER_NOT_ROUTING_READY,
                 message="Phone number routing is not ready for this agent.",
             )
 
+<<<<<<< Updated upstream
+=======
+    def _order_platform_status(
+        self, provider_status: str | None, requirements_met: bool | None = None
+    ) -> str:
+        normalized = str(provider_status or "").strip().lower()
+        if requirements_met is False:
+            return "action_required"
+        if normalized == "success":
+            return "purchased"
+        if normalized in {"failure", "failed"}:
+            return "failed"
+        if normalized in {"cancelled", "canceled"}:
+            return "cancelled"
+        if normalized == "deleted":
+            return "deleted"
+        return "pending"
+
+    def _reconcile_number_purchase(
+        self,
+        client: TelnyxClient,
+        e164_number: str,
+        order_res: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Give newly submitted Telnyx orders a short chance to materialize cleanly.
+
+        Telnyx can accept a number order but lag briefly before either:
+        1. flipping the order status from pending to success, or
+        2. returning the purchased number from owned-number inventory.
+
+        A short bounded reconciliation loop makes the common "click buy" path
+        return a usable managed number immediately instead of forcing clients to
+        do an extra manual refresh when the provider already finished.
+        """
+        latest = dict(order_res)
+        owned: list[dict[str, Any]] = []
+
+        for attempt in range(self._purchase_reconcile_attempts):
+            provider_order_id = latest.get("provider_order_id")
+            if provider_order_id and latest.get("platform_status") not in {
+                "purchased",
+                "failed",
+                "cancelled",
+                "deleted",
+                "action_required",
+            }:
+                refreshed = client.get_number_order_status(str(provider_order_id))
+                latest.update({k: v for k, v in refreshed.items() if v is not None})
+
+            owned = client.list_owned_numbers(filter_phone_number=e164_number)
+            if owned:
+                if latest.get("platform_status") not in {
+                    "failed",
+                    "cancelled",
+                    "deleted",
+                    "action_required",
+                }:
+                    latest["platform_status"] = "purchased"
+                break
+
+            if latest.get("platform_status") in {
+                "failed",
+                "cancelled",
+                "deleted",
+                "action_required",
+            }:
+                break
+            if (
+                attempt < self._purchase_reconcile_attempts - 1
+                and self._purchase_reconcile_delay_sec > 0
+            ):
+                time.sleep(self._purchase_reconcile_delay_sec)
+
+        return latest, owned
+
+    def _materialize_managed_number(
+        self,
+        conn: Any,
+        *,
+        tenant_id: str,
+        telnyx_connection_id: str,
+        e164_number: str,
+        country: str,
+        number_type: str,
+        features: list[str],
+        provisioning_status: str,
+        routing_status: str,
+        provider_status: str | None,
+        external_customer_ref: str | None = None,
+        provider_number_id: str | None = None,
+        touch_last_synced_at: bool = False,
+    ) -> str | None:
+        """Upsert a managed number while reconciling later provider identity arrival.
+
+        Real Telnyx orders can succeed before the purchased number appears in the
+        owned-number inventory response. In that case we store a temporary row
+        without provider identity and later let inventory sync attach the real
+        `provider_number_id` by matching on E.164.
+        """
+        features_array = features if isinstance(features, list) else ["voice"]
+        last_synced_sql = ", last_synced_at = now()" if touch_last_synced_at else ""
+
+        if provider_number_id:
+            row = conn.execute(
+                f"""
+                update telephony_phone_numbers
+                set telnyx_connection_id = %s,
+                    provider_number_id = %s,
+                    country = %s,
+                    number_type = %s,
+                    features = %s::text[],
+                    provisioning_status = case
+                        when disabled_at is not null
+                          or provisioning_status in ('released', 'deleted')
+                        then %s
+                        else telephony_phone_numbers.provisioning_status
+                    end,
+                    routing_status = case
+                        when disabled_at is not null
+                        then %s
+                        else telephony_phone_numbers.routing_status
+                    end,
+                    provider_status = %s,
+                    external_customer_ref = coalesce(%s, external_customer_ref),
+                    disabled_at = null,
+                    updated_at = now()
+                    {last_synced_sql}
+                where tenant_id = %s and e164_number = %s
+                  and disabled_at is null
+                  and (provider_number_id is null or provider_number_id = %s)
+                returning id
+                """,
+                (
+                    telnyx_connection_id,
+                    provider_number_id,
+                    country,
+                    number_type,
+                    features_array,
+                    provisioning_status,
+                    routing_status,
+                    provider_status,
+                    external_customer_ref,
+                    tenant_id,
+                    e164_number,
+                    provider_number_id,
+                ),
+            ).fetchone()
+            if row:
+                return str(row[0])
+
+            row = conn.execute(
+                f"""
+                insert into telephony_phone_numbers (
+                    tenant_id, telnyx_connection_id, provider_number_id, e164_number,
+                    country, number_type, features, provisioning_status, routing_status,
+                    provider_status, external_customer_ref{", last_synced_at" if touch_last_synced_at else ""}
+                ) values (%s, %s, %s, %s, %s, %s, %s::text[], %s, %s, %s, %s{", now()" if touch_last_synced_at else ""})
+                on conflict (tenant_id, provider_number_id) do update set
+                    telnyx_connection_id = excluded.telnyx_connection_id,
+                    e164_number = excluded.e164_number,
+                    country = excluded.country,
+                    number_type = excluded.number_type,
+                    features = excluded.features,
+                    provisioning_status = case
+                        when telephony_phone_numbers.disabled_at is not null
+                          or telephony_phone_numbers.provisioning_status in ('released', 'deleted')
+                        then excluded.provisioning_status
+                        else telephony_phone_numbers.provisioning_status
+                    end,
+                    routing_status = case
+                        when telephony_phone_numbers.disabled_at is not null
+                        then excluded.routing_status
+                        else telephony_phone_numbers.routing_status
+                    end,
+                    provider_status = excluded.provider_status,
+                    external_customer_ref = coalesce(excluded.external_customer_ref, telephony_phone_numbers.external_customer_ref),
+                    disabled_at = null,
+                    updated_at = now()
+                    {last_synced_sql}
+                returning id
+                """,
+                (
+                    tenant_id,
+                    telnyx_connection_id,
+                    provider_number_id,
+                    e164_number,
+                    country,
+                    number_type,
+                    features_array,
+                    provisioning_status,
+                    routing_status,
+                    provider_status,
+                    external_customer_ref,
+                ),
+            ).fetchone()
+            return str(row[0]) if row else None
+
+        row = conn.execute(
+            """
+            update telephony_phone_numbers
+                set telnyx_connection_id = %s,
+                country = %s,
+                number_type = %s,
+                features = %s::text[],
+                provisioning_status = case
+                    when disabled_at is not null
+                      or provisioning_status in ('released', 'deleted')
+                    then %s
+                    else telephony_phone_numbers.provisioning_status
+                end,
+                routing_status = case
+                    when disabled_at is not null
+                    then %s
+                    else telephony_phone_numbers.routing_status
+                end,
+                provider_status = %s,
+                external_customer_ref = coalesce(%s, external_customer_ref),
+                disabled_at = null,
+                updated_at = now()
+            where tenant_id = %s and e164_number = %s and disabled_at is null
+            returning id
+            """,
+            (
+                telnyx_connection_id,
+                country,
+                number_type,
+                features_array,
+                provisioning_status,
+                routing_status,
+                provider_status,
+                external_customer_ref,
+                tenant_id,
+                e164_number,
+            ),
+        ).fetchone()
+        if row:
+            return str(row[0])
+
+        row = conn.execute(
+            """
+            insert into telephony_phone_numbers (
+                tenant_id, telnyx_connection_id, provider_number_id, e164_number,
+                country, number_type, features, provisioning_status, routing_status,
+                provider_status, external_customer_ref
+            ) values (%s, %s, null, %s, %s, %s, %s::text[], %s, %s, %s, %s)
+            returning id
+            """,
+            (
+                tenant_id,
+                telnyx_connection_id,
+                e164_number,
+                country,
+                number_type,
+                features_array,
+                provisioning_status,
+                routing_status,
+                provider_status,
+                external_customer_ref,
+            ),
+        ).fetchone()
+        return str(row[0]) if row else None
+>>>>>>> Stashed changes
 
     def connect_telnyx_account(
         self, tenant_id: str, api_key: str, label: str | None = None
@@ -187,7 +478,9 @@ class TelephonyService:
                 message="Telnyx API key is required.",
             )
 
-        encrypted_ref = None if is_mock_provider_mode() else encrypt_provider_secret(api_key)
+        encrypted_ref = (
+            None if is_mock_provider_mode() else encrypt_provider_secret(api_key)
+        )
         client = self._get_telnyx_client(api_key)
         account_info = client.verify_api_key()
         fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12]
@@ -230,9 +523,14 @@ class TelephonyService:
                         pending["id"],
                         account_info.get("telnyx_account_id"),
                     )
-                except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                except (
+                    psycopg.errors.UniqueViolation,
+                    psycopg.errors.InvalidColumnReference,
+                ) as exc:
                     self._raise_database_conflict("connect Telnyx account", exc)
-                stored = queries.get_active_telnyx_connection(conn, tenant_id) or pending
+                stored = (
+                    queries.get_active_telnyx_connection(conn, tenant_id) or pending
+                )
                 public = self._public_connection(stored)
         # Auto-provision SIP + OVP after credentials are active so clients only bring an API key.
         try:
@@ -243,7 +541,11 @@ class TelephonyService:
                 tenant_id,
                 exc.code,
             )
-            public = {**public, "infrastructure_status": "pending", "infrastructure_error": exc.code}
+            public = {
+                **public,
+                "infrastructure_status": "pending",
+                "infrastructure_error": exc.code,
+            }
         else:
             public = {**public, "infrastructure_status": "ready"}
         return public
@@ -251,7 +553,9 @@ class TelephonyService:
     def ensure_telephony_infrastructure(self, tenant_id: str) -> dict[str, Any]:
         """Create/reuse Telnyx SIP FQDN (→ LiveKit), outbound voice profile, and LiveKit outbound trunk."""
         sip = self.upsert_telnyx_sip_connection(tenant_id)
-        profile = self.upsert_telnyx_outbound_voice_profile(tenant_id, allowed_destinations=["US", "CA"])
+        profile = self.upsert_telnyx_outbound_voice_profile(
+            tenant_id, allowed_destinations=["US", "CA"]
+        )
         trunk: dict[str, Any] | None = None
         try:
             trunk = self.configure_outbound_trunk(tenant_id)
@@ -275,9 +579,7 @@ class TelephonyService:
             "status": "ready" if trunk else "sip_ready",
         }
 
-    def rotate_telnyx_account_key(
-        self, tenant_id: str, api_key: str
-    ) -> dict[str, Any]:
+    def rotate_telnyx_account_key(self, tenant_id: str, api_key: str) -> dict[str, Any]:
         """Verify and replace the credential on the current active Telnyx connection."""
         if not api_key:
             raise TelephonyError(
@@ -288,7 +590,9 @@ class TelephonyService:
 
         client = self._get_telnyx_client(api_key)
         account_info = client.verify_api_key()
-        encrypted_ref = None if is_mock_provider_mode() else encrypt_provider_secret(api_key)
+        encrypted_ref = (
+            None if is_mock_provider_mode() else encrypt_provider_secret(api_key)
+        )
         fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12]
 
         with self._connection() as conn:
@@ -318,7 +622,10 @@ class TelephonyService:
                     account_info.get("telnyx_account_id"),
                     account_info.get("status", "active"),
                 )
-            except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+            except (
+                psycopg.errors.UniqueViolation,
+                psycopg.errors.InvalidColumnReference,
+            ) as exc:
                 self._raise_database_conflict("rotate Telnyx account key", exc)
             if not updated:
                 raise TelephonyError(
@@ -333,11 +640,14 @@ class TelephonyService:
         with self._connection() as conn:
             conn_data = self._require_active_connection(conn, tenant_id)
             if conn is None:
-                conn_data["platform_status"] = ConnectionPlatformStatus.DISCONNECTED.value
+                conn_data["platform_status"] = (
+                    ConnectionPlatformStatus.DISCONNECTED.value
+                )
                 return self._public_connection(conn_data)
             queries.disconnect_telnyx_connection(conn, conn_data["id"])
             conn_data["platform_status"] = ConnectionPlatformStatus.DISCONNECTED.value
             return self._public_connection(conn_data)
+
     def get_connection_status(self, tenant_id: str) -> dict[str, Any]:
         """Get connection status for tenant."""
         with self._connection() as conn:
@@ -349,6 +659,7 @@ class TelephonyService:
                     "platform_status": ConnectionPlatformStatus.NOT_CONNECTED.value,
                 }
             return self._public_connection(conn_data)
+
     def list_managed_numbers(
         self, tenant_id: str, assigned_agent_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -357,9 +668,14 @@ class TelephonyService:
             if conn is None:
                 nums = self._numbers.get(tenant_id, [])
                 if assigned_agent_id:
-                    nums = [n for n in nums if n.get("assigned_agent_id") == assigned_agent_id]
+                    nums = [
+                        n
+                        for n in nums
+                        if n.get("assigned_agent_id") == assigned_agent_id
+                    ]
                 return nums
             return queries.list_managed_numbers(conn, tenant_id, assigned_agent_id)
+
     def search_available_numbers(
         self,
         tenant_id: str,
@@ -371,7 +687,19 @@ class TelephonyService:
         """Search available numbers via the tenant's Telnyx credential."""
         with self._connection() as conn:
             client, _ = self._tenant_telnyx_client(conn, tenant_id)
+<<<<<<< Updated upstream
             return client.search_available_numbers(country, area_code, number_type, features)
+=======
+            return client.search_available_numbers(
+                country,
+                area_code,
+                number_type,
+                features,
+                exact_phone_number=exact_phone_number,
+                limit=limit,
+            )
+
+>>>>>>> Stashed changes
     def purchase_number(
         self,
         tenant_id: str,
@@ -396,7 +724,9 @@ class TelephonyService:
                 return self._idempotency[idemp_id]
 
             if conn is not None:
-                existing = queries.get_idempotency_key(conn, tenant_id, idempotency_key, action)
+                existing = queries.get_idempotency_key(
+                    conn, tenant_id, idempotency_key, action
+                )
                 if existing:
                     if existing.get("request_hash") != request_hash:
                         raise TelephonyError(
@@ -408,6 +738,12 @@ class TelephonyService:
 
             client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
             order_res = client.purchase_number(e164_number)
+<<<<<<< Updated upstream
+=======
+            order_res, owned = self._reconcile_number_purchase(
+                client, e164_number, order_res
+            )
+>>>>>>> Stashed changes
 
             if conn is None:
                 num_id = f"num_{uuid.uuid4().hex[:12]}"
@@ -462,6 +798,7 @@ class TelephonyService:
 
             managed_number_id = None
             try:
+<<<<<<< Updated upstream
                 owned = client.list_owned_numbers(filter_phone_number=e164_number)
                 provider_number_id = (owned[0].get("provider_number_id") if owned else None) or f"pending:{e164_number}"
                 country = (owned[0].get("country") if owned else "US") or "US"
@@ -488,6 +825,28 @@ class TelephonyService:
                         country,
                         number_type,
                         json.dumps(features if isinstance(features, list) else ["voice"]),
+=======
+                provider_number_id = (
+                    owned[0].get("provider_number_id") if owned else None
+                )
+                country = (owned[0].get("country") if owned else "US") or "US"
+                number_type = (
+                    owned[0].get("number_type") if owned else "local"
+                ) or "local"
+                features = (owned[0].get("features") if owned else ["voice"]) or [
+                    "voice"
+                ]
+                managed_number_id = self._materialize_managed_number(
+                    conn,
+                    tenant_id=tenant_id,
+                    telnyx_connection_id=conn_data["id"],
+                    provider_number_id=provider_number_id,
+                    e164_number=e164_number,
+                    country=country,
+                    number_type=number_type,
+                    features=features if isinstance(features, list) else ["voice"],
+                    provisioning_status=(
+>>>>>>> Stashed changes
                         NumberProvisioningStatus.OWNED.value
                         if order_res.get("platform_status") == "purchased"
                         else NumberProvisioningStatus.PURCHASE_PENDING.value,
@@ -591,7 +950,9 @@ class TelephonyService:
                 )
         return number
 
-    def _bind_telnyx_number_to_sip(self, tenant_id: str, number: dict[str, Any]) -> None:
+    def _bind_telnyx_number_to_sip(
+        self, tenant_id: str, number: dict[str, Any]
+    ) -> None:
         """Attach managed number to the tenant Telnyx FQDN/SIP connection."""
         provider_number_id = number.get("provider_number_id")
         if not provider_number_id:
@@ -604,7 +965,9 @@ class TelephonyService:
             client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
             if conn is None:
                 sip = self.upsert_telnyx_sip_connection(tenant_id)
-                connection_id = sip.get("provider_sip_connection_id") or "fqdn_conn_mock_123"
+                connection_id = (
+                    sip.get("provider_sip_connection_id") or "fqdn_conn_mock_123"
+                )
             else:
                 sip_row = conn.execute(
                     """
@@ -627,45 +990,63 @@ class TelephonyService:
                     code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
                     message="Tenant Telnyx SIP connection id is missing.",
                 )
-            client.assign_phone_number_to_connection(str(provider_number_id), str(connection_id))
+            client.assign_phone_number_to_connection(
+                str(provider_number_id), str(connection_id)
+            )
 
     def get_outbound_readiness(self, tenant_id: str) -> dict[str, Any]:
         """Check outbound calling readiness."""
         with self._connection() as conn:
             conn_data = self._active_connection(conn, tenant_id)
-            is_conn_active = conn_data is not None and conn_data.get("platform_status") == ConnectionPlatformStatus.ACTIVE.value
+            is_conn_active = (
+                conn_data is not None
+                and conn_data.get("platform_status")
+                == ConnectionPlatformStatus.ACTIVE.value
+            )
             if conn is None:
                 nums = self._numbers.get(tenant_id, [])
                 sip_active = is_conn_active and bool(nums)
                 profile_active = sip_active
                 assigned_ready_numbers = [
-                    n for n in nums
-                    if n.get("routing_status") == NumberRoutingStatus.READY.value and n.get("assigned_agent_id")
+                    n
+                    for n in nums
+                    if n.get("routing_status") == NumberRoutingStatus.READY.value
+                    and n.get("assigned_agent_id")
                 ]
             else:
                 nums = queries.list_managed_numbers(conn, tenant_id)
                 assigned_ready_numbers = [
-                    n for n in nums
-                    if n.get("routing_status") == NumberRoutingStatus.READY.value and n.get("assigned_agent_id")
+                    n
+                    for n in nums
+                    if n.get("routing_status") == NumberRoutingStatus.READY.value
+                    and n.get("assigned_agent_id")
                 ]
-                sip_active = bool(conn_data) and conn.execute(
-                    """
+                sip_active = (
+                    bool(conn_data)
+                    and conn.execute(
+                        """
                     select id from telnyx_sip_connections
                     where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                       and platform_status in ('pending_verification', 'testing', 'active')
                     limit 1
                     """,
-                    (tenant_id, conn_data["id"] if conn_data else None),
-                ).fetchone() is not None
-                profile_active = bool(conn_data) and conn.execute(
-                    """
+                        (tenant_id, conn_data["id"] if conn_data else None),
+                    ).fetchone()
+                    is not None
+                )
+                profile_active = (
+                    bool(conn_data)
+                    and conn.execute(
+                        """
                     select id from telnyx_outbound_voice_profiles
                     where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
                       and platform_status = 'active'
                     limit 1
                     """,
-                    (tenant_id, conn_data["id"] if conn_data else None),
-                ).fetchone() is not None
+                        (tenant_id, conn_data["id"] if conn_data else None),
+                    ).fetchone()
+                    is not None
+                )
 
             reasons = []
             if not is_conn_active:
@@ -673,22 +1054,34 @@ class TelephonyService:
             if not nums:
                 reasons.append("Tenant has no active assigned phone numbers.")
             if nums and not assigned_ready_numbers:
-                reasons.append("Tenant has no routed phone number assigned to an agent.")
+                reasons.append(
+                    "Tenant has no routed phone number assigned to an agent."
+                )
             if is_conn_active and not sip_active:
                 reasons.append("Tenant Telnyx SIP connection is not active.")
             if is_conn_active and not profile_active:
                 reasons.append("Tenant outbound voice profile is not active.")
 
-            is_ready = is_conn_active and bool(assigned_ready_numbers) and sip_active and profile_active
+            is_ready = (
+                is_conn_active
+                and bool(assigned_ready_numbers)
+                and sip_active
+                and profile_active
+            )
             return {
                 "tenant_id": tenant_id,
                 "is_ready": is_ready,
-                "connection_status": conn_data.get("platform_status") if conn_data else "not_connected",
+                "connection_status": conn_data.get("platform_status")
+                if conn_data
+                else "not_connected",
                 "sip_status": "active" if sip_active else "not_configured",
-                "outbound_profile_status": "active" if profile_active else "not_configured",
+                "outbound_profile_status": "active"
+                if profile_active
+                else "not_configured",
                 "active_numbers_count": len(assigned_ready_numbers),
                 "reasons": reasons,
             }
+
     def create_outbound_call(
         self,
         tenant_id: str,
@@ -716,7 +1109,11 @@ class TelephonyService:
 
             if conn is None:
                 phone = next(
-                    (n for n in self._numbers.get(tenant_id, []) if n["id"] == from_number_id),
+                    (
+                        n
+                        for n in self._numbers.get(tenant_id, [])
+                        if n["id"] == from_number_id
+                    ),
                     None,
                 )
                 if not phone:
@@ -741,7 +1138,11 @@ class TelephonyService:
                     (tenant_id, from_number_id),
                 ).fetchone()
                 if not number_row:
-                    raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {from_number_id} not found for tenant.")
+                    raise TelephonyError(
+                        status=404,
+                        code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                        message=f"Number {from_number_id} not found for tenant.",
+                    )
                 phone = self._number_from_row(number_row)
                 self._assert_number_bound_to_agent(phone, agent_id)
                 phone_e164 = phone["e164_number"]
@@ -769,9 +1170,15 @@ class TelephonyService:
                             (tenant_id,),
                         ).fetchone()
                     except Exception as err:
-                        logger.warning("Auto-configuring outbound trunk deferred: %s", err)
+                        logger.warning(
+                            "Auto-configuring outbound trunk deferred: %s", err
+                        )
                 if not trunk_row:
-                    raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_NOT_READY, message="Tenant outbound trunk is not configured.")
+                    raise TelephonyError(
+                        status=409,
+                        code=TelephonyErrorCode.OUTBOUND_NOT_READY,
+                        message="Tenant outbound trunk is not configured.",
+                    )
                 trunk = self._outbound_trunk_from_row(trunk_row)
                 outbound_trunk_id = trunk["livekit_outbound_trunk_id"]
                 outbound_trunk_record_id = trunk["id"]
@@ -816,7 +1223,12 @@ class TelephonyService:
             }
             if conn is None:
                 self._idempotency[idemp_id] = res
-                self._calls[call_id] = {**res, "id": call_id, "tenant_id": tenant_id, "agent_id": agent_id}
+                self._calls[call_id] = {
+                    **res,
+                    "id": call_id,
+                    "tenant_id": tenant_id,
+                    "agent_id": agent_id,
+                }
                 return res
 
             conn.execute(
@@ -849,6 +1261,7 @@ class TelephonyService:
                 ),
             )
             return res
+
     def reverify_telnyx_account(self, tenant_id: str) -> dict[str, Any]:
         """Re-verify permissions and platform status of existing connection."""
         with self._connection() as conn:
@@ -863,7 +1276,10 @@ class TelephonyService:
                 conn_data["id"],
                 account_info.get("telnyx_account_id"),
             )
-            return self._public_connection(queries.get_active_telnyx_connection(conn, tenant_id) or conn_data)
+            return self._public_connection(
+                queries.get_active_telnyx_connection(conn, tenant_id) or conn_data
+            )
+
     def list_telnyx_owned_numbers(
         self, tenant_id: str, filter_country: str | None = None
     ) -> list[dict[str, Any]]:
@@ -874,6 +1290,7 @@ class TelephonyService:
             if filter_country:
                 numbers = [n for n in numbers if n.get("country") == filter_country]
             return numbers
+
     def import_telnyx_number(
         self, tenant_id: str, e164_number: str, external_customer_ref: str | None = None
     ) -> dict[str, Any]:
@@ -942,6 +1359,7 @@ class TelephonyService:
                 "assigned_agent_id": row[9],
                 "external_customer_ref": row[10],
             }
+
     def sync_telnyx_owned_numbers(self, tenant_id: str) -> dict[str, Any]:
         """Sync managed number inventory against Telnyx account."""
         with self._connection() as conn:
@@ -959,9 +1377,34 @@ class TelephonyService:
                 provider_number_id = item.get("provider_number_id")
                 e164_number = item.get("e164_number")
                 if not provider_number_id or not e164_number:
-                    logger.warning("Skipping Telnyx number missing provider identity or E.164 value.")
+                    logger.warning(
+                        "Skipping Telnyx number missing provider identity or E.164 value."
+                    )
                     continue
                 try:
+<<<<<<< Updated upstream
+=======
+                    materialized_id = self._materialize_managed_number(
+                        conn,
+                        tenant_id=tenant_id,
+                        telnyx_connection_id=conn_data["id"],
+                        provider_number_id=provider_number_id,
+                        e164_number=e164_number,
+                        country=item.get("country"),
+                        number_type=item.get("number_type"),
+                        features=item.get("features") or ["voice"],
+                        provisioning_status=NumberProvisioningStatus.OWNED.value,
+                        routing_status=NumberRoutingStatus.NOT_CONFIGURED.value,
+                        provider_status=item.get("status"),
+                        touch_last_synced_at=True,
+                    )
+                except (
+                    psycopg.errors.UniqueViolation,
+                    psycopg.errors.InvalidColumnReference,
+                ) as exc:
+                    self._raise_database_conflict("sync Telnyx owned numbers", exc)
+                if materialized_id:
+>>>>>>> Stashed changes
                     row = conn.execute(
                         """
                         insert into telephony_phone_numbers (
@@ -1044,12 +1487,16 @@ class TelephonyService:
             "status": "reserved",
             "expires_at": "2026-01-01T01:00:00Z",
         }
+
     def get_number_order_status(self, tenant_id: str, order_id: str) -> dict[str, Any]:
         """Get number purchase order status by ID."""
         with self._connection() as conn:
             if conn is None:
                 for val in self._idempotency.values():
-                    if val.get("id") == order_id or val.get("provider_order_id") == order_id:
+                    if (
+                        val.get("id") == order_id
+                        or val.get("provider_order_id") == order_id
+                    ):
                         return val
                 return {
                     "id": order_id,
@@ -1070,6 +1517,7 @@ class TelephonyService:
                 "provider_order_id": provider_status.get("provider_order_id"),
                 "created_at": None,
             }
+
     def upsert_telnyx_sip_connection(
         self,
         tenant_id: str,
@@ -1092,7 +1540,9 @@ class TelephonyService:
                     "provider_status": "active",
                 }
             encrypted_sip_secret_ref = (
-                None if not sip_secret or is_mock_provider_mode() else encrypt_provider_secret(sip_secret)
+                None
+                if not sip_secret or is_mock_provider_mode()
+                else encrypt_provider_secret(sip_secret)
             )
 
             existing = conn.execute(
@@ -1106,6 +1556,14 @@ class TelephonyService:
                 """,
                 (tenant_id, conn_data["id"]),
             ).fetchone()
+<<<<<<< Updated upstream
+=======
+            fqdn = (
+                sip_fqdn
+                or (self._sip_from_row(existing).get("sip_fqdn") if existing else None)
+                or require_livekit_sip_uri()
+            )
+>>>>>>> Stashed changes
             if existing:
                 updated = conn.execute(
                     """
@@ -1149,11 +1607,17 @@ class TelephonyService:
                 ),
             ).fetchone()
             return self._sip_from_row(row)
+
     def verify_telnyx_sip_connection(self, tenant_id: str) -> dict[str, Any]:
         """Test and verify SIP connection readiness."""
         with self._connection() as conn:
             if conn is None:
-                return {"tenant_id": tenant_id, "is_valid": True, "sip_status": "active", "latency_ms": 42}
+                return {
+                    "tenant_id": tenant_id,
+                    "is_valid": True,
+                    "sip_status": "active",
+                    "latency_ms": 42,
+                }
             conn_data = self._require_active_connection(conn, tenant_id)
             row = conn.execute(
                 """
@@ -1173,7 +1637,48 @@ class TelephonyService:
                     message="Tenant Telnyx SIP connection is not configured.",
                 )
             sip = self._sip_from_row(row)
+<<<<<<< Updated upstream
             return {"tenant_id": tenant_id, "is_valid": True, "sip_status": sip["platform_status"]}
+=======
+            provider_connection = next(
+                (
+                    item
+                    for item in client.list_fqdn_connections(
+                        connection_name=f"tenant-{tenant_id}"
+                    )
+                    if str(item.get("id") or "")
+                    == str(sip.get("provider_sip_connection_id") or "")
+                ),
+                None,
+            )
+            provider_fqdns = client.list_fqdns(
+                connection_id=str(sip.get("provider_sip_connection_id") or "")
+            )
+            matched_fqdn = next(
+                (
+                    item
+                    for item in provider_fqdns
+                    if str(item.get("fqdn") or "") == str(sip.get("sip_fqdn") or "")
+                ),
+                None,
+            )
+            return {
+                "tenant_id": tenant_id,
+                "is_valid": bool(provider_connection and matched_fqdn),
+                "sip_status": sip["platform_status"]
+                if provider_connection and matched_fqdn
+                else "mismatch",
+                "provider_connection_id": provider_connection.get("id")
+                if provider_connection
+                else None,
+                "provider_fqdn": matched_fqdn.get("fqdn") if matched_fqdn else None,
+                "expected_provider_connection_id": sip.get(
+                    "provider_sip_connection_id"
+                ),
+                "expected_fqdn": sip.get("sip_fqdn"),
+            }
+
+>>>>>>> Stashed changes
     def upsert_telnyx_outbound_voice_profile(
         self,
         tenant_id: str,
@@ -1229,7 +1734,9 @@ class TelephonyService:
                     message="Tenant Telnyx SIP connection is required before outbound voice profile setup.",
                 )
             sip = self._sip_from_row(sip_row)
-            provider = client.create_or_get_outbound_voice_profile(f"tenant-{tenant_id}-outbound", sip["provider_sip_connection_id"])
+            provider = client.create_or_get_outbound_voice_profile(
+                f"tenant-{tenant_id}-outbound", sip["provider_sip_connection_id"]
+            )
             row = conn.execute(
                 """
                 insert into telnyx_outbound_voice_profiles (
@@ -1253,11 +1760,16 @@ class TelephonyService:
                 ),
             ).fetchone()
             return self._outbound_profile_from_row(row)
+
     def verify_telnyx_outbound_voice_profile(self, tenant_id: str) -> dict[str, Any]:
         """Re-verify outbound voice profile readiness."""
         with self._connection() as conn:
             if conn is None:
-                return {"tenant_id": tenant_id, "is_valid": True, "platform_status": "active"}
+                return {
+                    "tenant_id": tenant_id,
+                    "is_valid": True,
+                    "platform_status": "active",
+                }
             conn_data = self._require_active_connection(conn, tenant_id)
             row = conn.execute(
                 """
@@ -1278,7 +1790,12 @@ class TelephonyService:
                     message="Tenant outbound voice profile is not configured.",
                 )
             profile = self._outbound_profile_from_row(row)
-            return {"tenant_id": tenant_id, "is_valid": True, "platform_status": profile["platform_status"]}
+            return {
+                "tenant_id": tenant_id,
+                "is_valid": True,
+                "platform_status": profile["platform_status"],
+            }
+
     def configure_number_routing(
         self, tenant_id: str, number_id: str, inbound_agent_id: str | None = None
     ) -> dict[str, Any]:
@@ -1315,7 +1832,11 @@ class TelephonyService:
                 (tenant_id, number_id),
             ).fetchone()
             if not number_row:
-                raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {number_id} not found for tenant.")
+                raise TelephonyError(
+                    status=404,
+                    code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                    message=f"Number {number_id} not found for tenant.",
+                )
             number = self._number_from_row(number_row)
             conn_data = self._require_active_connection(conn, tenant_id)
             sip_row = conn.execute(
@@ -1330,7 +1851,11 @@ class TelephonyService:
                 (tenant_id, conn_data["id"]),
             ).fetchone()
             if not sip_row:
-                raise TelephonyError(status=409, code=TelephonyErrorCode.SIP_VERIFICATION_FAILED, message="Tenant Telnyx SIP connection is required before routing setup.")
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+                    message="Tenant Telnyx SIP connection is required before routing setup.",
+                )
             sip = self._sip_from_row(sip_row)
             lk_client = self._get_livekit_sip_client()
 
@@ -1347,7 +1872,9 @@ class TelephonyService:
             if inbound_row:
                 inbound = self._inbound_trunk_from_row(inbound_row)
             else:
-                created = lk_client.create_or_get_inbound_trunk(number_id, number["e164_number"])
+                created = lk_client.create_or_get_inbound_trunk(
+                    number_id, number["e164_number"]
+                )
                 inbound_row = conn.execute(
                     """
                     insert into livekit_inbound_trunks (
@@ -1356,7 +1883,14 @@ class TelephonyService:
                     ) values (%s, %s, %s, %s, %s, 'active', %s, now())
                     returning id, tenant_id, phone_number_id, livekit_inbound_trunk_id, platform_status, provider_status
                     """,
-                    (tenant_id, number_id, conn_data["id"], sip["id"], created.get("livekit_inbound_trunk_id"), created.get("status", "active")),
+                    (
+                        tenant_id,
+                        number_id,
+                        conn_data["id"],
+                        sip["id"],
+                        created.get("livekit_inbound_trunk_id"),
+                        created.get("status", "active"),
+                    ),
                 ).fetchone()
                 inbound = self._inbound_trunk_from_row(inbound_row)
 
@@ -1388,7 +1922,13 @@ class TelephonyService:
                     ) values (%s, %s, %s, %s, 'active', %s, now())
                     returning id, tenant_id, phone_number_id, livekit_sip_dispatch_rule_id, platform_status, provider_status
                     """,
-                    (tenant_id, number_id, inbound["id"], created_rule.get("livekit_sip_dispatch_rule_id"), created_rule.get("status", "active")),
+                    (
+                        tenant_id,
+                        number_id,
+                        inbound["id"],
+                        created_rule.get("livekit_sip_dispatch_rule_id"),
+                        created_rule.get("status", "active"),
+                    ),
                 ).fetchone()
                 rule = self._dispatch_rule_from_row(rule_row)
 
@@ -1410,6 +1950,7 @@ class TelephonyService:
                 "dispatch_rule_id": rule["livekit_sip_dispatch_rule_id"],
                 "routing_status": NumberRoutingStatus.READY.value,
             }
+
     def configure_outbound_trunk(
         self, tenant_id: str, outbound_voice_profile_id: str | None = None
     ) -> dict[str, Any]:
@@ -1434,7 +1975,11 @@ class TelephonyService:
                 (tenant_id, conn_data["id"]),
             ).fetchone()
             if not sip_row:
-                raise TelephonyError(status=409, code=TelephonyErrorCode.SIP_VERIFICATION_FAILED, message="Tenant Telnyx SIP connection is required before outbound trunk setup.")
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+                    message="Tenant Telnyx SIP connection is required before outbound trunk setup.",
+                )
             sip = self._sip_from_row(sip_row)
             profile_sql = """
                 select id, tenant_id, telnyx_connection_id, telnyx_sip_connection_id,
@@ -1451,9 +1996,15 @@ class TelephonyService:
             profile_sql += " order by created_at desc limit 1"
             profile_row = conn.execute(profile_sql, tuple(params)).fetchone()
             if not profile_row:
-                raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_VOICE_PROFILE_MISSING, message="Tenant outbound voice profile is not configured.")
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.OUTBOUND_VOICE_PROFILE_MISSING,
+                    message="Tenant outbound voice profile is not configured.",
+                )
             profile = self._outbound_profile_from_row(profile_row)
-            trunk_numbers = self._eligible_outbound_trunk_numbers(conn, tenant_id, conn_data["id"])
+            trunk_numbers = self._eligible_outbound_trunk_numbers(
+                conn, tenant_id, conn_data["id"]
+            )
             if not trunk_numbers:
                 raise TelephonyError(
                     status=409,
@@ -1489,10 +2040,19 @@ class TelephonyService:
                     where tenant_id = %s and id = %s
                     returning id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
                     """,
-                    (created.get("livekit_outbound_trunk_id"), created.get("status", "active"), tenant_id, existing[0]),
+                    (
+                        created.get("livekit_outbound_trunk_id"),
+                        created.get("status", "active"),
+                        tenant_id,
+                        existing[0],
+                    ),
                 ).fetchone()
                 trunk = self._outbound_trunk_from_row(row or existing)
-                return {"tenant_id": tenant_id, "outbound_trunk_id": trunk["livekit_outbound_trunk_id"], "platform_status": trunk["platform_status"]}
+                return {
+                    "tenant_id": tenant_id,
+                    "outbound_trunk_id": trunk["livekit_outbound_trunk_id"],
+                    "platform_status": trunk["platform_status"],
+                }
             row = conn.execute(
                 """
                 insert into livekit_outbound_trunks (
@@ -1502,11 +2062,21 @@ class TelephonyService:
                 ) values (%s, %s, %s, %s, %s, 'active', %s, now())
                 returning id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
                 """,
-                (tenant_id, conn_data["id"], sip["id"], profile["id"], created.get("livekit_outbound_trunk_id"), created.get("status", "active")),
+                (
+                    tenant_id,
+                    conn_data["id"],
+                    sip["id"],
+                    profile["id"],
+                    created.get("livekit_outbound_trunk_id"),
+                    created.get("status", "active"),
+                ),
             ).fetchone()
             trunk = self._outbound_trunk_from_row(row)
-            return {"tenant_id": tenant_id, "outbound_trunk_id": trunk["livekit_outbound_trunk_id"], "platform_status": trunk["platform_status"]}
-
+            return {
+                "tenant_id": tenant_id,
+                "outbound_trunk_id": trunk["livekit_outbound_trunk_id"],
+                "platform_status": trunk["platform_status"],
+            }
 
     def get_call_status(self, tenant_id: str, telephony_call_id: str) -> dict[str, Any]:
         """Get call record detail and status."""
@@ -1534,8 +2104,13 @@ class TelephonyService:
                 (tenant_id, telephony_call_id),
             ).fetchone()
             if not row:
-                raise TelephonyError(status=404, code=TelephonyErrorCode.CALL_SETUP_FAILED, message="Telephony call record not found.")
+                raise TelephonyError(
+                    status=404,
+                    code=TelephonyErrorCode.CALL_SETUP_FAILED,
+                    message="Telephony call record not found.",
+                )
             return self._call_from_row(row)
+
     def list_call_records(
         self, tenant_id: str, assigned_agent_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -1559,7 +2134,11 @@ class TelephonyService:
                 params.append(assigned_agent_id)
             sql += " order by created_at desc limit %s"
             params.append(limit)
-            return [self._call_from_row(row) for row in conn.execute(sql, tuple(params)).fetchall()]
+            return [
+                self._call_from_row(row)
+                for row in conn.execute(sql, tuple(params)).fetchall()
+            ]
+
     def disable_number(self, tenant_id: str, number_id: str) -> dict[str, Any]:
         """Soft-disable managed phone number."""
         with self._connection() as conn:
@@ -1588,9 +2167,12 @@ class TelephonyService:
                 (tenant_id, number_id),
             ).fetchone()
             if not row:
-                raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {number_id} not found.")
+                raise TelephonyError(
+                    status=404,
+                    code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                    message=f"Number {number_id} not found.",
+                )
             return self._number_from_row(row)
-
 
     def _number_from_row(self, row: Any) -> dict[str, Any]:
         return {
@@ -1619,7 +2201,9 @@ class TelephonyService:
             "encrypted_sip_secret_ref": row[6] if len(row) > 9 else None,
             "platform_status": row[7] if len(row) > 9 else row[6],
             "provider_status": row[8] if len(row) > 9 else row[7],
-            "last_verified_at": str(row[9]) if len(row) > 9 and row[9] else (str(row[8]) if len(row) > 8 and row[8] else None),
+            "last_verified_at": str(row[9])
+            if len(row) > 9 and row[9]
+            else (str(row[8]) if len(row) > 8 and row[8] else None),
         }
 
     def _outbound_profile_from_row(self, row: Any) -> dict[str, Any]:

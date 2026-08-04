@@ -3,7 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "supabase" / "migrations" / "0014_telephony_data_governance_audit.sql"
+MIGRATION = (
+    ROOT / "supabase" / "migrations" / "0014_telephony_data_governance_audit.sql"
+)
 
 GOVERNED_TABLES = [
     "tenant_telnyx_connections",
@@ -68,11 +70,16 @@ def test_restricted_diagnostic_payload_metadata_is_explicit():
     orders = _alter_body("telephony_number_orders")
     events = _alter_body("telephony_call_events")
 
-    assert "provider_error_payload_access_scope text not null default 'restricted_diagnostic'" in orders
+    assert (
+        "provider_error_payload_access_scope text not null default 'restricted_diagnostic'"
+        in orders
+    )
     assert "provider_error_payload_redacted_at timestamptz" in orders
     assert "provider_error_payload_redaction_reason text" in orders
     assert "telephony_number_orders_provider_error_payload_access_scope_check" in orders
-    assert "payload_access_scope text not null default 'restricted_diagnostic'" in events
+    assert (
+        "payload_access_scope text not null default 'restricted_diagnostic'" in events
+    )
     assert "payload_redacted_at timestamptz" in events
     assert "payload_redaction_reason text" in events
     assert "telephony_call_events_payload_access_scope_check" in events
