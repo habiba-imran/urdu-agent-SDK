@@ -17,7 +17,9 @@ class DbConnection(Protocol):
     def execute(self, query: str, params: tuple | list | None = ...) -> Any: ...
 
 
-def get_active_telnyx_connection(conn: DbConnection, tenant_id: str) -> dict[str, Any] | None:
+def get_active_telnyx_connection(
+    conn: DbConnection, tenant_id: str
+) -> dict[str, Any] | None:
     """Fetch active Telnyx connection for a tenant."""
     row = conn.execute(
         """
@@ -92,7 +94,6 @@ def mark_telnyx_connection_active(
     )
 
 
-
 def update_active_telnyx_connection_credential(
     conn: DbConnection,
     tenant_id: str,
@@ -146,6 +147,8 @@ def update_active_telnyx_connection_credential(
         "permission_last_checked_at": str(row[8]) if row[8] else None,
         "encrypted_api_key_ref": row[9],
     }
+
+
 def disconnect_telnyx_connection(conn: DbConnection, connection_id: str) -> None:
     """Soft disconnect a Telnyx connection."""
     conn.execute(
@@ -253,7 +256,11 @@ def save_idempotency_key(
     response_body: dict[str, Any],
 ) -> None:
     """Save completed idempotency payload."""
-    body_json = json.dumps(response_body) if not isinstance(response_body, str) else response_body
+    body_json = (
+        json.dumps(response_body)
+        if not isinstance(response_body, str)
+        else response_body
+    )
     conn.execute(
         """
         insert into telephony_idempotency_keys (
@@ -347,5 +354,12 @@ def insert_call_event(
             tenant_id, telephony_call_id, source, event_type, internal_stage, payload
         ) values (%s, %s, %s, %s, %s, %s::jsonb)
         """,
-        (tenant_id, telephony_call_id, source, event_type, internal_stage, json.dumps(payload)),
+        (
+            tenant_id,
+            telephony_call_id,
+            source,
+            event_type,
+            internal_stage,
+            json.dumps(payload),
+        ),
     )

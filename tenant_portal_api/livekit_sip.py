@@ -13,7 +13,11 @@ import threading
 from typing import Any, Awaitable, TypeVar
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode, livekit_agent_name
-from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode, redact_sensitive_string
+from tenant_portal_api.telephony_errors import (
+    TelephonyError,
+    TelephonyErrorCode,
+    redact_sensitive_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +54,13 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
             try:
-                listed = await api.sip.list_sip_inbound_trunk(lk.ListSIPInboundTrunkRequest(numbers=[e164_number]))
+                listed = await api.sip.list_sip_inbound_trunk(
+                    lk.ListSIPInboundTrunkRequest(numbers=[e164_number])
+                )
                 for item in listed.items:
                     if e164_number in list(item.numbers):
                         return {
@@ -64,7 +72,9 @@ class LiveKitSipClient:
                     name=f"uva-inbound-{phone_number_id}",
                     numbers=[e164_number],
                 )
-                created = await api.sip.create_sip_inbound_trunk(lk.CreateSIPInboundTrunkRequest(trunk=trunk))
+                created = await api.sip.create_sip_inbound_trunk(
+                    lk.CreateSIPInboundTrunkRequest(trunk=trunk)
+                )
                 return {
                     "livekit_inbound_trunk_id": created.sip_trunk_id,
                     "e164_number": e164_number,
@@ -73,7 +83,11 @@ class LiveKitSipClient:
             finally:
                 await api.aclose()
 
-        return self._run(op(), TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit inbound trunk.")
+        return self._run(
+            op(),
+            TelephonyErrorCode.LIVEKIT_INBOUND_TRUNK_FAILED,
+            "Failed to create or configure LiveKit inbound trunk.",
+        )
 
     def create_or_get_outbound_trunk(
         self,
@@ -84,7 +98,13 @@ class LiveKitSipClient:
         sip_secret: str | None = None,
     ) -> dict[str, Any]:
         """Configure or retrieve a reusable long-lived LiveKit outbound trunk for a Telnyx connection."""
-        numbers = sorted({number.strip() for number in trunk_numbers if number and number.strip().startswith("+")})
+        numbers = sorted(
+            {
+                number.strip()
+                for number in trunk_numbers
+                if number and number.strip().startswith("+")
+            }
+        )
         if not numbers:
             raise TelephonyError(
                 status=409,
@@ -103,16 +123,22 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
             try:
-                listed = await api.sip.list_sip_outbound_trunk(lk.ListSIPOutboundTrunkRequest())
+                listed = await api.sip.list_sip_outbound_trunk(
+                    lk.ListSIPOutboundTrunkRequest()
+                )
                 name = f"uva-outbound-{telnyx_connection_id}"
                 for item in listed.items:
                     if item.name == name:
                         current_numbers = sorted(set(item.numbers))
                         current_username = getattr(item, "auth_username", "")
                         current_headers = dict(getattr(item, "headers", {}) or {})
-                        expected_headers = {"X-Telnyx-Username": sip_username} if sip_username else {}
+                        expected_headers = (
+                            {"X-Telnyx-Username": sip_username} if sip_username else {}
+                        )
                         if (
                             current_numbers != numbers
                             or item.address != sip_fqdn
@@ -141,7 +167,9 @@ class LiveKitSipClient:
                     auth_password=sip_secret or "",
                     headers={"X-Telnyx-Username": sip_username} if sip_username else {},
                 )
-                created = await api.sip.create_outbound_trunk(lk.CreateSIPOutboundTrunkRequest(trunk=trunk))
+                created = await api.sip.create_outbound_trunk(
+                    lk.CreateSIPOutboundTrunkRequest(trunk=trunk)
+                )
                 return {
                     "livekit_outbound_trunk_id": created.sip_trunk_id,
                     "sip_fqdn": sip_fqdn,
@@ -151,7 +179,11 @@ class LiveKitSipClient:
             finally:
                 await api.aclose()
 
-        return self._run(op(), TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED, "Failed to create or configure LiveKit outbound trunk.")
+        return self._run(
+            op(),
+            TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED,
+            "Failed to create or configure LiveKit outbound trunk.",
+        )
 
     def create_or_get_dispatch_rule(
         self,
@@ -183,7 +215,9 @@ class LiveKitSipClient:
 
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
             try:
                 listed = await api.sip.list_sip_dispatch_rule(
                     lk.ListSIPDispatchRuleRequest(trunk_ids=[inbound_trunk_id])
@@ -273,7 +307,9 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
             try:
                 created = await api.agent_dispatch.create_dispatch(
                     lk.CreateAgentDispatchRequest(
@@ -285,7 +321,8 @@ class LiveKitSipClient:
                 return {
                     "room_name": room_name,
                     "agent_name": resolved_agent,
-                    "dispatch_id": getattr(created, "id", None) or getattr(created, "dispatch_id", ""),
+                    "dispatch_id": getattr(created, "id", None)
+                    or getattr(created, "dispatch_id", ""),
                     "status": "dispatched",
                 }
             finally:
@@ -318,7 +355,9 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
             try:
                 created = await api.sip.create_sip_participant(
                     lk.CreateSIPParticipantRequest(
@@ -330,7 +369,9 @@ class LiveKitSipClient:
                 )
                 return {
                     "livekit_sip_call_id": created.sip_call_id,
-                    "livekit_sip_call_id_full": getattr(created, "sip_call_id_full", created.sip_call_id),
+                    "livekit_sip_call_id_full": getattr(
+                        created, "sip_call_id_full", created.sip_call_id
+                    ),
                     "room_name": room_name,
                     "to_number": to_number,
                     "status": "dialing",
@@ -382,10 +423,18 @@ class LiveKitSipClient:
             self._raise_provider_error(exc, code, message)
         return result["value"]
 
-    def _raise_provider_error(self, exc: BaseException, code: str, message: str) -> None:
+    def _raise_provider_error(
+        self, exc: BaseException, code: str, message: str
+    ) -> None:
         provider_message = str(exc)
-        logger.error("LiveKit SIP provider operation failed: %s", redact_sensitive_string(provider_message))
-        if code == TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED and "no trunk numbers specified" in provider_message.lower():
+        logger.error(
+            "LiveKit SIP provider operation failed: %s",
+            redact_sensitive_string(provider_message),
+        )
+        if (
+            code == TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED
+            and "no trunk numbers specified" in provider_message.lower()
+        ):
             raise TelephonyError(
                 status=409,
                 code=TelephonyErrorCode.OUTBOUND_NOT_READY,

@@ -66,11 +66,15 @@ def test_livekit_outbound_trunk_requires_numbers_before_provider_call():
 
 
 def test_livekit_outbound_trunk_validation_maps_to_readiness_error():
-    client = LiveKitSipClient(url="wss://livekit.example", api_key="key", api_secret="secret", mock_mode=False)
+    client = LiveKitSipClient(
+        url="wss://livekit.example", api_key="key", api_secret="secret", mock_mode=False
+    )
 
     with pytest.raises(TelephonyError) as exc_info:
         client._raise_provider_error(
-            RuntimeError("ServerError(code=invalid_argument, message=no trunk numbers specified, status=400)"),
+            RuntimeError(
+                "ServerError(code=invalid_argument, message=no trunk numbers specified, status=400)"
+            ),
             TelephonyErrorCode.LIVEKIT_OUTBOUND_TRUNK_FAILED,
             "Failed to create or configure LiveKit outbound trunk.",
         )

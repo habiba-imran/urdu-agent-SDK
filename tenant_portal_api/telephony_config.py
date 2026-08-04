@@ -39,7 +39,10 @@ def livekit_agent_name() -> str:
 
 def telnyx_sip_outbound_address() -> str:
     """SIP address LiveKit outbound trunks dial (Telnyx edge, not LiveKit)."""
-    return os.getenv("TELNYX_SIP_OUTBOUND_ADDRESS", "sip.telnyx.com").strip() or "sip.telnyx.com"
+    return (
+        os.getenv("TELNYX_SIP_OUTBOUND_ADDRESS", "sip.telnyx.com").strip()
+        or "sip.telnyx.com"
+    )
 
 
 def require_livekit_sip_uri() -> str:

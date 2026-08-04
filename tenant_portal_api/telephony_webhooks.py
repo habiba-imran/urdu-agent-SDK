@@ -1,4 +1,4 @@
-﻿"""Telnyx webhook handlers and event deduplication for call status and order updates.
+"""Telnyx webhook handlers and event deduplication for call status and order updates.
 
 Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
 """
@@ -49,7 +49,9 @@ def verify_telnyx_webhook_signature(
     public verification key comes from Mission Control and is configured as
     ``TELNYX_PUBLIC_KEY``.
     """
-    configured_public_key = public_key if public_key is not None else telnyx_public_key()
+    configured_public_key = (
+        public_key if public_key is not None else telnyx_public_key()
+    )
     if is_mock_provider_mode() and not configured_public_key:
         return True
     if not configured_public_key or not signature_header or not timestamp_header:
@@ -71,9 +73,13 @@ def verify_telnyx_webhook_signature(
         public_key_bytes = base64.b64decode(configured_public_key, validate=True)
         signature = base64.b64decode(signature_header, validate=True)
         signed_payload = timestamp_header.encode("utf-8") + b"|" + payload_body
-        Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(signature, signed_payload)
+        Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+            signature, signed_payload
+        )
     except (ValueError, InvalidSignature, TypeError) as exc:
-        logger.warning("Telnyx webhook signature verification failed: %s", exc.__class__.__name__)
+        logger.warning(
+            "Telnyx webhook signature verification failed: %s", exc.__class__.__name__
+        )
         return False
 
     _seen_webhook_signatures.add(replay_key)
@@ -83,12 +89,18 @@ def verify_telnyx_webhook_signature(
 def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> None:
     """Best-effort durable updates for number-order and call webhook events."""
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
-    event_payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
-    provider_order_id = event_payload.get("order_id") or event_payload.get("id") or data.get("id")
+    event_payload = (
+        data.get("payload") if isinstance(data.get("payload"), dict) else data
+    )
+    provider_order_id = (
+        event_payload.get("order_id") or event_payload.get("id") or data.get("id")
+    )
     provider_status = str(event_payload.get("status") or "").lower()
 
     if event_type.startswith("number_order.") and provider_order_id:
-        platform_status = "purchased" if provider_status in {"success", "completed"} else "pending"
+        platform_status = (
+            "purchased" if provider_status in {"success", "completed"} else "pending"
+        )
         if provider_status in {"failure", "failed"}:
             platform_status = "failed"
         conn.execute(
@@ -100,7 +112,12 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
                 updated_at = now()
             where provider_order_id = %s
             """,
-            (provider_status or None, platform_status, provider_status or None, str(provider_order_id)),
+            (
+                provider_status or None,
+                platform_status,
+                provider_status or None,
+                str(provider_order_id),
+            ),
         )
 
     if event_type.startswith("call."):
@@ -137,7 +154,9 @@ async def telnyx_webhook_endpoint(
 ):
     """Receive and deduplicate Telnyx call and number order webhooks."""
     raw_body = await request.body()
-    if not verify_telnyx_webhook_signature(raw_body, telnyx_signature, telnyx_timestamp):
+    if not verify_telnyx_webhook_signature(
+        raw_body, telnyx_signature, telnyx_timestamp
+    ):
         raise HTTPException(
             status_code=401,
             detail={
@@ -185,7 +204,11 @@ async def telnyx_webhook_endpoint(
                 ).fetchone()
                 if existing:
                     conn.commit()
-                    return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
+                    return {
+                        "status": "duplicate",
+                        "event_id": event_id,
+                        "event_type": event_type,
+                    }
 
                 # Attach to a matching call when possible; otherwise skip event insert
                 # (provider_event_id uniqueness still guarded by process-local set).
@@ -196,8 +219,18 @@ async def telnyx_webhook_endpoint(
                     order by created_at desc limit 1
                     """,
                     (
-                        str(data.get("data", {}).get("payload", {}).get("call_control_id") or ""),
-                        str(data.get("data", {}).get("payload", {}).get("call_control_id") or ""),
+                        str(
+                            data.get("data", {})
+                            .get("payload", {})
+                            .get("call_control_id")
+                            or ""
+                        ),
+                        str(
+                            data.get("data", {})
+                            .get("payload", {})
+                            .get("call_control_id")
+                            or ""
+                        ),
                     ),
                 ).fetchone()
                 if matched:
@@ -208,12 +241,20 @@ async def telnyx_webhook_endpoint(
                         ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
                         on conflict do nothing
                         """,
-                        (matched[1], matched[0], event_type, str(event_id), json.dumps(data)),
+                        (
+                            matched[1],
+                            matched[0],
+                            event_type,
+                            str(event_id),
+                            json.dumps(data),
+                        ),
                     )
                 _apply_webhook_side_effects(conn, event_type, data)
                 conn.commit()
         except Exception as exc:
-            logger.warning("Telnyx webhook durable processing failed: %s", exc.__class__.__name__)
+            logger.warning(
+                "Telnyx webhook durable processing failed: %s", exc.__class__.__name__
+            )
 
     logger.info("Received Telnyx webhook event: %s (id: %s)", event_type, event_id)
     return {"status": "accepted", "event_id": event_id, "event_type": event_type}

@@ -73,7 +73,11 @@ def is_sip_participant(
         if "sip" in kind or identity.startswith("sip_"):
             return True
     extracted = extract_sip_participant_attributes(participant_metadata, attrs)
-    return bool(extracted["trunk_phone_number"] or extracted["sip_call_id"] or extracted["trunk_id"])
+    return bool(
+        extracted["trunk_phone_number"]
+        or extracted["sip_call_id"]
+        or extracted["trunk_id"]
+    )
 
 
 def parse_job_telephony_metadata(job_metadata: Any) -> dict[str, Any]:
@@ -105,14 +109,21 @@ def resolve_inbound_sip_call(
     Returns dict containing tenant_id, agent_id, e164_number, and call_id.
     Raises ValueError on unknown or unassigned numbers.
     """
-    attributes = extract_sip_participant_attributes(participant_metadata, participant_attributes)
+    attributes = extract_sip_participant_attributes(
+        participant_metadata, participant_attributes
+    )
     trunk_num = attributes["trunk_phone_number"]
 
     # Explicit local/test mock mode. Real staging must provide a DB connection.
     if not db_conn:
         if not is_mock_provider_mode():
-            raise ValueError("Database connection is required for live inbound SIP resolution")
-        logger.info("Resolving inbound SIP call for number: %s (mock mode)", trunk_num or "+15551234567")
+            raise ValueError(
+                "Database connection is required for live inbound SIP resolution"
+            )
+        logger.info(
+            "Resolving inbound SIP call for number: %s (mock mode)",
+            trunk_num or "+15551234567",
+        )
         return {
             "tenant_id": "tenant_test_123",
             "agent_id": "agent_test_456",
@@ -185,8 +196,12 @@ def resolve_session_metadata(
             "telephony": from_job,
         }
 
-    participant_metadata = getattr(participant, "metadata", None) if participant is not None else None
-    participant_attributes = getattr(participant, "attributes", None) if participant is not None else None
+    participant_metadata = (
+        getattr(participant, "metadata", None) if participant is not None else None
+    )
+    participant_attributes = (
+        getattr(participant, "attributes", None) if participant is not None else None
+    )
     if isinstance(participant_attributes, dict) and is_sip_participant(
         participant,
         participant_metadata=participant_metadata,

@@ -139,14 +139,22 @@ def test_machine_rotate_telnyx():
 
 def test_machine_reverify_telnyx():
     # Connect first
-    client.post("/machine/telephony/telnyx/connect", headers=HEADERS, json={"api_key": "mock_key"})
+    client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key"},
+    )
     resp = client.post("/machine/telephony/telnyx/reverify", headers=HEADERS, json={})
     assert resp.status_code == 200
     assert resp.json()["last_verified_at"] is not None
 
 
 def test_machine_disconnect_telnyx():
-    client.post("/machine/telephony/telnyx/connect", headers=HEADERS, json={"api_key": "mock_key"})
+    client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key"},
+    )
     resp = client.delete("/machine/telephony/telnyx/connection", headers=HEADERS)
     assert resp.status_code == 200
     assert resp.json()["platform_status"] == "disconnected"
@@ -271,7 +279,11 @@ def test_machine_assign_and_unassign_agent():
 
 
 def test_machine_upsert_sip_connection():
-    client.post("/machine/telephony/telnyx/connect", headers=HEADERS, json={"api_key": "mock_key"})
+    client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key"},
+    )
     resp = client.post(
         "/machine/telephony/telnyx/sip-connection",
         headers=HEADERS,
@@ -282,13 +294,19 @@ def test_machine_upsert_sip_connection():
 
 
 def test_machine_verify_sip_connection():
-    resp = client.post("/machine/telephony/telnyx/sip-connection/test", headers=HEADERS, json={})
+    resp = client.post(
+        "/machine/telephony/telnyx/sip-connection/test", headers=HEADERS, json={}
+    )
     assert resp.status_code == 200
     assert resp.json()["is_valid"] is True
 
 
 def test_machine_upsert_outbound_voice_profile():
-    client.post("/machine/telephony/telnyx/connect", headers=HEADERS, json={"api_key": "mock_key"})
+    client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key"},
+    )
     resp = client.post(
         "/machine/telephony/telnyx/outbound-voice-profile",
         headers=HEADERS,

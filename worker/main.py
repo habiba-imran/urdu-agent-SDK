@@ -177,7 +177,6 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
 
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
     md: dict[str, Any] = {}
-    telephony_info: dict[str, Any] | None = None
 
     try:
         import sys as _sys
@@ -210,14 +209,16 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
                 "tenant_id": resolved.get("tenant_id", ""),
                 "agent_id": resolved.get("agent_id", ""),
             }
-            telephony_info = resolved.get("telephony")
         finally:
             if db_conn is not None:
                 db_conn.close()
     except Exception as resolve_exc:
         from livekit.agents.log import logger as _logger
 
-        _logger.warning("telephony session resolve failed, falling back to participant metadata: %s", resolve_exc)
+        _logger.warning(
+            "telephony session resolve failed, falling back to participant metadata: %s",
+            resolve_exc,
+        )
         try:
             md = json.loads(participant.metadata or "{}")
         except Exception:

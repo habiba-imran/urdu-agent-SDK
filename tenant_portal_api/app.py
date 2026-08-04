@@ -79,7 +79,14 @@ app.add_middleware(
     allow_origins=TENANT_PORTAL_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Timestamp", "X-Nonce", "X-Signature"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Tenant-Id",
+        "X-Timestamp",
+        "X-Nonce",
+        "X-Signature",
+    ],
 )
 
 

@@ -48,7 +48,9 @@ def test_call_status_transitions():
 
     # Idempotent same status
     assert validate_call_status_transition(
-        CallPublicStatus.IN_PROGRESS, CallPublicStatus.IN_PROGRESS, CallDirection.OUTBOUND
+        CallPublicStatus.IN_PROGRESS,
+        CallPublicStatus.IN_PROGRESS,
+        CallDirection.OUTBOUND,
     )
 
     # Terminal state transition rejection
@@ -61,7 +63,9 @@ def test_call_status_transitions():
 
 
 def test_telephony_error_redaction():
-    raw_msg = "Telnyx key KEY011234567890abcdef failed authentication with Bearer eyJhbGciOi"
+    raw_msg = (
+        "Telnyx key KEY011234567890abcdef failed authentication with Bearer eyJhbGciOi"
+    )
     redacted = redact_sensitive_string(raw_msg)
     assert "KEY011234567890abcdef" not in redacted
     assert "[REDACTED]" in redacted
@@ -81,7 +85,9 @@ def test_telephony_models_validation():
     body = ConnectTelnyxBody(api_key="KEY01_test_key", label="Test Connection")
     assert body.api_key == "KEY01_test_key"
 
-    search = SearchAvailableNumbersBody(country="US", area_code="555", features=["voice"])
+    search = SearchAvailableNumbersBody(
+        country="US", area_code="555", features=["voice"]
+    )
     assert search.country == "US"
 
     call_body = CreateOutboundCallBody(
