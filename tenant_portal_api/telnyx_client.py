@@ -96,48 +96,66 @@ def _telnyx_error_message(response: httpx.Response, fallback: str) -> str:
 def _raise_telnyx_number_order_error(response: httpx.Response, e164_number: str) -> None:
     provider_message = _telnyx_error_message(response, "Telnyx rejected the number order.")
     normalized = provider_message.lower()
+    provider_detail = {
+        "provider_message": provider_message,
+        "provider_status_code": response.status_code,
+    }
 
     if response.status_code == 401:
         raise TelephonyError(
             status=401,
             code=TelephonyErrorCode.TELNYX_KEY_INVALID,
             message="Invalid Telnyx API key or unauthorized.",
+            detail=provider_detail,
         )
     if response.status_code == 403:
         raise TelephonyError(
             status=403,
             code=TelephonyErrorCode.TELNYX_KEY_PERMISSION_FAILED,
             message="Telnyx API key lacks permission to order phone numbers.",
+            detail=provider_detail,
         )
     if response.status_code == 429:
         raise TelephonyError(
             status=429,
             code=TelephonyErrorCode.TELNYX_RATE_LIMITED,
             message="Telnyx rate-limited the number order request.",
+            detail=provider_detail,
         )
     if response.status_code == 402 or any(token in normalized for token in ("balance", "credit", "fund", "payment")):
         raise TelephonyError(
             status=402,
             code=TelephonyErrorCode.INSUFFICIENT_TELNYX_BALANCE,
             message="Telnyx rejected the number order because the account balance, credit, or payment state is not sufficient.",
+            detail=provider_detail,
         )
     if any(token in normalized for token in ("regulatory", "kyc", "verification", "verified", "address", "document", "requirement")):
         raise TelephonyError(
             status=409,
             code=TelephonyErrorCode.REGULATORY_ACTION_REQUIRED,
             message="Telnyx requires account, destination, or regulatory verification before this number can be ordered.",
+            detail=provider_detail,
         )
-    if response.status_code in {404, 409, 422} or any(token in normalized for token in ("not available", "unavailable", "already been taken", "already purchased")):
+    if response.status_code == 404 or any(token in normalized for token in ("not available", "unavailable", "already been taken", "already purchased")):
         raise TelephonyError(
             status=422,
             code=TelephonyErrorCode.NUMBER_NOT_AVAILABLE,
             message=f"Phone number {e164_number} is no longer available for purchase.",
+            detail=provider_detail,
+        )
+    if response.status_code in {409, 422}:
+        raise TelephonyError(
+            status=409,
+            code=TelephonyErrorCode.NUMBER_ORDER_ACTION_REQUIRED,
+            message="Telnyx rejected the number order and requires additional action or a different order input.",
+            detail=provider_detail,
         )
 
     raise TelephonyError(
         status=502,
         code=TelephonyErrorCode.TELNYX_API_ERROR,
         message=f"Telnyx rejected the number order: {provider_message}",
+        detail=provider_detail,
     )
 
 

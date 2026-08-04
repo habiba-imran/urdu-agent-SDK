@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import sys
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,10 +55,14 @@ class TelephonyService:
         db_conn: Any = None,
         telnyx_client_factory: Any = None,
         livekit_client_factory: Any = None,
+        purchase_reconcile_attempts: int = 3,
+        purchase_reconcile_delay_sec: float = 0.35,
     ):
         self.db_conn = db_conn
         self._telnyx_client_factory = telnyx_client_factory
         self._livekit_client_factory = livekit_client_factory
+        self._purchase_reconcile_attempts = max(1, purchase_reconcile_attempts)
+        self._purchase_reconcile_delay_sec = max(0.0, purchase_reconcile_delay_sec)
         # Local in-memory state stores are used only in explicit mock provider mode.
         self._connections: dict[str, dict[str, Any]] = {}
         self._numbers: dict[str, list[dict[str, Any]]] = {}
@@ -72,7 +77,7 @@ class TelephonyService:
         if is_mock_provider_mode():
             yield None
             return
-        with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
             yield conn
             conn.commit()
 
@@ -188,6 +193,50 @@ class TelephonyService:
         if normalized == "deleted":
             return "deleted"
         return "pending"
+
+    def _reconcile_number_purchase(
+        self,
+        client: TelnyxClient,
+        e164_number: str,
+        order_res: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Give newly submitted Telnyx orders a short chance to materialize cleanly.
+
+        Telnyx can accept a number order but lag briefly before either:
+        1. flipping the order status from pending to success, or
+        2. returning the purchased number from owned-number inventory.
+
+        A short bounded reconciliation loop makes the common "click buy" path
+        return a usable managed number immediately instead of forcing clients to
+        do an extra manual refresh when the provider already finished.
+        """
+        latest = dict(order_res)
+        owned: list[dict[str, Any]] = []
+
+        for attempt in range(self._purchase_reconcile_attempts):
+            provider_order_id = latest.get("provider_order_id")
+            if provider_order_id and latest.get("platform_status") not in {
+                "purchased",
+                "failed",
+                "cancelled",
+                "deleted",
+                "action_required",
+            }:
+                refreshed = client.get_number_order_status(str(provider_order_id))
+                latest.update({k: v for k, v in refreshed.items() if v is not None})
+
+            owned = client.list_owned_numbers(filter_phone_number=e164_number)
+            if owned:
+                if latest.get("platform_status") not in {"failed", "cancelled", "deleted", "action_required"}:
+                    latest["platform_status"] = "purchased"
+                break
+
+            if latest.get("platform_status") in {"failed", "cancelled", "deleted", "action_required"}:
+                break
+            if attempt < self._purchase_reconcile_attempts - 1 and self._purchase_reconcile_delay_sec > 0:
+                time.sleep(self._purchase_reconcile_delay_sec)
+
+        return latest, owned
 
     def _materialize_managed_number(
         self,
@@ -618,6 +667,7 @@ class TelephonyService:
 
             client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
             order_res = client.purchase_number(e164_number)
+            order_res, owned = self._reconcile_number_purchase(client, e164_number, order_res)
 
             if conn is None:
                 num_id = f"num_{uuid.uuid4().hex[:12]}"
@@ -672,7 +722,6 @@ class TelephonyService:
 
             managed_number_id = None
             try:
-                owned = client.list_owned_numbers(filter_phone_number=e164_number)
                 provider_number_id = owned[0].get("provider_number_id") if owned else None
                 country = (owned[0].get("country") if owned else "US") or "US"
                 number_type = (owned[0].get("number_type") if owned else "local") or "local"
@@ -741,6 +790,8 @@ class TelephonyService:
                 target["assigned_agent_id"] = agent_id
                 if agent_id:
                     target["routing_status"] = NumberRoutingStatus.READY.value
+                else:
+                    target["routing_status"] = NumberRoutingStatus.NOT_CONFIGURED.value
                 return target
             if not queries.assign_number_to_agent(conn, tenant_id, number_id, agent_id):
                 raise TelephonyError(
@@ -802,6 +853,20 @@ class TelephonyService:
                     tenant_id,
                     exc.code,
                 )
+        else:
+            with self._connection() as conn:
+                if conn is not None:
+                    conn.execute(
+                        """
+                        update telephony_phone_numbers
+                        set routing_status = 'not_configured',
+                            updated_at = now()
+                        where tenant_id = %s and id = %s
+                        """,
+                        (tenant_id, number_id),
+                    )
+            number["routing_status"] = NumberRoutingStatus.NOT_CONFIGURED.value
+            number["assigned_agent_id"] = None
         return number
 
     def _bind_telnyx_number_to_sip(self, tenant_id: str, number: dict[str, Any]) -> None:

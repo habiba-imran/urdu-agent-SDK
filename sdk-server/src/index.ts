@@ -101,6 +101,20 @@ export interface ProviderCapabilities {
   languages: Record<string, LanguageCapabilities>;
 }
 
+export interface ManagedNumberRecord {
+  id: string;
+  tenant_id: string;
+  provider_number_id: string | null;
+  e164_number: string;
+  country: string;
+  number_type: string;
+  features: string[];
+  provisioning_status: string;
+  routing_status: string;
+  assigned_agent_id: string | null;
+  external_customer_ref: string | null;
+}
+
 export class AwaazLabsUvaAgentsError extends Error {
   constructor(
     public readonly status: number,
@@ -245,6 +259,21 @@ export class AwaazLabsUvaAgentsClient {
       'provider_capabilities.get',
       {},
     );
+  }
+
+  async listManagedNumbers(params?: { assignedAgentId?: string }): Promise<ManagedNumberRecord[]> {
+    const body: Record<string, unknown> = {};
+    if (params?.assignedAgentId) body.assigned_agent_id = params.assignedAgentId;
+    return this.request<ManagedNumberRecord[]>('POST', '/machine/telephony/numbers/list', 'telephony.managed_numbers.list', body);
+  }
+
+  async assignAgentToNumber(numberId: string, agentId: string | null): Promise<ManagedNumberRecord> {
+    const body: Record<string, unknown> = { agent_id: agentId };
+    return this.request<ManagedNumberRecord>('PATCH', `/machine/telephony/numbers/${numberId}/assignment`, 'telephony.numbers.assign_agent', body);
+  }
+
+  async unassignAgentFromNumber(numberId: string): Promise<ManagedNumberRecord> {
+    return this.assignAgentToNumber(numberId, null);
   }
 }
 

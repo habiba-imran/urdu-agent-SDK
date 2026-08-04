@@ -191,13 +191,17 @@ await telephony.listManagedPhoneNumbers({ limit: 25 });
 await telephony.importTelnyxNumber({ e164Number: '<E164_NUMBER>' });
 await telephony.syncTelnyxOwnedNumbers();
 await telephony.getTelnyxNumberDrift();
-await telephony.searchAvailableNumbers({ country: 'US', areaCode: '<AREA_CODE>' });
-await telephony.purchaseNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
+const available = await telephony.searchAvailableNumbers({ country: 'US', areaCode: '<AREA_CODE>' });
+console.log(available[0]?.upfront_cost, available[0]?.monthly_cost, available[0]?.currency);
+const order = await telephony.purchaseNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
+console.log(order.managed_number_id, order.platform_status);
 await telephony.getNumberOrderStatus('<ORDER_ID>');
 await telephony.disableNumber('<MANAGED_NUMBER_ID>');
 ```
 
 Only run purchase, disable, and outbound call actions after your product flow has explicit user or operator approval. For real-provider number acquisition, use sync/import for owned numbers or purchase through an approved backend flow.
+
+`searchAvailableNumbers()` returns priced inventory rows including `upfront_cost`, `monthly_cost`, and `currency` when Telnyx provides them. `purchaseNumber()` returns the order status plus `managed_number_id` when the backend can already reconcile the purchased number into managed inventory during that same request.
 
 ## 8. Inbound telephony flow
 

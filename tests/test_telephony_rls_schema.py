@@ -52,7 +52,9 @@ def _normalized_sql() -> str:
 
 
 def _grant_select_blocks() -> list[str]:
-    return re.findall(r"grant select \((.*?)\) on ([a-z_]+) to authenticated;", _sql(), re.DOTALL)
+    return re.findall(
+        r"grant select \((.*?)\) on ([a-z_]+) to authenticated;", _sql(), re.DOTALL
+    )
 
 
 def test_rls_is_enabled_for_all_telephony_tables():
@@ -74,8 +76,13 @@ def test_authenticated_policies_are_tenant_scoped_and_not_broad():
     assert "to anon" not in sql
     for table in TELEPHONY_TABLES:
         assert f"on {table} for select to authenticated using ({tenant_check})" in sql
-        assert f"on {table} for insert to authenticated with check ({tenant_check})" in sql
-        assert f"on {table} for update to authenticated using ({tenant_check}) with check ({tenant_check})" in sql
+        assert (
+            f"on {table} for insert to authenticated with check ({tenant_check})" in sql
+        )
+        assert (
+            f"on {table} for update to authenticated using ({tenant_check}) with check ({tenant_check})"
+            in sql
+        )
 
 
 def test_no_anon_or_broad_authenticated_grants_exist():

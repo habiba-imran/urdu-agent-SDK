@@ -111,7 +111,10 @@ class ConnectWriteDb(ActiveConnectionDb):
     def execute(self, query: str, params: tuple[Any, ...] = ()):
         self.calls.append((query, params))
         sql = " ".join(query.lower().split())
-        if "from tenant_telnyx_connections" in sql and self.stored_encrypted_ref is None:
+        if (
+            "from tenant_telnyx_connections" in sql
+            and self.stored_encrypted_ref is None
+        ):
             return FakeCursor(row=None)
         if "insert into tenant_telnyx_connections" in sql:
             self.stored_encrypted_ref = params[3]
@@ -175,11 +178,29 @@ class RoutingDb(ActiveConnectionDb):
         if "from livekit_inbound_trunks" in sql:
             return FakeCursor(row=None)
         if "insert into livekit_inbound_trunks" in sql:
-            return FakeCursor(row=("trunk_record_123", TENANT_ID, "num_real_123", params[4], "active", params[5]))
+            return FakeCursor(
+                row=(
+                    "trunk_record_123",
+                    TENANT_ID,
+                    "num_real_123",
+                    params[4],
+                    "active",
+                    params[5],
+                )
+            )
         if "from livekit_sip_dispatch_rules" in sql:
             return FakeCursor(row=None)
         if "insert into livekit_sip_dispatch_rules" in sql:
-            return FakeCursor(row=("rule_record_123", TENANT_ID, "num_real_123", params[3], "active", params[4]))
+            return FakeCursor(
+                row=(
+                    "rule_record_123",
+                    TENANT_ID,
+                    "num_real_123",
+                    params[3],
+                    "active",
+                    params[4],
+                )
+            )
         if "update telephony_phone_numbers" in sql:
             self.updated_number = True
             return FakeCursor()
@@ -210,7 +231,9 @@ class FakeTelnyxClient:
             }
         ]
         if filter_phone_number:
-            return [item for item in items if item["e164_number"] == filter_phone_number]
+            return [
+                item for item in items if item["e164_number"] == filter_phone_number
+            ]
         return items
 
 
@@ -224,7 +247,9 @@ class FakeLiveKitClient:
         self.inbound_calls.append((phone_number_id, e164_number))
         return {"livekit_inbound_trunk_id": "lk_tr_in_real_123", "status": "active"}
 
-    def create_or_get_dispatch_rule(self, inbound_trunk_id: str, phone_number_id: str, e164_number: str):
+    def create_or_get_dispatch_rule(
+        self, inbound_trunk_id: str, phone_number_id: str, e164_number: str
+    ):
         self.rule_calls.append((inbound_trunk_id, phone_number_id, e164_number))
         return {"livekit_sip_dispatch_rule_id": "lk_rule_real_123", "status": "active"}
 
@@ -238,7 +263,9 @@ def test_service_uses_stored_tenant_credential_for_real_telnyx_inventory():
         captured["mock_mode"] = mock_mode
         return FakeTelnyxClient(api_key, mock_mode)
 
-    service = TelephonyService(db_conn=ActiveConnectionDb(encrypted_ref), telnyx_client_factory=factory)
+    service = TelephonyService(
+        db_conn=ActiveConnectionDb(encrypted_ref), telnyx_client_factory=factory
+    )
     numbers = service.list_telnyx_owned_numbers(TENANT_ID)
 
     assert captured == {"api_key": RAW_TELNYX_KEY, "mock_mode": False}
@@ -273,11 +300,14 @@ def test_sync_owned_numbers_uses_real_adapter_and_upserts_inventory():
     assert captured == {"api_key": RAW_TELNYX_KEY, "mock_mode": False}
     assert result["synced_count"] == 1
     assert result["items"][0]["provider_number_id"] == "pn_real_123"
-    assert any("insert into telephony_phone_numbers" in call[0].lower() for call in db.calls)
+    assert any(
+        "insert into telephony_phone_numbers" in call[0].lower() for call in db.calls
+    )
 
 
-
-def test_connect_missing_encryption_config_fails_before_provider_verification(monkeypatch):
+def test_connect_missing_encryption_config_fails_before_provider_verification(
+    monkeypatch,
+):
     monkeypatch.delenv("TELEPHONY_CREDENTIAL_ENCRYPTION_KEY", raising=False)
     factory_called = False
 
@@ -319,12 +349,18 @@ def test_livekit_routing_uses_real_adapter_path_when_configured():
     db = RoutingDb()
     fake_livekit = FakeLiveKitClient(mock_mode=False)
 
-    service = TelephonyService(db_conn=db, livekit_client_factory=lambda mock_mode: fake_livekit)
-    result = service.configure_number_routing(TENANT_ID, "num_real_123", inbound_agent_id="agent_real_123")
+    service = TelephonyService(
+        db_conn=db, livekit_client_factory=lambda mock_mode: fake_livekit
+    )
+    result = service.configure_number_routing(
+        TENANT_ID, "num_real_123", inbound_agent_id="agent_real_123"
+    )
 
     assert fake_livekit.mock_mode is False
     assert fake_livekit.inbound_calls == [("num_real_123", "+14155550123")]
-    assert fake_livekit.rule_calls == [("lk_tr_in_real_123", "num_real_123", "+14155550123")]
+    assert fake_livekit.rule_calls == [
+        ("lk_tr_in_real_123", "num_real_123", "+14155550123")
+    ]
     assert result["inbound_trunk_id"] == "lk_tr_in_real_123"
     assert result["dispatch_rule_id"] == "lk_rule_real_123"
     assert not result["inbound_trunk_id"].startswith("lk_tr_in_mock_")
@@ -335,7 +371,9 @@ def test_livekit_missing_credentials_do_not_produce_mock_success():
     client = LiveKitSipClient(mock_mode=False)
 
     with pytest.raises(TelephonyError) as exc_info:
-        client.create_or_get_outbound_trunk("conn_real_123", "sip.telnyx.example", ["+14155550123"])
+        client.create_or_get_outbound_trunk(
+            "conn_real_123", "sip.telnyx.example", ["+14155550123"]
+        )
 
     assert exc_info.value.code == "provider_credentials_missing"
     assert exc_info.value.status == 503
@@ -350,7 +388,9 @@ def _telnyx_test_keypair() -> tuple[Ed25519PrivateKey, str]:
     return private_key, base64.b64encode(public_key).decode("ascii")
 
 
-def _telnyx_signature(private_key: Ed25519PrivateKey, timestamp: str, body: bytes) -> str:
+def _telnyx_signature(
+    private_key: Ed25519PrivateKey, timestamp: str, body: bytes
+) -> str:
     signed_payload = timestamp.encode("utf-8") + b"|" + body
     return base64.b64encode(private_key.sign(signed_payload)).decode("ascii")
 
@@ -362,10 +402,22 @@ def test_webhook_real_mode_verifies_telnyx_api_v2_ed25519_signature(monkeypatch)
     timestamp = str(int(time.time()))
     signature = _telnyx_signature(private_key, timestamp, body)
 
-    assert telephony_webhooks.verify_telnyx_webhook_signature(body, None, timestamp) is False
-    assert telephony_webhooks.verify_telnyx_webhook_signature(body, "bad", timestamp) is False
-    assert telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp) is True
-    assert telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp) is False
+    assert (
+        telephony_webhooks.verify_telnyx_webhook_signature(body, None, timestamp)
+        is False
+    )
+    assert (
+        telephony_webhooks.verify_telnyx_webhook_signature(body, "bad", timestamp)
+        is False
+    )
+    assert (
+        telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp)
+        is True
+    )
+    assert (
+        telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp)
+        is False
+    )
 
 
 def test_webhook_real_mode_rejects_stale_timestamp(monkeypatch):
@@ -375,7 +427,10 @@ def test_webhook_real_mode_rejects_stale_timestamp(monkeypatch):
     timestamp = str(int(time.time()) - 301)
     signature = _telnyx_signature(private_key, timestamp, body)
 
-    assert telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp) is False
+    assert (
+        telephony_webhooks.verify_telnyx_webhook_signature(body, signature, timestamp)
+        is False
+    )
 
 
 def test_webhook_endpoint_accepts_signed_request_and_dedupes_event_id(monkeypatch):
@@ -458,7 +513,16 @@ class OutboundCallDb(ActiveConnectionDb):
                 )
             )
         if "from livekit_outbound_trunks" in sql:
-            return FakeCursor(row=("trunk_record_123", TENANT_ID, "ovp_real_123", "lk_tr_out_real_123", "active", "active"))
+            return FakeCursor(
+                row=(
+                    "trunk_record_123",
+                    TENANT_ID,
+                    "ovp_real_123",
+                    "lk_tr_out_real_123",
+                    "active",
+                    "active",
+                )
+            )
         if "from quota_state" in sql:
             return FakeCursor(row=None)
         if "insert into telephony_calls" in sql:
@@ -472,7 +536,13 @@ class OutboundLiveKitClient:
         self.mock_mode = mock_mode
         self.sip_participant_calls: list[tuple[str, str, str]] = []
 
-    def create_sip_participant(self, room_name: str, outbound_trunk_id: str, to_number: str, participant_identity: str | None = None):
+    def create_sip_participant(
+        self,
+        room_name: str,
+        outbound_trunk_id: str,
+        to_number: str,
+        participant_identity: str | None = None,
+    ):
         self.sip_participant_calls.append((room_name, outbound_trunk_id, to_number))
         return {
             "livekit_sip_call_id": "lk_call_real_123",
@@ -484,7 +554,9 @@ class OutboundLiveKitClient:
 def test_outbound_call_uses_uuid_database_id_and_no_fake_session_id():
     db = OutboundCallDb()
     livekit = OutboundLiveKitClient(mock_mode=False)
-    service = TelephonyService(db_conn=db, livekit_client_factory=lambda mock_mode: livekit)
+    service = TelephonyService(
+        db_conn=db, livekit_client_factory=lambda mock_mode: livekit
+    )
 
     result = service.create_outbound_call(
         TENANT_ID,
@@ -499,4 +571,6 @@ def test_outbound_call_uses_uuid_database_id_and_no_fake_session_id():
     assert db.inserted_call_params is not None
     assert db.inserted_call_params[0] == result["telephony_call_id"]
     uuid.UUID(db.inserted_call_params[0])
-    assert livekit.sip_participant_calls == [(result["room_name"], "lk_tr_out_real_123", "+14155550199")]
+    assert livekit.sip_participant_calls == [
+        (result["room_name"], "lk_tr_out_real_123", "+14155550199")
+    ]

@@ -137,6 +137,17 @@ export interface SearchAvailableNumbersParams extends JsonInputObject {
   features?: string[];
 }
 
+export interface AvailableNumber extends JsonObject {
+  e164_number: string;
+  country: string;
+  region?: string | null;
+  number_type?: string | null;
+  features: string[];
+  upfront_cost?: string | null;
+  monthly_cost?: string | null;
+  currency: string;
+}
+
 export interface ReserveNumberParams extends JsonInputObject {
   e164Number: string;
   idempotencyKey: string;
@@ -146,6 +157,20 @@ export interface PurchaseNumberParams extends JsonInputObject {
   e164Number: string;
   externalCustomerRef?: string;
   idempotencyKey: string;
+}
+
+export interface NumberOrderResponse extends JsonObject {
+  id: string;
+  tenant_id: string;
+  idempotency_key?: string;
+  provider_order_id?: string | null;
+  selected_e164_number: string;
+  platform_status: string;
+  provider_status?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
+  managed_number_id?: string | null;
 }
 
 export interface UpsertTelnyxSipConnectionParams extends JsonInputObject {

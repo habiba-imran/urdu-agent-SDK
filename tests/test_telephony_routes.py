@@ -44,6 +44,9 @@ def test_portal_search_and_purchase():
     assert search_resp.status_code == 200
     numbers = search_resp.json()
     assert len(numbers) > 0
+    assert numbers[0]["upfront_cost"] == "1.00"
+    assert numbers[0]["monthly_cost"] == "1.00"
+    assert numbers[0]["currency"] == "USD"
 
     target = numbers[0]["e164_number"]
     purchase_resp = client.post(
@@ -52,6 +55,7 @@ def test_portal_search_and_purchase():
     )
     assert purchase_resp.status_code == 200
     assert purchase_resp.json()["platform_status"] == "purchased"
+    assert purchase_resp.json()["managed_number_id"] is not None
 
 
 def test_portal_outbound_readiness_and_call():
@@ -119,6 +123,30 @@ def test_portal_outbound_call_rejects_number_bound_to_another_agent():
     )
     assert call_resp.status_code == 409
     assert call_resp.json()["detail"]["error"]["code"] == "number_not_assigned"
+
+
+def test_portal_unassign_agent_transitions_routing_status_to_not_configured():
+    num = client.post(
+        "/portal/telephony/numbers/import",
+        json={"e164_number": "+15557650003"},
+    ).json()
+    num_id = num["id"]
+
+    # Assign agent
+    assigned = client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": "agent_to_unassign"},
+    ).json()
+    assert assigned["assigned_agent_id"] == "agent_to_unassign"
+    assert assigned["routing_status"] == "ready"
+
+    # Unassign agent (pass agent_id: null)
+    unassigned = client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": None},
+    ).json()
+    assert unassigned["assigned_agent_id"] is None
+    assert unassigned["routing_status"] == "not_configured"
 
 
 def test_portal_disconnect():

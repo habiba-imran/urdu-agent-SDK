@@ -4,7 +4,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "supabase" / "migrations" / "0012_telephony_core_tables.sql"
-PHASE4_MIGRATION = ROOT / "supabase" / "migrations" / "0013_telephony_constraints_indexes_status_idempotency.sql"
+PHASE4_MIGRATION = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "0013_telephony_constraints_indexes_status_idempotency.sql"
+)
 
 TELEPHONY_TABLES = [
     "tenant_telnyx_connections",
@@ -236,7 +241,10 @@ def test_phase4_migration_adds_constraints_indexes_without_phase5_scope():
 def test_every_tenant_owned_telephony_table_has_tenant_id():
     for table in TELEPHONY_TABLES:
         assert _has_column(table, "tenant_id"), f"{table} missing tenant_id"
-        assert "tenant_id uuid not null references tenants(id) on delete cascade" in _table_body(table)
+        assert (
+            "tenant_id uuid not null references tenants(id) on delete cascade"
+            in _table_body(table)
+        )
 
 
 def test_required_phase3_columns_exist():
@@ -246,28 +254,36 @@ def test_required_phase3_columns_exist():
 
 
 def test_base_foreign_key_relationships_exist():
-    assert "telnyx_connection_id uuid not null references tenant_telnyx_connections(id)" in _table_body(
-        "telnyx_sip_connections"
+    assert (
+        "telnyx_connection_id uuid not null references tenant_telnyx_connections(id)"
+        in _table_body("telnyx_sip_connections")
     )
-    assert "telnyx_sip_connection_id uuid references telnyx_sip_connections(id)" in _table_body(
-        "telnyx_outbound_voice_profiles"
+    assert (
+        "telnyx_sip_connection_id uuid references telnyx_sip_connections(id)"
+        in _table_body("telnyx_outbound_voice_profiles")
     )
-    assert "assigned_agent_id uuid references agents(id) on delete set null" in _table_body(
-        "telephony_phone_numbers"
+    assert (
+        "assigned_agent_id uuid references agents(id) on delete set null"
+        in _table_body("telephony_phone_numbers")
     )
-    assert "phone_number_id uuid not null references telephony_phone_numbers(id)" in _table_body(
-        "livekit_inbound_trunks"
+    assert (
+        "phone_number_id uuid not null references telephony_phone_numbers(id)"
+        in _table_body("livekit_inbound_trunks")
     )
     assert (
         "outbound_voice_profile_record_id uuid not null references telnyx_outbound_voice_profiles(id)"
         in _table_body("livekit_outbound_trunks")
     )
-    assert "inbound_trunk_record_id uuid not null references livekit_inbound_trunks(id)" in _table_body(
-        "livekit_sip_dispatch_rules"
+    assert (
+        "inbound_trunk_record_id uuid not null references livekit_inbound_trunks(id)"
+        in _table_body("livekit_sip_dispatch_rules")
     )
-    assert "session_id uuid references sessions(id) on delete set null" in _table_body("telephony_calls")
-    assert "telephony_call_id uuid not null references telephony_calls(id)" in _table_body(
-        "telephony_call_events"
+    assert "session_id uuid references sessions(id) on delete set null" in _table_body(
+        "telephony_calls"
+    )
+    assert (
+        "telephony_call_id uuid not null references telephony_calls(id)"
+        in _table_body("telephony_call_events")
     )
 
 
@@ -275,8 +291,13 @@ def test_telephony_calls_uses_internal_trunk_rule_references_only():
     body = _table_body("telephony_calls")
 
     assert "inbound_trunk_record_id uuid references livekit_inbound_trunks(id)" in body
-    assert "outbound_trunk_record_id uuid references livekit_outbound_trunks(id)" in body
-    assert "sip_dispatch_rule_record_id uuid references livekit_sip_dispatch_rules(id)" in body
+    assert (
+        "outbound_trunk_record_id uuid references livekit_outbound_trunks(id)" in body
+    )
+    assert (
+        "sip_dispatch_rule_record_id uuid references livekit_sip_dispatch_rules(id)"
+        in body
+    )
     assert not re.search(r"^\s*livekit_inbound_trunk_id\b", body, re.MULTILINE)
     assert not re.search(r"^\s*livekit_outbound_trunk_id\b", body, re.MULTILINE)
     assert not re.search(r"^\s*livekit_sip_dispatch_rule_id\b", body, re.MULTILINE)
