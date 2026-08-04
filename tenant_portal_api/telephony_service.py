@@ -790,6 +790,8 @@ class TelephonyService:
                 target["assigned_agent_id"] = agent_id
                 if agent_id:
                     target["routing_status"] = NumberRoutingStatus.READY.value
+                else:
+                    target["routing_status"] = NumberRoutingStatus.NOT_CONFIGURED.value
                 return target
             if not queries.assign_number_to_agent(conn, tenant_id, number_id, agent_id):
                 raise TelephonyError(
@@ -851,6 +853,20 @@ class TelephonyService:
                     tenant_id,
                     exc.code,
                 )
+        else:
+            with self._connection() as conn:
+                if conn is not None:
+                    conn.execute(
+                        """
+                        update telephony_phone_numbers
+                        set routing_status = 'not_configured',
+                            updated_at = now()
+                        where tenant_id = %s and id = %s
+                        """,
+                        (tenant_id, number_id),
+                    )
+            number["routing_status"] = NumberRoutingStatus.NOT_CONFIGURED.value
+            number["assigned_agent_id"] = None
         return number
 
     def _bind_telnyx_number_to_sip(self, tenant_id: str, number: dict[str, Any]) -> None:

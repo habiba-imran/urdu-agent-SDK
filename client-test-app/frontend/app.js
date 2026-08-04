@@ -856,6 +856,26 @@ async function assignNumber() {
   }
 }
 
+async function unassignNumber() {
+  const numberId = $('pt-number-id')?.value;
+  if (!numberId) {
+    toast('warning', 'Select a managed number first');
+    return;
+  }
+  const button = $('btn-unassign-number');
+  setLoading(button, true, 'Unassigning...');
+  try {
+    await api('POST', `/api/telnyx/numbers/${encodeURIComponent(numberId)}/assign-agent`, { agentId: null });
+    toast('success', 'Agent unassigned from number', numberId);
+    await loadManagedNumbers();
+    handleNumberSelection(numberId);
+  } catch (error) {
+    toast('error', 'Could not unassign agent', error.message);
+  } finally {
+    setLoading(button, false);
+  }
+}
+
 async function configureRouting() {
   const numberId = $('pt-number-id')?.value;
   const agentId = $('pt-agent-id')?.value;
@@ -1311,6 +1331,7 @@ function registerEvents() {
   on('modal-update-cancel', 'click', () => closeModal('modal-update-agent'));
   on('modal-update-confirm', 'click', updateAgent);
   on('btn-assign-number', 'click', assignNumber);
+  on('btn-unassign-number', 'click', unassignNumber);
   on('btn-configure-routing', 'click', configureRouting);
   on('btn-check-readiness', 'click', checkReadiness);
   on('btn-upsert-sip', 'click', saveSip);

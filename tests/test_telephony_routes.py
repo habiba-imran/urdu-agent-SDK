@@ -125,6 +125,30 @@ def test_portal_outbound_call_rejects_number_bound_to_another_agent():
     assert call_resp.json()["detail"]["error"]["code"] == "number_not_assigned"
 
 
+def test_portal_unassign_agent_transitions_routing_status_to_not_configured():
+    num = client.post(
+        "/portal/telephony/numbers/import",
+        json={"e164_number": "+15557650003"},
+    ).json()
+    num_id = num["id"]
+
+    # Assign agent
+    assigned = client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": "agent_to_unassign"},
+    ).json()
+    assert assigned["assigned_agent_id"] == "agent_to_unassign"
+    assert assigned["routing_status"] == "ready"
+
+    # Unassign agent (pass agent_id: null)
+    unassigned = client.patch(
+        f"/portal/telephony/numbers/{num_id}/assignment",
+        json={"number_id": num_id, "agent_id": None},
+    ).json()
+    assert unassigned["assigned_agent_id"] is None
+    assert unassigned["routing_status"] == "not_configured"
+
+
 def test_portal_disconnect():
     resp = client.delete("/portal/telephony/telnyx/connection")
     assert resp.status_code == 200

@@ -990,8 +990,7 @@ app.post('/api/telnyx/numbers/:numberId/disable', async (req, res) => {
 
 app.post('/api/telnyx/numbers/:numberId/assign-agent', async (req, res) => {
   try {
-    const { agentId } = req.body;
-    if (!agentId) return res.status(400).json({ ok: false, message: 'agentId required' });
+    const agentId = req.body?.agentId ?? null;
     const result = await withTelephonyCredentialRepair(async () => {
       const telephony = getTelephonyClient();
       return telephony.assignAgentToNumber(req.params.numberId, agentId);
