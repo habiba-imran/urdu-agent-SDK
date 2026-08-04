@@ -10,10 +10,12 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 
 import psycopg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from tenant_portal_api.auth import TenantAuthError, verify_tenant_jwt
 from tenant_portal_api.machine_auth import (
@@ -188,6 +190,45 @@ def _verify_machine_with_db(
     with _open_db() as conn:
         _verify_machine(conn, tenant_id, ts, nonce, action, body, signature)
         conn.commit()
+
+
+async def _read_machine_json_body(request: Request | None) -> dict[str, Any]:
+    if request is None:
+        return {}
+    if request.headers.get("content-length", "0") == "0":
+        return {}
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+async def _run_machine_service_call(
+    *,
+    request: Request | None,
+    tenant_id: str,
+    timestamp: str,
+    nonce: str,
+    signature: str,
+    action: str,
+    service_call: Callable[[dict[str, Any]], Any],
+) -> Any:
+    """Keep sync DB/provider work off the event loop so health checks stay responsive."""
+    body = await _read_machine_json_body(request)
+    await run_in_threadpool(
+        _verify_machine_with_db,
+        tenant_id,
+        timestamp,
+        nonce,
+        action,
+        body,
+        signature,
+    )
+    try:
+        return await run_in_threadpool(service_call, body)
+    except TelephonyError as e:
+        raise HTTPException(status_code=e.status, detail=e.to_dict()) from e
 
 
 # ==========================================
@@ -542,21 +583,17 @@ async def machine_connect_telnyx(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: connectTelnyxAccount (action: telephony.telnyx_connection.connect)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_connection.connect",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.connect_telnyx_account(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_connection.connect",
+        service_call=lambda body: _service.connect_telnyx_account(
             x_tenant_id, body.get("api_key", ""), body.get("label")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/telnyx/rotate")
@@ -568,19 +605,17 @@ async def machine_rotate_telnyx(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: rotateTelnyxAccountKey (action: telephony.telnyx_connection.rotate)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_connection.rotate",
-        body,
-        x_signature,
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_connection.rotate",
+        service_call=lambda body: _service.rotate_telnyx_account_key(
+            x_tenant_id, body.get("api_key", "")
+        ),
     )
-    try:
-        return _service.rotate_telnyx_account_key(x_tenant_id, body.get("api_key", ""))
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/telnyx/reverify")
@@ -592,23 +627,15 @@ async def machine_reverify_telnyx(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: reverifyTelnyxAccount (action: telephony.telnyx_connection.reverify)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_connection.reverify",
+        service_call=lambda _body: _service.reverify_telnyx_account(x_tenant_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_connection.reverify",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.reverify_telnyx_account(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.delete("/machine/telephony/telnyx/connection")
@@ -620,23 +647,15 @@ async def machine_disconnect_telnyx(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: disconnectTelnyxAccount (action: telephony.telnyx_connection.disconnect)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_connection.disconnect",
+        service_call=lambda _body: _service.disconnect_telnyx_account(x_tenant_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_connection.disconnect",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.disconnect_telnyx_account(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.get("/machine/telephony/telnyx/connection")
@@ -647,18 +666,15 @@ async def machine_get_connection_status(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: getConnectionStatus (action: telephony.telnyx_connection.status)"""
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_connection.status",
-        {},
-        x_signature,
+    return await _run_machine_service_call(
+        request=None,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_connection.status",
+        service_call=lambda _body: _service.get_connection_status(x_tenant_id),
     )
-    try:
-        return _service.get_connection_status(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/telnyx/owned-numbers/list")
@@ -670,25 +686,17 @@ async def machine_list_owned_numbers(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: listTelnyxOwnedNumbers (action: telephony.telnyx_owned_numbers.list)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
-    )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_owned_numbers.list",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.list_telnyx_owned_numbers(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_owned_numbers.list",
+        service_call=lambda body: _service.list_telnyx_owned_numbers(
             x_tenant_id, body.get("filter_country")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/numbers/list")
@@ -700,23 +708,17 @@ async def machine_list_numbers(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: listManagedPhoneNumbers (action: telephony.managed_numbers.list)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.managed_numbers.list",
+        service_call=lambda body: _service.list_managed_numbers(
+            x_tenant_id, body.get("assigned_agent_id")
+        ),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.managed_numbers.list",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.list_managed_numbers(x_tenant_id, body.get("assigned_agent_id"))
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/numbers/import")
@@ -728,21 +730,17 @@ async def machine_import_number(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: importTelnyxNumber (action: telephony.managed_numbers.import)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.managed_numbers.import",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.import_telnyx_number(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.managed_numbers.import",
+        service_call=lambda body: _service.import_telnyx_number(
             x_tenant_id, body.get("e164_number", ""), body.get("external_customer_ref")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/numbers/sync")
@@ -754,23 +752,15 @@ async def machine_sync_numbers(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: syncTelnyxOwnedNumbers (action: telephony.managed_numbers.sync)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.managed_numbers.sync",
+        service_call=lambda _body: _service.sync_telnyx_owned_numbers(x_tenant_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.managed_numbers.sync",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.sync_telnyx_owned_numbers(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/numbers/drift")
@@ -782,23 +772,15 @@ async def machine_get_number_drift(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: getTelnyxNumberDrift (action: telephony.managed_numbers.drift)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.managed_numbers.drift",
+        service_call=lambda _body: _service.get_telnyx_number_drift(x_tenant_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.managed_numbers.drift",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.get_telnyx_number_drift(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/available-numbers/search")
@@ -810,17 +792,14 @@ async def machine_search_numbers(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: searchAvailableNumbers (action: telephony.available_numbers.search)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.available_numbers.search",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.search_available_numbers(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.available_numbers.search",
+        service_call=lambda body: _service.search_available_numbers(
             x_tenant_id,
             body.get("country", "US"),
             body.get("area_code"),
@@ -828,9 +807,8 @@ async def machine_search_numbers(
             body.get("features"),
             body.get("exact_phone_number"),
             body.get("limit"),
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/number-reservations")
@@ -842,21 +820,17 @@ async def machine_reserve_number(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: reserveNumber (action: telephony.number_reservations.create)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.number_reservations.create",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.reserve_number(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.number_reservations.create",
+        service_call=lambda body: _service.reserve_number(
             x_tenant_id, body.get("e164_number", ""), body.get("idempotency_key", "")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/number-orders")
@@ -868,24 +842,20 @@ async def machine_purchase_number(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: purchaseNumber (action: telephony.number_orders.create)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.number_orders.create",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.purchase_number(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.number_orders.create",
+        service_call=lambda body: _service.purchase_number(
             x_tenant_id,
             body.get("e164_number", ""),
             body.get("idempotency_key", ""),
             body.get("external_customer_ref"),
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/number-orders/get")
@@ -897,19 +867,17 @@ async def machine_get_number_order(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: getNumberOrderStatus (action: telephony.number_orders.get)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.number_orders.get",
-        body,
-        x_signature,
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.number_orders.get",
+        service_call=lambda body: _service.get_number_order_status(
+            x_tenant_id, body.get("order_id", "")
+        ),
     )
-    try:
-        return _service.get_number_order_status(x_tenant_id, body.get("order_id", ""))
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.patch("/machine/telephony/numbers/{number_id}/assignment")
@@ -922,21 +890,17 @@ async def machine_assign_agent(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: assignAgentToNumber / unassignAgentFromNumber (action: telephony.numbers.assign_agent)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.numbers.assign_agent",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.assign_agent_to_number(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.numbers.assign_agent",
+        service_call=lambda body: _service.assign_agent_to_number(
             x_tenant_id, number_id, body.get("agent_id")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/telnyx/sip-connection")
@@ -948,24 +912,20 @@ async def machine_upsert_sip_connection(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: upsertTelnyxSipConnection (action: telephony.telnyx_sip_connection.upsert)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_sip_connection.upsert",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.upsert_telnyx_sip_connection(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_sip_connection.upsert",
+        service_call=lambda body: _service.upsert_telnyx_sip_connection(
             x_tenant_id,
             body.get("sip_fqdn"),
             body.get("sip_username"),
             body.get("sip_secret"),
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/telnyx/sip-connection/test")
@@ -977,23 +937,15 @@ async def machine_verify_sip_connection(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: verifyTelnyxSipConnection (action: telephony.telnyx_sip_connection.test)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_sip_connection.test",
+        service_call=lambda _body: _service.verify_telnyx_sip_connection(x_tenant_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_sip_connection.test",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.verify_telnyx_sip_connection(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/telnyx/outbound-voice-profile")
@@ -1005,24 +957,20 @@ async def machine_upsert_outbound_profile(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: upsertTelnyxOutboundVoiceProfile (action: telephony.telnyx_outbound_voice_profile.upsert)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_outbound_voice_profile.upsert",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.upsert_telnyx_outbound_voice_profile(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_outbound_voice_profile.upsert",
+        service_call=lambda body: _service.upsert_telnyx_outbound_voice_profile(
             x_tenant_id,
             body.get("allowed_destinations"),
             body.get("concurrency_limit"),
             body.get("daily_spending_limit"),
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/telnyx/outbound-voice-profile/reverify")
@@ -1034,23 +982,17 @@ async def machine_verify_outbound_profile(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: verifyTelnyxOutboundVoiceProfile (action: telephony.telnyx_outbound_voice_profile.reverify)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.telnyx_outbound_voice_profile.reverify",
+        service_call=lambda _body: _service.verify_telnyx_outbound_voice_profile(
+            x_tenant_id
+        ),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.telnyx_outbound_voice_profile.reverify",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.verify_telnyx_outbound_voice_profile(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/numbers/{number_id}/routing/configure")
@@ -1063,25 +1005,17 @@ async def machine_configure_routing(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: configureNumberRouting (action: telephony.number_routing.configure)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
-    )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.number_routing.configure",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.configure_number_routing(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.number_routing.configure",
+        service_call=lambda body: _service.configure_number_routing(
             x_tenant_id, number_id, body.get("inbound_agent_id")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/telnyx/outbound-trunk/configure")
@@ -1093,25 +1027,17 @@ async def machine_configure_outbound_trunk(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: configureOutboundTrunk (action: telephony.outbound_trunk.configure)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
-    )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.outbound_trunk.configure",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.configure_outbound_trunk(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.outbound_trunk.configure",
+        service_call=lambda body: _service.configure_outbound_trunk(
             x_tenant_id, body.get("outbound_voice_profile_id")
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.get("/machine/telephony/outbound-readiness")
@@ -1122,18 +1048,15 @@ async def machine_get_outbound_readiness(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: getOutboundReadiness (action: telephony.outbound_readiness.get)"""
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.outbound_readiness.get",
-        {},
-        x_signature,
+    return await _run_machine_service_call(
+        request=None,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.outbound_readiness.get",
+        service_call=lambda _body: _service.get_outbound_readiness(x_tenant_id),
     )
-    try:
-        return _service.get_outbound_readiness(x_tenant_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/outbound-calls")
@@ -1145,8 +1068,9 @@ async def machine_create_outbound_call(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: createOutboundCall (action: telephony.outbound_calls.create)"""
-    body = await request.json()
-    _verify_machine_with_db(
+    body = await _read_machine_json_body(request)
+    await run_in_threadpool(
+        _verify_machine_with_db,
         x_tenant_id,
         x_timestamp,
         x_nonce,
@@ -1155,19 +1079,20 @@ async def machine_create_outbound_call(
         x_signature,
     )
     try:
-        return _service.create_outbound_call(
-            tenant_id=x_tenant_id,
-            agent_id=body.get("agent_id", ""),
-            from_number_id=body.get("from_number_id", ""),
-            to_number=body.get("to_number", ""),
-            idempotency_key=body.get("idempotency_key", ""),
-            recipient=body.get("recipient"),
-            context=body.get("context", {}),
-            external_customer_ref=body.get("external_customer_ref"),
-            external_workflow_ref=body.get("external_workflow_ref"),
+        return await run_in_threadpool(
+            _service.create_outbound_call,
+            x_tenant_id,
+            body.get("agent_id", ""),
+            body.get("from_number_id", ""),
+            body.get("to_number", ""),
+            body.get("idempotency_key", ""),
+            body.get("recipient"),
+            body.get("context", {}),
+            body.get("external_customer_ref"),
+            body.get("external_workflow_ref"),
         )
     except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        raise HTTPException(status_code=e.status, detail=e.to_dict()) from e
     except Exception as e:
         logger.exception(
             "Unhandled machine outbound call setup failure for tenant %s", x_tenant_id
@@ -1177,7 +1102,7 @@ async def machine_create_outbound_call(
             code=TelephonyErrorCode.CALL_SETUP_FAILED,
             message=f"Outbound call setup failed: {e}",
         )
-        raise HTTPException(status_code=err.status, detail=err.to_dict())
+        raise HTTPException(status_code=err.status, detail=err.to_dict()) from e
 
 
 @router.post("/machine/telephony/calls/get")
@@ -1189,14 +1114,17 @@ async def machine_get_call_status(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: getCallStatus (action: telephony.calls.get)"""
-    body = await request.json()
-    _verify_machine_with_db(
-        x_tenant_id, x_timestamp, x_nonce, "telephony.calls.get", body, x_signature
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.calls.get",
+        service_call=lambda body: _service.get_call_status(
+            x_tenant_id, body.get("telephony_call_id", "")
+        ),
     )
-    try:
-        return _service.get_call_status(x_tenant_id, body.get("telephony_call_id", ""))
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
 @router.post("/machine/telephony/calls/list")
@@ -1208,20 +1136,17 @@ async def machine_list_calls(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: listCallRecords (action: telephony.calls.list)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
-    )
-    _verify_machine_with_db(
-        x_tenant_id, x_timestamp, x_nonce, "telephony.calls.list", body, x_signature
-    )
-    try:
-        return _service.list_call_records(
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.calls.list",
+        service_call=lambda body: _service.list_call_records(
             x_tenant_id, body.get("assigned_agent_id"), body.get("limit", 50)
-        )
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())
+        ),
+    )
 
 
 @router.post("/machine/telephony/numbers/{number_id}/disable")
@@ -1234,20 +1159,12 @@ async def machine_disable_number(
     x_signature: str = Header(..., alias="X-Signature"),
 ):
     """SDK: disableNumber (action: telephony.numbers.disable)"""
-    body = (
-        await request.json()
-        if request.headers.get("content-length", "0") != "0"
-        else {}
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.numbers.disable",
+        service_call=lambda _body: _service.disable_number(x_tenant_id, number_id),
     )
-    _verify_machine_with_db(
-        x_tenant_id,
-        x_timestamp,
-        x_nonce,
-        "telephony.numbers.disable",
-        body,
-        x_signature,
-    )
-    try:
-        return _service.disable_number(x_tenant_id, number_id)
-    except TelephonyError as e:
-        raise HTTPException(status_code=e.status, detail=e.to_dict())

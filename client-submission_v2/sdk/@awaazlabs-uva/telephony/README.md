@@ -84,6 +84,7 @@ client.importTelnyxNumber({ e164Number, externalCustomerRef? })
 client.syncTelnyxOwnedNumbers()
 client.getTelnyxNumberDrift()
 client.searchAvailableNumbers({ country, areaCode?, numberType?, features? }) // => AvailableNumber[] with upfront_cost, monthly_cost, currency
+client.reserveNumber({ e164Number, idempotencyKey })
 client.purchaseNumber({ e164Number, externalCustomerRef?, idempotencyKey }) // => NumberOrderResponse with platform_status and managed_number_id when available immediately
 client.getNumberOrderStatus(orderId)
 client.disableNumber(numberId)
@@ -139,6 +140,7 @@ Common error codes include `telephony_auth_failed`, `provider_credentials_missin
 ## Number search and purchase behavior
 
 - `searchAvailableNumbers()` returns priced Telnyx inventory rows, including `upfront_cost`, `monthly_cost`, and `currency` when available from the provider.
+- `reserveNumber()` exists in the SDK contract for reservation-style flows where your hosted backend and product policy support that behavior.
 - `purchaseNumber()` attempts a short post-order reconciliation step so a successful "Buy" action can return `managed_number_id` in the same response when Telnyx has already exposed the purchased number in owned inventory.
 - If Telnyx still has the order in a true pending state, the response may still return `platform_status: 'pending'`; in that case check `getNumberOrderStatus(orderId)` instead of creating a second purchase request.
 

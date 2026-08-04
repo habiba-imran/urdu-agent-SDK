@@ -20,6 +20,8 @@ This folder contains three installable npm tarballs and their TypeScript source 
 
 Install the tarballs into your frontend/backend applications. The `src/` folders are included for review; application code should import the packages by package name.
 
+For the full callable SDK surface, see `../docs/SDK_CAPABILITIES_REFERENCE.md`.
+
 ## Runtime requirements
 
 - Node.js 20 or newer is recommended for all backend SDK usage.

@@ -2,6 +2,8 @@
 
 This guide covers browser voice, backend agent management, and backend telephony management using the packages in `client-submission_v2/sdk`.
 
+For a full method-by-method package inventory, also read `SDK_CAPABILITIES_REFERENCE.md`.
+
 ## 1. Architecture
 
 Use the packages in two places:
@@ -95,6 +97,14 @@ const urduTtsProviders = Object.keys(capabilities.languages.ur?.tts ?? {});
 ```
 
 `getProviderCapabilities()` returns only currently enabled combinations. If a provider is absent for a language/layer, treat it as unavailable and do not offer it in the UI. For provider-validation failures, `AwaazLabsUvaAgentsError` includes a stable `code` for cases such as `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, and `unsupported_voice_for_provider`.
+
+The agents SDK also exposes number-assignment helper methods when you want to keep simple agent-to-number binding in the same backend integration layer:
+
+```ts
+const managed = await agents.listManagedNumbers({ assignedAgentId: agent.id });
+await agents.assignAgentToNumber('<MANAGED_NUMBER_ID>', agent.id);
+await agents.unassignAgentFromNumber('<MANAGED_NUMBER_ID>');
+```
 ## 6. Browser voice sessions
 
 ```ts
@@ -124,6 +134,8 @@ await voice.connect({ agentId: '<AGENT_ID>', voiceId: 'voice_id_from_catalog' })
 ```
 
 Your session endpoint must return JSON containing `token`, `wsUrl`, and `roomName`. If token refresh is supported, include `refreshUrl` and `expiresIn` or configure `refreshEndpoint`.
+
+Treat the session endpoint as the source of truth for the final session payload. `agentId` is required for browser connect. `voiceId` is an optional compatibility field in the browser API shape and should not replace backend session-side agent/session selection logic.
 
 ## 7. Telephony setup
 
@@ -186,6 +198,10 @@ try {
 ### Number management methods
 
 ```ts
+await telephony.getConnectionStatus();
+await telephony.reverifyTelnyxAccount();
+await telephony.rotateTelnyxAccountKey({ apiKey: '<NEW_TELNYX_API_KEY>' });
+await telephony.disconnectTelnyxAccount();
 await telephony.listTelnyxOwnedNumbers({ limit: 25 });
 await telephony.listManagedPhoneNumbers({ limit: 25 });
 await telephony.importTelnyxNumber({ e164Number: '<E164_NUMBER>' });
@@ -193,9 +209,11 @@ await telephony.syncTelnyxOwnedNumbers();
 await telephony.getTelnyxNumberDrift();
 const available = await telephony.searchAvailableNumbers({ country: 'US', areaCode: '<AREA_CODE>' });
 console.log(available[0]?.upfront_cost, available[0]?.monthly_cost, available[0]?.currency);
+await telephony.reserveNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
 const order = await telephony.purchaseNumber({ e164Number: '<E164_NUMBER>', idempotencyKey: '<UNIQUE_KEY>' });
 console.log(order.managed_number_id, order.platform_status);
 await telephony.getNumberOrderStatus('<ORDER_ID>');
+await telephony.unassignAgentFromNumber('<MANAGED_NUMBER_ID>');
 await telephony.disableNumber('<MANAGED_NUMBER_ID>');
 ```
 
@@ -203,14 +221,17 @@ Only run purchase, disable, and outbound call actions after your product flow ha
 
 `searchAvailableNumbers()` returns priced inventory rows including `upfront_cost`, `monthly_cost`, and `currency` when Telnyx provides them. `purchaseNumber()` returns the order status plus `managed_number_id` when the backend can already reconcile the purchased number into managed inventory during that same request.
 
+`reserveNumber()` is part of the SDK contract and can be used only if your hosted platform enables reservation-style flows in your operating model. If your product does not use reservations, you can ignore that method and rely on search plus purchase/import flows instead.
+
 ## 8. Inbound telephony flow
 
 1. Connect the tenant Telnyx account from backend code.
 2. Sync or import the tenant-owned phone number.
 3. Create or select an agent.
 4. Assign the managed phone number to the agent with `assignAgentToNumber(numberId, agentId)`.
-5. Configure SIP/routing resources with `configureNumberRouting(numberId)`.
-6. The provider routes inbound calls to the configured SIP infrastructure, which dispatches the call to the assigned agent.
+5. Configure SIP resources if your hosted deployment requires explicit SIP credentials/configuration.
+6. Configure routing resources with `configureNumberRouting(numberId)`.
+7. The provider routes inbound calls to the configured SIP infrastructure, which dispatches the call to the assigned agent.
 
 Your browser app does not need Telnyx, LiveKit, or HMAC secrets for inbound calls.
 
@@ -292,3 +313,15 @@ Before enabling telephony workflows, the client must provide or confirm:
 - Agent IDs to assign to phone numbers.
 - SIP/routing configuration values required by the hosted backend.
 - Approved outbound destinations, spending/concurrency limits, and operational consent for outbound calls.
+
+## 13. Delivered SDK Surface Summary
+
+The client submission includes these practical capabilities:
+
+- Browser voice session connect/disconnect, transcript events, speaking events, metrics events, autoplay-unlock handling, and voice-catalog fetching.
+- Agent CRUD for hosted voice agents, plus provider-capability discovery for multi-provider setups.
+- Telnyx connection lifecycle: connect, rotate, reverify, disconnect, and status checks.
+- Number inventory management: list owned numbers, list managed numbers, import, sync, drift inspection, search available numbers, reserve, purchase, order-status lookup, disable.
+- Agent-number operations: assign and unassign numbers.
+- Telephony infrastructure operations: SIP connection upsert/verify, outbound voice profile upsert/verify, inbound routing configuration, outbound trunk configuration, and outbound readiness checks.
+- Live outbound call operations: create outbound call, get call status, and list recent call records.

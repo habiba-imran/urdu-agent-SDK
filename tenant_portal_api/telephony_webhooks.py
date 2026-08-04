@@ -17,6 +17,7 @@ import psycopg
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode, telnyx_public_key
 from tenant_portal_api.telephony_errors import TelephonyErrorCode
@@ -146,6 +147,72 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
                 )
 
 
+def _persist_telnyx_webhook_event(
+    event_id: str,
+    event_type: str,
+    data: dict[str, Any],
+) -> dict[str, Any] | None:
+    with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
+        existing = conn.execute(
+            """
+            select 1 from telephony_call_events
+            where source = 'telnyx' and provider_event_id = %s
+            limit 1
+            """,
+            (str(event_id),),
+        ).fetchone()
+        if existing:
+            conn.commit()
+            return {
+                "status": "duplicate",
+                "event_id": event_id,
+                "event_type": event_type,
+            }
+
+        # Attach to a matching call when possible; otherwise skip event insert
+        # (provider_event_id uniqueness still guarded by process-local set).
+        matched = conn.execute(
+            """
+            select id, tenant_id from telephony_calls
+            where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
+            order by created_at desc limit 1
+            """,
+            (
+                str(
+                    data.get("data", {})
+                    .get("payload", {})
+                    .get("call_control_id")
+                    or ""
+                ),
+                str(
+                    data.get("data", {})
+                    .get("payload", {})
+                    .get("call_control_id")
+                    or ""
+                ),
+            ),
+        ).fetchone()
+        if matched:
+            conn.execute(
+                """
+                insert into telephony_call_events (
+                    tenant_id, telephony_call_id, source, event_type, provider_event_id, payload
+                ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
+                on conflict do nothing
+                """,
+                (
+                    matched[1],
+                    matched[0],
+                    event_type,
+                    str(event_id),
+                    json.dumps(data),
+                ),
+            )
+        _apply_webhook_side_effects(conn, event_type, data)
+        conn.commit()
+    return None
+
+
 @router.post("/webhooks/telephony/telnyx")
 async def telnyx_webhook_endpoint(
     request: Request,
@@ -193,64 +260,14 @@ async def telnyx_webhook_endpoint(
 
     if not is_mock_provider_mode():
         try:
-            with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
-                existing = conn.execute(
-                    """
-                    select 1 from telephony_call_events
-                    where source = 'telnyx' and provider_event_id = %s
-                    limit 1
-                    """,
-                    (str(event_id),),
-                ).fetchone()
-                if existing:
-                    conn.commit()
-                    return {
-                        "status": "duplicate",
-                        "event_id": event_id,
-                        "event_type": event_type,
-                    }
-
-                # Attach to a matching call when possible; otherwise skip event insert
-                # (provider_event_id uniqueness still guarded by process-local set).
-                matched = conn.execute(
-                    """
-                    select id, tenant_id from telephony_calls
-                    where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
-                    order by created_at desc limit 1
-                    """,
-                    (
-                        str(
-                            data.get("data", {})
-                            .get("payload", {})
-                            .get("call_control_id")
-                            or ""
-                        ),
-                        str(
-                            data.get("data", {})
-                            .get("payload", {})
-                            .get("call_control_id")
-                            or ""
-                        ),
-                    ),
-                ).fetchone()
-                if matched:
-                    conn.execute(
-                        """
-                        insert into telephony_call_events (
-                            tenant_id, telephony_call_id, source, event_type, provider_event_id, payload
-                        ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
-                        on conflict do nothing
-                        """,
-                        (
-                            matched[1],
-                            matched[0],
-                            event_type,
-                            str(event_id),
-                            json.dumps(data),
-                        ),
-                    )
-                _apply_webhook_side_effects(conn, event_type, data)
-                conn.commit()
+            duplicate = await run_in_threadpool(
+                _persist_telnyx_webhook_event,
+                str(event_id),
+                event_type,
+                data,
+            )
+            if duplicate:
+                return duplicate
         except Exception as exc:
             logger.warning(
                 "Telnyx webhook durable processing failed: %s", exc.__class__.__name__
