@@ -145,13 +145,32 @@ class LiveKitSipClient:
                             or current_username != (sip_username or "")
                             or current_headers != expected_headers
                         ):
-                            item = await api.sip.update_outbound_trunk_fields(
+                            item = await api.sip.update_outbound_trunk(
                                 item.sip_trunk_id,
-                                address=sip_fqdn,
-                                numbers=numbers,
-                                auth_username=sip_username or "",
-                                auth_password=sip_secret or "",
-                                headers=expected_headers,
+                                lk.SIPOutboundTrunkInfo(
+                                    name=name,
+                                    address=sip_fqdn,
+                                    numbers=numbers,
+                                    auth_username=sip_username or "",
+                                    auth_password=sip_secret or "",
+                                    headers=expected_headers,
+                                    metadata=getattr(item, "metadata", ""),
+                                    transport=getattr(item, "transport", None),
+                                    destination_country=getattr(
+                                        item, "destination_country", ""
+                                    ),
+                                    from_host=getattr(item, "from_host", ""),
+                                    headers_to_attributes=dict(
+                                        getattr(item, "headers_to_attributes", {}) or {}
+                                    ),
+                                    attributes_to_headers=dict(
+                                        getattr(item, "attributes_to_headers", {}) or {}
+                                    ),
+                                    include_headers=getattr(
+                                        item, "include_headers", None
+                                    ),
+                                    media=getattr(item, "media", None),
+                                ),
                             )
                         return {
                             "livekit_outbound_trunk_id": item.sip_trunk_id,
