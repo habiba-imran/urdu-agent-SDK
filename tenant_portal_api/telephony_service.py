@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import secrets
+import string
 import sys
 import time
 import uuid
@@ -101,10 +102,19 @@ class TelephonyService:
         ) from exc
 
     def _default_sip_username(self, tenant_id: str) -> str:
-        return f"tenant_{str(tenant_id).replace('-', '')[:16]}"
+        normalized_tenant = "".join(ch for ch in str(tenant_id) if ch.isalnum()).lower()
+        suffix = (normalized_tenant or uuid.uuid4().hex)[:16]
+        return f"tenant{suffix}"
+
+    def _normalize_sip_username(self, tenant_id: str, value: str | None) -> str:
+        normalized = "".join(ch for ch in str(value or "") if ch.isalnum()).lower()
+        if normalized:
+            return normalized[:24]
+        return self._default_sip_username(tenant_id)
 
     def _generate_sip_secret(self) -> str:
-        return secrets.token_urlsafe(24)
+        alphabet = string.ascii_letters + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(24))
 
     def _public_connection(self, conn_data: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1381,7 +1391,7 @@ class TelephonyService:
                     "tenant_id": tenant_id,
                     "telnyx_connection_id": conn_data["id"],
                     "sip_fqdn": sip_fqdn or require_livekit_sip_uri(),
-                    "sip_username": sip_username or self._default_sip_username(tenant_id),
+                    "sip_username": self._normalize_sip_username(tenant_id, sip_username),
                     "provider_sip_connection_id": "fqdn_conn_mock_123",
                     "platform_status": "active",
                     "provider_status": "active",
@@ -1401,7 +1411,10 @@ class TelephonyService:
             fqdn = sip_fqdn or (self._sip_from_row(existing).get("sip_fqdn") if existing else None) or require_livekit_sip_uri()
             if existing:
                 current = self._sip_from_row(existing)
-                effective_sip_username = sip_username or current.get("sip_username") or self._default_sip_username(tenant_id)
+                effective_sip_username = self._normalize_sip_username(
+                    tenant_id,
+                    sip_username or current.get("sip_username"),
+                )
                 effective_sip_secret = sip_secret
                 if not effective_sip_secret and current.get("encrypted_sip_secret_ref"):
                     effective_sip_secret = decrypt_provider_secret(current.get("encrypted_sip_secret_ref"))
@@ -1446,7 +1459,7 @@ class TelephonyService:
                 ).fetchone()
                 return self._sip_from_row(updated or existing)
 
-            effective_sip_username = sip_username or self._default_sip_username(tenant_id)
+            effective_sip_username = self._normalize_sip_username(tenant_id, sip_username)
             effective_sip_secret = sip_secret or self._generate_sip_secret()
             encrypted_sip_secret_ref = (
                 None
