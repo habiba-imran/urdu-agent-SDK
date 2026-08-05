@@ -275,28 +275,33 @@ def save_idempotency_key(
 # Call & Quota Repository
 def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
     """Atomically reserve quota for a call in quota_state."""
-    row = conn.execute(
-        """
-        select coalesce(q.concurrent_now, 0) as concurrent_now,
-               t.max_concurrent
-        from tenants t
-        left join quota_state q on q.tenant_id = t.id
-        where t.id = %s
-        for update
-        """,
+    tenant_row = conn.execute(
+        "select max_concurrent from tenants where id = %s for update",
         (tenant_id,),
     ).fetchone()
-    if not row:
+    if not tenant_row:
         return True
-    curr, max_conc = row[0], row[1]
+    max_conc = tenant_row[0]
+    conn.execute(
+        """
+        insert into quota_state (tenant_id, concurrent_now)
+        values (%s, 0)
+        on conflict (tenant_id) do nothing
+        """,
+        (tenant_id,),
+    )
+    quota_row = conn.execute(
+        "select concurrent_now from quota_state where tenant_id = %s for update",
+        (tenant_id,),
+    ).fetchone()
+    curr = quota_row[0] if quota_row else 0
     if curr >= max_conc:
         return False
     conn.execute(
         """
-        insert into quota_state (tenant_id, concurrent_now)
-        values (%s, 1)
-        on conflict (tenant_id) do update
-        set concurrent_now = quota_state.concurrent_now + 1
+        update quota_state
+        set concurrent_now = concurrent_now + 1
+        where tenant_id = %s
         """,
         (tenant_id,),
     )

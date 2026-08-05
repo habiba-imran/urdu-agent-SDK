@@ -294,6 +294,21 @@ function previewText(value, limit = 360) {
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
+function extractUpstreamErrorMessage(parsedBody) {
+  if (!parsedBody || typeof parsedBody !== 'object') return '';
+  const errorBlock = parsedBody?.detail?.error || parsedBody?.error || null;
+  if (typeof parsedBody?.message === 'string' && parsedBody.message.trim()) return parsedBody.message.trim();
+  if (typeof parsedBody?.detail === 'string' && parsedBody.detail.trim()) return parsedBody.detail.trim();
+  if (errorBlock && typeof errorBlock === 'object') {
+    const parts = [
+      typeof errorBlock.message === 'string' ? errorBlock.message.trim() : '',
+      typeof errorBlock.code === 'string' ? `(${errorBlock.code.trim()})` : '',
+    ].filter(Boolean);
+    if (parts.length) return parts.join(' ');
+  }
+  return '';
+}
+
 function detectResponseKind(contentType, text) {
   const normalizedType = String(contentType || '').toLowerCase();
   const trimmed = String(text || '').trim().toLowerCase();
@@ -1245,11 +1260,14 @@ app.post('/api/outbound-call', async (req, res) => {
           upstreamProbe,
         },
       });
+      const upstreamMessage = extractUpstreamErrorMessage(upstreamProbe?.parsedBody);
+      const fallbackMessage = 'Telephony API returned a non-JSON or gateway response during outbound call setup.';
       return res.status(502).json({
         ok: false,
         code: error.code,
-        message: 'Telephony API returned a non-JSON or gateway response during outbound call setup.',
+        message: upstreamMessage || fallbackMessage,
         detail: {
+          upstreamMessage: upstreamMessage || null,
           diagnostics,
           upstreamProbe,
         },
