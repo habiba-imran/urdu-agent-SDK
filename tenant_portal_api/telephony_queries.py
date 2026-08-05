@@ -277,20 +277,27 @@ def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
     """Atomically reserve quota for a call in quota_state."""
     row = conn.execute(
         """
-        select current_concurrency, max_concurrency
-        from quota_state
-        where tenant_id = %s
+        select coalesce(q.concurrent_now, 0) as concurrent_now,
+               t.max_concurrent
+        from tenants t
+        left join quota_state q on q.tenant_id = t.id
+        where t.id = %s
         for update
         """,
         (tenant_id,),
     ).fetchone()
     if not row:
-        return True  # If no quota row, default pass or initialize
+        return True
     curr, max_conc = row[0], row[1]
     if curr >= max_conc:
         return False
     conn.execute(
-        "update quota_state set current_concurrency = current_concurrency + 1 where tenant_id = %s",
+        """
+        insert into quota_state (tenant_id, concurrent_now)
+        values (%s, 1)
+        on conflict (tenant_id) do update
+        set concurrent_now = quota_state.concurrent_now + 1
+        """,
         (tenant_id,),
     )
     return True
@@ -309,7 +316,7 @@ def release_call_quota_once(conn: DbConnection, call_id: str, tenant_id: str) ->
         (call_id,),
     )
     conn.execute(
-        "update quota_state set current_concurrency = greatest(0, current_concurrency - 1) where tenant_id = %s",
+        "update quota_state set concurrent_now = greatest(0, concurrent_now - 1) where tenant_id = %s",
         (tenant_id,),
     )
     return True
