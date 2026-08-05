@@ -20,8 +20,8 @@ class FakeDbConn:
     def execute(self, query: str, params: tuple = ()):
         self.executed_queries.append((query.strip(), params))
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = (
-            self.rows_to_return.pop(0) if self.rows_to_return else None
+        mock_cursor.fetchone.side_effect = (
+            lambda: self.rows_to_return.pop(0) if self.rows_to_return else None
         )
         mock_cursor.fetchall.return_value = self.rows_to_return
         return mock_cursor
@@ -87,15 +87,16 @@ def test_assign_number_to_agent_invalid_agent():
 
 def test_reserve_call_quota():
     conn = FakeDbConn()
-    # Current concurrency = 2, max = 5
-    conn.rows_to_return = [(2, 5)]
+    conn.rows_to_return = [(5,), (2,)]
     res = reserve_call_quota(conn, "tenant_abc")
     assert res is True
+    assert "from tenants where id = %s" in conn.executed_queries[0][0].lower()
+    assert "for update" not in conn.executed_queries[0][0].lower()
+    assert "from quota_state where tenant_id = %s for update" in conn.executed_queries[2][0].lower()
 
 
 def test_reserve_call_quota_exceeded():
     conn = FakeDbConn()
-    # Current concurrency = 5, max = 5
-    conn.rows_to_return = [(5, 5)]
+    conn.rows_to_return = [(5,), (5,)]
     res = reserve_call_quota(conn, "tenant_abc")
     assert res is False

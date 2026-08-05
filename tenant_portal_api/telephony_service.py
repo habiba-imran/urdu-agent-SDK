@@ -1033,57 +1033,60 @@ class TelephonyService:
                 phone_e164 = phone["e164_number"]
                 outbound_trunk_record_id = None
             else:
-                number_row = conn.execute(
-                    """
-                    select id, tenant_id, provider_number_id, e164_number, country, number_type,
-                           features, provisioning_status, routing_status, assigned_agent_id,
-                           external_customer_ref, disabled_at
-                    from telephony_phone_numbers
-                    where tenant_id = %s and id = %s and disabled_at is null
-                    """,
-                    (tenant_id, from_number_id),
-                ).fetchone()
-                if not number_row:
-                    raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {from_number_id} not found for tenant.")
-                phone = self._number_from_row(number_row)
-                self._assert_number_bound_to_agent(phone, agent_id)
-                phone_e164 = phone["e164_number"]
-                trunk_row = conn.execute(
-                    """
-                    select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
-                    from livekit_outbound_trunks
-                    where tenant_id = %s and disabled_at is null
-                      and platform_status in ('pending_verification', 'testing', 'active')
-                    order by created_at desc limit 1
-                    """,
-                    (tenant_id,),
-                ).fetchone()
-                if not trunk_row:
-                    try:
-                        self.configure_outbound_trunk(tenant_id)
-                        trunk_row = conn.execute(
-                            """
-                            select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
-                            from livekit_outbound_trunks
-                            where tenant_id = %s and disabled_at is null
-                              and platform_status in ('pending_verification', 'testing', 'active')
-                            order by created_at desc limit 1
-                            """,
-                            (tenant_id,),
-                        ).fetchone()
-                    except Exception as err:
-                        logger.warning("Auto-configuring outbound trunk deferred: %s", err)
-                if not trunk_row:
-                    raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_NOT_READY, message="Tenant outbound trunk is not configured.")
-                trunk = self._outbound_trunk_from_row(trunk_row)
-                outbound_trunk_id = trunk["livekit_outbound_trunk_id"]
-                outbound_trunk_record_id = trunk["id"]
-                if not queries.reserve_call_quota(conn, tenant_id):
-                    raise TelephonyError(
-                        status=429,
-                        code=TelephonyErrorCode.OUTBOUND_CONCURRENCY_LIMIT_REACHED,
-                        message="Tenant outbound concurrency limit is reached.",
-                    )
+                try:
+                    number_row = conn.execute(
+                        """
+                        select id, tenant_id, provider_number_id, e164_number, country, number_type,
+                               features, provisioning_status, routing_status, assigned_agent_id,
+                               external_customer_ref, disabled_at
+                        from telephony_phone_numbers
+                        where tenant_id = %s and id = %s and disabled_at is null
+                        """,
+                        (tenant_id, from_number_id),
+                    ).fetchone()
+                    if not number_row:
+                        raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {from_number_id} not found for tenant.")
+                    phone = self._number_from_row(number_row)
+                    self._assert_number_bound_to_agent(phone, agent_id)
+                    phone_e164 = phone["e164_number"]
+                    trunk_row = conn.execute(
+                        """
+                        select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
+                        from livekit_outbound_trunks
+                        where tenant_id = %s and disabled_at is null
+                          and platform_status in ('pending_verification', 'testing', 'active')
+                        order by created_at desc limit 1
+                        """,
+                        (tenant_id,),
+                    ).fetchone()
+                    if not trunk_row:
+                        try:
+                            self.configure_outbound_trunk(tenant_id)
+                            trunk_row = conn.execute(
+                                """
+                                select id, tenant_id, outbound_voice_profile_record_id, livekit_outbound_trunk_id, platform_status, provider_status
+                                from livekit_outbound_trunks
+                                where tenant_id = %s and disabled_at is null
+                                  and platform_status in ('pending_verification', 'testing', 'active')
+                                order by created_at desc limit 1
+                                """,
+                                (tenant_id,),
+                            ).fetchone()
+                        except Exception as err:
+                            logger.warning("Auto-configuring outbound trunk deferred: %s", err)
+                    if not trunk_row:
+                        raise TelephonyError(status=409, code=TelephonyErrorCode.OUTBOUND_NOT_READY, message="Tenant outbound trunk is not configured.")
+                    trunk = self._outbound_trunk_from_row(trunk_row)
+                    outbound_trunk_id = trunk["livekit_outbound_trunk_id"]
+                    outbound_trunk_record_id = trunk["id"]
+                    if not queries.reserve_call_quota(conn, tenant_id):
+                        raise TelephonyError(
+                            status=429,
+                            code=TelephonyErrorCode.OUTBOUND_CONCURRENCY_LIMIT_REACHED,
+                            message="Tenant outbound concurrency limit is reached.",
+                        )
+                except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                    self._raise_database_conflict("create outbound call", exc)
 
             call_id = str(uuid.uuid4())
             room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
@@ -1110,7 +1113,7 @@ class TelephonyService:
                 )
             except TelephonyError as exc:
                 if conn is not None:
-                    queries.release_call_quota(conn, tenant_id, call_id)
+                    queries.release_call_quota_once(conn, call_id, tenant_id)
                 detail = exc.detail if isinstance(exc.detail, dict) else {}
                 provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
                 raise TelephonyError(
@@ -1141,35 +1144,38 @@ class TelephonyService:
                 self._calls[call_id] = {**res, "id": call_id, "tenant_id": tenant_id, "agent_id": agent_id}
                 return res
 
-            conn.execute(
-                """
-                insert into telephony_calls (
-                    id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                    from_number, to_number, recipient, call_context, external_customer_ref,
-                    external_workflow_ref, outbound_trunk_record_id, livekit_sip_call_id,
-                    livekit_sip_call_id_full, platform_status, provider_status
-                ) values (%s, %s, null, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
-                          %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    call_id,
-                    tenant_id,
-                    agent_id,
-                    from_number_id,
-                    room_name,
-                    phone_e164,
-                    to_number,
-                    recipient,
-                    json.dumps(context or {}),
-                    external_customer_ref,
-                    external_workflow_ref,
-                    outbound_trunk_record_id,
-                    sip_part.get("livekit_sip_call_id"),
-                    sip_part.get("livekit_sip_call_id_full"),
-                    CallPublicStatus.DIALING.value,
-                    sip_part.get("status"),
-                ),
-            )
+            try:
+                conn.execute(
+                    """
+                    insert into telephony_calls (
+                        id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
+                        from_number, to_number, recipient, call_context, external_customer_ref,
+                        external_workflow_ref, outbound_trunk_record_id, livekit_sip_call_id,
+                        livekit_sip_call_id_full, platform_status, provider_status
+                    ) values (%s, %s, null, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
+                              %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        call_id,
+                        tenant_id,
+                        agent_id,
+                        from_number_id,
+                        room_name,
+                        phone_e164,
+                        to_number,
+                        recipient,
+                        json.dumps(context or {}),
+                        external_customer_ref,
+                        external_workflow_ref,
+                        outbound_trunk_record_id,
+                        sip_part.get("livekit_sip_call_id"),
+                        sip_part.get("livekit_sip_call_id_full"),
+                        CallPublicStatus.DIALING.value,
+                        sip_part.get("status"),
+                    ),
+                )
+            except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
+                self._raise_database_conflict("persist outbound call", exc)
             return res
     def reverify_telnyx_account(self, tenant_id: str) -> dict[str, Any]:
         """Re-verify permissions and platform status of existing connection."""
@@ -1748,7 +1754,21 @@ class TelephonyService:
                 if provider_profile.get("daily_spending_limit") is None
                 else str(provider_profile.get("daily_spending_limit"))
             )
-            expected_connection_id = conn_data["id"]
+            expected_connection_id = str(profile.get("telnyx_sip_connection_id") or "")
+            sip_row = conn.execute(
+                """
+                select id, tenant_id, telnyx_connection_id, provider_sip_connection_id, sip_fqdn,
+                       sip_username, encrypted_sip_secret_ref, platform_status, provider_status, last_verified_at
+                from telnyx_sip_connections
+                where tenant_id = %s and id = %s and disabled_at is null
+                limit 1
+                """,
+                (tenant_id, profile.get("telnyx_sip_connection_id")),
+            ).fetchone() if profile.get("telnyx_sip_connection_id") else None
+            if sip_row:
+                expected_connection_id = str(
+                    self._sip_from_row(sip_row).get("provider_sip_connection_id") or expected_connection_id
+                )
             provider_connections = provider_profile.get("connections") or []
             actual_connection_ids = {
                 str(item.get("id") or item.get("connection_id") or "")

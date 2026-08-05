@@ -1,10 +1,12 @@
 import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
 
 const API = import.meta.env.VITE_TEST_BACKEND_URL || 'http://localhost:3001';
+const MAX_CLIENT_DEBUG_EVENTS = 60;
 const state = {
   numbers: [],
   agents: [],
   debugEvents: [],
+  clientDebugEvents: [],
   pendingNumber: null,
   pendingPurchase: null,
   pendingReservation: null,
@@ -42,13 +44,96 @@ function normalizeCollection(result, keys = []) {
   return [];
 }
 
-async function api(method, path, body) {
+function isoNow() {
+  return new Date().toISOString();
+}
+
+function pushClientDebugEvent(event) {
+  state.clientDebugEvents.unshift({
+    id: crypto.randomUUID(),
+    createdAt: isoNow(),
+    source: 'frontend',
+    ...event,
+  });
+  if (state.clientDebugEvents.length > MAX_CLIENT_DEBUG_EVENTS) {
+    state.clientDebugEvents.length = MAX_CLIENT_DEBUG_EVENTS;
+  }
+  renderDebugPanel();
+}
+
+function sortedDebugEvents() {
+  return [...state.clientDebugEvents, ...state.debugEvents].sort((a, b) => (
+    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  ));
+}
+
+function formatDebugValue(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function renderDebugPanel() {
+  const target = $('debug-log-list');
+  if (!target) return;
+  const events = sortedDebugEvents();
+  if (!events.length) {
+    target.innerHTML = '<div class="empty-state"><div class="empty-state-title">No recent diagnostics</div><div class="empty-state-text">Browser requests, backend responses, and telephony diagnostics will appear here.</div></div>';
+    return;
+  }
+  target.innerHTML = events.map((item) => {
+    const requestBlock = formatDebugValue(item.request);
+    const responseBlock = formatDebugValue(item.response);
+    const detailBlock = formatDebugValue(item.detail);
+    return `
+      <div class="number-card debug-event-card" style="margin-bottom:0.75rem; border-radius: var(--radius-sm)">
+        <div>
+          <div class="flex justify-between items-center gap-1">
+            <div class="number-display" style="font-size:0.9rem">${escHtml(item.scope || item.code || 'event')}</div>
+            <div class="number-meta flex gap-1">
+              ${item.source ? `<span class="badge badge-blue">${escHtml(item.source)}</span>` : ''}
+              ${statusBadge(item.status || (item.ok === false ? 'error' : 'info'))}
+            </div>
+          </div>
+          <div class="number-meta flex gap-1 mt-1">
+            ${item.code ? `<span class="badge badge-red">${escHtml(item.code)}</span>` : ''}
+            ${item.method ? `<span class="badge badge-gray">${escHtml(item.method)}</span>` : ''}
+            ${item.route ? `<span class="badge badge-gray">${escHtml(item.route)}</span>` : ''}
+          </div>
+          <div class="readiness-detail" style="margin-top:0.5rem">${escHtml(item.createdAt || '')}</div>
+          ${item.message ? `<div class="readiness-label" style="margin-top:0.35rem">${escHtml(item.message)}</div>` : ''}
+          ${requestBlock ? `<details class="debug-detail"><summary>Request</summary><div class="code-block">${escHtml(requestBlock)}</div></details>` : ''}
+          ${responseBlock ? `<details class="debug-detail"><summary>Response</summary><div class="code-block">${escHtml(responseBlock)}</div></details>` : ''}
+          ${detailBlock ? `<details class="debug-detail"><summary>Detail</summary><div class="code-block">${escHtml(detailBlock)}</div></details>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function api(method, path, body, options = {}) {
+  const startedAt = isoNow();
   const response = await fetch(`${API}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   const payload = await response.json().catch(() => ({ message: 'No response body' }));
+  if (!options.skipDebugLog && path !== '/api/debug/errors' && path !== '/api/debug/errors/clear') {
+    pushClientDebugEvent({
+      scope: response.ok ? 'frontend_api_response' : 'frontend_api_error',
+      route: path,
+      method,
+      status: response.status,
+      ok: response.ok,
+      requestStartedAt: startedAt,
+      request: body || null,
+      response: payload,
+      message: response.ok
+        ? `HTTP ${response.status} ${method} ${path}`
+        : (payload?.message || payload?.detail?.error?.message || `HTTP ${response.status}`),
+    });
+  }
   if (!response.ok) {
     const message =
       payload?.message ||
@@ -412,28 +497,9 @@ async function loadDebugLog() {
   if (!target) return;
   target.innerHTML = '<div class="loading-row"><div class="spinner"></div><br/>Loading logs...</div>';
   try {
-    const result = await api('GET', '/api/debug/errors');
+    const result = await api('GET', '/api/debug/errors', undefined, { skipDebugLog: true });
     state.debugEvents = normalizeCollection(result, ['items', 'data']);
-    if (!state.debugEvents.length) {
-      target.innerHTML = '<div class="empty-state"><div class="empty-state-title">No recent backend diagnostics</div><div class="empty-state-text">Recent telephony and gateway failures will appear here.</div></div>';
-      return;
-    }
-    target.innerHTML = state.debugEvents.map((item) => `
-      <div class="number-card" style="margin-bottom:0.5rem; border-radius: var(--radius-sm)">
-        <div>
-          <div class="number-display" style="font-size:0.9rem">${escHtml(item.scope || item.code || 'backend_event')}</div>
-          <div class="number-meta flex gap-1 mt-1">
-            ${statusBadge(item.status || 'info')}
-            ${item.code ? `<span class="badge badge-red">${escHtml(item.code)}</span>` : ''}
-            ${item.method ? `<span class="badge badge-gray">${escHtml(item.method)}</span>` : ''}
-            ${item.route ? `<span class="badge badge-gray">${escHtml(item.route)}</span>` : ''}
-          </div>
-          <div class="readiness-detail" style="margin-top:0.5rem">${escHtml(item.createdAt || '')}</div>
-          <div class="readiness-label" style="margin-top:0.35rem">${escHtml(item.message || 'No message')}</div>
-          ${item.detail ? `<div class="code-block">${escHtml(JSON.stringify(item.detail, null, 2))}</div>` : ''}
-        </div>
-      </div>
-    `).join('');
+    renderDebugPanel();
   } catch (error) {
     target.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load debug log</div><div class="empty-state-text">${escHtml(error.message)}</div></div>`;
   }
@@ -441,9 +507,11 @@ async function loadDebugLog() {
 
 async function clearDebugLog() {
   try {
-    await api('POST', '/api/debug/errors/clear');
+    await api('POST', '/api/debug/errors/clear', undefined, { skipDebugLog: true });
+    state.clientDebugEvents = [];
+    state.debugEvents = [];
     toast('success', 'Debug log cleared');
-    await loadDebugLog();
+    renderDebugPanel();
   } catch (error) {
     toast('error', 'Could not clear debug log', error.message);
   }
@@ -606,7 +674,7 @@ async function loadCallLog() {
   tbody.innerHTML = '<tr><td colspan="7" class="loading-row"><div class="spinner"></div><br/>Loading...</td></tr>';
   try {
     const limit = $('calllog-limit')?.value || '25';
-    const result = await api('GET', `/api/calls?limit=${encodeURIComponent(limit)}`);
+    const result = await api('GET', `/api/calls?limit=${encodeURIComponent(limit)}`, undefined, { skipDebugLog: true });
     const calls = normalizeCollection(result, ['calls', 'data', 'items']);
     if (!calls.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="loading-row">No calls found</td></tr>';
@@ -641,7 +709,7 @@ async function watchOutboundCall(callId, toNumber = '') {
   }
   for (let attempt = 0; attempt < 15; attempt += 1) {
     try {
-      const call = await api('GET', `/api/calls/${encodeURIComponent(callId)}`);
+      const call = await api('GET', `/api/calls/${encodeURIComponent(callId)}`, undefined, { skipDebugLog: true });
       if (resultBox) {
         resultBox.style.display = 'block';
         resultBox.innerHTML = renderCallStatusCard(call, toNumber);

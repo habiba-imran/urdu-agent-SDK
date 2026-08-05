@@ -276,7 +276,7 @@ def save_idempotency_key(
 def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
     """Atomically reserve quota for a call in quota_state."""
     tenant_row = conn.execute(
-        "select max_concurrent from tenants where id = %s for update",
+        "select max_concurrent from tenants where id = %s",
         (tenant_id,),
     ).fetchone()
     if not tenant_row:

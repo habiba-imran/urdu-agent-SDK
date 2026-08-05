@@ -21,7 +21,9 @@ import pytest
 
 from tenant_portal_api.livekit_sip import LiveKitSipClient
 from tenant_portal_api.telephony_credentials import encrypt_provider_secret
-from tenant_portal_api.telephony_errors import TelephonyError
+import psycopg
+
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 from tenant_portal_api.telephony_service import TelephonyService
 import tenant_portal_api.telephony_webhooks as telephony_webhooks
 
@@ -531,6 +533,16 @@ class OutboundCallDb(ActiveConnectionDb):
         raise AssertionError(f"Unexpected SQL: {query}")
 
 
+class OutboundQuotaConflictDb(OutboundCallDb):
+    def execute(self, query: str, params: tuple[Any, ...] = ()):
+        sql = " ".join(query.lower().split())
+        if "from quota_state where tenant_id = %s for update" in sql:
+            raise psycopg.errors.InvalidColumnReference(
+                "FOR UPDATE cannot be applied to the nullable side of an outer join"
+            )
+        return super().execute(query, params)
+
+
 class OutboundLiveKitClient:
     def __init__(self, mock_mode: bool):
         self.mock_mode = mock_mode
@@ -574,3 +586,24 @@ def test_outbound_call_uses_uuid_database_id_and_no_fake_session_id():
     assert livekit.sip_participant_calls == [
         (result["room_name"], "lk_tr_out_real_123", "+14155550199")
     ]
+
+
+def test_outbound_call_maps_quota_lock_conflict_to_platform_conflict():
+    db = OutboundQuotaConflictDb()
+    livekit = OutboundLiveKitClient(mock_mode=False)
+    service = TelephonyService(
+        db_conn=db, livekit_client_factory=lambda mock_mode: livekit
+    )
+
+    with pytest.raises(TelephonyError) as excinfo:
+        service.create_outbound_call(
+            TENANT_ID,
+            agent_id="agent_real_123",
+            from_number_id="num_real_123",
+            to_number="+14155550199",
+            idempotency_key="outbound-test-idempotency",
+        )
+
+    assert excinfo.value.status == 409
+    assert excinfo.value.code == TelephonyErrorCode.CALL_STATE_CONFLICT
+    assert livekit.sip_participant_calls == []

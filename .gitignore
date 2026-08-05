@@ -19,3 +19,6 @@ hamza/
 client_deliverables/
 /hamza docs
 client-test-app/
+
+# CodeContext — auto-generated LLM documentation (do not commit)
+codebase-context/

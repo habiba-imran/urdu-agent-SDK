@@ -707,6 +707,21 @@ tr:last-child td {
   margin-bottom: 0.8rem;
 }
 
+.debug-event-card {
+  border-left: 3px solid var(--accent);
+}
+
+.debug-detail {
+  margin-top: 0.7rem;
+}
+
+.debug-detail summary {
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  margin-bottom: 0.45rem;
+}
+
 .spinner {
   width: 20px;
   height: 20px;

@@ -45,6 +45,7 @@ let config = {
 
 const MAX_DEBUG_EVENTS = 40;
 const debugEvents = [];
+const DEBUG_EXCLUDED_ROUTES = new Set(['/api/debug/errors', '/api/debug/errors/clear']);
 
 function redactText(value) {
   return String(value || '')
@@ -77,6 +78,10 @@ function recordDebugEvent(event) {
   if (debugEvents.length > MAX_DEBUG_EVENTS) debugEvents.length = MAX_DEBUG_EVENTS;
 }
 
+function shouldRecordApiDebug(req) {
+  return req.path?.startsWith('/api/') && !DEBUG_EXCLUDED_ROUTES.has(req.path);
+}
+
 const app = express();
 app.use(cors({
   origin(origin, cb) {
@@ -85,6 +90,34 @@ app.use(cors({
   },
 }));
 app.use(express.json());
+app.use((req, res, next) => {
+  if (!shouldRecordApiDebug(req)) {
+    next();
+    return;
+  }
+
+  const originalJson = res.json.bind(res);
+  res.json = (payload) => {
+    if (!res.locals.debugLogged) {
+      recordDebugEvent({
+        scope: 'api_response',
+        source: 'local_backend',
+        route: req.originalUrl || req.url,
+        method: req.method,
+        status: res.statusCode,
+        ok: res.statusCode >= 200 && res.statusCode < 400,
+        request: {
+          query: req.query || {},
+          body: req.body || null,
+        },
+        response: payload,
+      });
+    }
+    return originalJson(payload);
+  };
+
+  next();
+});
 
 // ─── SDK client factory helpers ─────────────────────────────────────────────
 function getAgentsClient() {
@@ -441,6 +474,7 @@ function handleError(res, error) {
   const req = res?.req;
   const baseEvent = {
     scope: 'backend_error',
+    source: 'local_backend',
     route: req?.originalUrl || req?.url || '(unknown route)',
     method: req?.method || '(unknown method)',
     status: error?.status || 500,
@@ -457,10 +491,21 @@ function handleError(res, error) {
     const message = providerMessage && !signatureMessage.includes(providerMessage)
       ? `${signatureMessage} Telnyx said: ${providerMessage}`
       : signatureMessage;
+    res.locals.debugLogged = true;
     recordDebugEvent({
       ...baseEvent,
       scope: 'telephony_error',
       code: error.code,
+      request: {
+        query: req?.query || {},
+        body: req?.body || null,
+      },
+      response: {
+        ok: false,
+        code: error.code,
+        message,
+        detail: error.detail || null,
+      },
       detail: error.detail || null,
     });
     return res.status(error.status || 500).json({
@@ -470,6 +515,7 @@ function handleError(res, error) {
       detail: error.detail,
     });
   }
+  res.locals.debugLogged = true;
   recordDebugEvent(baseEvent);
   if (error instanceof AwaazLabsUvaAgentsError) {
     return res.status(error.status || 500).json({
