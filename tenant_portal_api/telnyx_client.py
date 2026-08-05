@@ -17,6 +17,7 @@ from tenant_portal_api.telephony_errors import (
     redact_sensitive_string,
 )
 from tenant_portal_api.telephony_config import is_mock_provider_mode
+from tenant_portal_api.telnyx_destinations import default_telnyx_outbound_destinations
 
 logger = logging.getLogger(__name__)
 
@@ -706,6 +707,9 @@ class TelnyxClient:
                 "provider_outbound_voice_profile_id": "ovp_mock_123",
                 "name": name,
                 "status": "active",
+                "allowed_destinations": allowed_destinations or default_telnyx_outbound_destinations(),
+                "concurrency_limit": concurrency_limit,
+                "daily_spending_limit": daily_spending_limit,
             }
 
         try:
@@ -754,7 +758,7 @@ class TelnyxClient:
                 "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
                 "name": name,
                 "status": "active",
-                "allowed_destinations": allowed_destinations or [],
+                "allowed_destinations": allowed_destinations or default_telnyx_outbound_destinations(),
                 "concurrency_limit": concurrency_limit,
                 "daily_spending_limit": daily_spending_limit,
             }
@@ -803,7 +807,7 @@ class TelnyxClient:
                 "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
                 "name": "mock-outbound-profile",
                 "status": "active",
-                "allowed_destinations": ["US", "CA"],
+                "allowed_destinations": default_telnyx_outbound_destinations(),
                 "concurrency_limit": 10,
                 "daily_spending_limit": "100.0",
                 "connections": [],

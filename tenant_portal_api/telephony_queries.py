@@ -327,6 +327,14 @@ def release_call_quota_once(conn: DbConnection, call_id: str, tenant_id: str) ->
     return True
 
 
+def release_call_quota_unpersisted(conn: DbConnection, tenant_id: str) -> None:
+    """Release quota when reservation happened before any telephony_calls row existed."""
+    conn.execute(
+        "update quota_state set concurrent_now = greatest(0, concurrent_now - 1) where tenant_id = %s",
+        (tenant_id,),
+    )
+
+
 def transition_call_status(
     conn: DbConnection,
     call_id: str,

@@ -36,6 +36,7 @@ from tenant_portal_api.telephony_status import (
     NumberProvisioningStatus,
     NumberRoutingStatus,
 )
+from tenant_portal_api.telnyx_destinations import default_telnyx_outbound_destinations
 
 from tenant_portal_api import telephony_queries as queries
 from tenant_portal_api.telnyx_client import TelnyxClient
@@ -519,7 +520,10 @@ class TelephonyService:
     def ensure_telephony_infrastructure(self, tenant_id: str) -> dict[str, Any]:
         """Create/reuse Telnyx SIP FQDN (→ LiveKit), outbound voice profile, and LiveKit outbound trunk."""
         sip = self.upsert_telnyx_sip_connection(tenant_id)
-        profile = self.upsert_telnyx_outbound_voice_profile(tenant_id, allowed_destinations=["US", "CA"])
+        profile = self.upsert_telnyx_outbound_voice_profile(
+            tenant_id,
+            allowed_destinations=default_telnyx_outbound_destinations(),
+        )
         if profile.get("provider_outbound_voice_profile_id"):
             sip = self.upsert_telnyx_sip_connection(
                 tenant_id,
@@ -1113,7 +1117,7 @@ class TelephonyService:
                 )
             except TelephonyError as exc:
                 if conn is not None:
-                    queries.release_call_quota_once(conn, call_id, tenant_id)
+                    queries.release_call_quota_unpersisted(conn, tenant_id)
                 detail = exc.detail if isinstance(exc.detail, dict) else {}
                 provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
                 raise TelephonyError(
@@ -1561,7 +1565,7 @@ class TelephonyService:
                     "id": f"ovp_{uuid.uuid4().hex[:8]}",
                     "tenant_id": tenant_id,
                     "telnyx_connection_id": conn_data["id"],
-                    "allowed_destinations": allowed_destinations or ["US", "CA"],
+                    "allowed_destinations": allowed_destinations or default_telnyx_outbound_destinations(),
                     "concurrency_limit": concurrency_limit or 10,
                     "daily_spending_limit": daily_spending_limit or 100.0,
                     "platform_status": "active",
@@ -1613,6 +1617,8 @@ class TelephonyService:
                         for item in (current.get("allowed_destinations") or [])
                         if str(item).strip()
                     ]
+                if not effective_allowed_destinations:
+                    effective_allowed_destinations = default_telnyx_outbound_destinations()
                 if effective_concurrency_limit is None:
                     effective_concurrency_limit = current.get("concurrency_limit")
                 if effective_daily_spending_limit is None:
@@ -1661,6 +1667,9 @@ class TelephonyService:
                     ),
                 )
                 return synced_profile
+
+            if not effective_allowed_destinations:
+                effective_allowed_destinations = default_telnyx_outbound_destinations()
 
             provider = client.create_or_get_outbound_voice_profile(
                 f"tenant-{tenant_id}-outbound",

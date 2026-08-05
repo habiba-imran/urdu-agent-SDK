@@ -16,6 +16,9 @@ os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
 from fastapi.testclient import TestClient
 
 import tenant_portal_api.telephony_routes as telephony_routes
+from tenant_portal_api.telnyx_destinations import (
+    TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES,
+)
 
 os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
@@ -314,6 +317,24 @@ def test_machine_upsert_outbound_voice_profile():
     )
     assert resp.status_code == 200
     assert resp.json()["platform_status"] == "active"
+
+
+def test_machine_upsert_outbound_voice_profile_defaults_to_telnyx_country_list():
+    client.post(
+        "/machine/telephony/telnyx/connect",
+        headers=HEADERS,
+        json={"api_key": "mock_key"},
+    )
+    resp = client.post(
+        "/machine/telephony/telnyx/outbound-voice-profile",
+        headers=HEADERS,
+        json={},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["allowed_destinations"] == list(
+        TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES
+    )
+    assert "PK" in resp.json()["allowed_destinations"]
 
 
 def test_machine_verify_outbound_voice_profile():

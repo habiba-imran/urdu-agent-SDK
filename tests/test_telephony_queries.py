@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from tenant_portal_api.telephony_queries import (
     assign_number_to_agent,
     get_active_telnyx_connection,
+    release_call_quota_unpersisted,
     reserve_call_quota,
     upsert_telnyx_connection_verifying,
 )
@@ -100,3 +101,12 @@ def test_reserve_call_quota_exceeded():
     conn.rows_to_return = [(5,), (5,)]
     res = reserve_call_quota(conn, "tenant_abc")
     assert res is False
+
+
+def test_release_call_quota_unpersisted_decrements_concurrency():
+    conn = FakeDbConn()
+    release_call_quota_unpersisted(conn, "tenant_abc")
+    assert len(conn.executed_queries) == 1
+    query, params = conn.executed_queries[0]
+    assert "update quota_state set concurrent_now = greatest(0, concurrent_now - 1)" in query.lower()
+    assert params == ("tenant_abc",)

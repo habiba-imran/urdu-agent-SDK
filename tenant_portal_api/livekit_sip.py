@@ -234,24 +234,8 @@ class LiveKitSipClient:
 
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
-            try:
-                listed = await api.sip.list_sip_dispatch_rule(
-                    lk.ListSIPDispatchRuleRequest(trunk_ids=[inbound_trunk_id])
-                )
-                name = f"uva-dispatch-{phone_number_id}"
-                for item in listed.items:
-                    if item.name == name:
-                        return {
-                            "livekit_sip_dispatch_rule_id": item.sip_dispatch_rule_id,
-                            "inbound_trunk_id": inbound_trunk_id,
-                            "e164_number": e164_number,
-                            "agent_name": agent_name,
-                            "status": "active",
-                        }
-                dispatch_metadata = _json.dumps(
+            def _desired_dispatch_metadata() -> str:
+                return _json.dumps(
                     {
                         "direction": "inbound",
                         "phone_number_id": phone_number_id,
@@ -260,12 +244,16 @@ class LiveKitSipClient:
                         "agent_id": agent_id or "",
                     }
                 )
-                rule = lk.SIPDispatchRule(
+
+            def _desired_rule() -> Any:
+                return lk.SIPDispatchRule(
                     dispatch_rule_individual=lk.SIPDispatchRuleIndividual(
                         room_prefix=f"telephony-inbound-{phone_number_id}-"
                     )
                 )
-                room_config = lk.RoomConfiguration(
+
+            def _desired_room_config(dispatch_metadata: str) -> Any:
+                return lk.RoomConfiguration(
                     agents=[
                         lk.RoomAgentDispatch(
                             agent_name=agent_name,
@@ -273,12 +261,102 @@ class LiveKitSipClient:
                         )
                     ]
                 )
+
+            api = lk.LiveKitAPI(
+                url=self.url, api_key=self.api_key, api_secret=self.api_secret
+            )
+            try:
+                name = f"uva-dispatch-{phone_number_id}"
+                dispatch_metadata = _desired_dispatch_metadata()
+                rule = _desired_rule()
+                room_config = _desired_room_config(dispatch_metadata)
+                listed = await api.sip.list_dispatch_rule(
+                    lk.ListSIPDispatchRuleRequest()
+                )
+                matching_items = [
+                    item for item in listed.items if getattr(item, "name", "") == name
+                ]
+                if matching_items:
+                    item = next(
+                        (
+                            candidate
+                            for candidate in matching_items
+                            if inbound_trunk_id in list(getattr(candidate, "trunk_ids", []) or [])
+                        ),
+                        matching_items[0],
+                    )
+                    current_room_prefix = getattr(
+                        getattr(getattr(item, "rule", None), "dispatch_rule_individual", None),
+                        "room_prefix",
+                        "",
+                    )
+                    current_trunk_ids = sorted(
+                        str(value) for value in (getattr(item, "trunk_ids", []) or [])
+                    )
+                    current_inbound_numbers = [
+                        str(value).strip()
+                        for value in (getattr(item, "inbound_numbers", []) or [])
+                        if str(value).strip()
+                    ]
+                    current_agents = list(
+                        getattr(getattr(item, "room_config", None), "agents", []) or []
+                    )
+                    current_agent_name = (
+                        getattr(current_agents[0], "agent_name", "") if current_agents else ""
+                    )
+                    current_agent_metadata = (
+                        getattr(current_agents[0], "metadata", "") if current_agents else ""
+                    )
+                    expected_trunk_ids = [str(inbound_trunk_id)]
+                    needs_update = (
+                        current_trunk_ids != expected_trunk_ids
+                        or current_room_prefix != f"telephony-inbound-{phone_number_id}-"
+                        or current_agent_name != agent_name
+                        or current_agent_metadata != dispatch_metadata
+                        or bool(current_inbound_numbers)
+                    )
+                    if needs_update:
+                        item = await api.sip.update_dispatch_rule(
+                            item.sip_dispatch_rule_id,
+                            lk.SIPDispatchRuleInfo(
+                                sip_dispatch_rule_id=item.sip_dispatch_rule_id,
+                                name=name,
+                                rule=rule,
+                                trunk_ids=[inbound_trunk_id],
+                                inbound_numbers=[],
+                                room_config=room_config,
+                                metadata=getattr(item, "metadata", ""),
+                                attributes=dict(getattr(item, "attributes", {}) or {}),
+                                hide_phone_number=getattr(item, "hide_phone_number", False),
+                                room_preset=getattr(item, "room_preset", ""),
+                                media=getattr(item, "media", None),
+                                krisp_enabled=getattr(item, "krisp_enabled", False),
+                                media_encryption=getattr(item, "media_encryption", None),
+                            ),
+                        )
+                    duplicate_items = [
+                        candidate
+                        for candidate in matching_items
+                        if getattr(candidate, "sip_dispatch_rule_id", "") != getattr(item, "sip_dispatch_rule_id", "")
+                    ]
+                    for duplicate in duplicate_items:
+                        await api.sip.delete_dispatch_rule(
+                            lk.DeleteSIPDispatchRuleRequest(
+                                sip_dispatch_rule_id=duplicate.sip_dispatch_rule_id
+                            )
+                        )
+                    return {
+                        "livekit_sip_dispatch_rule_id": item.sip_dispatch_rule_id,
+                        "inbound_trunk_id": inbound_trunk_id,
+                        "e164_number": e164_number,
+                        "agent_name": agent_name,
+                        "status": "active",
+                    }
                 created = await api.sip.create_sip_dispatch_rule(
                     lk.CreateSIPDispatchRuleRequest(
                         name=name,
                         rule=rule,
                         trunk_ids=[inbound_trunk_id],
-                        inbound_numbers=[e164_number],
                         room_config=room_config,
                     )
                 )
