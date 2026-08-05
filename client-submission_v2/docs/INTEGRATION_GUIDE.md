@@ -266,7 +266,7 @@ const recentCalls = await telephony.listCallRecords({ limit: 25 });
 
 ## 10. Error handling
 
-Agents errors use `AwaazLabsUvaAgentsError` with `status` and `message`.
+Agents errors use `AwaazLabsUvaAgentsError` with `status`, `message`, and (for 422 provider/language/model/voice validation failures only) a stable `code` — e.g. `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`. Other failures (auth, suspended tenants, missing agents, rate limits) leave `code` undefined.
 
 Voice errors use `AwaazLabsUvaVoiceError` with one of:
 

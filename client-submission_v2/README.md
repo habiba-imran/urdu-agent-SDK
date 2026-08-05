@@ -12,6 +12,7 @@ client-submission_v2/
     credentials-template.md
     ai-integration-guide.md
     SDK_CAPABILITIES_REFERENCE.md
+    TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md
   sdk/
     README.md
     @awaazlabs-uva/

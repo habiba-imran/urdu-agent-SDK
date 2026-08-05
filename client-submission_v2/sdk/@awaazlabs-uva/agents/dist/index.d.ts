@@ -80,6 +80,19 @@ export interface LanguageCapabilities {
 export interface ProviderCapabilities {
     languages: Record<string, LanguageCapabilities>;
 }
+export interface ManagedNumberRecord {
+    id: string;
+    tenant_id: string;
+    provider_number_id: string | null;
+    e164_number: string;
+    country: string;
+    number_type: string;
+    features: string[];
+    provisioning_status: string;
+    routing_status: string;
+    assigned_agent_id: string | null;
+    external_customer_ref: string | null;
+}
 export declare class AwaazLabsUvaAgentsError extends Error {
     readonly status: number;
     /** Stable machine-readable code from tenant_portal_api's ProviderValidationError, e.g.
@@ -106,5 +119,10 @@ export declare class AwaazLabsUvaAgentsClient {
      * combinations are currently `enabled` and selectable, plus each TTS provider's own voice IDs.
      * Use this to build cascading provider/model/voice pickers instead of hardcoding options. */
     getProviderCapabilities(): Promise<ProviderCapabilities>;
+    listManagedNumbers(params?: {
+        assignedAgentId?: string;
+    }): Promise<ManagedNumberRecord[]>;
+    assignAgentToNumber(numberId: string, agentId: string | null): Promise<ManagedNumberRecord>;
+    unassignAgentFromNumber(numberId: string): Promise<ManagedNumberRecord>;
 }
 export { AwaazLabsUvaAgentsClient as UvaAgentsClient };

@@ -156,5 +156,18 @@ export class AwaazLabsUvaAgentsClient {
     async getProviderCapabilities() {
         return this.request('GET', '/machine/provider-capabilities', 'provider_capabilities.get', {});
     }
+    async listManagedNumbers(params) {
+        const body = {};
+        if (params?.assignedAgentId)
+            body.assigned_agent_id = params.assignedAgentId;
+        return this.request('POST', '/machine/telephony/numbers/list', 'telephony.managed_numbers.list', body);
+    }
+    async assignAgentToNumber(numberId, agentId) {
+        const body = { agent_id: agentId };
+        return this.request('PATCH', `/machine/telephony/numbers/${numberId}/assignment`, 'telephony.numbers.assign_agent', body);
+    }
+    async unassignAgentFromNumber(numberId) {
+        return this.assignAgentToNumber(numberId, null);
+    }
 }
 export { AwaazLabsUvaAgentsClient as UvaAgentsClient };

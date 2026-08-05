@@ -143,7 +143,17 @@ async def build_session(md: dict[str, str], room_name: str) -> tuple[Any, AgentC
         # aligned_transcript, this falls back to VAD-based interruption with a WARNING log,
         # not a crash. See docs/40-ADR.md ADR-008 for the full account and how to confirm
         # which mode is actually active in a live log.
-        turn_handling={"interruption": {"mode": "adaptive"}},
+        # false_interruption_timeout: verified default is 2.0s
+        # (livekit/agents/voice/turn.py::_INTERRUPTION_DEFAULTS) — how long the session waits,
+        # after an interruption that never produced a real transcribed utterance, before
+        # deciding it was a FALSE interruption and (resume_false_interruption defaults to True)
+        # resuming the agent's original interrupted sentence. That 2.0s was the exact cause of
+        # the reported "2-3 second dead air after interrupting then going silent" — lowered to
+        # 0.7s (human-chosen): comfortably above typical breathing/micro-pause noise (~200-400ms)
+        # while far snappier than the default.
+        turn_handling={
+            "interruption": {"mode": "adaptive", "false_interruption_timeout": 0.7}
+        },
     )
     # Direct evidence of the configured value, not an assumption — the actual RUNTIME
     # confirmation is LiveKit's own "adaptive interruption detector initialized" INFO log
@@ -455,6 +465,22 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     await session.start(agent, room=ctx.room)
     # (P3-T07's "emit usage_events on session end" NOTE that stood here is now DONE — implemented
     # in _release_quota_slot above, which is where the duration and session id already exist.)
+
+    # Greet immediately rather than waiting for the caller to speak first — without this the
+    # agent was purely reactive (confirmed: no generate_reply()/session.say() existed anywhere
+    # in this file before this change), which is actively broken for OUTBOUND calls (the callee
+    # has no idea an agent picked up and is waiting for them to speak) and just feels slow on
+    # inbound (caller has to speak first, then wait a full STT->LLM->TTS round trip). Uses
+    # generate_reply(instructions=...) rather than a hardcoded line so the greeting still comes
+    # from the agent's own persona/prompt/language (build_agent() already puts cfg.prompt in
+    # chat_ctx as a system message) — not fire-and-forget awaited, matching session.start()
+    # itself not blocking until the conversation ends.
+    session.generate_reply(
+        instructions=(
+            "Greet the caller now, briefly and in character with your persona and language, "
+            "then ask how you can help. Keep it to one short sentence."
+        )
+    )
 
 
 def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
