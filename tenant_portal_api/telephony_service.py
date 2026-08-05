@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 import sys
 import time
 import uuid
@@ -98,6 +99,13 @@ class TelephonyService:
             code=TelephonyErrorCode.CALL_STATE_CONFLICT,
             message="Telephony resource state changed during the database update. Refresh and retry.",
         ) from exc
+
+    def _default_sip_username(self, tenant_id: str) -> str:
+        return f"tenant_{str(tenant_id).replace('-', '')[:16]}"
+
+    def _generate_sip_secret(self) -> str:
+        return secrets.token_urlsafe(24)
+
     def _public_connection(self, conn_data: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": conn_data.get("id"),
@@ -1373,14 +1381,11 @@ class TelephonyService:
                     "tenant_id": tenant_id,
                     "telnyx_connection_id": conn_data["id"],
                     "sip_fqdn": sip_fqdn or require_livekit_sip_uri(),
-                    "sip_username": sip_username or f"user_{tenant_id[:8]}",
+                    "sip_username": sip_username or self._default_sip_username(tenant_id),
                     "provider_sip_connection_id": "fqdn_conn_mock_123",
                     "platform_status": "active",
                     "provider_status": "active",
                 }
-            encrypted_sip_secret_ref = (
-                None if not sip_secret or is_mock_provider_mode() else encrypt_provider_secret(sip_secret)
-            )
 
             existing = conn.execute(
                 """
@@ -1396,11 +1401,22 @@ class TelephonyService:
             fqdn = sip_fqdn or (self._sip_from_row(existing).get("sip_fqdn") if existing else None) or require_livekit_sip_uri()
             if existing:
                 current = self._sip_from_row(existing)
+                effective_sip_username = sip_username or current.get("sip_username") or self._default_sip_username(tenant_id)
+                effective_sip_secret = sip_secret
+                if not effective_sip_secret and current.get("encrypted_sip_secret_ref"):
+                    effective_sip_secret = decrypt_provider_secret(current.get("encrypted_sip_secret_ref"))
+                if not effective_sip_secret:
+                    effective_sip_secret = self._generate_sip_secret()
+                encrypted_sip_secret_ref = (
+                    None
+                    if not effective_sip_secret or is_mock_provider_mode()
+                    else encrypt_provider_secret(effective_sip_secret)
+                )
                 provider = client.create_or_get_fqdn_connection(
                     f"tenant-{tenant_id}",
                     fqdn,
-                    sip_username=sip_username or current.get("sip_username"),
-                    sip_secret=sip_secret,
+                    sip_username=effective_sip_username,
+                    sip_secret=effective_sip_secret,
                     outbound_voice_profile_id=outbound_voice_profile_provider_id,
                 )
                 updated = conn.execute(
@@ -1421,7 +1437,7 @@ class TelephonyService:
                     (
                         provider.get("provider_sip_connection_id"),
                         provider.get("sip_fqdn") or fqdn,
-                        sip_username,
+                        effective_sip_username,
                         encrypted_sip_secret_ref,
                         provider.get("status", "active"),
                         tenant_id,
@@ -1430,11 +1446,18 @@ class TelephonyService:
                 ).fetchone()
                 return self._sip_from_row(updated or existing)
 
+            effective_sip_username = sip_username or self._default_sip_username(tenant_id)
+            effective_sip_secret = sip_secret or self._generate_sip_secret()
+            encrypted_sip_secret_ref = (
+                None
+                if not effective_sip_secret or is_mock_provider_mode()
+                else encrypt_provider_secret(effective_sip_secret)
+            )
             provider = client.create_or_get_fqdn_connection(
                 f"tenant-{tenant_id}",
                 fqdn,
-                sip_username=sip_username,
-                sip_secret=sip_secret,
+                sip_username=effective_sip_username,
+                sip_secret=effective_sip_secret,
                 outbound_voice_profile_id=outbound_voice_profile_provider_id,
             )
             row = conn.execute(
@@ -1451,7 +1474,7 @@ class TelephonyService:
                     conn_data["id"],
                     provider.get("provider_sip_connection_id"),
                     provider.get("sip_fqdn") or fqdn,
-                    sip_username,
+                    effective_sip_username,
                     encrypted_sip_secret_ref,
                     provider.get("status", "active"),
                 ),

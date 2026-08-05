@@ -533,10 +533,20 @@ class TelnyxClient:
                 "status": "active" if data.get("active", True) else "disabled",
             }
         except httpx.HTTPError as e:
+            response = getattr(e, "response", None)
+            provider_message = (
+                _telnyx_error_message(response, "Telnyx rejected the FQDN connection request.")
+                if response is not None
+                else redact_sensitive_string(str(e) or "Telnyx rejected the FQDN connection request.")
+            )
             raise TelephonyError(
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
-                message="Failed to create/configure Telnyx FQDN connection.",
+                message=f"Failed to create/configure Telnyx FQDN connection: {provider_message}",
+                detail={
+                    "provider_message": provider_message,
+                    "provider_status_code": getattr(response, "status_code", None),
+                },
             ) from e
 
     def list_fqdn_connections(
