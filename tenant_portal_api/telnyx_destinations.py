@@ -150,5 +150,5 @@ TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES: tuple[str, ...] = (
 
 
 def default_telnyx_outbound_destinations() -> list[str]:
-    """Return a copy so callers can safely mutate their working list."""
-    return list(TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES)
+    """Return default allowed destinations (US, CA) compatible with standard & trial Telnyx accounts."""
+    return ["US", "CA"]

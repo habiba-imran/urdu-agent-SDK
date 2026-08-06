@@ -491,3 +491,9 @@ def machine_update_agent_route(
 
 app.include_router(telephony_router)
 app.include_router(telephony_webhook_router)
+
+try:
+    from control_plane.app import app as control_plane_app
+    app.mount("", control_plane_app)
+except Exception as _exc:
+    pass

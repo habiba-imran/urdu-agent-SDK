@@ -500,15 +500,55 @@ class TelnyxClient:
                     "outbound_voice_profile_id": outbound_voice_profile_id
                 }
             existing = self.list_fqdn_connections(connection_name=connection_name)
+            if not existing:
+                try:
+                    all_conns = self.list_fqdn_connections()
+                    existing = [
+                        c
+                        for c in all_conns
+                        if str(c.get("connection_name") or "") == connection_name
+                        or (sip_username and str(c.get("user_name") or "") == sip_username)
+                    ]
+                except Exception:
+                    existing = []
+
             if existing:
                 connection_id = existing[0].get("id")
                 if connection_id:
-                    resp = self.client.patch(
-                        f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
-                        headers=self._headers(),
-                        json=payload,
-                    )
-                    resp.raise_for_status()
+                    patch_payload = dict(payload)
+                    try:
+                        resp = self.client.patch(
+                            f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                            headers=self._headers(),
+                            json=patch_payload,
+                        )
+                        resp.raise_for_status()
+                    except httpx.HTTPError as patch_err:
+                        patch_resp = getattr(patch_err, "response", None)
+                        msg = (
+                            _telnyx_error_message(patch_resp, "")
+                            if patch_resp is not None
+                            else str(patch_err)
+                        )
+                        if (
+                            "already" in msg.lower()
+                            or "10015" in msg
+                            or "user_name" in msg.lower()
+                            or getattr(patch_resp, "status_code", None) in (400, 422)
+                        ):
+                            patch_payload.pop("user_name", None)
+                            patch_payload.pop("password", None)
+                            patch_payload.pop("connection_name", None)
+                            patch_payload.pop("outbound", None)
+                            resp = self.client.patch(
+                                f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                                headers=self._headers(),
+                                json=patch_payload,
+                            )
+                            resp.raise_for_status()
+                        else:
+                            raise patch_err
+
                     data = resp.json().get("data", {})
                     self._ensure_fqdn_target(str(connection_id), fqdn)
                     return {
@@ -517,22 +557,68 @@ class TelnyxClient:
                         "sip_fqdn": fqdn,
                         "status": "active" if data.get("active", True) else "disabled",
                     }
-            resp = self.client.post(
-                f"{TELNYX_API_BASE_URL}/fqdn_connections",
-                headers=self._headers(),
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json().get("data", {})
-            connection_id = data.get("id")
-            if connection_id:
-                self._ensure_fqdn_target(str(connection_id), fqdn)
-            return {
-                "provider_sip_connection_id": connection_id,
-                "connection_name": data.get("connection_name"),
-                "sip_fqdn": fqdn,
-                "status": "active" if data.get("active", True) else "disabled",
-            }
+
+            try:
+                resp = self.client.post(
+                    f"{TELNYX_API_BASE_URL}/fqdn_connections",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+                connection_id = data.get("id")
+                if connection_id:
+                    self._ensure_fqdn_target(str(connection_id), fqdn)
+                return {
+                    "provider_sip_connection_id": connection_id,
+                    "connection_name": data.get("connection_name"),
+                    "sip_fqdn": fqdn,
+                    "status": "active" if data.get("active", True) else "disabled",
+                }
+            except httpx.HTTPError as post_err:
+                response = getattr(post_err, "response", None)
+                provider_msg = (
+                    _telnyx_error_message(response, "") if response is not None else str(post_err)
+                )
+                if "already been taken" in provider_msg.lower() or "10015" in provider_msg:
+                    logger.info(
+                        "Telnyx connection or username already taken; fetching existing connection to patch: %s",
+                        provider_msg,
+                    )
+                    all_conns = self.list_fqdn_connections()
+                    matched = next(
+                        (
+                            c
+                            for c in all_conns
+                            if str(c.get("connection_name") or "") == connection_name
+                            or (sip_username and str(c.get("user_name") or "") == sip_username)
+                        ),
+                        None,
+                    )
+                    if not matched and all_conns:
+                        matched = all_conns[0]
+                    if matched and matched.get("id"):
+                        connection_id = matched["id"]
+                        patch_payload = dict(payload)
+                        patch_payload.pop("user_name", None)
+                        patch_payload.pop("password", None)
+                        patch_payload.pop("connection_name", None)
+                        patch_payload.pop("outbound", None)
+                        resp = self.client.patch(
+                            f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                            headers=self._headers(),
+                            json=patch_payload,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json().get("data", {})
+                        self._ensure_fqdn_target(str(connection_id), fqdn)
+                        return {
+                            "provider_sip_connection_id": data.get("id") or str(connection_id),
+                            "connection_name": data.get("connection_name") or connection_name,
+                            "sip_fqdn": fqdn,
+                            "status": "active" if data.get("active", True) else "disabled",
+                        }
+                raise post_err
         except httpx.HTTPError as e:
             response = getattr(e, "response", None)
             provider_message = (
@@ -569,7 +655,7 @@ class TelnyxClient:
             ]
 
         try:
-            params: dict[str, str] = {}
+            params: dict[str, str] = {"page[size]": "100"}
             if connection_name:
                 params["filter[connection_name]"] = connection_name
             if fqdn:
@@ -674,11 +760,16 @@ class TelnyxClient:
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": name,
-            "connections": [fqdn_connection_id],
             "traffic_type": "conversational",
             "service_plan": "global",
             "billing_group_id": None,
         }
+        if (
+            fqdn_connection_id
+            and str(fqdn_connection_id).strip()
+            and str(fqdn_connection_id).strip() != "None"
+        ):
+            payload["connections"] = [str(fqdn_connection_id).strip()]
         normalized_destinations = [
             str(item).strip().upper()
             for item in (allowed_destinations or [])
@@ -720,21 +811,67 @@ class TelnyxClient:
                 concurrency_limit=concurrency_limit,
                 daily_spending_limit=daily_spending_limit,
             )
-            resp = self.client.post(
-                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
-                headers=self._headers(),
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json().get("data", {})
-            return {
-                "provider_outbound_voice_profile_id": data.get("id"),
-                "name": data.get("name"),
-                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
-                "allowed_destinations": data.get("whitelisted_destinations") or [],
-                "concurrency_limit": data.get("concurrent_call_limit"),
-                "daily_spending_limit": data.get("daily_spend_limit"),
-            }
+            try:
+                resp = self.client.post(
+                    f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+                return {
+                    "provider_outbound_voice_profile_id": data.get("id"),
+                    "name": data.get("name"),
+                    "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                    "allowed_destinations": data.get("whitelisted_destinations") or [],
+                    "concurrency_limit": data.get("concurrent_call_limit"),
+                    "daily_spending_limit": data.get("daily_spend_limit"),
+                }
+            except httpx.HTTPError as post_err:
+                response = getattr(post_err, "response", None)
+                provider_msg = (
+                    _telnyx_error_message(response, "") if response is not None else str(post_err)
+                )
+                if (
+                    "already" in provider_msg.lower()
+                    or "limit" in provider_msg.lower()
+                    or "10015" in provider_msg
+                    or "10039" in provider_msg
+                    or getattr(response, "status_code", None) in (400, 403, 409, 422)
+                ):
+                    try:
+                        list_resp = self.client.get(
+                            f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
+                            headers=self._headers(),
+                        )
+                        list_resp.raise_for_status()
+                        items = list_resp.json().get("data", [])
+                        matched = next(
+                            (item for item in items if str(item.get("name") or "") == name),
+                            None,
+                        )
+                        if not matched and items:
+                            matched = items[0]
+                        if matched and matched.get("id"):
+                            profile_id = str(matched["id"])
+                            patch_resp = self.client.patch(
+                                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{profile_id}",
+                                headers=self._headers(),
+                                json=payload,
+                            )
+                            patch_resp.raise_for_status()
+                            data = patch_resp.json().get("data", {})
+                            return {
+                                "provider_outbound_voice_profile_id": data.get("id") or profile_id,
+                                "name": data.get("name") or name,
+                                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                                "concurrency_limit": data.get("concurrent_call_limit"),
+                                "daily_spending_limit": data.get("daily_spend_limit"),
+                            }
+                    except Exception as _reuse_err:
+                        logger.warning("Failed to recover existing outbound voice profile: %s", _reuse_err)
+                raise post_err
         except httpx.HTTPError as e:
             raise TelephonyError(
                 status=502,
@@ -792,6 +929,44 @@ class TelnyxClient:
                 "daily_spending_limit": data.get("daily_spend_limit"),
             }
         except httpx.HTTPError as e:
+            response = getattr(e, "response", None)
+            provider_msg = (
+                _telnyx_error_message(response, "") if response is not None else str(e)
+            )
+            if (
+                "countries" in provider_msg.lower()
+                or "whitelisted_destinations" in provider_msg.lower()
+                or "upgrade" in provider_msg.lower()
+                or getattr(response, "status_code", None) == 403
+            ):
+                payload["whitelisted_destinations"] = ["US", "CA"]
+                try:
+                    resp = self.client.patch(
+                        f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json().get("data", {})
+                    return {
+                        "provider_outbound_voice_profile_id": data.get("id") or provider_outbound_voice_profile_id,
+                        "name": data.get("name") or name,
+                        "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                        "allowed_destinations": data.get("whitelisted_destinations") or ["US", "CA"],
+                        "concurrency_limit": data.get("concurrent_call_limit"),
+                        "daily_spending_limit": data.get("daily_spend_limit"),
+                    }
+                except Exception:
+                    pass
+
+            if getattr(response, "status_code", None) in (404, 400, 422):
+                return self.create_or_get_outbound_voice_profile(
+                    name=name,
+                    fqdn_connection_id=fqdn_connection_id,
+                    allowed_destinations=["US", "CA"],
+                    concurrency_limit=concurrency_limit,
+                    daily_spending_limit=daily_spending_limit,
+                )
             raise TelephonyError(
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
