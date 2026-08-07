@@ -1331,13 +1331,34 @@ class TelephonyService:
             }
 
     def get_telnyx_number_drift(self, tenant_id: str) -> dict[str, Any]:
-        """Report configuration drift for tenant numbers."""
-        return {
-            "tenant_id": tenant_id,
-            "has_drift": False,
-            "drift_count": 0,
-            "drifted_numbers": [],
-        }
+        """Report configuration drift between live Telnyx account and local managed numbers."""
+        with self._connection() as conn:
+            managed_numbers = self.list_managed_numbers(tenant_id)
+            managed_e164s = {n["e164_number"] for n in managed_numbers if n.get("e164_number")}
+
+            try:
+                client, _ = self._tenant_telnyx_client(conn, tenant_id)
+                provider_owned = client.list_owned_numbers()
+                provider_e164s = {n["e164_number"] for n in provider_owned if n.get("e164_number")}
+            except Exception as e:
+                logger.warning("Could not list owned Telnyx numbers for drift check: %s", e)
+                provider_e164s = set()
+
+            missing_in_provider = list(managed_e164s - provider_e164s)
+            unmapped_in_provider = list(provider_e164s - managed_e164s)
+            drift_detected = len(missing_in_provider) > 0 or len(unmapped_in_provider) > 0
+
+            return {
+                "tenant_id": tenant_id,
+                "drift_detected": drift_detected,
+                "has_drift": drift_detected,
+                "drift_count": len(missing_in_provider) + len(unmapped_in_provider),
+                "managed_count": len(managed_e164s),
+                "provider_count": len(provider_e164s),
+                "missing_in_provider": missing_in_provider,
+                "unmapped_in_provider": unmapped_in_provider,
+                "drifted_numbers": missing_in_provider,
+            }
 
     def reserve_number(
         self, tenant_id: str, e164_number: str, idempotency_key: str

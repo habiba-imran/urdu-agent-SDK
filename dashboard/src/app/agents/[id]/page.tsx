@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
-import { ChevronDown, ChevronLeft, Copy } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Copy, Mic, Settings2, Sliders } from 'lucide-react';
 
 import { updateAgent } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
@@ -16,8 +16,13 @@ import { VoiceAvatar } from '@/components/VoiceAvatar';
 import { VoiceCatalogueGrid } from '@/components/VoiceCatalogueGrid';
 import { cn } from '@/lib/utils';
 
-export default function AgentDetailPage() {
-  const { id } = useParams<{ id: string }>();
+export default function AgentDetailPage({
+  params,
+}: {
+  params?: { id?: string };
+}) {
+  const routeParams = useParams<{ id: string }>();
+  const id = params?.id || routeParams?.id;
   const router = useRouter();
 
   const {
@@ -29,9 +34,14 @@ export default function AgentDetailPage() {
 
   const agent = agents?.find((a) => a.id === id);
 
+  const [mode, setMode] = useState<'basic' | 'advanced'>('basic');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [voiceId, setVoiceId] = useState('');
+  const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
+  const [temperature, setTemperature] = useState(0.7);
+  const [systemFraming, setSystemFraming] = useState('strict');
+
   const [showVoicePicker, setShowVoicePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -46,6 +56,9 @@ export default function AgentDetailPage() {
     setName(agent.name);
     setPrompt(agent.prompt);
     setVoiceId(agent.voice_id);
+    setLlmModel(agent.llm_model || 'gemini-2.5-flash');
+    setTemperature(agent.temperature ?? 0.7);
+    setSystemFraming(agent.system_framing_mode || 'strict');
   }, [agent]);
 
   useEffect(() => {
@@ -68,7 +81,14 @@ export default function AgentDetailPage() {
     if (!agent) return;
     try {
       setSaving(true);
-      const updated = await updateAgent(agent.id, { name, prompt, voice_id: voiceId });
+      const updated = await updateAgent(agent.id, {
+        name,
+        prompt,
+        voice_id: voiceId,
+        llm_model: llmModel,
+        temperature,
+        system_framing_mode: systemFraming,
+      });
       await mutateAgents(
         (current) => (current ?? []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a)),
         { revalidate: false },
@@ -129,17 +149,50 @@ export default function AgentDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-6 flex items-center gap-3">
-        {backButton}
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">{agent.name}</h1>
-        <button
-          type="button"
-          onClick={handleCopyAgentId}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-        >
-          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-          {idCopied ? 'Copied' : 'Agent ID'}
-        </button>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {backButton}
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">{agent.name}</h1>
+          <button
+            type="button"
+            onClick={handleCopyAgentId}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+          >
+            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+            {idCopied ? 'Copied' : 'Agent ID'}
+          </button>
+        </div>
+
+        {/* Mode Toggle & Test Action */}
+        <div className="flex items-center gap-3">
+          <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
+            <button
+              onClick={() => setMode('basic')}
+              className={cn(
+                'rounded px-3 py-1 text-xs font-medium transition-colors',
+                mode === 'basic' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              Basic View
+            </button>
+            <button
+              onClick={() => setMode('advanced')}
+              className={cn(
+                'rounded px-3 py-1 text-xs font-medium transition-colors flex items-center gap-1',
+                mode === 'advanced' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <Sliders className="h-3 w-3" /> Advanced View
+            </button>
+          </div>
+
+          <Button
+            variant="secondary"
+            onClick={() => router.push(`/test-studio?agentId=${agent.id}`)}
+          >
+            <Mic className="mr-1.5 h-4 w-4 text-primary" /> Test in Studio
+          </Button>
+        </div>
       </div>
 
       {saveError ? (
@@ -168,7 +221,7 @@ export default function AgentDetailPage() {
             </div>
 
             <div className="flex min-w-0 flex-1 basis-0 flex-col gap-1.5">
-              <label className="text-sm font-medium text-muted-foreground">Voice</label>
+              <label className="text-sm font-medium text-muted-foreground">Assigned Voice</label>
               <button
                 type="button"
                 onClick={() => setShowVoicePicker(true)}
@@ -185,39 +238,77 @@ export default function AgentDetailPage() {
             </div>
           </div>
 
+          {/* Advanced Mode Controls */}
+          {mode === 'advanced' && (
+            <div className="grid gap-4 sm:grid-cols-3 rounded-lg border border-border bg-muted/20 p-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">LLM Model Engine</label>
+                <select
+                  value={llmModel}
+                  onChange={(e) => setLlmModel(e.target.value)}
+                  className={cn(inputClassName, 'h-9 text-xs')}
+                >
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast Low-Latency)</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Deep Reasoning)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Temperature: {temperature}</label>
+                <input
+                  type="range"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                  className="w-full h-9 cursor-pointer accent-primary"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">System Framing Mode</label>
+                <select
+                  value={systemFraming}
+                  onChange={(e) => setSystemFraming(e.target.value)}
+                  className={cn(inputClassName, 'h-9 text-xs')}
+                >
+                  <option value="strict">Strict (Strict Safety Bounds)</option>
+                  <option value="relaxed">Relaxed (Natural Flow)</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Prompt</label>
+            <label className="text-sm font-medium text-muted-foreground">Urdu System Instructions & Prompt</label>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              className={cn(inputClassName, 'flex-1 resize-none')}
+              className={cn(inputClassName, 'flex-1 resize-none font-mono text-sm leading-relaxed')}
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Status</label>
-            <div className={cn(inputClassName, 'cursor-not-allowed bg-muted text-muted-foreground')}>
-              Active
-            </div>
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push('/agents')}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={saving}
+              onClick={handleSave}
+            >
+              {saving ? 'Saving...' : 'Save Configuration'}
+            </Button>
           </div>
         </CardContent>
       </Card>
 
-      <div className="mt-6 flex shrink-0 justify-end gap-2">
-        <Button variant="secondary" onClick={() => router.push('/agents')}>
-          Cancel
-        </Button>
-        <Button onClick={() => void handleSave()} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </Button>
-      </div>
-
-      <Modal
-        open={showVoicePicker}
-        onOpenChange={setShowVoicePicker}
-        title="Select Voice"
-        className="max-w-6xl"
-      >
+      <Modal open={showVoicePicker} onOpenChange={setShowVoicePicker} title="Select Urdu Voice">
         <VoiceCatalogueGrid
           mode="select"
           selectedVoiceId={voiceId}

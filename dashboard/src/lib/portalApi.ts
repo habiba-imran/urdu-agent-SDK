@@ -10,6 +10,14 @@ export type PortalAgent = {
   llm_model: string;
   created_at: string | null;
   total_agent_sec?: number;
+  // Advanced parameters
+  temperature?: number;
+  top_p?: number;
+  phone_number?: string | null;
+  phone_number_id?: string | null;
+  system_framing_mode?: 'strict' | 'relaxed' | 'conversational' | string;
+  vad_sensitivity?: number;
+  agent_description?: string;
 };
 
 export type PortalCredentials = {
@@ -116,11 +124,19 @@ export function getAgents() {
   return request<PortalAgent[]>("/portal/agents");
 }
 
+export function getAgentById(agentId: string) {
+  return request<PortalAgent>(`/portal/agents/${agentId}`);
+}
+
 export function createAgent(body: {
   name: string;
   prompt: string;
   voice_id: string;
   llm_model: string;
+  temperature?: number;
+  top_p?: number;
+  system_framing_mode?: string;
+  agent_description?: string;
 }) {
   return request<PortalAgent>("/portal/agents", {
     method: "POST",
@@ -135,11 +151,21 @@ export function updateAgent(
     prompt?: string;
     voice_id?: string;
     llm_model?: string;
+    temperature?: number;
+    top_p?: number;
+    system_framing_mode?: string;
+    agent_description?: string;
   },
 ) {
   return request<PortalAgent>(`/portal/agents/${agentId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
+  });
+}
+
+export function deleteAgent(agentId: string) {
+  return request<{ success: boolean }>(`/portal/agents/${agentId}`, {
+    method: "DELETE",
   });
 }
 
