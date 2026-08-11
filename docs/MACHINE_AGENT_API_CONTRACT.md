@@ -58,20 +58,46 @@ For `GET /machine/agents` (list), the body is the empty object `{}` (canonical f
 
 `POST /machine/agents`
 
-Body (all fields required except `llm_model`, which defaults server-side to
-`gemini-2.5-flash` if omitted):
+Body: `name`, `prompt`, `voice_id` required; `llm_model` defaults server-side to
+`gemini-2.5-flash` if omitted. Every other field below is optional (Phase 3,
+`docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md`, ADR-036) — omitting all of them keeps the
+pre-existing `ur`+Gladia+Gemini+Uplift behavior exactly:
 
 ```json
 {
   "name": "Support Agent",
   "prompt": "آپ ایک مددگار معاون ہیں...",
   "voice_id": "helpdesk-agent",
-  "llm_model": "gemini-2.5-flash"
+  "llm_model": "gemini-2.5-flash",
+  "agent_language": "ur",
+  "stt_provider": "gladia",
+  "stt_model": "default",
+  "stt_options": {},
+  "llm_provider": "gemini",
+  "llm_options": {},
+  "tts_provider": "uplift",
+  "tts_voice_id": "helpdesk-agent",
+  "tts_options": {}
 }
 ```
 
+🔴 **Signature rule — omitted fields must be entirely absent from the JSON body, not sent as
+`null`, exactly like `PATCH` below.** Any field with a Pydantic default other than `None`
+(`llm_model` today) is always present in the signed payload once resolved server-side — sign the
+value you expect the server to resolve, not only what's literally on the wire. Every field with a
+`None` default (all the new provider/language fields above) is excluded from the signed payload
+when omitted. This is not a hypothetical: adding the optional fields above silently broke every
+existing signature until the server-side verification was changed to `exclude_none=True` — a real
+regression caught by re-running this contract's own test suite, not assumed safe.
+
+`tts_voice_id` takes priority over `voice_id` when both are given (server-resolved). Unsupported or
+disabled combinations return `422` with a stable `{"code": "...", "reason": "..."}` body — see
+Errors below.
+
 `action = "agent.create"`. Response: the created agent row (`id`, `name`, `prompt`, `voice_id`,
-`llm_model`, `created_at`) — same shape `POST /portal/agents` already returns.
+`llm_model`, `created_at`, `agent_language`, `stt_provider`, `stt_model`, `stt_options`,
+`llm_provider`, `llm_options`, `tts_provider`, `tts_voice_id`, `tts_options`) — same shape
+`POST /portal/agents` already returns.
 
 ### List agents
 
@@ -84,12 +110,15 @@ No body (sign `{}`). `action = "agent.list"`. Response: array of this tenant's a
 
 `PATCH /machine/agents/{agent_id}`
 
-Body: any subset of `{name, prompt, voice_id, llm_model}` — **include only the fields you are
-changing**. Omitted fields must be entirely absent from the JSON body, not sent as `null`; the
-signature covers exactly what you send, and the server only applies the fields present.
+Body: any subset of `{name, prompt, voice_id, llm_model, agent_language, stt_provider, stt_model,
+stt_options, llm_provider, llm_options, tts_provider, tts_voice_id, tts_options}` — **include only
+the fields you are changing**. Omitted fields must be entirely absent from the JSON body, not sent
+as `null`; the signature covers exactly what you send, and the server only applies the fields
+present — every other field keeps the agent's current resolved value (not the create-time
+defaults).
 
-`action = "agent.update"`. Response: the updated agent row, or `404` if `agent_id` does not belong
-to this tenant (or doesn't exist).
+`action = "agent.update"`. Response: the updated agent row (same shape as create, above), or `404`
+if `agent_id` does not belong to this tenant (or doesn't exist).
 
 ## Error mapping
 
@@ -98,6 +127,7 @@ to this tenant (or doesn't exist).
 | `401` | missing signature header, bad signature, timestamp outside the 60s replay window, nonce reuse, unknown tenant, tenant has no secret provisioned |
 | `403` | tenant suspended |
 | `404` | (update only) `agent_id` not found or belongs to another tenant |
+| `422` | (create/update only) invalid provider/language/model/voice/options combination — body is `{"detail": {"code": "...", "reason": "..."}}`. Stable codes: `unsupported_language`, `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`, `invalid_stt_options`, `invalid_llm_options`, `invalid_tts_options` |
 | `429` | per-tenant rate limit exceeded (30 requests/minute across all three routes) |
 
 The browser-facing collapsing rules from `docs/HOST_BACKEND_CONTRACT.md` do not apply here — there

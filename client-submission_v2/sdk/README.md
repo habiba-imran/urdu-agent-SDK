@@ -1,107 +1,39 @@
-# AwaazLabs-UVA-Voice SDK — Package Overview
+﻿# SDK Packages
 
-> Delivered by **Finova Solutions** · Confidential Client Package
+This folder contains three installable npm tarballs and their TypeScript source for review.
 
----
+## Package boundaries
 
-## What's in This Folder
+| Package | Import | Where to use it | Secret handling |
+| --- | --- | --- | --- |
+| Voice SDK | `@awaazlabs-uva/voice` | Browser frontend | Uses only a publishable key and your own session endpoint. |
+| Agents SDK | `@awaazlabs-uva/agents` | Backend services only | Signs requests with `UVA_TENANT_ID` and `UVA_HMAC_SECRET`. |
+| Telephony SDK | `@awaazlabs-uva/telephony` | Backend services only | Signs requests with `UVA_TENANT_ID` and `UVA_HMAC_SECRET`; Telnyx API keys are accepted only as transient method parameters for connect/rotate calls. |
 
-This folder contains the two npm packages that power your AwaazLabs-UVA integration.
+## Tarballs
 
-```
-sdk/
-├── @awaazlabs-uva/voice/          →  Browser SDK  (@awaazlabs-uva/voice)
-│   ├── dist/            →  Compiled JS + TypeScript declaration files
-│   ├── src/             →  TypeScript source (reference only)
-│   ├── package.json
-│   └── README.md
-│
-└── @awaazlabs-uva/agents/         →  Server-side Agent Management SDK  (@awaazlabs-uva/agents)
-    ├── dist/            →  Compiled JS + TypeScript declaration files
-    ├── src/             →  TypeScript source (reference only)
-    ├── package.json
-    └── README.md
+```text
+@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz
+@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
+@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
 ```
 
----
+Install the tarballs into your frontend/backend applications. The `src/` folders are included for review; application code should import the packages by package name.
 
-## The Two Packages at a Glance
+For the full callable SDK surface, see `../docs/SDK_CAPABILITIES_REFERENCE.md`.
 
-### `@awaazlabs-uva/voice` — Browser SDK
+## Runtime requirements
 
-| Property | Value |
-|---|---|
-| **Environment** | Browser only (React, Vue, vanilla JS, etc.) |
-| **Purpose** | Opens a real-time WebRTC Urdu voice session with an AI agent |
-| **Secrets held** | **None** — fully safe to ship in a public bundle |
-| **Key dependency** | `livekit-client ^2.0.0` |
+- Node.js 20 or newer is recommended for all backend SDK usage.
+- Modern browser support is required for the voice SDK because it uses WebRTC through LiveKit.
+- Backend secrets must never be included in browser bundles, mobile apps, client-side logs, or analytics payloads.
 
-The browser SDK never talks to AwaazLabs-UVA upstream services with credentials. It calls
-**your own backend's** session endpoint, which holds your secrets and mints the
-LiveKit token on your behalf.
+## Validation after install
 
-### `@awaazlabs-uva/agents` — Server-Side Agent Management SDK
+After installing a package, verify imports from your application build:
 
-| Property | Value |
-|---|---|
-| **Environment** | Node.js backend **only** |
-| **Purpose** | Create, list, and update Urdu AI agents via the Tenant Portal API |
-| **Secrets held** | `tenantSecret` (HMAC-SHA256 signing key) — **NEVER import in browser code** |
-| **Key dependency** | Node.js built-ins (`crypto`) only |
-
----
-
-## Architecture Overview
-
+```ts
+import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
+import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
+import { TelephonyClient } from '@awaazlabs-uva/telephony';
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      YOUR APPLICATION                       │
-│                                                             │
-│  ┌──────────────────────┐     ┌────────────────────────┐   │
-│  │   Browser / Frontend │     │  Node.js Backend        │   │
-│  │                      │     │                         │   │
-│  │  @awaazlabs-uva/voice          │────▶│  Your /api/voice/session│   │
-│  │  (zero secrets)      │     │  endpoint               │   │
-│  │                      │     │                         │   │
-│  │                      │     │  @awaazlabs-uva/agents            │   │
-│  │                      │     │  (holds tenantSecret)   │   │
-│  └──────────────────────┘     └────────────┬───────────┘   │
-└───────────────────────────────────────────|────────────────┘
-                                            │
-                              ┌─────────────▼──────────────┐
-                              │  AwaazLabs-UVA Services     │
-                              │  (session issuance and      │
-                              │   agent orchestration)      │
-                              └────────────────────────────┘
-```
-
-**Security rule:** `tenantSecret` and `hmacSecret` never cross the browser boundary.
-Your backend holds them; your browser only ever holds the `publishableKey`.
-
----
-
-## Quick Reference: Which Package Do I Use Where?
-
-| Task | Package | Environment |
-|---|---|---|
-| Start a voice call in the browser | `@awaazlabs-uva/voice` | Browser |
-| Display live transcription | `@awaazlabs-uva/voice` | Browser |
-| Create a new AI agent | `@awaazlabs-uva/agents` | Backend |
-| List existing agents | `@awaazlabs-uva/agents` | Backend |
-| Update agent prompt / voice | `@awaazlabs-uva/agents` | Backend |
-| Sign session token requests | Your backend + HMAC secret | Backend |
-
----
-
-## Version Compatibility
-
-| SDK Package | Node.js | Browser Targets |
-|---|---|---|
-| `@awaazlabs-uva/voice` | N/A | ES2020+, all modern browsers |
-| `@awaazlabs-uva/agents` | ≥ 18.0.0 | Not applicable |
-
----
-
-> For full setup instructions, see the `docs/` folder.
-> For the AI integration prompt, see `../docs/ai-integration-guide.md`.
-> For credentials, see `../docs/credentials-template.md`.

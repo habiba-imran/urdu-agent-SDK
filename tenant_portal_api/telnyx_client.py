@@ -1,0 +1,1067 @@
+"""Telnyx API client adapter for credential verification, inventory sync, number search, number orders, FQDN connection, and outbound voice profile management.
+
+Backend-only module. Supports fake provider mock mode only when explicitly configured for testing.
+Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+
+from tenant_portal_api.telephony_errors import (
+    TelephonyError,
+    TelephonyErrorCode,
+    redact_sensitive_string,
+)
+from tenant_portal_api.telephony_config import is_mock_provider_mode
+from tenant_portal_api.telnyx_destinations import default_telnyx_outbound_destinations
+
+logger = logging.getLogger(__name__)
+
+TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
+
+
+def _validate_telnyx_inbound_fqdn(fqdn: str) -> str:
+    value = str(fqdn or "").strip().lower()
+    if not value:
+        raise TelephonyError(
+            status=400,
+            code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+            message="A Telnyx SIP FQDN is required for inbound routing.",
+        )
+    if value.startswith("sip:"):
+        value = value[4:].strip()
+    if value.startswith("+"):
+        raise TelephonyError(
+            status=400,
+            code=TelephonyErrorCode.SIP_VERIFICATION_FAILED,
+            message="SIP FQDN cannot be a phone number. Use a Telnyx-reachable SIP hostname such as nyc1.sip.livekit-telnyx.com.",
+        )
+    return value
+
+
+def _normalize_features(raw: Any) -> list[str]:
+    """Normalize Telnyx feature shapes into public SDK strings.
+
+    Telnyx v2 can return features as an array of objects/strings, while older
+    fixtures used a boolean map. Keep both shapes valid so real provider
+    responses do not crash the route.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [str(key) for key, enabled in raw.items() if enabled]
+    if isinstance(raw, list):
+        values: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                values.append(item)
+            elif isinstance(item, dict):
+                value = item.get("name") or item.get("feature") or item.get("type")
+                if value:
+                    values.append(str(value))
+        return values
+    return []
+
+
+def _telnyx_error_message(response: httpx.Response, fallback: str) -> str:
+    """Extract a safe provider error message without exposing credentials."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return fallback
+
+    messages: list[str] = []
+    if isinstance(payload, dict):
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            for item in errors[:3]:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("title", "detail", "code"):
+                    value = item.get(key)
+                    if value:
+                        messages.append(str(value))
+        for key in ("message", "error", "detail", "title"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                messages.append(value)
+
+    combined = " ".join(part.strip() for part in messages if part and part.strip())
+    return redact_sensitive_string(combined or fallback)
+
+
+def _raise_telnyx_number_order_error(response: httpx.Response, e164_number: str) -> None:
+    provider_message = _telnyx_error_message(response, "Telnyx rejected the number order.")
+    normalized = provider_message.lower()
+    provider_detail = {
+        "provider_message": provider_message,
+        "provider_status_code": response.status_code,
+    }
+
+    if response.status_code == 401:
+        raise TelephonyError(
+            status=401,
+            code=TelephonyErrorCode.TELNYX_KEY_INVALID,
+            message="Invalid Telnyx API key or unauthorized.",
+            detail=provider_detail,
+        )
+    if response.status_code == 403:
+        raise TelephonyError(
+            status=403,
+            code=TelephonyErrorCode.TELNYX_KEY_PERMISSION_FAILED,
+            message="Telnyx API key lacks permission to order phone numbers.",
+            detail=provider_detail,
+        )
+    if response.status_code == 429:
+        raise TelephonyError(
+            status=429,
+            code=TelephonyErrorCode.TELNYX_RATE_LIMITED,
+            message="Telnyx rate-limited the number order request.",
+            detail=provider_detail,
+        )
+    if response.status_code == 402 or any(token in normalized for token in ("balance", "credit", "fund", "payment")):
+        raise TelephonyError(
+            status=402,
+            code=TelephonyErrorCode.INSUFFICIENT_TELNYX_BALANCE,
+            message="Telnyx rejected the number order because the account balance, credit, or payment state is not sufficient.",
+            detail=provider_detail,
+        )
+    if any(token in normalized for token in ("regulatory", "kyc", "verification", "verified", "address", "document", "requirement")):
+        raise TelephonyError(
+            status=409,
+            code=TelephonyErrorCode.REGULATORY_ACTION_REQUIRED,
+            message="Telnyx requires account, destination, or regulatory verification before this number can be ordered.",
+            detail=provider_detail,
+        )
+    if response.status_code == 404 or any(token in normalized for token in ("not available", "unavailable", "already been taken", "already purchased")):
+        raise TelephonyError(
+            status=422,
+            code=TelephonyErrorCode.NUMBER_NOT_AVAILABLE,
+            message=f"Phone number {e164_number} is no longer available for purchase.",
+            detail=provider_detail,
+        )
+    if response.status_code in {409, 422}:
+        raise TelephonyError(
+            status=409,
+            code=TelephonyErrorCode.NUMBER_ORDER_ACTION_REQUIRED,
+            message="Telnyx rejected the number order and requires additional action or a different order input.",
+            detail=provider_detail,
+        )
+
+    raise TelephonyError(
+        status=502,
+        code=TelephonyErrorCode.TELNYX_API_ERROR,
+        message=f"Telnyx rejected the number order: {provider_message}",
+        detail=provider_detail,
+    )
+
+
+def _map_number_order_platform_status(provider_status: Any, requirements_met: Any = None) -> str:
+    normalized = str(provider_status or "").strip().lower()
+    if requirements_met is False:
+        return "action_required"
+    if normalized == "success":
+        return "purchased"
+    if normalized in {"failure", "failed"}:
+        return "failed"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized == "deleted":
+        return "deleted"
+    return "pending"
+
+class TelnyxClient:
+    """Backend client for Telnyx REST v2 APIs."""
+
+    def __init__(
+        self,
+        api_key: str,
+        http_client: httpx.Client | None = None,
+        mock_mode: bool | None = None,
+        timeout: float = 10.0,
+    ):
+        self.api_key = api_key
+        self.timeout = timeout
+        self._owned_client = http_client is None
+        self.client = http_client or httpx.Client(timeout=timeout)
+
+        # Mock mode must be explicit through the caller or TELEPHONY_PROVIDER_MODE.
+        # Staging/production should fail closed instead of silently synthesizing
+        # provider resources when credentials are absent or placeholder-shaped.
+        if mock_mode is not None:
+            self.mock_mode = mock_mode
+        else:
+            self.mock_mode = is_mock_provider_mode()
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def verify_api_key(self) -> dict[str, Any]:
+        """Verify API key validity against Telnyx /v2/balance or fake provider."""
+        if self.mock_mode:
+            if self.api_key == "invalid_key":
+                raise TelephonyError(
+                    status=401,
+                    code=TelephonyErrorCode.TELNYX_KEY_INVALID,
+                    message="Invalid Telnyx API key provided.",
+                )
+            return {
+                "telnyx_account_id": "act_fake_telnyx_123",
+                "balance": "100.00",
+                "currency": "USD",
+                "status": "active",
+            }
+
+        if not self.api_key:
+            raise TelephonyError(
+                status=503,
+                code=TelephonyErrorCode.PROVIDER_CREDENTIALS_MISSING,
+                message="Telnyx API key is not configured for this tenant.",
+            )
+
+        try:
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/balance",
+                headers=self._headers(),
+            )
+            if resp.status_code == 401:
+                raise TelephonyError(
+                    status=401,
+                    code=TelephonyErrorCode.TELNYX_KEY_INVALID,
+                    message="Invalid Telnyx API key or unauthorized.",
+                )
+            if resp.status_code == 403:
+                raise TelephonyError(
+                    status=403,
+                    code=TelephonyErrorCode.TELNYX_KEY_PERMISSION_FAILED,
+                    message="Telnyx API key lacks required permissions.",
+                )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            account_id = (
+                data.get("account_id")
+                or data.get("organization_id")
+                or data.get("customer_id")
+            )
+            return {
+                "telnyx_account_id": account_id,
+                "verification_record_type": data.get("record_type"),
+                "balance": str(data.get("balance", "0.00")),
+                "currency": data.get("currency", "USD"),
+                "status": "active",
+            }
+        except httpx.HTTPError as e:
+            logger.error("Telnyx balance check failed: %s", redact_sensitive_string(str(e)))
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to verify Telnyx API key with upstream provider.",
+            ) from e
+
+    def list_owned_numbers(
+        self, filter_phone_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List phone numbers owned in the Telnyx account."""
+        if self.mock_mode:
+            mock_numbers = [
+                {
+                    "provider_number_id": "num_mock_001",
+                    "e164_number": "+15551234567",
+                    "country": "US",
+                    "number_type": "local",
+                    "features": ["voice"],
+                    "status": "active",
+                }
+            ]
+            if filter_phone_number:
+                return [n for n in mock_numbers if n["e164_number"] == filter_phone_number]
+            return mock_numbers
+
+        try:
+            params = {}
+            if filter_phone_number:
+                params["filter[phone_number]"] = filter_phone_number
+
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/phone_numbers",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            raw_list = resp.json().get("data", [])
+            results = []
+            for item in raw_list:
+                results.append(
+                    {
+                        "provider_number_id": item.get("id"),
+                        "e164_number": item.get("phone_number"),
+                        "country": item.get("country_code", "US"),
+                        "number_type": item.get("phone_number_type", "local"),
+                        "features": item.get("features", []),
+                        "status": item.get("status", "active"),
+                    }
+                )
+            return results
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to list owned numbers from Telnyx.",
+            ) from e
+
+    def search_available_numbers(
+        self,
+        country: str,
+        area_code: str | None = None,
+        number_type: str | None = None,
+        features: list[str] | None = None,
+        exact_phone_number: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search available phone numbers for purchase."""
+        if self.mock_mode:
+            prefix = area_code or "555"
+            return [
+                {
+                    "e164_number": f"+1{prefix}9876543",
+                    "country": country.upper(),
+                    "region": "US-CA",
+                    "number_type": number_type or "local",
+                    "features": features or ["voice"],
+                    "upfront_cost": "1.00",
+                    "monthly_cost": "1.00",
+                    "currency": "USD",
+                }
+            ]
+
+        try:
+            params = {"filter[country_code]": country.upper()}
+            if area_code:
+                params["filter[national_destination_code]"] = area_code
+            if number_type:
+                params["filter[phone_number_type]"] = number_type
+            if exact_phone_number:
+                params["filter[phone_number]"] = exact_phone_number
+            if limit:
+                params["filter[limit]"] = str(limit)
+            if features:
+                for f in features:
+                    params[f"filter[features][{f}]"] = "true"
+
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/available_phone_numbers",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            raw_list = resp.json().get("data", [])
+            results = []
+            for item in raw_list:
+                cost = item.get("cost_information", {})
+                results.append(
+                    {
+                        "e164_number": item.get("phone_number"),
+                        "country": item.get("country_code", country.upper()),
+                        "region": item.get("region"),
+                        "number_type": item.get("phone_number_type"),
+                        "features": _normalize_features(item.get("features")) or ["voice"],
+                        "upfront_cost": str(cost.get("upfront_cost", "1.00")),
+                        "monthly_cost": str(cost.get("monthly_cost", "1.00")),
+                        "currency": cost.get("currency", "USD"),
+                    }
+                )
+            return results
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to search available numbers from Telnyx.",
+            ) from e
+
+    def purchase_number(self, e164_number: str) -> dict[str, Any]:
+        """Order purchase of an exact selected E.164 phone number."""
+        if self.mock_mode:
+            return {
+                "provider_order_id": "order_mock_12345",
+                "selected_e164_number": e164_number,
+                "status": "success",
+                "provider_status": "success",
+                "platform_status": "purchased",
+            }
+
+        try:
+            payload = {
+                "phone_numbers": [{"phone_number": e164_number}],
+            }
+            resp = self.client.post(
+                f"{TELNYX_API_BASE_URL}/number_orders",
+                headers=self._headers(),
+                json=payload,
+            )
+            if resp.status_code >= 400:
+                _raise_telnyx_number_order_error(resp, e164_number)
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            provider_status = data.get("status", "pending")
+            return {
+                "provider_order_id": data.get("id"),
+                "selected_e164_number": e164_number,
+                "status": provider_status,
+                "provider_status": provider_status,
+                "platform_status": _map_number_order_platform_status(
+                    provider_status,
+                    data.get("requirements_met"),
+                ),
+            }
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to submit number order to Telnyx.",
+            ) from e
+
+    def get_number_order_status(self, order_id: str) -> dict[str, Any]:
+        """Fetch status of a Telnyx number order."""
+        if self.mock_mode:
+            return {
+                "provider_order_id": order_id,
+                "status": "success",
+                "provider_status": "success",
+                "platform_status": "purchased",
+            }
+
+        try:
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/number_orders/{order_id}",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            provider_status = data.get("status", "pending")
+            return {
+                "provider_order_id": data.get("id"),
+                "status": provider_status,
+                "provider_status": provider_status,
+                "platform_status": _map_number_order_platform_status(
+                    provider_status,
+                    data.get("requirements_met"),
+                ),
+            }
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message=f"Failed to fetch order status for {order_id}.",
+            ) from e
+
+    def create_or_get_fqdn_connection(
+        self,
+        connection_name: str,
+        fqdn: str,
+        sip_username: str | None = None,
+        sip_secret: str | None = None,
+        outbound_voice_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create or get a Telnyx FQDN/SIP connection."""
+        fqdn = _validate_telnyx_inbound_fqdn(fqdn)
+        if self.mock_mode:
+            return {
+                "provider_sip_connection_id": "fqdn_conn_mock_123",
+                "connection_name": connection_name,
+                "sip_fqdn": fqdn,
+                "status": "active",
+            }
+
+        try:
+            payload = {
+                "connection_name": connection_name,
+                "active": True,
+                "anchorsite_override": "Latency",
+                "transport_protocol": "TCP",
+                "inbound": {
+                    "ani_number_format": "+E.164",
+                    "dnis_number_format": "+e164",
+                },
+            }
+            if sip_username:
+                payload["user_name"] = sip_username
+            if sip_secret:
+                payload["password"] = sip_secret
+            if outbound_voice_profile_id:
+                payload["outbound"] = {
+                    "outbound_voice_profile_id": outbound_voice_profile_id
+                }
+            existing = self.list_fqdn_connections(connection_name=connection_name)
+            if not existing:
+                try:
+                    all_conns = self.list_fqdn_connections()
+                    existing = [
+                        c
+                        for c in all_conns
+                        if str(c.get("connection_name") or "") == connection_name
+                        or (sip_username and str(c.get("user_name") or "") == sip_username)
+                    ]
+                except Exception:
+                    existing = []
+
+            if existing:
+                connection_id = existing[0].get("id")
+                if connection_id:
+                    patch_payload = dict(payload)
+                    try:
+                        resp = self.client.patch(
+                            f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                            headers=self._headers(),
+                            json=patch_payload,
+                        )
+                        resp.raise_for_status()
+                    except httpx.HTTPError as patch_err:
+                        patch_resp = getattr(patch_err, "response", None)
+                        msg = (
+                            _telnyx_error_message(patch_resp, "")
+                            if patch_resp is not None
+                            else str(patch_err)
+                        )
+                        if (
+                            "already" in msg.lower()
+                            or "10015" in msg
+                            or "user_name" in msg.lower()
+                            or getattr(patch_resp, "status_code", None) in (400, 422)
+                        ):
+                            patch_payload.pop("user_name", None)
+                            patch_payload.pop("password", None)
+                            patch_payload.pop("connection_name", None)
+                            patch_payload.pop("outbound", None)
+                            resp = self.client.patch(
+                                f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                                headers=self._headers(),
+                                json=patch_payload,
+                            )
+                            resp.raise_for_status()
+                        else:
+                            raise patch_err
+
+                    data = resp.json().get("data", {})
+                    self._ensure_fqdn_target(str(connection_id), fqdn)
+                    return {
+                        "provider_sip_connection_id": data.get("id") or str(connection_id),
+                        "connection_name": data.get("connection_name") or connection_name,
+                        "sip_fqdn": fqdn,
+                        "status": "active" if data.get("active", True) else "disabled",
+                    }
+
+            try:
+                resp = self.client.post(
+                    f"{TELNYX_API_BASE_URL}/fqdn_connections",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+                connection_id = data.get("id")
+                if connection_id:
+                    self._ensure_fqdn_target(str(connection_id), fqdn)
+                return {
+                    "provider_sip_connection_id": connection_id,
+                    "connection_name": data.get("connection_name"),
+                    "sip_fqdn": fqdn,
+                    "status": "active" if data.get("active", True) else "disabled",
+                }
+            except httpx.HTTPError as post_err:
+                response = getattr(post_err, "response", None)
+                provider_msg = (
+                    _telnyx_error_message(response, "") if response is not None else str(post_err)
+                )
+                if "already been taken" in provider_msg.lower() or "10015" in provider_msg:
+                    logger.info(
+                        "Telnyx connection or username already taken; fetching existing connection to patch: %s",
+                        provider_msg,
+                    )
+                    all_conns = self.list_fqdn_connections()
+                    matched = next(
+                        (
+                            c
+                            for c in all_conns
+                            if str(c.get("connection_name") or "") == connection_name
+                            or (sip_username and str(c.get("user_name") or "") == sip_username)
+                        ),
+                        None,
+                    )
+                    if not matched and all_conns:
+                        matched = all_conns[0]
+                    if matched and matched.get("id"):
+                        connection_id = matched["id"]
+                        patch_payload = dict(payload)
+                        patch_payload.pop("user_name", None)
+                        patch_payload.pop("password", None)
+                        patch_payload.pop("connection_name", None)
+                        patch_payload.pop("outbound", None)
+                        resp = self.client.patch(
+                            f"{TELNYX_API_BASE_URL}/fqdn_connections/{connection_id}",
+                            headers=self._headers(),
+                            json=patch_payload,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json().get("data", {})
+                        self._ensure_fqdn_target(str(connection_id), fqdn)
+                        return {
+                            "provider_sip_connection_id": data.get("id") or str(connection_id),
+                            "connection_name": data.get("connection_name") or connection_name,
+                            "sip_fqdn": fqdn,
+                            "status": "active" if data.get("active", True) else "disabled",
+                        }
+                raise post_err
+        except httpx.HTTPError as e:
+            response = getattr(e, "response", None)
+            provider_message = (
+                _telnyx_error_message(response, "Telnyx rejected the FQDN connection request.")
+                if response is not None
+                else redact_sensitive_string(str(e) or "Telnyx rejected the FQDN connection request.")
+            )
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message=f"Failed to create/configure Telnyx FQDN connection: {provider_message}",
+                detail={
+                    "provider_message": provider_message,
+                    "provider_status_code": getattr(response, "status_code", None),
+                },
+            ) from e
+
+    def list_fqdn_connections(
+        self,
+        *,
+        connection_name: str | None = None,
+        fqdn: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List Telnyx FQDN connections for reconciliation and diagnostics."""
+        if self.mock_mode:
+            return [
+                {
+                    "id": "fqdn_conn_mock_123",
+                    "connection_name": connection_name or "tenant-mock",
+                    "fqdn": fqdn or "sip.livekit.cloud",
+                    "active": True,
+                    "transport_protocol": "UDP",
+                }
+            ]
+
+        try:
+            params: dict[str, str] = {"page[size]": "100"}
+            if connection_name:
+                params["filter[connection_name]"] = connection_name
+            if fqdn:
+                params["filter[fqdn]"] = fqdn
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/fqdn_connections",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to list Telnyx FQDN connections.",
+            ) from e
+
+    def list_fqdns(
+        self,
+        *,
+        connection_id: str | None = None,
+        fqdn: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List Telnyx FQDN child records attached to FQDN connections."""
+        if self.mock_mode:
+            return [
+                {
+                    "id": "fqdn_record_mock_123",
+                    "connection_id": connection_id or "fqdn_conn_mock_123",
+                    "fqdn": fqdn or "sip.livekit.cloud",
+                    "port": 5060,
+                    "dns_record_type": "a",
+                }
+            ]
+
+        try:
+            params: dict[str, str] = {}
+            if connection_id:
+                params["filter[connection_id]"] = connection_id
+            if fqdn:
+                params["filter[fqdn]"] = fqdn
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/fqdns",
+                headers=self._headers(),
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            return data if isinstance(data, list) else []
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to list Telnyx FQDN targets.",
+            ) from e
+
+    def _ensure_fqdn_target(self, connection_id: str, fqdn: str) -> None:
+        """Ensure the Telnyx FQDN connection has the expected routable target."""
+        existing = self.list_fqdns(connection_id=connection_id)
+        target = next((item for item in existing if str(item.get("fqdn") or "") == fqdn), None)
+        if target:
+            return
+
+        if existing:
+            fqdn_id = existing[0].get("id")
+            if fqdn_id:
+                resp = self.client.patch(
+                    f"{TELNYX_API_BASE_URL}/fqdns/{fqdn_id}",
+                    headers=self._headers(),
+                    json={
+                        "connection_id": connection_id,
+                        "fqdn": fqdn,
+                        "dns_record_type": "a",
+                        "port": 5060,
+                    },
+                )
+                resp.raise_for_status()
+                return
+
+        resp = self.client.post(
+            f"{TELNYX_API_BASE_URL}/fqdns",
+            headers=self._headers(),
+            json={
+                "connection_id": connection_id,
+                "fqdn": fqdn,
+                "dns_record_type": "a",
+                "port": 5060,
+            },
+        )
+        resp.raise_for_status()
+
+    def _outbound_voice_profile_payload(
+        self,
+        *,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": name,
+            "traffic_type": "conversational",
+            "service_plan": "global",
+            "billing_group_id": None,
+        }
+        if (
+            fqdn_connection_id
+            and str(fqdn_connection_id).strip()
+            and str(fqdn_connection_id).strip() != "None"
+        ):
+            payload["connections"] = [str(fqdn_connection_id).strip()]
+        normalized_destinations = [
+            str(item).strip().upper()
+            for item in (allowed_destinations or [])
+            if str(item).strip()
+        ]
+        if normalized_destinations:
+            payload["whitelisted_destinations"] = sorted(set(normalized_destinations))
+        if concurrency_limit is not None:
+            payload["concurrent_call_limit"] = concurrency_limit
+        if daily_spending_limit is not None:
+            payload["daily_spend_limit"] = str(daily_spending_limit)
+            payload["daily_spend_limit_enabled"] = True
+        return payload
+
+    def create_or_get_outbound_voice_profile(
+        self,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        """Create or get an Outbound Voice Profile for SIP calling."""
+        if self.mock_mode:
+            return {
+                "provider_outbound_voice_profile_id": "ovp_mock_123",
+                "name": name,
+                "status": "active",
+                "allowed_destinations": allowed_destinations or default_telnyx_outbound_destinations(),
+                "concurrency_limit": concurrency_limit,
+                "daily_spending_limit": daily_spending_limit,
+            }
+
+        try:
+            payload = self._outbound_voice_profile_payload(
+                name=name,
+                fqdn_connection_id=fqdn_connection_id,
+                allowed_destinations=allowed_destinations,
+                concurrency_limit=concurrency_limit,
+                daily_spending_limit=daily_spending_limit,
+            )
+            try:
+                resp = self.client.post(
+                    f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+                return {
+                    "provider_outbound_voice_profile_id": data.get("id"),
+                    "name": data.get("name"),
+                    "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                    "allowed_destinations": data.get("whitelisted_destinations") or [],
+                    "concurrency_limit": data.get("concurrent_call_limit"),
+                    "daily_spending_limit": data.get("daily_spend_limit"),
+                }
+            except httpx.HTTPError as post_err:
+                response = getattr(post_err, "response", None)
+                provider_msg = (
+                    _telnyx_error_message(response, "") if response is not None else str(post_err)
+                )
+                if (
+                    "already" in provider_msg.lower()
+                    or "limit" in provider_msg.lower()
+                    or "10015" in provider_msg
+                    or "10039" in provider_msg
+                    or getattr(response, "status_code", None) in (400, 403, 409, 422)
+                ):
+                    try:
+                        list_resp = self.client.get(
+                            f"{TELNYX_API_BASE_URL}/outbound_voice_profiles",
+                            headers=self._headers(),
+                        )
+                        list_resp.raise_for_status()
+                        items = list_resp.json().get("data", [])
+                        matched = next(
+                            (item for item in items if str(item.get("name") or "") == name),
+                            None,
+                        )
+                        if not matched and items:
+                            matched = items[0]
+                        if matched and matched.get("id"):
+                            profile_id = str(matched["id"])
+                            patch_resp = self.client.patch(
+                                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{profile_id}",
+                                headers=self._headers(),
+                                json=payload,
+                            )
+                            patch_resp.raise_for_status()
+                            data = patch_resp.json().get("data", {})
+                            return {
+                                "provider_outbound_voice_profile_id": data.get("id") or profile_id,
+                                "name": data.get("name") or name,
+                                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                                "concurrency_limit": data.get("concurrent_call_limit"),
+                                "daily_spending_limit": data.get("daily_spend_limit"),
+                            }
+                    except Exception as _reuse_err:
+                        logger.warning("Failed to recover existing outbound voice profile: %s", _reuse_err)
+                raise post_err
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to create Telnyx Outbound Voice Profile.",
+            ) from e
+
+    def update_outbound_voice_profile(
+        self,
+        provider_outbound_voice_profile_id: str,
+        *,
+        name: str,
+        fqdn_connection_id: str,
+        allowed_destinations: list[str] | None = None,
+        concurrency_limit: int | None = None,
+        daily_spending_limit: float | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing Telnyx Outbound Voice Profile."""
+        if self.mock_mode:
+            return {
+                "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
+                "name": name,
+                "status": "active",
+                "allowed_destinations": allowed_destinations or default_telnyx_outbound_destinations(),
+                "concurrency_limit": concurrency_limit,
+                "daily_spending_limit": daily_spending_limit,
+            }
+        if not provider_outbound_voice_profile_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_outbound_voice_profile_id is required to update a Telnyx outbound voice profile.",
+            )
+        try:
+            payload = self._outbound_voice_profile_payload(
+                name=name,
+                fqdn_connection_id=fqdn_connection_id,
+                allowed_destinations=allowed_destinations,
+                concurrency_limit=concurrency_limit,
+                daily_spending_limit=daily_spending_limit,
+            )
+            resp = self.client.patch(
+                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                headers=self._headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_outbound_voice_profile_id": data.get("id") or provider_outbound_voice_profile_id,
+                "name": data.get("name") or name,
+                "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                "concurrency_limit": data.get("concurrent_call_limit"),
+                "daily_spending_limit": data.get("daily_spend_limit"),
+            }
+        except httpx.HTTPError as e:
+            response = getattr(e, "response", None)
+            provider_msg = (
+                _telnyx_error_message(response, "") if response is not None else str(e)
+            )
+            if (
+                "countries" in provider_msg.lower()
+                or "whitelisted_destinations" in provider_msg.lower()
+                or "upgrade" in provider_msg.lower()
+                or getattr(response, "status_code", None) == 403
+            ):
+                payload["whitelisted_destinations"] = ["US", "CA"]
+                try:
+                    resp = self.client.patch(
+                        f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                        headers=self._headers(),
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json().get("data", {})
+                    return {
+                        "provider_outbound_voice_profile_id": data.get("id") or provider_outbound_voice_profile_id,
+                        "name": data.get("name") or name,
+                        "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
+                        "allowed_destinations": data.get("whitelisted_destinations") or ["US", "CA"],
+                        "concurrency_limit": data.get("concurrent_call_limit"),
+                        "daily_spending_limit": data.get("daily_spend_limit"),
+                    }
+                except Exception:
+                    pass
+
+            if getattr(response, "status_code", None) in (404, 400, 422):
+                return self.create_or_get_outbound_voice_profile(
+                    name=name,
+                    fqdn_connection_id=fqdn_connection_id,
+                    allowed_destinations=["US", "CA"],
+                    concurrency_limit=concurrency_limit,
+                    daily_spending_limit=daily_spending_limit,
+                )
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to update Telnyx Outbound Voice Profile.",
+            ) from e
+
+    def get_outbound_voice_profile(
+        self, provider_outbound_voice_profile_id: str
+    ) -> dict[str, Any]:
+        """Fetch a Telnyx Outbound Voice Profile by provider id."""
+        if self.mock_mode:
+            return {
+                "provider_outbound_voice_profile_id": provider_outbound_voice_profile_id,
+                "name": "mock-outbound-profile",
+                "status": "active",
+                "allowed_destinations": default_telnyx_outbound_destinations(),
+                "concurrency_limit": 10,
+                "daily_spending_limit": "100.0",
+                "connections": [],
+            }
+        if not provider_outbound_voice_profile_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_outbound_voice_profile_id is required to fetch a Telnyx outbound voice profile.",
+            )
+        try:
+            resp = self.client.get(
+                f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_outbound_voice_profile_id": data.get("id")
+                or provider_outbound_voice_profile_id,
+                "name": data.get("name"),
+                "status": "active"
+                if data.get("enabled", data.get("active", True))
+                else "disabled",
+                "allowed_destinations": data.get("whitelisted_destinations") or [],
+                "concurrency_limit": data.get("concurrent_call_limit"),
+                "daily_spending_limit": data.get("daily_spend_limit"),
+                "connections": data.get("connections") or [],
+            }
+        except httpx.HTTPError as e:
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to fetch Telnyx Outbound Voice Profile.",
+            ) from e
+
+    def assign_phone_number_to_connection(
+        self, provider_number_id: str, connection_id: str
+    ) -> dict[str, Any]:
+        """Attach a Telnyx-owned phone number to the tenant SIP/FQDN connection."""
+        if self.mock_mode:
+            return {
+                "provider_number_id": provider_number_id,
+                "connection_id": connection_id,
+                "status": "active",
+            }
+
+        if not provider_number_id or not connection_id:
+            raise TelephonyError(
+                status=400,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="provider_number_id and connection_id are required to bind a Telnyx number.",
+            )
+
+        try:
+            resp = self.client.patch(
+                f"{TELNYX_API_BASE_URL}/phone_numbers/{provider_number_id}",
+                headers=self._headers(),
+                json={"connection_id": connection_id},
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return {
+                "provider_number_id": data.get("id") or provider_number_id,
+                "connection_id": data.get("connection_id") or connection_id,
+                "status": data.get("status", "active"),
+            }
+        except httpx.HTTPError as e:
+            logger.error(
+                "Telnyx number bind failed for %s: %s",
+                provider_number_id,
+                redact_sensitive_string(str(e)),
+            )
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message="Failed to assign Telnyx phone number to SIP connection.",
+            ) from e
+
+    def close(self):
+        if self._owned_client:
+            self.client.close()

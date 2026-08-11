@@ -1,0 +1,39 @@
+{
+  "name": "@awaazlabs-uva/telephony",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend-only AwaazLabs UVA telephony SDK for signed machine telephony API calls.",
+  "keywords": [
+    "awaazlabs",
+    "uva",
+    "telephony",
+    "hmac",
+    "backend"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

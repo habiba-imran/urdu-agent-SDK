@@ -1,72 +1,61 @@
-# AwaazLabs-UVA-Voice SDK — Client Submission Package
+﻿# AwaazLabs UVA Client Handover
 
-> Delivered by **Finova Solutions** · Confidential
-> Recipient: [Client Name]
+This folder contains the client-facing SDK handover for integrating browser voice sessions, backend agent management, and backend telephony management.
 
----
+## Folder structure
 
-## Package Contents
-
-```
-client-submission/
-│
-├── sdk/                          ← Install these packages into your application
-│   ├── README.md                 ← SDK architecture overview
-│   ├── @awaazlabs-uva/voice/               ← @awaazlabs-uva/voice  (browser SDK, zero secrets)
-│   │   ├── dist/                 ← Compiled JS + type declarations (ready to use)
-│   │   ├── src/                  ← TypeScript source (reference)
-│   │   └── package.json
-│   └── @awaazlabs-uva/agents/              ← @awaazlabs-uva/agents (server SDK, holds your HMAC secret)
-│       ├── dist/                 ← Compiled JS + type declarations (ready to use)
-│       ├── src/                  ← TypeScript source (reference)
-│       └── package.json
-│
-└── docs/
-    ├── INTEGRATION_GUIDE.md      ← Complete setup & integration documentation
-    ├── ai-integration-guide.md   ← Copy-paste prompt for AI coding assistants
-    └── credentials-template.md   ← Credential placeholders (filled by Finova)
+```text
+client-submission_v2/
+  README.md
+  docs/
+    INTEGRATION_GUIDE.md
+    credentials-template.md
+    ai-integration-guide.md
+    SDK_CAPABILITIES_REFERENCE.md
+    TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md
+  sdk/
+    README.md
+    @awaazlabs-uva/
+      voice/
+        awaazlabs-uva-voice-1.0.0.tgz
+      agents/
+        awaazlabs-uva-agents-0.1.0.tgz
+      telephony/
+        awaazlabs-uva-telephony-0.1.0.tgz
 ```
 
----
+## Packages
 
-## Where to Start
+| Package | Runtime | Purpose |
+| --- | --- | --- |
+| `@awaazlabs-uva/voice` | Browser only | Starts LiveKit/WebRTC voice sessions from your frontend. It uses a publishable key and never receives backend secrets. |
+| `@awaazlabs-uva/agents` | Backend only | Creates, lists, and updates voice agents through signed machine API calls. |
+| `@awaazlabs-uva/telephony` | Backend only | Connects Telnyx, syncs numbers, assigns numbers to agents, configures routing, checks readiness, and starts outbound calls through signed machine API calls. |
 
-| I want to… | Go to… |
-|---|---|
-| Understand the SDK architecture | [`sdk/README.md`](sdk/README.md) |
-| Follow the full step-by-step integration guide | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
-| Let my AI assistant write the integration code | [`docs/ai-integration-guide.md`](docs/ai-integration-guide.md) |
-| See what credentials I need and how they connect to code | [`docs/credentials-template.md`](docs/credentials-template.md) |
+## Recommended integration order
 
----
+1. Install the backend packages in your server application: `@awaazlabs-uva/agents` and `@awaazlabs-uva/telephony`.
+2. Store `UVA_TENANT_ID`, `UVA_HMAC_SECRET`, and the API base URLs only in backend environment variables.
+3. Use `@awaazlabs-uva/agents` to create or select the agent IDs your application will expose to the browser.
+4. Add backend session endpoints that issue short-lived voice session payloads for `@awaazlabs-uva/voice`.
+5. Install `@awaazlabs-uva/voice` in the frontend and connect using only `publishableKey`, `sessionEndpoint`, and `agentId`.
+6. Use `@awaazlabs-uva/telephony` from the backend to connect Telnyx, sync/import numbers, assign a number to an agent, configure SIP/routing resources, and check outbound readiness.
+7. Enable inbound and outbound phone workflows only after provider credentials, phone number ownership, routing, and readiness checks are complete.
 
-## Quick Install Reference
+## Install from the handover tarballs
 
-### Browser SDK — install into your **frontend** project
+Run these commands from your application package, adjusting the relative path to this handover folder:
 
 ```bash
-npm install ./sdk/@awaazlabs-uva/voice livekit-client@^2.0.0
+npm install ./client-submission_v2/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz
+npm install ./client-submission_v2/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
+npm install ./client-submission_v2/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
 ```
 
-### Server SDK — install into your **backend** project only
+The voice package has a runtime dependency on `livekit-client`; npm installs it automatically when installing the tarball.
 
-```bash
-npm install ./sdk/@awaazlabs-uva/agents
-```
+## Start here
 
-> ⚠️ **Never install `@awaazlabs-uva/agents` in a frontend project.** It holds your tenant secret.
+Read `docs/INTEGRATION_GUIDE.md` for the full implementation flow. Read `docs/SDK_CAPABILITIES_REFERENCE.md` for the full callable surface of the delivered SDKs. Use `docs/credentials-template.md` to prepare backend and frontend environment variables before writing application code.
 
----
-
-## Security Notice
-
-**Do not share this package publicly.** It contains structural documentation of a private API.
-Your Finova-issued credentials, when added to your `.env` files, must be treated as secrets:
-
-- Never commit `.env` files to version control
-- Never include `UVA_HMAC_SECRET` in any frontend bundle
-- Refer to the Security Checklist in `docs/INTEGRATION_GUIDE.md` before deploying to production
-
----
-
-*Questions? Contact your Finova Solutions account manager.*
+If you are integrating telephony, also read `docs/TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md` before building purchase, number-assignment, inbound, or outbound call flows. That note explains the tenant-scoped uniqueness rules, idempotency expectations, backend-only Telnyx key handling, and outbound-readiness constraints that affect production behavior.

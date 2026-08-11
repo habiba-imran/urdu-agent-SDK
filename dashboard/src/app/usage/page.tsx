@@ -25,9 +25,68 @@ function kindLabel(kind: string): string {
   return KIND_LABELS[kind] ?? kind;
 }
 
+/** "2026-07-01" -> "July 2026". Parses the Y/M/D components directly rather than
+ *  `new Date(isoDateString)` (which parses as UTC midnight) so a viewer west of UTC doesn't see
+ *  the previous month — this is a label for a value the backend already computed in Postgres.
+ *
+ *  Guards against a missing/malformed value even though the type says `string`: an SWR cache
+ *  entry fetched before this field existed on the API (a stale browser tab spanning a backend
+ *  deploy) can hand this a real `undefined` at runtime that the type system never sees. A label
+ *  falling back to "this month" beats crashing the whole page over date formatting. */
+function monthLabel(periodStartIso: string | undefined): string {
+  const [year, month] = (periodStartIso ?? '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return 'this month';
+  }
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Zero-fills every day from the 1st of the month through TODAY (not the rest of the month —
+ *  there is no usage to show for days that have not happened yet). Without this, the chart only
+ *  plotted days that had at least one usage_events row, so on day 28 of the month with real
+ *  traffic starting on day 27 it rendered a 2-bar chart instead of a 28-bar one — visually
+ *  indistinguishable from "this endpoint is broken and only returns 2 days." `periodEnd` (the
+ *  exclusive 1st of next month) is only a safety cap in case a client clock runs ahead of the
+ *  server's; it should never be reached in practice. */
+function fillMissingDays(
+  data: ReadonlyArray<{ day: string; total_qty: number }>,
+  periodStart: string,
+  periodEnd: string,
+): Array<{ day: string; total_qty: number }> {
+  const [sy, sm, sd] = periodStart.split('-').map(Number);
+  const [ey, em, ed] = periodEnd.split('-').map(Number);
+  if (![sy, sm, sd, ey, em, ed].every(Number.isFinite)) {
+    return [...data].sort((a, b) => a.day.localeCompare(b.day));
+  }
+
+  const start = new Date(sy, sm - 1, sd);
+  const periodEndDate = new Date(ey, em - 1, ed);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const end = tomorrow < periodEndDate ? tomorrow : periodEndDate;
+
+  const byDay = new Map(data.map((d) => [d.day, d.total_qty]));
+  const out: Array<{ day: string; total_qty: number }> = [];
+  for (const d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+    const iso = isoDate(d);
+    out.push({ day: iso, total_qty: byDay.get(iso) ?? 0 });
+  }
+  return out;
+}
+
 function DailyBarChart({ data }: { data: Array<{ day: string; total_qty: number }> }) {
   if (data.length === 0) {
-    return <p className="text-sm text-muted-foreground">No usage recorded in this window.</p>;
+    return <p className="text-sm text-muted-foreground">No usage recorded this month.</p>;
   }
 
   const max = Math.max(1, ...data.map((d) => d.total_qty));
@@ -66,8 +125,15 @@ export default function UsagePage() {
       list.push({ day: row.day, total_qty: row.total_qty });
       map.set(row.kind, list);
     }
-    map.forEach((list) => {
-      list.sort((a, b) => a.day.localeCompare(b.day));
+    const periodStart = usage?.period_start;
+    const periodEnd = usage?.period_end;
+    map.forEach((list, kind) => {
+      map.set(
+        kind,
+        periodStart && periodEnd
+          ? fillMissingDays(list, periodStart, periodEnd)
+          : [...list].sort((a, b) => a.day.localeCompare(b.day)),
+      );
     });
     return map;
   }, [usage]);
@@ -87,14 +153,18 @@ export default function UsagePage() {
       ['Day', 'Kind', 'Quantity'],
       usage.daily.map((row) => [row.day, kindLabel(row.kind), String(row.total_qty)]),
     );
-    downloadCsv(`usage-${usage.window_days}d.csv`, csv);
+    downloadCsv(`usage-${usage.period_start ?? 'export'}.csv`, csv);
   };
 
   return (
     <div>
       <PageHeader
         title="Usage"
-        description="Provider usage and quota consumption for the last 30 days."
+        description={
+          usage
+            ? `Provider usage and quota consumption for ${monthLabel(usage.period_start)}.`
+            : 'Provider usage and quota consumption for the current calendar month.'
+        }
         actions={
           usage ? (
             <Button variant="secondary" onClick={handleExport}>
@@ -176,11 +246,13 @@ export default function UsagePage() {
           <Card>
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-semibold text-foreground">
-                Daily usage (last {usage.window_days} days)
+                Daily usage — {monthLabel(usage.period_start)}
               </h2>
 
               {kinds.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No usage recorded in this window.</p>
+                <p className="text-sm text-muted-foreground">
+                  No usage recorded this month.
+                </p>
               ) : (
                 <Tabs value={activeKind} onValueChange={setActiveKind}>
                   <TabsList label="Usage kind" className="mb-4">

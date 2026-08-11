@@ -43,14 +43,19 @@ class AgentUserdata:
     tenant_id: str
     agent_id: str
     room_name: str
+    # Set by end_conversation_summary so the shutdown path can record WHY the call ended.
+    # Without it an agent-ended call lands in the DB as LiveKit's generic "user_initiated"
+    # (its term for "closed via API"), which reads on the dashboard as if the caller hung up.
+    ended_by_agent: bool = False
 
 
 @function_tool
 async def end_conversation_summary(
     ctx: RunContext[AgentUserdata], summary: str
 ) -> dict:
-    """Call this once, at the end of the conversation, with a one-sentence summary of what was
-    discussed. Then say a warm closing line to the caller.
+    """Call this ONLY when the conversation is genuinely over, AFTER you have already said your
+    closing line to the caller. This HANGS UP — the caller cannot say anything else once you
+    call it, so never call it mid-conversation or to acknowledge something.
 
     Args:
         summary: One sentence describing what the conversation was about.
@@ -61,6 +66,24 @@ async def end_conversation_summary(
             "update sessions set summary = %s where room_name = %s and tenant_id = %s",
             (summary, ud.room_name, ud.tenant_id),
         )
+
+    # Actually END the call. Before this, the tool only wrote a summary string despite its name:
+    # the session stayed open, the agent sat there after its goodbye, and the session row stayed
+    # `ended_at IS NULL` — so the dashboard kept showing a live call until the caller happened to
+    # hang up (or forever, if they just closed the tab).
+    #
+    # `AgentSession.shutdown(drain=True)` is the public API for this (agent_session.py L1006-1007
+    # -> `_close_soon(reason=USER_INITIATED, drain=drain)`); `drain=True` lets in-flight speech
+    # finish via `AgentActivity.drain()` rather than cutting the audio mid-word. It is sync — it
+    # schedules the close and returns, so this tool still returns its result to the LLM normally.
+    #
+    # Closing the session is what makes the rest work: it emits AgentSession's "close" event,
+    # which worker/main.py turns into `JobContext.shutdown()`, which fires the shutdown callbacks
+    # that close the session row and release the concurrency slot.
+    ud.ended_by_agent = True
+    session = getattr(ctx, "session", None)
+    if session is not None:
+        session.shutdown(drain=True)
     return {"status": "saved"}
 
 

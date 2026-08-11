@@ -27,6 +27,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build",
     "prepublishOnly": "npm run build && npm run lint"
   },
   "dependencies": {},

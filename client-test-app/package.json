@@ -1,0 +1,27 @@
+{
+  "name": "uva-client-test-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local client integration test app for AwaazLabs UVA SDK packages.",
+  "scripts": {
+    "install:sdks": "npm install ../client-submission_v2/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz ../client-submission_v2/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz ../client-submission_v2/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz",
+    "backend": "node backend/server.js",
+    "frontend": "vite",
+    "build": "vite build",
+    "dev": "npx concurrently \"npm run backend\" \"npm run frontend\""
+  },
+  "dependencies": {
+    "@awaazlabs-uva/agents": "file:../client-submission_v2/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz",
+    "@awaazlabs-uva/telephony": "file:../client-submission_v2/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz",
+    "@awaazlabs-uva/voice": "file:../client-submission_v2/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "serve": "^14.2.3",
+    "vite": "^8.2.0"
+  }
+}

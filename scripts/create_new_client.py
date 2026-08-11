@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# path: scripts/create_new_client.py
 """Provision a new Client Tenant for Finova Solutions Urdu Voice Agent Platform.
 
 Usage:
@@ -23,7 +24,9 @@ from control_plane.secrets import secret_hash  # noqa: E402
 from dbconn import conn_kwargs  # noqa: E402
 
 
-def create_tenant(name: str, max_concurrent: int = 20, max_minutes_month: int = 10000) -> dict:
+def create_tenant(
+    name: str, max_concurrent: int = 20, max_minutes_month: int = 10000
+) -> dict:
     tid = str(uuid.uuid4())
     raw_secret = secrets.token_urlsafe(32)
     hashed_secret = secret_hash(raw_secret)
@@ -56,10 +59,22 @@ def create_tenant(name: str, max_concurrent: int = 20, max_minutes_month: int = 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Provision a new client tenant in Finova platform.")
+    parser = argparse.ArgumentParser(
+        description="Provision a new client tenant in Finova platform."
+    )
     parser.add_argument("name", help="Name of the client tenant business")
-    parser.add_argument("--max-concurrent", type=int, default=20, help="Max concurrent sessions allowed (default: 20)")
-    parser.add_argument("--max-minutes", type=int, default=10000, help="Max monthly minutes allowed (default: 10000)")
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=20,
+        help="Max concurrent sessions allowed (default: 20)",
+    )
+    parser.add_argument(
+        "--max-minutes",
+        type=int,
+        default=10000,
+        help="Max monthly minutes allowed (default: 10000)",
+    )
 
     args = parser.parse_args()
 

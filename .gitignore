@@ -1,8 +1,9 @@
-.env
+﻿.env
 .env.*
 !.env.example
 __pycache__/
 .venv/
+.venv312/
 node_modules/
 dist/
 .next/
@@ -16,3 +17,8 @@ voice-picker/previews/
 state/admin_bootstrap.local.md
 hamza/
 client_deliverables/
+/hamza docs
+client-test-app/
+
+# CodeContext — auto-generated LLM documentation (do not commit)
+codebase-context/

@@ -18,7 +18,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build"
   },
   "dependencies": {
     "livekit-client": "^2.0.0"
