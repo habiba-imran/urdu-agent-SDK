@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import useSWR from 'swr';
-import { Copy, Check, Download } from 'lucide-react';
+import { Copy, Check, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { type PortalSession } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
@@ -119,6 +119,8 @@ function CopyableId({
   );
 }
 
+const PAGE_SIZE = 15;
+
 export default function SessionsPage() {
   const { data: sessions, isLoading: loading, error } = useSWR(
     swrKeys.sessions,
@@ -126,6 +128,16 @@ export default function SessionsPage() {
   );
   const [activeSession, setActiveSession] = useState<PortalSession | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil((sessions?.length ?? 0) / PAGE_SIZE));
+  // Clamp rather than reset on every revalidation -- SWR hands back a new array reference on
+  // each background refetch even when the content is unchanged, so resetting unconditionally
+  // would kick the user back to page 1 while they're reading page 3.
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+  const paginatedSessions = (sessions ?? []).slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const handleCopy = (field: string, value: string) => {
     navigator.clipboard.writeText(value);
@@ -193,7 +205,7 @@ export default function SessionsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(sessions ?? []).map((session) => (
+                {paginatedSessions.map((session) => (
                   <TableRow key={session.id} onClick={() => setActiveSession(session)}>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       <RowOpenButton
@@ -228,6 +240,38 @@ export default function SessionsPage() {
               </TableBody>
             </Table>
           )}
+
+          {!loading && (sessions ?? []).length > PAGE_SIZE ? (
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+              <span className="text-xs text-muted-foreground">
+                Showing {(page - 1) * PAGE_SIZE + 1}–
+                {Math.min(page * PAGE_SIZE, (sessions ?? []).length)} of {(sessions ?? []).length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

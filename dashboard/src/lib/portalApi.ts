@@ -11,13 +11,43 @@ export type PortalAgent = {
   created_at: string | null;
   total_agent_sec?: number;
   // Advanced parameters
-  temperature?: number;
   top_p?: number;
   phone_number?: string | null;
   phone_number_id?: string | null;
-  system_framing_mode?: 'strict' | 'relaxed' | 'conversational' | string;
   vad_sensitivity?: number;
   agent_description?: string;
+  // Multi-provider / language (ADR-036) — see provider_capabilities.py for what's enabled.
+  agent_language?: string;
+  stt_provider?: string;
+  stt_model?: string;
+  stt_options?: Record<string, unknown>;
+  llm_provider?: string;
+  llm_options?: Record<string, unknown>;
+  tts_provider?: string;
+  tts_voice_id?: string | null;
+  tts_options?: Record<string, unknown>;
+};
+
+// ── Provider capabilities (ADR-036) — which STT/LLM/TTS providers + models/voices are enabled
+// per agent_language. Mirrors test-app/frontend/src/lib/api.ts's ProviderCapabilities exactly,
+// since both consume the same tenant_portal_api response shape (machine vs portal auth only).
+export type ProviderCapabilityEntry = {
+  state: 'enabled';
+  models?: string[];
+  defaultModel?: string;
+  voices?: string[];
+  defaultVoice?: string | null;
+};
+
+export type LanguageCapabilities = {
+  label: string;
+  stt?: Record<string, ProviderCapabilityEntry>;
+  llm?: Record<string, ProviderCapabilityEntry>;
+  tts?: Record<string, ProviderCapabilityEntry>;
+};
+
+export type ProviderCapabilities = {
+  languages: Record<string, LanguageCapabilities>;
 };
 
 export type PortalCredentials = {
@@ -128,16 +158,25 @@ export function getAgentById(agentId: string) {
   return request<PortalAgent>(`/portal/agents/${agentId}`);
 }
 
-export function createAgent(body: {
-  name: string;
-  prompt: string;
-  voice_id: string;
-  llm_model: string;
-  temperature?: number;
-  top_p?: number;
-  system_framing_mode?: string;
-  agent_description?: string;
-}) {
+export type AgentProviderFields = {
+  agent_language?: string;
+  stt_provider?: string;
+  stt_model?: string;
+  llm_provider?: string;
+  tts_provider?: string;
+  tts_voice_id?: string;
+};
+
+export function createAgent(
+  body: {
+    name: string;
+    prompt: string;
+    voice_id: string;
+    llm_model: string;
+    top_p?: number;
+    agent_description?: string;
+  } & AgentProviderFields,
+) {
   return request<PortalAgent>("/portal/agents", {
     method: "POST",
     body: JSON.stringify(body),
@@ -151,11 +190,9 @@ export function updateAgent(
     prompt?: string;
     voice_id?: string;
     llm_model?: string;
-    temperature?: number;
     top_p?: number;
-    system_framing_mode?: string;
     agent_description?: string;
-  },
+  } & AgentProviderFields,
 ) {
   return request<PortalAgent>(`/portal/agents/${agentId}`, {
     method: "PATCH",
@@ -167,6 +204,10 @@ export function deleteAgent(agentId: string) {
   return request<{ success: boolean }>(`/portal/agents/${agentId}`, {
     method: "DELETE",
   });
+}
+
+export function getProviderCapabilities() {
+  return request<ProviderCapabilities>("/portal/provider-capabilities");
 }
 
 export function getCredentials() {

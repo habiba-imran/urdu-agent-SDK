@@ -3,18 +3,29 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import useSWR from 'swr';
-import { ChevronDown, ChevronLeft, Copy, Mic, Settings2, Sliders } from 'lucide-react';
+import { ChevronLeft, Copy, Mic, Settings2, Volume2 } from 'lucide-react';
 
 import { updateAgent } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { Select, type SelectOption } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { VoiceAvatar } from '@/components/VoiceAvatar';
 import { VoiceCatalogueGrid } from '@/components/VoiceCatalogueGrid';
 import { cn } from '@/lib/utils';
+
+function capitalize(value: string): string {
+  return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function providerOptions(
+  layer: Record<string, { models?: string[]; voices?: string[] }> | undefined,
+): SelectOption[] {
+  return Object.keys(layer ?? {}).map((provider) => ({ value: provider, label: capitalize(provider) }));
+}
 
 export default function AgentDetailPage({
   params,
@@ -30,19 +41,30 @@ export default function AgentDetailPage({
     isLoading: agentsLoading,
     mutate: mutateAgents,
   } = useSWR(swrKeys.agents, swrFetchers.agents);
-  const { data: voices } = useSWR(swrKeys.voices, swrFetchers.voices);
+  const { data: capabilities } = useSWR(
+    swrKeys.providerCapabilities,
+    swrFetchers.providerCapabilities,
+  );
 
   const agent = agents?.find((a) => a.id === id);
 
-  const [mode, setMode] = useState<'basic' | 'advanced'>('basic');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [voiceId, setVoiceId] = useState('');
-  const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
-  const [temperature, setTemperature] = useState(0.7);
-  const [systemFraming, setSystemFraming] = useState('strict');
+  // Real value always comes from the seeded agent record below (llm_model is a required field
+  // on every agent) -- left empty rather than baking in a stale Uplift-only model name.
+  const [llmModel, setLlmModel] = useState('');
+  // agent_language is create-only (same rule test-app's AgentForm enforces) — seeded here but
+  // never changed by this page, since changing it would invalidate stt/llm/tts provider+voice
+  // choices that were made for the OTHER language.
+  const [language, setLanguage] = useState('ur');
+  const [sttProvider, setSttProvider] = useState('');
+  const [sttModel, setSttModel] = useState('');
+  const [llmProvider, setLlmProvider] = useState('');
+  const [ttsProvider, setTtsProvider] = useState('');
 
-  const [showVoicePicker, setShowVoicePicker] = useState(false);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -55,19 +77,46 @@ export default function AgentDetailPage({
     seeded.current = true;
     setName(agent.name);
     setPrompt(agent.prompt);
-    setVoiceId(agent.voice_id);
-    setLlmModel(agent.llm_model || 'gemini-2.5-flash');
-    setTemperature(agent.temperature ?? 0.7);
-    setSystemFraming(agent.system_framing_mode || 'strict');
+    setVoiceId(agent.tts_voice_id || agent.voice_id);
+    setLlmModel(agent.llm_model);
+    setLanguage(agent.agent_language || 'ur');
+    setSttProvider(agent.stt_provider || '');
+    setSttModel(agent.stt_model || '');
+    setLlmProvider(agent.llm_provider || '');
+    setTtsProvider(agent.tts_provider || '');
   }, [agent]);
+
+  const langEntry = capabilities?.languages[language];
+  const sttModelOptions: SelectOption[] = (langEntry?.stt?.[sttProvider]?.models ?? []).map((m) => ({
+    value: m,
+    label: m,
+  }));
+  const llmModelOptions: SelectOption[] = (langEntry?.llm?.[llmProvider]?.models ?? []).map((m) => ({
+    value: m,
+    label: m,
+  }));
+  const allowedVoiceIds = langEntry?.tts?.[ttsProvider]?.voices ?? [];
+
+  const handleSttProviderChange = (next: string) => {
+    setSttProvider(next);
+    setSttModel(langEntry?.stt?.[next]?.defaultModel ?? '');
+  };
+
+  const handleLlmProviderChange = (next: string) => {
+    setLlmProvider(next);
+    setLlmModel(langEntry?.llm?.[next]?.defaultModel ?? '');
+  };
+
+  const handleTtsProviderChange = (next: string) => {
+    setTtsProvider(next);
+    setVoiceId(langEntry?.tts?.[next]?.defaultVoice ?? '');
+  };
 
   useEffect(() => {
     return () => {
       if (idCopyTimeoutRef.current) clearTimeout(idCopyTimeoutRef.current);
     };
   }, []);
-
-  const pickedVoice = voices?.find((v) => v.id === voiceId);
 
   const handleCopyAgentId = () => {
     if (!agent) return;
@@ -86,8 +135,12 @@ export default function AgentDetailPage({
         prompt,
         voice_id: voiceId,
         llm_model: llmModel,
-        temperature,
-        system_framing_mode: systemFraming,
+        agent_language: language,
+        stt_provider: sttProvider,
+        stt_model: sttModel,
+        llm_provider: llmProvider,
+        tts_provider: ttsProvider,
+        tts_voice_id: voiceId,
       });
       await mutateAgents(
         (current) => (current ?? []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a)),
@@ -163,29 +216,7 @@ export default function AgentDetailPage({
           </button>
         </div>
 
-        {/* Mode Toggle & Test Action */}
         <div className="flex items-center gap-3">
-          <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5">
-            <button
-              onClick={() => setMode('basic')}
-              className={cn(
-                'rounded px-3 py-1 text-xs font-medium transition-colors',
-                mode === 'basic' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              Basic View
-            </button>
-            <button
-              onClick={() => setMode('advanced')}
-              className={cn(
-                'rounded px-3 py-1 text-xs font-medium transition-colors flex items-center gap-1',
-                mode === 'advanced' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Sliders className="h-3 w-3" /> Advanced View
-            </button>
-          </div>
-
           <Button
             variant="secondary"
             onClick={() => router.push(`/test-studio?agentId=${agent.id}`)}
@@ -220,71 +251,25 @@ export default function AgentDetailPage({
               />
             </div>
 
-            <div className="flex min-w-0 flex-1 basis-0 flex-col gap-1.5">
-              <label className="text-sm font-medium text-muted-foreground">Assigned Voice</label>
-              <button
-                type="button"
-                onClick={() => setShowVoicePicker(true)}
-                className={cn(inputClassName, 'flex h-9 items-center justify-between gap-2 text-left hover:bg-muted/40')}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  {pickedVoice ? (
-                    <VoiceAvatar name={pickedVoice.displayName} gender={pickedVoice.gender} seed={pickedVoice.id} size={20} />
-                  ) : null}
-                  <span className="truncate">{pickedVoice ? pickedVoice.displayName : voiceId}</span>
-                </span>
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              </button>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-muted-foreground">Settings</label>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => setShowVoiceSettings(true)}>
+                  <Volume2 className="mr-1.5 h-4 w-4" aria-hidden="true" /> Voice Settings
+                </Button>
+                <Button variant="secondary" onClick={() => setShowAdvancedSettings(true)}>
+                  <Settings2 className="mr-1.5 h-4 w-4" aria-hidden="true" /> Advanced Settings
+                </Button>
+              </div>
             </div>
           </div>
 
-          {/* Advanced Mode Controls */}
-          {mode === 'advanced' && (
-            <div className="grid gap-4 sm:grid-cols-3 rounded-lg border border-border bg-muted/20 p-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">LLM Model Engine</label>
-                <select
-                  value={llmModel}
-                  onChange={(e) => setLlmModel(e.target.value)}
-                  className={cn(inputClassName, 'h-9 text-xs')}
-                >
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast Low-Latency)</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Deep Reasoning)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Temperature: {temperature}</label>
-                <input
-                  type="range"
-                  min="0.0"
-                  max="1.0"
-                  step="0.05"
-                  value={temperature}
-                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  className="w-full h-9 cursor-pointer accent-primary"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">System Framing Mode</label>
-                <select
-                  value={systemFraming}
-                  onChange={(e) => setSystemFraming(e.target.value)}
-                  className={cn(inputClassName, 'h-9 text-xs')}
-                >
-                  <option value="strict">Strict (Strict Safety Bounds)</option>
-                  <option value="relaxed">Relaxed (Natural Flow)</option>
-                </select>
-              </div>
-            </div>
-          )}
-
           <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Urdu System Instructions & Prompt</label>
+            <label className="text-sm font-medium text-muted-foreground">System Instructions & Prompt</label>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              dir="auto"
               className={cn(inputClassName, 'flex-1 resize-none font-mono text-sm leading-relaxed')}
             />
           </div>
@@ -308,15 +293,115 @@ export default function AgentDetailPage({
         </CardContent>
       </Card>
 
-      <Modal open={showVoicePicker} onOpenChange={setShowVoicePicker} title="Select Urdu Voice">
-        <VoiceCatalogueGrid
-          mode="select"
-          selectedVoiceId={voiceId}
-          onSelect={(voice) => {
-            setVoiceId(voice.id);
-            setShowVoicePicker(false);
-          }}
-        />
+      <Modal
+        open={showVoiceSettings}
+        onOpenChange={setShowVoiceSettings}
+        title="Voice Settings"
+        className="max-w-3xl"
+        footer={
+          <div className="flex justify-end">
+            <Button onClick={() => setShowVoiceSettings(false)}>Done</Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Text-to-speech provider</label>
+            <Select
+              aria-label="TTS provider"
+              value={ttsProvider}
+              onValueChange={handleTtsProviderChange}
+              options={providerOptions(langEntry?.tts)}
+              placeholder="TTS provider"
+              className="w-full sm:w-64"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Voice</label>
+            <VoiceCatalogueGrid
+              mode="select"
+              selectedVoiceId={voiceId}
+              onSelect={(voice) => setVoiceId(voice.id)}
+              allowedVoiceIds={allowedVoiceIds}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showAdvancedSettings}
+        onOpenChange={setShowAdvancedSettings}
+        title="Advanced Settings"
+        footer={
+          <div className="flex justify-end">
+            <Button onClick={() => setShowAdvancedSettings(false)}>Done</Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Language</label>
+            <div className={cn(inputClassName, 'flex h-9 items-center bg-muted text-xs text-muted-foreground')}>
+              <Badge variant="outline">{language.toUpperCase()}</Badge>
+              <span className="ml-2">set at creation, not editable</span>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Speech-to-text provider</label>
+              <Select
+                aria-label="STT provider"
+                value={sttProvider}
+                onValueChange={handleSttProviderChange}
+                options={providerOptions(langEntry?.stt)}
+                placeholder="STT provider"
+                className="w-full"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Speech-to-text model</label>
+              <Select
+                aria-label="STT model"
+                value={sttModel}
+                onValueChange={setSttModel}
+                options={sttModelOptions}
+                placeholder="STT model"
+                disabled={sttModelOptions.length === 0}
+                className="w-full"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Language model provider</label>
+              <Select
+                aria-label="LLM provider"
+                value={llmProvider}
+                onValueChange={handleLlmProviderChange}
+                options={providerOptions(langEntry?.llm)}
+                placeholder="LLM provider"
+                className="w-full"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Language model</label>
+              <Select
+                aria-label="LLM model"
+                value={llmModel}
+                onValueChange={setLlmModel}
+                options={llmModelOptions}
+                placeholder="LLM model"
+                disabled={llmModelOptions.length === 0}
+                className="w-full"
+              />
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );
