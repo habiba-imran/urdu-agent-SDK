@@ -47,8 +47,13 @@ export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 
 export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface TranscriptEvent {
+  /** Stable per-segment id from LiveKit — the same id recurs with updated `text`/`final` as a
+   *  segment goes from interim to final. Use it to replace, not append, matching updates. */
+  id: string;
   text: string;
   final: boolean;
+  /** 'user' for the local mic's own transcript, 'agent' for anything from a remote participant. */
+  speaker: 'user' | 'agent';
 }
 
 export interface MetricsEvent {
@@ -137,6 +142,17 @@ export class AwaazLabsUvaVoice {
 
   get isConnected(): boolean {
     return this.state === 'connected';
+  }
+
+  /** Whether the local microphone track is currently enabled. `false` when not connected. */
+  get isMicMuted(): boolean {
+    return this.room ? !this.room.localParticipant.isMicrophoneEnabled : false;
+  }
+
+  /** Enable/disable the local microphone track. No-op if not connected. */
+  async setMicMuted(muted: boolean): Promise<void> {
+    if (!this.room) return;
+    await this.room.localParticipant.setMicrophoneEnabled(!muted);
   }
 
   async connect(opts: ConnectOptions): Promise<void> {
@@ -262,9 +278,10 @@ export class AwaazLabsUvaVoice {
 
     room.on(
       RoomEvent.TranscriptionReceived,
-      (segments: TranscriptionSegment[]) => {
+      (segments: TranscriptionSegment[], participant?: Participant) => {
+        const speaker: 'user' | 'agent' = participant?.isLocal ? 'user' : 'agent';
         for (const seg of segments) {
-          this.emit('transcript', { text: seg.text, final: seg.final });
+          this.emit('transcript', { id: seg.id, text: seg.text, final: seg.final, speaker });
         }
       },
     );
@@ -407,7 +424,21 @@ export class AwaazLabsUvaVoice {
   }
 
   private resolveRefreshEndpoint(): string {
-    if (this.session?.refreshUrl) return this.session.refreshUrl;
+    if (this.session?.refreshUrl) {
+      // A relative refreshUrl (e.g. control_plane's own "/v1/session/refresh", meant to be
+      // rewritten by a proxying host backend before it ever reaches a browser — see
+      // examples/host-backend's resolveRefreshUrl()) must resolve against the endpoint that
+      // actually served it (sessionEndpoint), not the current page's origin. A bare
+      // fetch('/v1/session/refresh') from the browser would otherwise hit the PAGE's own
+      // origin, which has no such route. Already-absolute URLs pass through `new URL()`
+      // unchanged regardless of the base, so this is a no-op for well-behaved host backends
+      // that already rewrite it themselves.
+      try {
+        return new URL(this.session.refreshUrl, this.options.sessionEndpoint).toString();
+      } catch {
+        return this.session.refreshUrl;
+      }
+    }
     if (this.options.refreshEndpoint) return this.options.refreshEndpoint;
     if (this.options.sessionEndpoint.endsWith('/v1/session')) {
       return `${this.options.sessionEndpoint}/refresh`;

@@ -20,6 +20,19 @@ source, not invented).
 Requires RIME_API_KEY (env var, or api_key= kwarg) — the plugin itself raises a clear ValueError
 if neither is set, checked eagerly at construction (same pattern as every other provider adapter
 in this repo).
+
+`use_websocket=True` — the plugin's own default is `False` (one-shot REST synthesis over
+`RIME_BASE_URL`), which silently disables its real-time `.stream()` interface entirely (the
+plugin raises "Rime TTS streaming requires use_websocket=True at construction time" if
+AgentSession ever calls it in that mode). Left at the default during Phase 6f, this meant every
+Rime turn actually went through the one-shot `.synthesize()` path — AgentSession has to wait for
+a full sentence/response, fire one blocking REST call per chunk, then stitch the separate clips
+together, instead of streaming audio incrementally as the LLM generates text. That reproduces
+exactly the "laggy, sometimes stuttering/glitching" reports users hit live — the human-observed
+"laggy start" flagged during Phase 6f's own live test (attributed then to a one-off cold start,
+never actually root-caused) was this same defect. `use_websocket=True` switches to
+`RIME_WS_BASE_URL` and enables the streaming path, matching how Cartesia/ElevenLabs/Uplift already
+behave.
 """
 
 from __future__ import annotations
@@ -37,4 +50,4 @@ def build(voice_id: str, language: str) -> Any:
             f"no Rime language code mapping for agent_language={language!r}"
         )
 
-    return rime.TTS(speaker=voice_id, lang=_LANG_CODES[language])
+    return rime.TTS(speaker=voice_id, lang=_LANG_CODES[language], use_websocket=True)
