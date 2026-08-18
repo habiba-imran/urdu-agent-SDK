@@ -27,7 +27,11 @@ from .spoken_sanitize import sanitizer_for_provider
 from .providers.registry import build_components
 from .providers.types import AgentRuntimeConfig
 from .session_opening import apply_session_opening
-from .stale_jobs import reject_stale_job_request, wait_for_session_participant
+from .stale_jobs import (
+    abandon_stale_job_if_needed,
+    reject_stale_job_request,
+    wait_for_session_participant,
+)
 from .tools import FIXED_TOOLS, AgentUserdata
 
 # OUR fixed operating instructions (Uplift default). Cartesia/Rime agents get an extended block
@@ -155,6 +159,23 @@ async def build_session(
         audio_channel=audio_channel,
     )
     components = build_components(runtime_cfg)
+    resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
+    logger.info(
+        "session pipeline room=%s agent=%s llm=%s/%s tts=%s voice=%s first_speaker=%s",
+        room_name,
+        cfg.agent_id,
+        cfg.llm_provider,
+        resolved_llm_model,
+        cfg.tts_provider,
+        internal_voice_id,
+        cfg.first_speaker,
+    )
+    if cfg.llm_model != resolved_llm_model:
+        logger.info(
+            "llm model remapped requested=%s runtime=%s",
+            cfg.llm_model,
+            resolved_llm_model,
+        )
     if cfg.tts_provider == "cartesia":
         from worker.providers.tts.cartesia_options import CARTESIA_AUDIO_PROFILES
 
@@ -268,6 +289,63 @@ def _load_vad() -> Any:
     return silero.VAD.load()
 
 
+def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) -> None:
+    """Log LLM/TTS pipeline activity and surface provider errors that were previously silent."""
+    from livekit.agents.log import logger
+
+    def _on_error(ev: Any) -> None:
+        err = getattr(ev, "error", ev)
+        src = getattr(ev, "source", None)
+        provider = getattr(src, "provider", type(src).__name__ if src else "unknown")
+        model = getattr(src, "model", "")
+        if isinstance(err, BaseException):
+            logger.error(
+                "session pipeline error room=%s source=%s/%s: %s",
+                room_name,
+                provider,
+                model,
+                err,
+                exc_info=err,
+            )
+        else:
+            logger.error(
+                "session pipeline error room=%s source=%s/%s: %r",
+                room_name,
+                provider,
+                model,
+                err,
+            )
+
+    def _on_agent_state(ev: Any) -> None:
+        logger.info(
+            "agent state room=%s %s -> %s",
+            room_name,
+            getattr(ev, "old_state", None),
+            getattr(ev, "new_state", None),
+        )
+
+    def _on_conversation_item(ev: Any) -> None:
+        item = getattr(ev, "item", None)
+        role = getattr(item, "role", None)
+        if role != "assistant":
+            return
+        text = (getattr(item, "text_content", None) or "")[:200]
+        logger.info("assistant turn room=%s text=%r", room_name, text)
+
+    def _on_speech_created(ev: Any) -> None:
+        logger.info(
+            "speech created room=%s source=%s user_initiated=%s",
+            room_name,
+            getattr(ev, "source", None),
+            getattr(ev, "user_initiated", None),
+        )
+
+    session.on("error", _on_error)
+    session.on("agent_state_changed", _on_agent_state)
+    session.on("conversation_item_added", _on_conversation_item)
+    session.on("speech_created", _on_speech_created)
+
+
 async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     """LiveKit job entrypoint.
 
@@ -276,6 +354,9 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     2. SIP participant attributes → telephony DB lookup (inbound PSTN)
     3. Joining participant JWT metadata from Phase-2 mint (browser WebRTC)
     """
+    if await abandon_stale_job_if_needed(ctx):
+        return
+
     try:
         participant = await wait_for_session_participant(ctx)
     except (asyncio.TimeoutError, RuntimeError):
@@ -546,6 +627,14 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     def _on_session_close(ev: Any) -> None:
         from livekit.agents.log import logger
 
+        close_error = getattr(ev, "error", None)
+        if close_error is not None:
+            logger.error(
+                "agent session closed with error room=%s: %r",
+                ctx.room.name,
+                close_error,
+            )
+
         reason = getattr(getattr(ev, "reason", None), "value", None) or "session_closed"
         # An agent-ended call closes via AgentSession.shutdown(), whose CloseReason is the
         # generic USER_INITIATED ("closed via API") — indistinguishable from any other
@@ -562,6 +651,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         ctx.shutdown(reason=reason)
 
     session.on("close", _on_session_close)
+    _wire_session_diagnostics(session, cfg, ctx.room.name)
 
     await session.start(agent, room=ctx.room)
     # (P3-T07's "emit usage_events on session end" NOTE that stood here is now DONE — implemented

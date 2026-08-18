@@ -193,19 +193,30 @@ async def cleanup_livekit_room(room_name: str) -> None:
 
 
 async def reject_stale_job_request(req: JobRequest) -> None:
-    """LiveKit ``request_fnc`` hook: reject orphaned jobs before room connect."""
+    """LiveKit ``request_fnc`` hook: accept immediately, then filter stale jobs in entrypoint.
+
+    LiveKit expects ``accept()`` within ~10s of assignment. A synchronous DB round-trip here
+    (plus cold job-runner startup on Windows THREAD mode) was causing ``AssignmentTimeoutError``
+    and half-initialized sessions where STT worked but LLM never replied. Stale/orphan checks
+    run in ``abandon_stale_job_if_needed()`` at entrypoint start, before ``ctx.connect()``.
+    """
+    await req.accept()
+
+
+async def abandon_stale_job_if_needed(ctx: Any) -> bool:
+    """Drop stale jobs after accept, before room connect. Returns True if abandoned."""
     from livekit.agents.log import logger
 
-    room_name = req.room.name
+    room_name = ctx.room.name
     reject, reason = await asyncio.to_thread(evaluate_session_for_job, room_name)
-    if reject:
-        logger.info("rejecting stale job for room %s (%s)", room_name, reason)
-        await asyncio.to_thread(close_open_session, room_name, end_reason=reason)
-        await cleanup_livekit_room(room_name)
-        await req.reject(terminate=True)
-        return
+    if not reject:
+        return False
 
-    await req.accept()
+    logger.info("abandoning stale job for room %s (%s)", room_name, reason)
+    await asyncio.to_thread(close_open_session, room_name, end_reason=reason)
+    await cleanup_livekit_room(room_name)
+    ctx.shutdown(reason=reason)
+    return True
 
 
 async def wait_for_session_participant(ctx: Any) -> Any:
