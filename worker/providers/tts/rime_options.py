@@ -1,8 +1,12 @@
 """Rime ``tts_options`` schema and build-time defaults (Phase B humanization).
 
 Stored ``agents.tts_options`` holds tenant overrides only (may be ``{}``). The adapter merges
-with ``RIME_TTS_DEFAULTS`` so existing Rime agents pick up Coda + WebSocket without a DB
+with ``RIME_TTS_DEFAULTS`` so existing Rime agents pick up Arcana + WebSocket without a DB
 migration.
+
+The seeded voice catalog uses Arcana speakers (``rime-arcana-*`` -> ``astra``, ``celeste``,
+...). Default ``model`` is ``arcana`` to match the plugin and catalog. Coda remains opt-in
+via ``tts_options.model = \"coda\"`` with a Coda voice such as ``lyra``.
 
 ``speed_alpha`` is the speed control that works over WebSocket (docs/rime-labs-humanization.md).
 Values slightly above 1.0 are the documented "a bit slower / more deliberate" starting point.
@@ -12,8 +16,13 @@ from __future__ import annotations
 
 ALLOWED_RIME_TTS_OPTION_KEYS = frozenset({"model", "speed_alpha", "time_scale_factor"})
 
+# Matches livekit.plugins.rime.models.ArcanaVoices — every seeded ``voices.provider_voice_id``.
+_ARCANA_SPEAKERS = frozenset(
+    {"luna", "celeste", "orion", "ursa", "astra", "esther", "estelle", "andromeda"}
+)
+
 RIME_TTS_DEFAULTS: dict = {
-    "model": "coda",
+    "model": "arcana",
     "speed_alpha": 1.1,
     "use_websocket": True,
     "segment": "bySentence",
@@ -90,12 +99,18 @@ def resolve_rime_tts_kwargs(
     """Merge stored overrides with platform defaults; return kwargs for rime.TTS()."""
     overrides = validate_rime_tts_options(stored_options or {})
     merged = {**RIME_TTS_DEFAULTS, **overrides}
+    model = merged["model"]
+    # Legacy default was coda while the catalog only seeds Arcana speakers — coerce so
+    # ``rime-arcana-astra`` et al. always hit a valid model/speaker pair unless the tenant
+    # explicitly chose a non-Arcana model in stored tts_options.
+    if speaker in _ARCANA_SPEAKERS and model == "coda" and "model" not in overrides:
+        model = "arcana"
     profile = RIME_AUDIO_PROFILES.get(audio_channel, RIME_AUDIO_PROFILES["webrtc"])
 
     kwargs: dict = {
         "speaker": speaker,
         "lang": lang,
-        "model": merged["model"],
+        "model": model,
         "speed_alpha": merged["speed_alpha"],
         "use_websocket": merged["use_websocket"],
         "segment": merged["segment"],

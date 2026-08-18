@@ -185,12 +185,12 @@ async def build_session(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
         "turn_handling": {
-            "interruption": {"mode": "adaptive", "false_interruption_timeout": 0.7}
+            "interruption": {"mode": "adaptive", "false_interruption_timeout": 1.2}
         },
     }
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
 
-    # turn_handling interruption mode="adaptive" and false_interruption_timeout=0.7: see
+    # turn_handling interruption mode="adaptive" and false_interruption_timeout=1.2: see
     # docs/40-ADR.md ADR-008. Forced rather than LiveKit's dev/prod auto-detect so production
     # `python -m worker.main start` matches `dev`. Compatibility: streaming STT with
     # aligned_transcript, VAD present, LLM not RealtimeModel.
@@ -570,7 +570,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # is untrusted tenant text spoken via session.say(), never merged into system instructions.
     from livekit.agents.log import logger as _opening_logger
 
-    apply_session_opening(session, cfg, _opening_logger)
+    await apply_session_opening(session, cfg, _opening_logger)
 
 
 def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None

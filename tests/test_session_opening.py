@@ -1,5 +1,6 @@
 """Unit tests for session opening: wait vs custom say vs generated greeting."""
 
+import asyncio
 from types import SimpleNamespace
 
 from worker.config import AgentConfig
@@ -67,30 +68,55 @@ def test_rime_custom_greeting_strips_cartesia_ssml():
 
 
 def test_apply_session_opening_dispatches():
+    class FakeHandle:
+        def __init__(self):
+            self.interrupted = False
+            self._exception = None
+            self.waited = False
+
+        async def wait_for_playout(self):
+            self.waited = True
+
+        def exception(self):
+            return self._exception
+
     class FakeSession:
         def __init__(self):
             self.said = None
+            self.say_kwargs = None
             self.generated = None
+            self.generate_kwargs = None
+            self.last_handle = None
 
-        def say(self, text):
+        def say(self, text, **kwargs):
             self.said = text
+            self.say_kwargs = kwargs
+            self.last_handle = FakeHandle()
+            return self.last_handle
 
-        def generate_reply(self, instructions=None):
+        def generate_reply(self, instructions=None, **kwargs):
             self.generated = instructions
+            self.generate_kwargs = kwargs
+            self.last_handle = FakeHandle()
+            return self.last_handle
 
-    logger = SimpleNamespace(info=lambda *args, **kwargs: None)
+    logger = SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
 
     wait_session = FakeSession()
-    apply_session_opening(wait_session, _cfg(first_speaker="user"), logger)
+    asyncio.run(apply_session_opening(wait_session, _cfg(first_speaker="user"), logger))
     assert wait_session.said is None
     assert wait_session.generated is None
 
     say_session = FakeSession()
-    apply_session_opening(say_session, _cfg(greeting="Hello there."), logger)
+    asyncio.run(apply_session_opening(say_session, _cfg(greeting="Hello there."), logger))
     assert say_session.said == "Hello there."
+    assert say_session.say_kwargs == {"allow_interruptions": False}
+    assert say_session.last_handle.waited is True
     assert say_session.generated is None
 
     gen_session = FakeSession()
-    apply_session_opening(gen_session, _cfg(), logger)
+    asyncio.run(apply_session_opening(gen_session, _cfg(), logger))
     assert gen_session.said is None
     assert gen_session.generated
+    assert gen_session.generate_kwargs == {"allow_interruptions": False}
+    assert gen_session.last_handle.waited is True

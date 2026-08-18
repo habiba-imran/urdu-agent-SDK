@@ -8,10 +8,10 @@ from worker.providers.tts.rime_options import (
 )
 
 
-def test_empty_options_apply_coda_websocket_defaults():
+def test_empty_options_apply_arcana_websocket_defaults():
     assert validate_rime_tts_options({}) == {}
     kwargs = resolve_rime_tts_kwargs("astra", "eng", {})
-    assert kwargs["model"] == RIME_TTS_DEFAULTS["model"] == "coda"
+    assert kwargs["model"] == RIME_TTS_DEFAULTS["model"] == "arcana"
     assert kwargs["speed_alpha"] == 1.1
     assert kwargs["use_websocket"] is True
     assert kwargs["segment"] == "bySentence"
@@ -21,10 +21,20 @@ def test_empty_options_apply_coda_websocket_defaults():
     assert "time_scale_factor" not in kwargs
 
 
+def test_legacy_implicit_coda_default_coerced_for_arcana_speaker():
+    kwargs = resolve_rime_tts_kwargs("celeste", "eng", {})
+    assert kwargs["model"] == "arcana"
+
+
+def test_explicit_coda_override_is_respected():
+    kwargs = resolve_rime_tts_kwargs("celeste", "eng", {"model": "coda"})
+    assert kwargs["model"] == "coda"
+
+
 def test_telephony_channel_uses_8k():
     kwargs = resolve_rime_tts_kwargs("astra", "eng", {}, audio_channel="telephony")
     assert kwargs["sample_rate"] == 8000
-    assert kwargs["model"] == "coda"
+    assert kwargs["model"] == "arcana"
 
 
 def test_unknown_channel_falls_back_to_webrtc_16k():
@@ -32,9 +42,9 @@ def test_unknown_channel_falls_back_to_webrtc_16k():
     assert kwargs["sample_rate"] == 16000
 
 
-def test_speed_alpha_override_keeps_coda():
+def test_speed_alpha_override_keeps_arcana():
     kwargs = resolve_rime_tts_kwargs("celeste", "eng", {"speed_alpha": 1.05})
-    assert kwargs["model"] == "coda"
+    assert kwargs["model"] == "arcana"
     assert kwargs["speed_alpha"] == 1.05
 
 
