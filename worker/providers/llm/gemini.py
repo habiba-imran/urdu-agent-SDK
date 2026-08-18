@@ -7,10 +7,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-_DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-3.1-flash-lite")
+_DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-3.6-flash")
 _DEPRECATED_GEMINI_MODELS = {
     "gemini-2.5-flash": _DEFAULT_GEMINI_MODEL,
     "gemini-2.0-flash": _DEFAULT_GEMINI_MODEL,
+    "gemini-3.1-flash-lite": _DEFAULT_GEMINI_MODEL,
 }
 
 

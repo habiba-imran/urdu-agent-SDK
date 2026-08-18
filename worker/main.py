@@ -207,7 +207,11 @@ async def build_session(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
         "turn_handling": {
-            "interruption": {"mode": "adaptive", "false_interruption_timeout": 1.2}
+            "interruption": {"mode": "adaptive", "false_interruption_timeout": 1.2},
+            # Preemptive generation was starting LLM replies before the user turn
+            # committed, then cancelling them when endpointing fired — the agent
+            # stayed in thinking/listening with no assistant output (see ADR-008).
+            "preemptive_generation": {"enabled": False},
         },
     }
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
@@ -333,15 +337,71 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
         logger.info("assistant turn room=%s text=%r", room_name, text)
 
     def _on_speech_created(ev: Any) -> None:
+        source = getattr(ev, "source", None)
+        user_initiated = getattr(ev, "user_initiated", None)
+        handle = getattr(ev, "speech_handle", None)
         logger.info(
             "speech created room=%s source=%s user_initiated=%s",
             room_name,
-            getattr(ev, "source", None),
-            getattr(ev, "user_initiated", None),
+            source,
+            user_initiated,
+        )
+
+        if handle is None:
+            return
+
+        def _on_speech_done(_handle: Any) -> None:
+            interrupted = getattr(_handle, "interrupted", False)
+            exc: BaseException | None = None
+            if hasattr(_handle, "exception"):
+                try:
+                    exc = _handle.exception()
+                except Exception:
+                    exc = None
+            if exc is not None:
+                logger.error(
+                    "speech failed room=%s source=%s interrupted=%s: %s",
+                    room_name,
+                    source,
+                    interrupted,
+                    exc,
+                    exc_info=exc,
+                )
+            elif interrupted:
+                logger.warning(
+                    "speech interrupted room=%s source=%s (no audio/text committed — "
+                    "caller may still be speaking or a new turn cancelled this reply)",
+                    room_name,
+                    source,
+                )
+            else:
+                logger.info(
+                    "speech completed room=%s source=%s",
+                    room_name,
+                    source,
+                )
+
+        handle.add_done_callback(_on_speech_done)
+
+    def _on_user_state(ev: Any) -> None:
+        logger.info(
+            "user state room=%s %s -> %s",
+            room_name,
+            getattr(ev, "old_state", None),
+            getattr(ev, "new_state", None),
+        )
+
+    def _on_false_interruption(ev: Any) -> None:
+        logger.warning(
+            "false interruption room=%s resumed=%s",
+            room_name,
+            getattr(ev, "resumed", None),
         )
 
     session.on("error", _on_error)
     session.on("agent_state_changed", _on_agent_state)
+    session.on("user_state_changed", _on_user_state)
+    session.on("agent_false_interruption", _on_false_interruption)
     session.on("conversation_item_added", _on_conversation_item)
     session.on("speech_created", _on_speech_created)
 
