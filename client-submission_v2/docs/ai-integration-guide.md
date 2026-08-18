@@ -2,6 +2,8 @@
 
 Use this brief when planning an application integration with the AwaazLabs UVA SDKs. It is client-facing and mirrors the package boundaries in this handover.
 
+English Cartesia and Rime TTS, plus greeting / first-speaker, are configured through `@awaazlabs-uva/agents`. Spoken humanization is hosted — do not put SSML or `spell()` in the tenant prompt.
+
 ## Non-negotiable boundaries
 
 - Browser code may import only `@awaazlabs-uva/voice`.
@@ -12,7 +14,7 @@ Use this brief when planning an application integration with the AwaazLabs UVA S
 ## Backend modules to build
 
 1. Configuration loader for `UVA_API_BASE_URL`, `UVA_TELEPHONY_API_URL`, `UVA_TENANT_ID`, and `UVA_HMAC_SECRET`.
-2. Agent service using `AwaazLabsUvaAgentsClient` for `createAgent`, `listAgents`, and `updateAgent`.
+2. Agent service using `AwaazLabsUvaAgentsClient` for `createAgent`, `listAgents`, and `updateAgent` (including `ttsProvider`, `greeting`, and `firstSpeaker`).
 3. Voice session routes that authenticate the user, choose an agent ID, and return a short-lived session payload for the browser SDK.
 4. Telephony service using `TelephonyClient` for Telnyx connection, number sync/import, assignment, SIP/routing setup, readiness checks, and approved outbound calls.
 5. Error mapping that preserves SDK status/code/message while returning product-appropriate messages to end users.
@@ -46,6 +48,9 @@ Use this brief when planning an application integration with the AwaazLabs UVA S
 - Frontend build contains no backend-only SDK imports.
 - Backend environment contains all required tenant/provider values.
 - Agent creation/list/update works from backend code.
+- An English agent can be created with `ttsProvider: 'cartesia'` or `'rime'`, optional `greeting`, and `firstSpeaker: 'agent' | 'user'`.
+- Switching TTS provider is an `updateAgent` of `ttsProvider` + `ttsVoiceId` from `getProviderCapabilities()`.
+- Browser `connect()` uses `agentId` only for greeting/TTS; those fields are not passed from the frontend.
 - Browser voice session can request a session from the client's backend and react to SDK events.
 - Telnyx connection status and managed number sync work from backend code.
 - Managed numbers can be assigned to agents.

@@ -23,6 +23,8 @@ export interface AwaazLabsUvaAgentsClientOptions {
 
 export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
 
+export type FirstSpeaker = 'agent' | 'user';
+
 export interface AgentRecord {
   id: string;
   name: string;
@@ -41,6 +43,8 @@ export interface AgentRecord {
   tts_provider: string;
   tts_voice_id: string | null;
   tts_options: Record<string, unknown>;
+  greeting: string | null;
+  first_speaker: FirstSpeaker;
 }
 
 export interface CreateAgentParams {
@@ -59,6 +63,10 @@ export interface CreateAgentParams {
   ttsProvider?: string;
   ttsVoiceId?: string;
   ttsOptions?: Record<string, unknown>;
+  /** Exact opening line when firstSpeaker is 'agent'. Omit for a generated greeting. Empty string on update clears it. */
+  greeting?: string;
+  /** Who speaks first. Default 'agent'. 'user' waits for the caller. */
+  firstSpeaker?: FirstSpeaker;
 }
 
 export interface UpdateAgentParams {
@@ -75,6 +83,9 @@ export interface UpdateAgentParams {
   ttsProvider?: string;
   ttsVoiceId?: string;
   ttsOptions?: Record<string, unknown>;
+  /** Exact opening line when firstSpeaker is 'agent'. Empty string clears it. */
+  greeting?: string;
+  firstSpeaker?: FirstSpeaker;
 }
 
 /** Shape returned by GET /machine/provider-capabilities (== GET /portal/provider-capabilities),
@@ -179,6 +190,8 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
+    if (params.greeting !== undefined) body.greeting = params.greeting;
+    if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
     return this.request<AgentRecord>('POST', '/machine/agents', 'agent.create', body);
   }
 
@@ -201,6 +214,8 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
+    if (params.greeting !== undefined) body.greeting = params.greeting;
+    if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
     return this.request<AgentRecord>('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
   }
 

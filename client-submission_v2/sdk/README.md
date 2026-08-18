@@ -20,6 +20,8 @@ This folder contains three installable npm tarballs and their TypeScript source 
 
 Install the tarballs into your frontend/backend applications. The `src/` folders are included for review; application code should import the packages by package name.
 
+`@awaazlabs-uva/agents` includes `greeting`, `firstSpeaker`, and English `ttsProvider` values `cartesia` and `rime`. Spoken humanization runs on the hosted worker, not in these packages.
+
 For the full callable SDK surface, see `../docs/SDK_CAPABILITIES_REFERENCE.md`.
 
 ## Runtime requirements

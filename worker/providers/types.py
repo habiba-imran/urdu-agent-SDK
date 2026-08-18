@@ -29,6 +29,7 @@ class AgentRuntimeConfig:
     tts_provider: str
     tts_voice_id: str
     tts_options: dict
+    audio_channel: str = "webrtc"
 
 
 @dataclass(frozen=True)

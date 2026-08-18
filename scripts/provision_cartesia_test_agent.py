@@ -31,8 +31,9 @@ from control_plane.secrets import secret_hash  # noqa: E402
 from dbconn import conn_kwargs  # noqa: E402
 
 _PROMPT = (
-    "You are a friendly assistant for a phone-based test call. Respond briefly and naturally in "
-    "English to whatever the caller says, in one or two short sentences."
+    "You are a friendly receptionist on a phone test call. Stay warm and helpful. Keep replies to "
+    "one or two short spoken sentences — the platform TTS rules handle pacing, pauses, and natural "
+    "speech patterns."
 )
 
 
@@ -40,6 +41,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--commit", action="store_true", help="actually write to the dev DB"
+    )
+    ap.add_argument(
+        "--expressive",
+        action="store_true",
+        help="set tts_options.expressive=true for LiveKit expressive-mode A/B",
     )
     args = ap.parse_args()
 
@@ -73,10 +79,12 @@ def main() -> int:
                 'gemini', %s, 'cartesia', 'cartesia-sonic-default', %s
             )
             """,
-            (aid, tid, _PROMPT, Jsonb({}), Jsonb({}), Jsonb({})),
+            (aid, tid, _PROMPT, Jsonb({}), Jsonb({}), Jsonb({"expressive": True} if args.expressive else {})),
         )
     print(
-        "\nSEEDED to dev DB (agent_language=en, tts_provider=cartesia). "
+        "\nSEEDED to dev DB (agent_language=en, tts_provider=cartesia"
+        + (", expressive=true" if args.expressive else "")
+        + "). "
         f"Delete later with: delete from tenants where id = '{tid}';"
     )
     print(

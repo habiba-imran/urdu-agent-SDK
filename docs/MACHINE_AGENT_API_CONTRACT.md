@@ -77,7 +77,9 @@ pre-existing `ur`+Gladia+Gemini+Uplift behavior exactly:
   "llm_options": {},
   "tts_provider": "uplift",
   "tts_voice_id": "helpdesk-agent",
-  "tts_options": {}
+  "tts_options": {},
+  "greeting": "Hi, thanks for calling Acme. How can I help you today?",
+  "first_speaker": "agent"
 }
 ```
 
@@ -96,8 +98,14 @@ Errors below.
 
 `action = "agent.create"`. Response: the created agent row (`id`, `name`, `prompt`, `voice_id`,
 `llm_model`, `created_at`, `agent_language`, `stt_provider`, `stt_model`, `stt_options`,
-`llm_provider`, `llm_options`, `tts_provider`, `tts_voice_id`, `tts_options`) — same shape
+`llm_provider`, `llm_options`, `tts_provider`, `tts_voice_id`, `tts_options`, `greeting`,
+`first_speaker`) — same shape
 `POST /portal/agents` already returns.
+
+`greeting` is optional untrusted tenant text (same trust class as `prompt`): the exact line the
+agent speaks when `first_speaker` is `agent`. Omit it (or send `""`) to keep the platform-generated
+greeting. Max 500 characters. `first_speaker` is `agent` (default — greets immediately) or `user`
+(wait for the caller). A stored greeting is ignored while `first_speaker` is `user`.
 
 ### List agents
 
@@ -111,11 +119,13 @@ No body (sign `{}`). `action = "agent.list"`. Response: array of this tenant's a
 `PATCH /machine/agents/{agent_id}`
 
 Body: any subset of `{name, prompt, voice_id, llm_model, agent_language, stt_provider, stt_model,
-stt_options, llm_provider, llm_options, tts_provider, tts_voice_id, tts_options}` — **include only
+stt_options, llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, greeting,
+first_speaker}` — **include only
 the fields you are changing**. Omitted fields must be entirely absent from the JSON body, not sent
 as `null`; the signature covers exactly what you send, and the server only applies the fields
 present — every other field keeps the agent's current resolved value (not the create-time
-defaults).
+defaults). Send `"greeting": ""` to clear a custom greeting (JSON `null` cannot clear it, because
+`null` is dropped from the signed payload).
 
 `action = "agent.update"`. Response: the updated agent row (same shape as create, above), or `404`
 if `agent_id` does not belong to this tenant (or doesn't exist).
@@ -127,7 +137,7 @@ if `agent_id` does not belong to this tenant (or doesn't exist).
 | `401` | missing signature header, bad signature, timestamp outside the 60s replay window, nonce reuse, unknown tenant, tenant has no secret provisioned |
 | `403` | tenant suspended |
 | `404` | (update only) `agent_id` not found or belongs to another tenant |
-| `422` | (create/update only) invalid provider/language/model/voice/options combination — body is `{"detail": {"code": "...", "reason": "..."}}`. Stable codes: `unsupported_language`, `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`, `invalid_stt_options`, `invalid_llm_options`, `invalid_tts_options` |
+| `422` | (create/update only) invalid provider/language/model/voice/options combination — body is `{"detail": {"code": "...", "reason": "..."}}`. Stable codes: `unsupported_language`, `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`, `invalid_stt_options`, `invalid_llm_options`, `invalid_tts_options`, `invalid_greeting`, `invalid_first_speaker` |
 | `429` | per-tenant rate limit exceeded (30 requests/minute across all three routes) |
 
 The browser-facing collapsing rules from `docs/HOST_BACKEND_CONTRACT.md` do not apply here — there

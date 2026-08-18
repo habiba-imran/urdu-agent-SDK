@@ -70,24 +70,68 @@ const agent = await agents.createAgent({
   prompt: 'Answer customer questions in a concise and helpful way.',
   voiceId: 'voice_id_from_catalog',
   llmModel: 'gemini-2.5-flash',
-  agentLanguage: 'ur',
-  sttProvider: 'gladia',
-  llmProvider: 'gemini',
-  ttsProvider: 'uplift',
+  agentLanguage: 'en',
+  ttsProvider: 'cartesia',
+  ttsVoiceId: 'voice_id_from_catalog',
+  firstSpeaker: 'agent',
+  greeting: 'Hi, thanks for calling. How can I help you today?',
 });
 
 const allAgents = await agents.listAgents();
 
 await agents.updateAgent(agent.id, {
-  prompt: 'Use a friendly, professional tone.',
   ttsProvider: 'rime',
   ttsVoiceId: 'voice_id_from_catalog',
 });
 ```
 
-Agent records include `id`, `name`, `prompt`, `voice_id`, `llm_model`, `created_at`, optional usage metadata, and provider fields such as `agent_language`, `stt_provider`, `stt_model`, `llm_provider`, `tts_provider`, and `tts_voice_id`.
+Agent records include `id`, `name`, `prompt`, `voice_id`, `llm_model`, `created_at`, optional usage metadata, provider fields (`agent_language`, `stt_provider`, `tts_provider`, `tts_voice_id`, …), plus `greeting` and `first_speaker`.
 
-Provider/language/model fields are optional. Omitting them keeps the hosted platform defaults. Set them only when your tenant has the requested provider and language combination enabled.
+### Greeting and who speaks first
+
+Set these on the **agent**, not on `@awaazlabs-uva/voice` `connect()`. The hosted worker reads them when the session starts (browser or phone).
+
+| Field | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `firstSpeaker` | `'agent'` \| `'user'` | `'agent'` | `'agent'` greets immediately. `'user'` waits for the caller. |
+| `greeting` | string, max 500 chars | omitted | Exact opening line when the agent speaks first. Omit it to let the worker generate a greeting from the persona. |
+
+```ts
+await agents.updateAgent(agent.id, { firstSpeaker: 'user' });
+await agents.updateAgent(agent.id, { greeting: '' }); // clear a stored custom greeting
+```
+
+`firstSpeaker: 'user'` ignores a stored greeting until you switch back to `'agent'`. Validation failures return 422 with `invalid_greeting` or `invalid_first_speaker`.
+
+### English TTS: Cartesia and Rime
+
+Humanization (pacing, spoken formatting, sanitizers, codec/sample-rate) runs on the **hosted worker**. Integrators only pick the provider and voice. Do **not** put SSML (`<break>`, `<spell>`), Rime `spell()`, markdown, or filler-word scripts in `prompt` or `greeting`. Keep `prompt` as character/role, not a speech script.
+
+```ts
+const capabilities = await agents.getProviderCapabilities();
+const cartesiaVoices = capabilities.languages.en?.tts?.cartesia?.voices ?? [];
+const rimeVoices = capabilities.languages.en?.tts?.rime?.voices ?? [];
+
+const englishAgent = await agents.createAgent({
+  name: 'English Support',
+  prompt: 'You are a calm, concise customer support agent.',
+  voiceId: cartesiaVoices[0],
+  agentLanguage: 'en',
+  ttsProvider: 'cartesia',
+  ttsVoiceId: cartesiaVoices[0],
+  firstSpeaker: 'agent',
+  greeting: 'Hi, thanks for calling. How can I help you today?',
+});
+
+await agents.updateAgent(englishAgent.id, {
+  ttsProvider: 'rime',
+  ttsVoiceId: rimeVoices[0],
+});
+```
+
+`ttsOptions` is optional. An empty object still gets platform defaults (Cartesia Sonic 3.5 + calm delivery; Rime Coda + websocket). Only send overrides you actually need. Pick voices from `getProviderCapabilities()` — do not hardcode IDs.
+
+Omitting `ttsProvider` keeps the hosted default (typically Urdu + Uplift). Cartesia and Rime are English (`en`) only. A provider absent from `capabilities.languages.en.tts` is not enabled for that tenant.
 
 Before building provider/model/voice pickers in your own product UI, fetch the currently enabled combinations from the backend:
 
@@ -105,6 +149,7 @@ const managed = await agents.listManagedNumbers({ assignedAgentId: agent.id });
 await agents.assignAgentToNumber('<MANAGED_NUMBER_ID>', agent.id);
 await agents.unassignAgentFromNumber('<MANAGED_NUMBER_ID>');
 ```
+
 ## 6. Browser voice sessions
 
 ```ts
@@ -266,7 +311,7 @@ const recentCalls = await telephony.listCallRecords({ limit: 25 });
 
 ## 10. Error handling
 
-Agents errors use `AwaazLabsUvaAgentsError` with `status`, `message`, and (for 422 provider/language/model/voice validation failures only) a stable `code` — e.g. `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`. Other failures (auth, suspended tenants, missing agents, rate limits) leave `code` undefined.
+Agents errors use `AwaazLabsUvaAgentsError` with `status`, `message`, and (for 422 provider/language/model/voice/greeting validation failures only) a stable `code` — e.g. `unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`, `invalid_greeting`, `invalid_first_speaker`. Other failures (auth, suspended tenants, missing agents, rate limits) leave `code` undefined.
 
 Voice errors use `AwaazLabsUvaVoiceError` with one of:
 
@@ -319,7 +364,7 @@ Before enabling telephony workflows, the client must provide or confirm:
 The client submission includes these practical capabilities:
 
 - Browser voice session connect/disconnect, transcript events, speaking events, metrics events, autoplay-unlock handling, and voice-catalog fetching.
-- Agent CRUD for hosted voice agents, plus provider-capability discovery for multi-provider setups.
+- Agent CRUD for hosted voice agents, including greeting / first-speaker and Cartesia or Rime English TTS, plus provider-capability discovery for multi-provider setups.
 - Telnyx connection lifecycle: connect, rotate, reverify, disconnect, and status checks.
 - Number inventory management: list owned numbers, list managed numbers, import, sync, drift inspection, search available numbers, reserve, purchase, order-status lookup, disable.
 - Agent-number operations: assign and unassign numbers.

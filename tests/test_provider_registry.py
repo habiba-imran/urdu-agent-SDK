@@ -193,6 +193,8 @@ def test_agent_config_new_fields_load_correctly(tenant_and_agents):
     assert cfg.tts_provider == "uplift"
     assert cfg.tts_voice_id == _VOICE_ID
     assert cfg.tts_options == {}
+    assert cfg.greeting is None
+    assert cfg.first_speaker == "agent"
 
 
 def test_agent_config_tts_voice_id_is_null_for_the_unsynced_row(tenant_and_agents):

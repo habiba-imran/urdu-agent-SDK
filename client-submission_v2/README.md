@@ -2,6 +2,8 @@
 
 This folder contains the client-facing SDK handover for integrating browser voice sessions, backend agent management, and backend telephony management.
 
+Copy this folder into the client application repository as-is. Install the tarballs from `sdk/@awaazlabs-uva/*/`. Spoken humanization for Cartesia and Rime, plus greeting / first-speaker, is already on the hosted worker — the client only sets those fields through `@awaazlabs-uva/agents`.
+
 ## Folder structure
 
 ```text
@@ -36,7 +38,7 @@ client-submission_v2/
 
 1. Install the backend packages in your server application: `@awaazlabs-uva/agents` and `@awaazlabs-uva/telephony`.
 2. Store `UVA_TENANT_ID`, `UVA_HMAC_SECRET`, and the API base URLs only in backend environment variables.
-3. Use `@awaazlabs-uva/agents` to create or select the agent IDs your application will expose to the browser.
+3. Use `@awaazlabs-uva/agents` to create or select the agent IDs your application will expose to the browser. For English, set `ttsProvider` to `cartesia` or `rime`, and set `greeting` / `firstSpeaker` on the agent (not in the browser SDK).
 4. Add backend session endpoints that issue short-lived voice session payloads for `@awaazlabs-uva/voice`.
 5. Install `@awaazlabs-uva/voice` in the frontend and connect using only `publishableKey`, `sessionEndpoint`, and `agentId`.
 6. Use `@awaazlabs-uva/telephony` from the backend to connect Telnyx, sync/import numbers, assign a number to an agent, configure SIP/routing resources, and check outbound readiness.
@@ -56,6 +58,6 @@ The voice package has a runtime dependency on `livekit-client`; npm installs it 
 
 ## Start here
 
-Read `docs/INTEGRATION_GUIDE.md` for the full implementation flow. Read `docs/SDK_CAPABILITIES_REFERENCE.md` for the full callable surface of the delivered SDKs. Use `docs/credentials-template.md` to prepare backend and frontend environment variables before writing application code.
+Read `docs/INTEGRATION_GUIDE.md` for the full implementation flow, including greeting / first-speaker and Cartesia or Rime English TTS. Read `docs/SDK_CAPABILITIES_REFERENCE.md` for the full callable surface of the delivered SDKs. Use `docs/credentials-template.md` to prepare backend and frontend environment variables before writing application code.
 
 If you are integrating telephony, also read `docs/TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md` before building purchase, number-assignment, inbound, or outbound call flows. That note explains the tenant-scoped uniqueness rules, idempotency expectations, backend-only Telnyx key handling, and outbound-readiness constraints that affect production behavior.

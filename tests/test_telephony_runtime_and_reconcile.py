@@ -20,6 +20,7 @@ from tenant_portal_api.telephony_webhooks import (
 from worker.telephony_runtime import (
     extract_sip_participant_attributes,
     resolve_inbound_sip_call,
+    session_audio_channel,
 )
 
 webhook_app = FastAPI(title="Webhook Test App")
@@ -44,6 +45,20 @@ def test_resolve_inbound_sip_call_mock():
     res = resolve_inbound_sip_call(meta, db_conn=None)
     assert res["tenant_id"] == "tenant_test_123"
     assert res["e164_number"] == "+15559998888"
+
+
+def test_session_audio_channel_telephony_when_metadata_present():
+    resolved = {
+        "tenant_id": "tenant-1",
+        "agent_id": "agent-1",
+        "telephony": {"direction": "outbound"},
+    }
+    assert session_audio_channel(resolved) == "telephony"
+
+
+def test_session_audio_channel_webrtc_by_default():
+    resolved = {"tenant_id": "tenant-1", "agent_id": "agent-1", "telephony": None}
+    assert session_audio_channel(resolved) == "webrtc"
 
 
 def test_telnyx_webhook_signature_verification():

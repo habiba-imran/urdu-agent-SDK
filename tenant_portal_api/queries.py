@@ -5,11 +5,14 @@ from __future__ import annotations
 import psycopg
 from psycopg.types.json import Jsonb
 
+_UNSET = object()
+
 
 _AGENT_COLUMNS = (
     "id, name, prompt, voice_id, llm_model, created_at, "
     "agent_language, stt_provider, stt_model, stt_options, "
-    "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options"
+    "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
+    "greeting, first_speaker"
 )
 
 
@@ -30,6 +33,8 @@ def _agent_row_to_dict(row) -> dict:
         "tts_provider": row[12],
         "tts_voice_id": row[13],
         "tts_options": row[14],
+        "greeting": row[15],
+        "first_speaker": row[16],
     }
 
 
@@ -39,6 +44,7 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
         select a.id, a.name, a.prompt, a.voice_id, a.llm_model, a.created_at,
                a.agent_language, a.stt_provider, a.stt_model, a.stt_options,
                a.llm_provider, a.llm_options, a.tts_provider, a.tts_voice_id, a.tts_options,
+               a.greeting, a.first_speaker,
                coalesce(u.total_agent_sec, 0) as total_agent_sec
         from agents a
         left join (
@@ -55,8 +61,8 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
     ).fetchall()
     out = []
     for r in rows:
-        d = _agent_row_to_dict(r[:15])
-        d["total_agent_sec"] = float(r[15])
+        d = _agent_row_to_dict(r[:17])
+        d["total_agent_sec"] = float(r[17])
         out.append(d)
     return out
 
@@ -88,15 +94,18 @@ def create_agent(
     tts_provider: str,
     tts_voice_id: str,
     tts_options: dict,
+    greeting: str | None = None,
+    first_speaker: str = "agent",
 ) -> dict:
     row = conn.execute(
         f"""
         insert into agents (
             tenant_id, name, prompt, voice_id, llm_model,
             agent_language, stt_provider, stt_model, stt_options,
-            llm_provider, llm_options, tts_provider, tts_voice_id, tts_options
+            llm_provider, llm_options, tts_provider, tts_voice_id, tts_options,
+            greeting, first_speaker
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning {_AGENT_COLUMNS}
         """,
         (
@@ -114,6 +123,8 @@ def create_agent(
             tts_provider,
             tts_voice_id,
             Jsonb(tts_options),
+            greeting,
+            first_speaker,
         ),
     ).fetchone()
     return _agent_row_to_dict(row)
@@ -137,6 +148,8 @@ def update_agent(
     tts_provider: str | None = None,
     tts_voice_id: str | None = None,
     tts_options: dict | None = None,
+    greeting=_UNSET,
+    first_speaker=_UNSET,
 ) -> dict:
     current = get_agent(conn, tenant_id, agent_id)
     if current is None:
@@ -157,7 +170,9 @@ def update_agent(
             llm_options = %s,
             tts_provider = %s,
             tts_voice_id = %s,
-            tts_options = %s
+            tts_options = %s,
+            greeting = %s,
+            first_speaker = %s
         where id = %s and tenant_id = %s
         returning {_AGENT_COLUMNS}
         """,
@@ -175,6 +190,8 @@ def update_agent(
             tts_provider if tts_provider is not None else current["tts_provider"],
             tts_voice_id if tts_voice_id is not None else current["tts_voice_id"],
             Jsonb(tts_options if tts_options is not None else current["tts_options"]),
+            current["greeting"] if greeting is _UNSET else greeting,
+            current["first_speaker"] if first_speaker is _UNSET else first_speaker,
             agent_id,
             tenant_id,
         ),

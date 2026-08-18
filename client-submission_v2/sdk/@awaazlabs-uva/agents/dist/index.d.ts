@@ -9,6 +9,7 @@ export interface AwaazLabsUvaAgentsClientOptions {
     extraHeaders?: Record<string, string>;
 }
 export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
+export type FirstSpeaker = 'agent' | 'user';
 export interface AgentRecord {
     id: string;
     name: string;
@@ -26,6 +27,8 @@ export interface AgentRecord {
     tts_provider: string;
     tts_voice_id: string | null;
     tts_options: Record<string, unknown>;
+    greeting: string | null;
+    first_speaker: FirstSpeaker;
 }
 export interface CreateAgentParams {
     name: string;
@@ -43,6 +46,10 @@ export interface CreateAgentParams {
     ttsProvider?: string;
     ttsVoiceId?: string;
     ttsOptions?: Record<string, unknown>;
+    /** Exact opening line when firstSpeaker is 'agent'. Omit for a generated greeting. Empty string on update clears it. */
+    greeting?: string;
+    /** Who speaks first. Default 'agent'. 'user' waits for the caller. */
+    firstSpeaker?: FirstSpeaker;
 }
 export interface UpdateAgentParams {
     name?: string;
@@ -58,6 +65,9 @@ export interface UpdateAgentParams {
     ttsProvider?: string;
     ttsVoiceId?: string;
     ttsOptions?: Record<string, unknown>;
+    /** Exact opening line when firstSpeaker is 'agent'. Empty string clears it. */
+    greeting?: string;
+    firstSpeaker?: FirstSpeaker;
 }
 /** Shape returned by GET /machine/provider-capabilities (== GET /portal/provider-capabilities),
  * see tenant_portal_api/provider_capabilities.py::get_public_capabilities. Only ever contains

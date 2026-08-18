@@ -1,35 +1,35 @@
 """Rime TTS adapter (Phase 6f, docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md, ADR-036).
 
-Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py (provider level) AND
-the specific voice row's own `rollout_state`/`enabled` in the `voices` table are both the real
-gates, not this file. `speaker`/`lang` constructor args verified directly against the installed
-livekit-plugins-rime==1.6.5 package (inspect.signature), not assumed from docs — two real, non-
-obvious differences from every other TTS adapter in this repo:
+Enabled for `en` only. `speaker`/`lang` constructor args verified against
+livekit-plugins-rime==1.6.5: the voice kwarg is `speaker` (not `voice`), and `lang` uses
+3-letter codes. Only `en` -> `"eng"` is mapped; any other language raises.
 
-1. The voice kwarg is `speaker` (not `voice`/`voice_id` like Cartesia/ElevenLabs/Fish Audio).
-2. The language kwarg is `lang`, and Rime uses 3-letter codes (`livekit.plugins.rime.langs.
-   TTSLangs = Literal["eng", "spa", "fra", "ger", "hin"]`) — NOT our internal 2-letter
-   `agent_language` values. Only `en` -> `"eng"` is mapped here since Rime is only enabled for
-   `en` in this plan's scope; any other value raises rather than silently guessing a code (this
-   repo's explicit "no silent fallback" rule).
+Phase B humanization defaults (model=coda, use_websocket, speed_alpha) and Phase C audio
+profiles (webrtc 16 kHz / telephony 8 kHz PCM) live in rime_options.py.
+Extra kwargs are filtered against inspect.signature so an older plugin without `use_websocket`
+or `segment` still constructs. The installed plugin hardcodes ``audioFormat=pcm``; we do not
+pass Cartesia-style ``encoding=pcm_mulaw``.
 
-The seeded voice (migration 0021) uses the plugin's own baked-in default speaker for its default
-model (`model="arcana"` -> `speaker="astra"`, both confirmed by reading the installed package's
-source, not invented).
-
-Requires RIME_API_KEY (env var, or api_key= kwarg) — the plugin itself raises a clear ValueError
-if neither is set, checked eagerly at construction (same pattern as every other provider adapter
-in this repo).
+Requires RIME_API_KEY (env var, or api_key= kwarg).
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
+
+from .rime_options import resolve_rime_tts_kwargs
 
 _LANG_CODES = {"en": "eng"}
 
 
-def build(voice_id: str, language: str) -> Any:
+def build(
+    voice_id: str,
+    language: str,
+    tts_options: dict | None = None,
+    *,
+    audio_channel: str = "webrtc",
+) -> Any:
     from livekit.plugins import rime
 
     if language not in _LANG_CODES:
@@ -37,4 +37,8 @@ def build(voice_id: str, language: str) -> Any:
             f"no Rime language code mapping for agent_language={language!r}"
         )
 
-    return rime.TTS(speaker=voice_id, lang=_LANG_CODES[language])
+    kwargs = resolve_rime_tts_kwargs(
+        voice_id, _LANG_CODES[language], tts_options, audio_channel=audio_channel
+    )
+    allowed = set(inspect.signature(rime.TTS).parameters)
+    return rime.TTS(**{k: v for k, v in kwargs.items() if k in allowed})

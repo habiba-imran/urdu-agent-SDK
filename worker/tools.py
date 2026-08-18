@@ -92,7 +92,8 @@ async def escalate_to_human(
     ctx: RunContext[AgentUserdata], reason: str, contact_info: str | None = None
 ) -> dict:
     """Call this when the caller needs a human to follow up -- they asked for something you
-    cannot resolve yourself, or explicitly asked to speak to a person.
+    cannot resolve yourself, or explicitly asked to speak to a person. Speak a short spoken
+    line first (you are getting them help), THEN call this tool — never sit in silence.
 
     Args:
         reason: A short description of what the caller needs.

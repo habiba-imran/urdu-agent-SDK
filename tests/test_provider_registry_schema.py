@@ -87,6 +87,19 @@ def test_new_agent_row_gets_column_defaults(tenant_and_agent):
     assert tts_options == {}
 
 
+def test_new_agent_row_gets_greeting_defaults(tenant_and_agent):
+    row = (
+        tenant_and_agent["conn"]
+        .execute(
+            "select greeting, first_speaker from agents where id = %s",
+            (tenant_and_agent["agent_id"],),
+        )
+        .fetchone()
+    )
+    assert row[0] is None
+    assert row[1] == "agent"
+
+
 def test_new_agent_row_leaves_tts_voice_id_null_by_design(tenant_and_agent):
     """`tts_voice_id` has NO column default (deliberate — see 0016's comment): a fresh insert
     through the OLD write path gets NULL here, not an auto-sync to voice_id. Migration 0016 only

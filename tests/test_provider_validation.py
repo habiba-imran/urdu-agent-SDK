@@ -143,6 +143,64 @@ def test_nonempty_stt_options_rejected(conn):
     assert exc.value.code == "invalid_stt_options"
 
 
+def test_nonempty_tts_options_rejected_for_uplift(conn):
+    with pytest.raises(ProviderValidationError) as exc:
+        _call(conn, tts_options={"speed": 0.95})
+    assert exc.value.code == "invalid_tts_options"
+
+
+def test_cartesia_tts_options_accepted_for_english(conn):
+    resolved = _call(
+        conn,
+        agent_language="en",
+        tts_provider="cartesia",
+        tts_voice_id="cartesia-sonic-default",
+        voice_id=None,
+        tts_options={"speed": 1.0, "emotion": ["sympathetic"]},
+    )
+    assert resolved["tts_provider"] == "cartesia"
+    assert resolved["tts_options"] == {"speed": 1.0, "emotion": ["sympathetic"]}
+
+
+def test_cartesia_invalid_tts_options_rejected(conn):
+    with pytest.raises(ProviderValidationError) as exc:
+        _call(
+            conn,
+            agent_language="en",
+            tts_provider="cartesia",
+            tts_voice_id="cartesia-sonic-default",
+            voice_id=None,
+            tts_options={"encoding": "pcm_mulaw"},
+        )
+    assert exc.value.code == "invalid_tts_options"
+
+
+def test_rime_tts_options_accepted_for_english(conn):
+    resolved = _call(
+        conn,
+        agent_language="en",
+        tts_provider="rime",
+        tts_voice_id="rime-arcana-astra",
+        voice_id=None,
+        tts_options={"speed_alpha": 1.05},
+    )
+    assert resolved["tts_provider"] == "rime"
+    assert resolved["tts_options"] == {"speed_alpha": 1.05}
+
+
+def test_rime_invalid_tts_options_rejected(conn):
+    with pytest.raises(ProviderValidationError) as exc:
+        _call(
+            conn,
+            agent_language="en",
+            tts_provider="rime",
+            tts_voice_id="rime-arcana-astra",
+            voice_id=None,
+            tts_options={"emotion": ["calm"]},
+        )
+    assert exc.value.code == "invalid_tts_options"
+
+
 def test_unknown_voice_rejected(conn):
     with pytest.raises(ProviderValidationError) as exc:
         _call(conn, voice_id="not-a-real-voice-id")

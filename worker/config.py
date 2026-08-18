@@ -55,6 +55,10 @@ class AgentConfig:
     tts_provider: str = "uplift"
     tts_voice_id: str | None = None
     tts_options: dict = field(default_factory=dict)
+    # Tenant session opening. greeting is UNTRUSTED (TTS input only). first_speaker defaults
+    # to "agent" so existing AgentConfig(...) callers keep the current greet-immediately behavior.
+    greeting: str | None = None
+    first_speaker: str = "agent"
 
 
 def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
@@ -67,7 +71,8 @@ def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
         cur.execute(
             "select id, tenant_id, name, prompt, voice_id, llm_model, "
             "agent_language, stt_provider, stt_model, stt_options, "
-            "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options "
+            "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
+            "greeting, first_speaker "
             "from agents where id = %s",
             (agent_id,),
         )
@@ -90,4 +95,6 @@ def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
         tts_provider=row[12],
         tts_voice_id=row[13],
         tts_options=row[14],
+        greeting=row[15],
+        first_speaker=row[16] or "agent",
     )

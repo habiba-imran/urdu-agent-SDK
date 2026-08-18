@@ -30,6 +30,7 @@ from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .machine_auth import MachineAuthError, verify_machine_request
 from .provider_capabilities import get_public_capabilities
 from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
+from .greeting_fields import GreetingConfigError, normalize_first_speaker, normalize_greeting
 from . import queries
 from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
@@ -113,6 +114,8 @@ class CreateAgentBody(BaseModel):
     tts_provider: str | None = Field(default=None, min_length=1)
     tts_voice_id: str | None = Field(default=None, min_length=1)
     tts_options: dict | None = Field(default=None)
+    greeting: str | None = Field(default=None)
+    first_speaker: str | None = Field(default=None)
 
 
 class UpdateAgentBody(BaseModel):
@@ -129,6 +132,8 @@ class UpdateAgentBody(BaseModel):
     tts_provider: str | None = Field(default=None, min_length=1)
     tts_voice_id: str | None = Field(default=None, min_length=1)
     tts_options: dict | None = Field(default=None)
+    greeting: str | None = Field(default=None)
+    first_speaker: str | None = Field(default=None)
 
 
 def _conn() -> psycopg.Connection:
@@ -165,6 +170,33 @@ def _resolve_provider_fields(
     except ProviderValidationError as e:
         raise HTTPException(
             status_code=e.status, detail={"code": e.code, "reason": e.reason}
+        ) from e
+
+
+def _opening_from_body(
+    body: CreateAgentBody | UpdateAgentBody, current: dict | None
+) -> dict[str, str | None]:
+    """Resolve greeting / first_speaker. Omit keeps current (PATCH); blank greeting clears."""
+    try:
+        if current is None:
+            return {
+                "greeting": normalize_greeting(body.greeting),
+                "first_speaker": normalize_first_speaker(body.first_speaker),
+            }
+        greeting = (
+            normalize_greeting(body.greeting)
+            if body.greeting is not None
+            else current.get("greeting")
+        )
+        first_speaker = (
+            normalize_first_speaker(body.first_speaker)
+            if body.first_speaker is not None
+            else current.get("first_speaker")
+        )
+        return {"greeting": greeting, "first_speaker": first_speaker}
+    except GreetingConfigError as e:
+        raise HTTPException(
+            status_code=422, detail={"code": e.code, "reason": e.reason}
         ) from e
 
 
@@ -238,6 +270,7 @@ def create_agent_route(
     claims = _require_tenant(authorization)
     with _conn() as conn:
         resolved = _resolve_provider_fields(conn, body, current=None)
+        opening = _opening_from_body(body, None)
         created = queries.create_agent(
             conn,
             claims["sub"],
@@ -254,6 +287,8 @@ def create_agent_route(
             tts_provider=resolved["tts_provider"],
             tts_voice_id=resolved["tts_voice_id"],
             tts_options=resolved["tts_options"],
+            greeting=opening["greeting"],
+            first_speaker=opening["first_speaker"],
         )
         conn.commit()
         return created
@@ -271,6 +306,7 @@ def update_agent_route(
         if current is None:
             raise HTTPException(status_code=404, detail="agent not found")
         resolved = _resolve_provider_fields(conn, body, current=current)
+        opening = _opening_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -289,6 +325,8 @@ def update_agent_route(
                 tts_provider=resolved["tts_provider"],
                 tts_voice_id=resolved["tts_voice_id"],
                 tts_options=resolved["tts_options"],
+                greeting=opening["greeting"],
+                first_speaker=opening["first_speaker"],
             )
             conn.commit()
             return updated
@@ -379,6 +417,7 @@ def machine_create_agent_route(
             body=body.model_dump(exclude_none=True),
         )
         resolved = _resolve_provider_fields(conn, body, current=None)
+        opening = _opening_from_body(body, None)
         created = queries.create_agent(
             conn,
             x_tenant_id,
@@ -395,6 +434,8 @@ def machine_create_agent_route(
             tts_provider=resolved["tts_provider"],
             tts_voice_id=resolved["tts_voice_id"],
             tts_options=resolved["tts_options"],
+            greeting=opening["greeting"],
+            first_speaker=opening["first_speaker"],
         )
         conn.commit()
         return created
@@ -464,6 +505,7 @@ def machine_update_agent_route(
         if current is None:
             raise HTTPException(status_code=404, detail="agent not found")
         resolved = _resolve_provider_fields(conn, body, current=current)
+        opening = _opening_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -482,6 +524,8 @@ def machine_update_agent_route(
                 tts_provider=resolved["tts_provider"],
                 tts_voice_id=resolved["tts_voice_id"],
                 tts_options=resolved["tts_options"],
+                greeting=opening["greeting"],
+                first_speaker=opening["first_speaker"],
             )
             conn.commit()
             return updated

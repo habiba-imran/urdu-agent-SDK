@@ -65,7 +65,7 @@ def _build_tts(cfg: AgentRuntimeConfig):
     if cfg.tts_provider == "cartesia":
         from .tts.cartesia import build
 
-        return build(cfg.tts_voice_id, cfg.agent_language)
+        return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options, audio_channel=cfg.audio_channel)
     if cfg.tts_provider == "elevenlabs":
         from .tts.elevenlabs import build
 
@@ -77,5 +77,10 @@ def _build_tts(cfg: AgentRuntimeConfig):
     if cfg.tts_provider == "rime":
         from .tts.rime import build
 
-        return build(cfg.tts_voice_id, cfg.agent_language)
+        return build(
+            cfg.tts_voice_id,
+            cfg.agent_language,
+            cfg.tts_options,
+            audio_channel=cfg.audio_channel,
+        )
     raise UnsupportedProviderError(f"no TTS adapter for provider={cfg.tts_provider!r}")

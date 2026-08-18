@@ -175,6 +175,17 @@ def resolve_inbound_sip_call(
     }
 
 
+def session_audio_channel(resolved: dict[str, Any]) -> str:
+    """Return ``telephony`` when the session is PSTN/SIP-bound, else ``webrtc``.
+
+    Uses the ``telephony`` block from :func:`resolve_session_metadata` — present for inbound SIP,
+    outbound dispatch jobs, and other telephony-bound sessions.
+    """
+    if resolved.get("telephony"):
+        return "telephony"
+    return "webrtc"
+
+
 def resolve_session_metadata(
     *,
     job_metadata: Any = None,

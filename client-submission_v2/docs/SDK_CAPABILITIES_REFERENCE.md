@@ -86,6 +86,8 @@ client.createAgent({
   ttsProvider?,
   ttsVoiceId?,
   ttsOptions?,
+  greeting?,
+  firstSpeaker?,
 })
 
 client.listAgents()
@@ -104,6 +106,8 @@ client.updateAgent(agentId, {
   ttsProvider?,
   ttsVoiceId?,
   ttsOptions?,
+  greeting?,
+  firstSpeaker?,
 })
 ```
 
@@ -114,6 +118,17 @@ client.getProviderCapabilities()
 ```
 
 This returns the currently enabled provider/language/model/voice combinations and should be used to build provider pickers instead of hardcoding options.
+
+### Greeting and first speaker
+
+These live on the agent record. The browser voice SDK does not take them on `connect()`.
+
+- `greeting` — exact opening line when the agent speaks first. Omit for a generated greeting. On update, `greeting: ''` clears it.
+- `firstSpeaker` — `'agent'` (default, greets immediately) or `'user'` (wait for the caller).
+
+### English TTS (Cartesia / Rime)
+
+Set `agentLanguage: 'en'` and `ttsProvider: 'cartesia' | 'rime'`, with `ttsVoiceId` from `getProviderCapabilities()`. Humanized spoken output is applied by the hosted worker. Do not put SSML or `spell()` in `prompt` or `greeting`. Switching providers is an `updateAgent` of `ttsProvider` + `ttsVoiceId`.
 
 ### Number-assignment helper methods
 

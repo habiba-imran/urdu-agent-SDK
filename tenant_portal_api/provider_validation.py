@@ -7,10 +7,9 @@ but not another — a broad provider-level check is not enough). Returns fully-r
 ready to write; callers must not write anything this function didn't return, so there is exactly
 one place these rules can be bypassed from (nowhere).
 
-Layer options (`stt_options`/`llm_options`/`tts_options`): no adapter in worker/providers/ consumes
-any option yet (Phase 2 deliberately left them unconsumed), so the only valid value today is `{}` —
-accepting anything else would silently accept configuration nothing honors. Each future provider
-subphase (Phase 6+) is where a real per-provider options schema gets added.
+Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia and Rime TTS consume
+``tts_options`` (humanization — model/speed and related keys). STT/LLM options remain
+unconsumed; the only valid value for those layers is ``{}``.
 """
 
 from __future__ import annotations
@@ -26,6 +25,14 @@ from worker.providers.capabilities import (  # noqa: E402
     llm_capability,
     stt_capability,
     tts_capability,
+)
+from worker.providers.tts.cartesia_options import (  # noqa: E402
+    CartesiaTtsOptionsError,
+    validate_cartesia_tts_options,
+)
+from worker.providers.tts.rime_options import (  # noqa: E402
+    RimeTtsOptionsError,
+    validate_rime_tts_options,
 )
 
 # Mirrors Phase 1's own DB backfill defaults (0016_agents_provider_fields.sql) — the values a
@@ -167,7 +174,17 @@ def resolve_agent_provider_fields(
     resolved_tts_options = (
         tts_options if tts_options is not None else base["tts_options"]
     )
-    if resolved_tts_options != {}:
+    if resolved_tts_provider == "cartesia":
+        try:
+            resolved_tts_options = validate_cartesia_tts_options(resolved_tts_options)
+        except CartesiaTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "rime":
+        try:
+            resolved_tts_options = validate_rime_tts_options(resolved_tts_options)
+        except RimeTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_options != {}:
         raise ProviderValidationError(
             "invalid_tts_options", "no tts provider accepts options yet"
         )

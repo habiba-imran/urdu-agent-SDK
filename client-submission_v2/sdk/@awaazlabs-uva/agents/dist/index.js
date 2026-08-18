@@ -79,6 +79,10 @@ export class AwaazLabsUvaAgentsClient {
             body.tts_voice_id = params.ttsVoiceId;
         if (params.ttsOptions !== undefined)
             body.tts_options = params.ttsOptions;
+        if (params.greeting !== undefined)
+            body.greeting = params.greeting;
+        if (params.firstSpeaker !== undefined)
+            body.first_speaker = params.firstSpeaker;
         return this.request('POST', '/machine/agents', 'agent.create', body);
     }
     async listAgents() {
@@ -112,6 +116,10 @@ export class AwaazLabsUvaAgentsClient {
             body.tts_voice_id = params.ttsVoiceId;
         if (params.ttsOptions !== undefined)
             body.tts_options = params.ttsOptions;
+        if (params.greeting !== undefined)
+            body.greeting = params.greeting;
+        if (params.firstSpeaker !== undefined)
+            body.first_speaker = params.firstSpeaker;
         return this.request('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
     }
     async request(method, path, action, body) {

@@ -42,14 +42,18 @@ const agent = await agents.createAgent({
 
 ### Methods
 
-- `createAgent({ name, prompt, voiceId, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions? })`
+- `createAgent({ name, prompt, voiceId, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions?, greeting?, firstSpeaker? })`
 - `listAgents()`
-- `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions? })`
+- `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions?, greeting?, firstSpeaker? })`
 
 Every field beyond `name`/`prompt`/`voiceId` is optional — omit them all and you get the same
 `ur` + Gladia + Gemini + Uplift agent this package has always created. `ttsVoiceId` takes priority
-over `voiceId` when both are given (server-resolved). See
-`docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` for what's live vs. planned.
+over `voiceId` when both are given (server-resolved). `firstSpeaker` defaults to `'agent'` (the
+agent greets immediately). Pass `firstSpeaker: 'user'` to wait for the caller. `greeting` is the
+exact opening line when the agent speaks first; omit it to let the worker generate a greeting from
+the persona. On update, `greeting: ''` clears a custom greeting.
+
+English Cartesia and Rime TTS are selected with `agentLanguage: 'en'` and `ttsProvider: 'cartesia' | 'rime'`. Spoken humanization runs on the hosted worker — do not put SSML or `spell()` in `prompt` or `greeting`. See `docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md` for what's live vs. planned.
 
 Each call signs its own request with `tenantSecret` (HMAC-SHA256, timestamped, single-use nonce,
 scoped to that one action) — see

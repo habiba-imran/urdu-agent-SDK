@@ -56,6 +56,8 @@ await agent.connect({
 
 Your backend session endpoint remains the source of truth for the actual session payload. `agentId` is the required browser input. `voiceId` is an optional compatibility field in the browser API shape and should not be treated as a replacement for backend session-side selection logic.
 
+Greeting, who speaks first, and TTS provider (`cartesia` / `rime`) are agent fields set through `@awaazlabs-uva/agents`. `connect()` only needs `agentId`.
+
 ## API
 
 ```ts
