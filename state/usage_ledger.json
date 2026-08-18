@@ -1,6 +1,6 @@
 {
   "uplift_tts_sec": 327,
-  "livekit_agent_min": 141,
+  "livekit_agent_min": 145,
   "gladia_stt_sec": 0,
   "supabase_db_mb": 0,
   "livekit_adaptive_interruption_req": 0
