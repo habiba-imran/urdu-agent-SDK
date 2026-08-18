@@ -207,10 +207,13 @@ async def build_session(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
         "turn_handling": {
-            "interruption": {"mode": "adaptive", "false_interruption_timeout": 1.2},
+            # Client demo: VAD treated impatient "hello?" during thinking as an
+            # interruption and cancelled every LLM reply before TTS. Leave
+            # interruption off until the agent can actually speak a first turn.
+            "interruption": {"enabled": False},
+            "endpointing": {"min_delay": 0.8, "max_delay": 3.0},
             # Preemptive generation was starting LLM replies before the user turn
-            # committed, then cancelling them when endpointing fired — the agent
-            # stayed in thinking/listening with no assistant output (see ADR-008).
+            # committed, then cancelling them when endpointing fired.
             "preemptive_generation": {"enabled": False},
         },
     }
