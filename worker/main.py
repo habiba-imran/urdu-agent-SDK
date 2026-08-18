@@ -27,6 +27,7 @@ from .spoken_sanitize import sanitizer_for_provider
 from .providers.registry import build_components
 from .providers.types import AgentRuntimeConfig
 from .session_opening import apply_session_opening
+from .stale_jobs import reject_stale_job_request, wait_for_session_participant
 from .tools import FIXED_TOOLS, AgentUserdata
 
 # OUR fixed operating instructions (Uplift default). Cartesia/Rime agents get an extended block
@@ -275,8 +276,10 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     2. SIP participant attributes → telephony DB lookup (inbound PSTN)
     3. Joining participant JWT metadata from Phase-2 mint (browser WebRTC)
     """
-    await ctx.connect()
-    participant = await ctx.wait_for_participant()
+    try:
+        participant = await wait_for_session_participant(ctx)
+    except (asyncio.TimeoutError, RuntimeError):
+        return
 
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
     md: dict[str, Any] = {}
@@ -714,10 +717,13 @@ if __name__ == "__main__":
 
     from livekit.agents import WorkerOptions, cli
 
+    # Reject orphaned dispatches before entrypoint connects — prevents a backlog of dead-room
+    # jobs from crashing the worker on startup (Windows THREAD mode + concurrent FFI connects).
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
+            request_fnc=reject_stale_job_request,
             agent_name=_agent_name,
         )
     )

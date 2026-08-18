@@ -366,6 +366,17 @@ def _rollback_dispatched_session(
         )
 
 
+def _session_response(payload: dict) -> JSONResponse:
+    """Session mint/refresh payloads must never be cached — token and room are single-use."""
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 def _with_dispatch(res: dict, tenant_id: str) -> dict:
     try:
         asyncio.run(_dispatch_agent(res["roomName"]))
@@ -465,7 +476,7 @@ def create_session(
                 signature=x_signature,
                 origin=request.headers.get("origin"),
             )
-            return _with_dispatch(res, x_tenant_id)
+            return _session_response(_with_dispatch(res, x_tenant_id))
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
@@ -474,11 +485,13 @@ def create_session(
 @app.post("/v1/session/dev-mint")
 def create_dev_session(body: DevSessionBody, request: Request):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
-    return _dev_mint_session(
-        tenant_id=tenant_id,
-        agent_id=body.agentId,
-        request=request,
-        auto_reset_quota=True,
+    return _session_response(
+        _dev_mint_session(
+            tenant_id=tenant_id,
+            agent_id=body.agentId,
+            request=request,
+            auto_reset_quota=True,
+        )
     )
 
 
@@ -494,7 +507,7 @@ def refresh_session_token(
         token = body.token.strip()
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
-    return _mint_refresh_token(token)
+    return _session_response(_mint_refresh_token(token).model_dump())
 
 
 if _STATIC_DIR.exists():
