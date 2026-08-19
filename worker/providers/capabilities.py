@@ -138,16 +138,19 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
             },
             "groq": {
                 "state": "enabled",
+                # Retired Groq IDs stay listed so existing agent rows and client pickers still
+                # validate; worker/providers/llm/groq.py remaps them at session start.
                 "models": [
+                    "openai/gpt-oss-120b",
+                    "openai/gpt-oss-20b",
+                    "qwen/qwen3.6-27b",
                     "llama-3.1-8b-instant",
                     "llama-3.3-70b-versatile",
                     "meta-llama/llama-4-scout-17b-16e-instruct",
-                    "openai/gpt-oss-120b",
-                    "openai/gpt-oss-20b",
                     "moonshotai/kimi-k2-instruct-0905",
                     "qwen/qwen3-32b",
                 ],
-                "default_model": "llama-3.3-70b-versatile",
+                "default_model": "openai/gpt-oss-120b",
             },
         },
         "tts": {

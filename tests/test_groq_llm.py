@@ -53,7 +53,9 @@ def test_groq_llm_constructs_for_english():
             "instance, not only to make a live call. Add it to .env.local to run this."
         )
     llm = build_groq_llm("llama-3.3-70b-versatile")
-    assert llm.model == "llama-3.3-70b-versatile"
+    assert llm.model == "openai/gpt-oss-120b"
+    live = build_groq_llm("openai/gpt-oss-120b")
+    assert live.model == "openai/gpt-oss-120b"
 
 
 def test_groq_llm_layer_validates_successfully_now_enabled(conn):
