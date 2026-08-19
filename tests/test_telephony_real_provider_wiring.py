@@ -81,8 +81,51 @@ class ActiveConnectionDb:
         sql = " ".join(query.lower().split())
         if "from tenant_telnyx_connections" in sql:
             return FakeCursor(row=self.active_row())
+        if "from tenants" in sql:
+            return FakeCursor(row=(10,))
+        if "from telnyx_sip_connections" in sql:
+            return FakeCursor(row=None)
+        if "from telnyx_outbound_voice_profiles" in sql:
+            return FakeCursor(row=None)
+        if "insert into telnyx_outbound_voice_profiles" in sql:
+            return FakeCursor(
+                row=(
+                    "ovp_rec_123",
+                    params[0],
+                    params[1],
+                    params[2],
+                    params[3],
+                    "active",
+                    "active",
+                    ["US", "CA"],
+                    10,
+                    None,
+                )
+            )
+        if "insert into telnyx_sip_connections" in sql:
+
+            return FakeCursor(
+                row=(
+                    "sip_rec_123",
+                    params[0],
+                    params[1],
+                    params[2],
+                    params[3],
+                    params[4],
+                    params[5],
+                    "active",
+                    "active",
+                    "2026-08-01T12:00:00Z",
+                )
+            )
+
+        if "quota_state" in sql:
+            return FakeCursor(row=(0, 10))
+        if "telephony_idempotency_keys" in sql:
+            return FakeCursor(row=None)
         if "update telephony_phone_numbers" in sql:
             return FakeCursor(row=None)
+
         if "insert into telephony_phone_numbers" in sql:
             row = (
                 "num_real_123",
@@ -221,7 +264,17 @@ class FakeTelnyxClient:
             "status": "active",
         }
 
+    def create_or_get_fqdn_connection(self, name: str, fqdn: str, **kwargs: Any):
+        return {
+            "provider_sip_connection_id": "sip_conn_real_123",
+            "sip_fqdn": fqdn,
+            "sip_username": "user_mock",
+            "sip_secret": "secret_mock",
+            "status": "active",
+        }
+
     def list_owned_numbers(self, filter_phone_number: str | None = None):
+
         items = [
             {
                 "provider_number_id": "pn_real_123",
@@ -250,10 +303,17 @@ class FakeLiveKitClient:
         return {"livekit_inbound_trunk_id": "lk_tr_in_real_123", "status": "active"}
 
     def create_or_get_dispatch_rule(
-        self, inbound_trunk_id: str, phone_number_id: str, e164_number: str
+        self,
+        inbound_trunk_id: str,
+        phone_number_id: str,
+        e164_number: str,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+        **kwargs: Any,
     ):
         self.rule_calls.append((inbound_trunk_id, phone_number_id, e164_number))
         return {"livekit_sip_dispatch_rule_id": "lk_rule_real_123", "status": "active"}
+
 
 
 def test_service_uses_stored_tenant_credential_for_real_telnyx_inventory():
@@ -530,7 +590,8 @@ class OutboundCallDb(ActiveConnectionDb):
         if "insert into telephony_calls" in sql:
             self.inserted_call_params = params
             return FakeCursor()
-        raise AssertionError(f"Unexpected SQL: {query}")
+        return super().execute(query, params)
+
 
 
 class OutboundQuotaConflictDb(OutboundCallDb):
@@ -548,7 +609,16 @@ class OutboundLiveKitClient:
         self.mock_mode = mock_mode
         self.sip_participant_calls: list[tuple[str, str, str]] = []
 
+    def create_agent_dispatch(
+        self,
+        room_name: str,
+        agent_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        return {"dispatch_id": "dispatch_real_123", "room_name": room_name}
+
     def create_sip_participant(
+
         self,
         room_name: str,
         outbound_trunk_id: str,

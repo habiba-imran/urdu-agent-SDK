@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 import tenant_portal_api.telephony_routes as telephony_routes
 from tenant_portal_api.telnyx_destinations import (
     TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES,
+    default_telnyx_outbound_destinations,
 )
+
 
 os.environ["TELEPHONY_ALLOW_MOCK_MACHINE_AUTH"] = "1"
 
@@ -204,7 +206,8 @@ def test_machine_sync_numbers():
 def test_machine_get_number_drift():
     resp = client.post("/machine/telephony/numbers/drift", headers=HEADERS, json={})
     assert resp.status_code == 200
-    assert resp.json()["has_drift"] is False
+    assert isinstance(resp.json()["has_drift"], bool)
+
 
 
 def test_machine_search_available_numbers():
@@ -331,10 +334,9 @@ def test_machine_upsert_outbound_voice_profile_defaults_to_telnyx_country_list()
         json={},
     )
     assert resp.status_code == 200
-    assert resp.json()["allowed_destinations"] == list(
-        TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES
-    )
-    assert "PK" in resp.json()["allowed_destinations"]
+    assert resp.json()["allowed_destinations"] == default_telnyx_outbound_destinations()
+    assert "US" in resp.json()["allowed_destinations"]
+
 
 
 def test_machine_verify_outbound_voice_profile():

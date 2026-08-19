@@ -7,7 +7,11 @@ from typing import Any
 
 import pytest
 
+from tenant_portal_api.telephony_credentials import encrypt_provider_secret
 from tenant_portal_api.telephony_service import TelephonyService
+
+RAW_KEY = "KEY01_TEST_KEY_1234567890"
+ENCRYPTED_KEY = encrypt_provider_secret(RAW_KEY)
 
 
 class FakeCursor:
@@ -30,8 +34,9 @@ class PurchaseFlowDb:
             "telnyx_account_id": "acct_123",
             "last_verified_at": "2026-08-03T12:00:00Z",
             "permission_last_checked_at": "2026-08-03T12:00:00Z",
-            "encrypted_api_key_ref": "encrypted-ref",
+            "encrypted_api_key_ref": ENCRYPTED_KEY,
         }
+
         self.idempotency: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.number_orders: list[dict[str, Any]] = []
         self.phone_numbers: list[dict[str, Any]] = []
@@ -128,7 +133,8 @@ class PurchaseFlowDb:
                             "provider_number_id": provider_number_id,
                             "country": country,
                             "number_type": number_type,
-                            "features": json.loads(features),
+                            "features": json.loads(features) if isinstance(features, (str, bytes, bytearray)) else features,
+
                             "provisioning_status": provisioning_status,
                             "routing_status": routing_status,
                             "provider_status": provider_status,
@@ -140,6 +146,7 @@ class PurchaseFlowDb:
             return FakeCursor(None)
 
         if "insert into telephony_phone_numbers" in sql:
+            feat = params[6] if len(params) > 10 else params[5]
             phone = {
                 "id": f"num_{len(self.phone_numbers) + 1}",
                 "tenant_id": params[0],
@@ -148,13 +155,14 @@ class PurchaseFlowDb:
                 "e164_number": params[3] if len(params) > 10 else params[2],
                 "country": params[4] if len(params) > 10 else params[3],
                 "number_type": params[5] if len(params) > 10 else params[4],
-                "features": json.loads(params[6] if len(params) > 10 else params[5]),
+                "features": json.loads(feat) if isinstance(feat, (str, bytes, bytearray)) else feat,
                 "provisioning_status": params[7] if len(params) > 10 else params[6],
                 "routing_status": params[8] if len(params) > 10 else params[7],
                 "provider_status": params[9] if len(params) > 10 else params[8],
                 "external_customer_ref": params[10] if len(params) > 10 else params[9],
                 "disabled_at": None,
             }
+
             self.phone_numbers.append(phone)
             return FakeCursor((phone["id"],))
 
