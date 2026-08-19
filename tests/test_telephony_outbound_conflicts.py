@@ -78,11 +78,16 @@ class ConflictQuotaDb:
             return FakeCursor((5,))
         if "insert into quota_state" in sql:
             return FakeCursor()
+        if "from telephony_idempotency_keys" in sql:
+            return FakeCursor(None)
+        if "insert into telephony_idempotency_keys" in sql or "update telephony_idempotency_keys" in sql or "delete from telephony_idempotency_keys" in sql:
+            return FakeCursor()
         if "from quota_state where tenant_id = %s for update" in sql:
             raise _FakeInvalidColumnReference(
                 "FOR UPDATE cannot be applied to the nullable side of an outer join"
             )
         raise AssertionError(f"Unexpected SQL: {query}")
+
 
 
 class StubLiveKitClient:

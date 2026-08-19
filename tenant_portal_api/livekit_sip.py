@@ -482,6 +482,31 @@ class LiveKitSipClient:
             "Failed to initiate outbound SIP participant.",
         )
 
+    def delete_sip_dispatch_rule(self, dispatch_rule_id: str) -> dict[str, Any]:
+        """Delete or disable a LiveKit SIP dispatch rule."""
+        if self.mock_mode:
+            return {"dispatch_rule_id": dispatch_rule_id, "status": "deleted"}
+        self._require_credentials()
+
+        async def op():
+            import livekit.api as lk
+
+            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            try:
+                await api.sip.delete_sip_dispatch_rule(
+                    lk.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=dispatch_rule_id)
+                )
+                return {"dispatch_rule_id": dispatch_rule_id, "status": "deleted"}
+            finally:
+                await api.aclose()
+
+        return self._run(
+            op(),
+            TelephonyErrorCode.LIVEKIT_SIP_DISPATCH_RULE_FAILED,
+            "Failed to delete LiveKit SIP dispatch rule.",
+        )
+
+
     def _require_credentials(self) -> None:
         if not self.url or not self.api_key or not self.api_secret:
             raise TelephonyError(

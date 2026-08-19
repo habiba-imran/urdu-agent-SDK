@@ -13,8 +13,10 @@ import hashlib
 import hmac
 import json
 import os
+from typing import Any
 
 from tenant_portal_api.telephony_config import is_mock_provider_mode
+
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 
 _PREFIX = "enc:v1:"
@@ -41,12 +43,25 @@ def encrypt_provider_secret(secret: str) -> str:
     )
 
 
+_LEGACY_PREFIX = "enc:legacy:"
+
+
 def decrypt_provider_secret(secret_ref: str | None) -> str:
     if not secret_ref:
         raise _missing_credentials("Tenant provider credential reference is missing.")
+    if is_mock_provider_mode() and not secret_ref.startswith(_PREFIX) and not secret_ref.startswith(_LEGACY_PREFIX):
+        return secret_ref
+    if secret_ref.startswith(_LEGACY_PREFIX):
+        # Backward compatible decoding for legacy prefix format
+        try:
+            return base64.b64decode(secret_ref[len(_LEGACY_PREFIX) :].encode("utf-8")).decode("utf-8")
+        except Exception:
+            if is_mock_provider_mode():
+                return secret_ref[len(_LEGACY_PREFIX) :]
+            raise _missing_credentials("Legacy provider credential reference is invalid.")
     if not secret_ref.startswith(_PREFIX):
         raise _missing_credentials(
-            "Tenant provider credential reference is not supported."
+            "Tenant provider credential reference format is not supported."
         )
 
     try:
@@ -76,6 +91,34 @@ def decrypt_provider_secret(secret_ref: str | None) -> str:
         raise _missing_credentials(
             "Tenant provider credential reference is invalid."
         ) from exc
+
+
+def reencrypt_legacy_provider_secrets(conn: Any) -> int:
+    """Scan and upgrade legacy or raw secret references in telephony_connections to enc:v1: format."""
+    if conn is None or is_mock_provider_mode():
+        return 0
+    rows = conn.execute(
+        """
+        select id, encrypted_api_key_ref from telephony_connections
+        where encrypted_api_key_ref is not null and encrypted_api_key_ref not like %s
+        """,
+        (f"{_PREFIX}%",),
+    ).fetchall()
+    migrated = 0
+    for row in rows:
+        conn_id, old_ref = row[0], row[1]
+        try:
+            raw_secret = decrypt_provider_secret(old_ref)
+            new_ref = encrypt_provider_secret(raw_secret)
+            conn.execute(
+                "update telephony_connections set encrypted_api_key_ref = %s, updated_at = now() where id = %s",
+                (new_ref, conn_id),
+            )
+            migrated += 1
+        except Exception:
+            pass
+    return migrated
+
 
 
 

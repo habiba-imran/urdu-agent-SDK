@@ -65,15 +65,46 @@ class PurchaseFlowDb:
             row = self.idempotency.get((params[0], params[1], params[2]))
             if not row:
                 return FakeCursor(None)
-            return FakeCursor((row["request_hash"], row["response_body"], row["platform_status"]))
+            return FakeCursor(
+                (
+                    row["tenant_id"],
+                    row["idempotency_key"],
+                    row["action"],
+                    row["request_hash"],
+                    row["response_body"],
+                    row["platform_status"],
+                    row["created_at"],
+                    row["completed_at"],
+                )
+            )
 
         if "insert into telephony_idempotency_keys" in sql:
+            resp = json.loads(params[4]) if len(params) > 4 and isinstance(params[4], str) and params[4].startswith("{") else (params[4] if len(params) > 4 else None)
             self.idempotency[(params[0], params[1], params[2])] = {
+                "tenant_id": params[0],
+                "idempotency_key": params[1],
+                "action": params[2],
                 "request_hash": params[3],
-                "response_body": json.loads(params[4]),
-                "platform_status": "completed",
+                "response_body": resp if isinstance(resp, dict) else None,
+                "platform_status": params[4] if len(params) > 4 and isinstance(params[4], str) and params[4] in ("in_progress", "pending", "completed") else "completed",
+                "created_at": "2026-08-03T12:00:00Z",
+                "completed_at": "2026-08-03T12:00:00Z",
             }
             return FakeCursor(None)
+
+        if "update telephony_idempotency_keys" in sql:
+            key = (params[1], params[2], params[3]) if len(params) > 3 else (params[0], params[1], params[2])
+            if key in self.idempotency:
+                self.idempotency[key]["platform_status"] = "completed"
+                if isinstance(params[0], str) and params[0].startswith("{"):
+                    self.idempotency[key]["response_body"] = json.loads(params[0])
+            return FakeCursor(None)
+
+        if "delete from telephony_idempotency_keys" in sql:
+            key = (params[0], params[1], params[2])
+            self.idempotency.pop(key, None)
+            return FakeCursor(None)
+
 
         if "insert into telephony_number_orders" in sql:
             order = {

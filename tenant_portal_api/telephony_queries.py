@@ -383,3 +383,117 @@ def insert_call_event(
             json.dumps(payload),
         ),
     )
+
+
+# Idempotency Repository Functions
+def get_idempotency_key(
+    conn: DbConnection, tenant_id: str, idempotency_key: str, action: str
+) -> dict[str, Any] | None:
+    """Fetch stored idempotency key record."""
+    row = conn.execute(
+        """
+        select tenant_id, idempotency_key, action, request_hash, response_body,
+               platform_status, created_at, completed_at
+        from telephony_idempotency_keys
+        where tenant_id = %s and idempotency_key = %s and action = %s
+        """,
+        (tenant_id, idempotency_key, action),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "tenant_id": str(row[0]),
+        "idempotency_key": row[1],
+        "action": row[2],
+        "request_hash": row[3],
+        "response_body": row[4] if row[4] is not None else None,
+        "platform_status": row[5],
+        "created_at": str(row[6]) if row[6] else None,
+        "completed_at": str(row[7]) if row[7] else None,
+    }
+
+
+def try_insert_idempotency_lock(
+    conn: DbConnection,
+    tenant_id: str,
+    idempotency_key: str,
+    action: str,
+    request_hash: str,
+    status: str = "in_progress",
+) -> bool:
+    """Attempt to insert in_progress idempotency record for leader election. Returns True if leader (inserted)."""
+    try:
+        cur = conn.execute(
+            """
+            insert into telephony_idempotency_keys (
+                tenant_id, idempotency_key, action, request_hash, platform_status
+            ) values (%s, %s, %s, %s, %s)
+            on conflict (tenant_id, idempotency_key, action) do nothing
+            """,
+            (tenant_id, idempotency_key, action, request_hash, status),
+        )
+        rowcount = getattr(cur, "rowcount", None)
+        if rowcount is not None:
+            return rowcount > 0
+        return True
+    except Exception:
+        return False
+
+
+def complete_idempotency_key(
+    conn: DbConnection,
+    tenant_id: str,
+    idempotency_key: str,
+    action: str,
+    response_body: dict[str, Any],
+) -> None:
+    """Mark idempotency key record as completed with response payload."""
+    conn.execute(
+        """
+        update telephony_idempotency_keys
+        set platform_status = 'completed',
+            response_body = %s::jsonb,
+            completed_at = now()
+        where tenant_id = %s and idempotency_key = %s and action = %s
+        """,
+        (json.dumps(response_body), tenant_id, idempotency_key, action),
+    )
+
+
+def fail_idempotency_key(
+    conn: DbConnection, tenant_id: str, idempotency_key: str, action: str
+) -> None:
+    """Mark idempotency record as failed or delete to allow safe retry."""
+    conn.execute(
+        """
+        delete from telephony_idempotency_keys
+        where tenant_id = %s and idempotency_key = %s and action = %s
+        """,
+        (tenant_id, idempotency_key, action),
+    )
+
+
+def save_idempotency_key(
+    conn: DbConnection,
+    tenant_id: str,
+    idempotency_key: str,
+    action: str,
+    request_hash: str,
+    response_body: dict[str, Any],
+) -> None:
+    """Save or complete idempotency key record."""
+    conn.execute(
+        """
+        insert into telephony_idempotency_keys (
+            tenant_id, idempotency_key, action, request_hash, response_body, platform_status, completed_at
+        ) values (%s, %s, %s, %s, %s::jsonb, 'completed', now())
+        on conflict (tenant_id, idempotency_key, action) do update
+        set platform_status = 'completed',
+            request_hash = excluded.request_hash,
+            response_body = excluded.response_body,
+            completed_at = now()
+        """,
+        (tenant_id, idempotency_key, action, request_hash, json.dumps(response_body)),
+    )
+
+
