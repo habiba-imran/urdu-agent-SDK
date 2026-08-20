@@ -1,4 +1,10 @@
-import { getAgents, getCredentials, getSessions, getUsageSummary } from '@/lib/portalApi';
+import {
+  getAgents,
+  getCredentials,
+  getSessions,
+  getUsageSummary,
+  getProviderCapabilities,
+} from '@/lib/portalApi';
 import { getVoiceCatalogue } from '@/lib/voicesApi';
 import {
   getTelnyxConnection,
@@ -19,6 +25,7 @@ export const swrKeys = {
   sessions: 'sessions',
   usage: 'usage',
   voices: 'voices',
+  providerCapabilities: 'providerCapabilities',
   telephonyConnection: 'telephonyConnection',
   telephonyNumbers: 'telephonyNumbers',
   telephonyReadiness: 'telephonyReadiness',
@@ -28,9 +35,12 @@ export const swrKeys = {
 export const swrFetchers = {
   agents: () => getAgents(),
   credentials: () => getCredentials(),
-  sessions: () => getSessions(),
+  // 300, not the default 50 -- the sessions page paginates client-side at 15/page, so a small
+  // fetch limit would make pagination pointless past page ~4 even when more sessions exist.
+  sessions: () => getSessions(300),
   usage: () => getUsageSummary(),
   voices: () => getVoiceCatalogue(),
+  providerCapabilities: () => getProviderCapabilities(),
   telephonyConnection: () => getTelnyxConnection(),
   telephonyNumbers: () => getManagedNumbers(),
   telephonyReadiness: () => getTelephonyReadiness(),

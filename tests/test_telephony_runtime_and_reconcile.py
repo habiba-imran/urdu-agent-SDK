@@ -8,8 +8,15 @@ import os
 os.environ["TELEPHONY_PROVIDER_MODE"] = "mock"
 os.environ.pop("TELNYX_PUBLIC_KEY", None)
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+@pytest.fixture(autouse=True)
+def mock_telephony_env(monkeypatch):
+    monkeypatch.setenv("TELEPHONY_PROVIDER_MODE", "mock")
+    monkeypatch.delenv("TELNYX_PUBLIC_KEY", raising=False)
+
 
 from tenant_portal_api.telephony_health import check_global_telephony_health
 from tenant_portal_api.telephony_reconcile import reconcile_telephony_state

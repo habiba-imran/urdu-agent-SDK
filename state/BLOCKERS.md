@@ -42,6 +42,30 @@ progress on it.
 **STATUS: BLOCKED — Phase 6e live test does not start. Phase 6f (Rime) begun instead, per human
 decision 2026-08-02.**
 
+## BLOCK-CARTESIA-CREDITS | Voice-picker preview generation for cartesia — account ran out of credits mid-run | 2026-08-12
+**Expected:** `scripts/record_provider_voice_previews.py` (new script, this session — records +
+uploads + signs a preview clip for every enabled `en` voice on cartesia/elevenlabs/rime that
+lacked one, since only Uplift ever had a preview pipeline) should complete all 418 cartesia
+voices, same as it cleanly did for elevenlabs (22/22) and rime (8/8).
+**Actual:** 335/418 cartesia voices got a preview recorded, uploaded, and committed
+(`voices.preview_url` set). The remaining 83 — alphabetically the back half of the catalogue
+(`cartesia-ruby-*` through `cartesia-zoey-*`) — all failed identically: `message='Payment
+Required', status_code=402, retryable=False`.
+**Tried:** (1) Ran the full 418-voice batch — succeeded for the first ~335 (in alphabetical `id`
+order), then every subsequent voice 402'd, consistent with credits running out partway through
+rather than a per-voice or per-key problem. (2) Confirmed `CARTESIA_API_KEY` itself is valid — it
+successfully authenticated and synthesized real audio for hundreds of voices in this same run
+before failing.
+**Hypothesis:** Same class of problem as `BLOCK-FISHAUDIO` — an account/billing state issue on
+Cartesia's side (credit balance exhausted), not a code or key-validity bug. Unlike Fish Audio
+(never worked at all), this account was funded enough to cover roughly 335 short (~50-60 char)
+synthesis calls before running dry.
+**Need from human:** Check Cartesia's billing/dashboard, top up credits, then rerun:
+`RECORD_PROVIDER_PREVIEWS=1 python scripts/record_provider_voice_previews.py --provider cartesia`
+— it only processes voices where `preview_url IS NULL`, so it will pick up exactly the remaining
+83 without re-doing (or re-billing) the 335 already done.
+**STATUS: BLOCKED — 83/418 cartesia voice previews still missing, pending credit top-up.**
+
 ## BLOCK-ENV | gate toolchain absent on this machine | 2026-07-27
 **Expected:** `.claude/hooks/gate.sh` runs `make gate` (secrets -> lint -> test -> rls-check ->
 usage-check) and reports a real pass/fail.

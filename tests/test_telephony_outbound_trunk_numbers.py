@@ -11,11 +11,14 @@ from typing import Any
 
 import pytest
 
+from tenant_portal_api.telephony_credentials import encrypt_provider_secret
 from tenant_portal_api.telephony_errors import TelephonyError
 from tenant_portal_api.telephony_service import TelephonyService
 
 TENANT_A = "a4231868-2f06-426a-b9a5-1081e89554ec"
 TENANT_B = "b5231868-2f06-426a-b9a5-1081e89554ec"
+TEST_ENC_SECRET = encrypt_provider_secret("sip-secret")
+
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +98,7 @@ class OutboundTrunkDb:
             "acct_real_123",
             "2026-08-01T12:00:00Z",
             "2026-08-01T12:00:00Z",
-            "enc:v1:test",
+            TEST_ENC_SECRET,
         )
 
     def _sip_row(self, tenant_id: str, connection_id: str):
@@ -107,13 +110,15 @@ class OutboundTrunkDb:
             tenant_id,
             connection_id,
             f"provider_sip_{connection_id}",
-            "sip.telnyx.example",
+            "sip.telnyx.com",
+
             "sip-user",
-            "enc:v1:sip-secret",
+            TEST_ENC_SECRET,
             "active",
             "active",
             "2026-08-01T12:00:00Z",
         )
+
 
     def _profile_row(self, tenant_id: str, connection_id: str):
         expected = "conn_a" if tenant_id == TENANT_A else "conn_b"
@@ -278,7 +283,7 @@ def test_configure_outbound_trunk_sends_one_eligible_managed_number_to_livekit()
 
     assert result["platform_status"] == "active"
     assert livekit.outbound_calls == [
-        ("conn_a", "sip.telnyx.example", ["+14402248161"], "sip-user", "sip-secret")
+        ("conn_a", "sip.telnyx.com", ["+14402248161"], "sip-user", "sip-secret")
     ]
     assert len(db.trunks) == 1
 
@@ -297,7 +302,7 @@ def test_configure_outbound_trunk_sends_multiple_eligible_numbers_to_livekit():
     assert livekit.outbound_calls == [
         (
             "conn_a",
-            "sip.telnyx.example",
+            "sip.telnyx.com",
             ["+14155550123", "+14402248161"],
             "sip-user",
             "sip-secret",
@@ -340,7 +345,7 @@ def test_configure_outbound_trunk_excludes_disabled_released_and_deleted_numbers
     service_for(db, livekit).configure_outbound_trunk(TENANT_A)
 
     assert livekit.outbound_calls == [
-        ("conn_a", "sip.telnyx.example", ["+14155550125"])
+        ("conn_a", "sip.telnyx.com", ["+14155550125"], "sip-user", "sip-secret")
     ]
 
 
@@ -356,8 +361,9 @@ def test_configure_outbound_trunk_excludes_cross_tenant_numbers():
     service_for(db, livekit).configure_outbound_trunk(TENANT_A)
 
     assert livekit.outbound_calls == [
-        ("conn_a", "sip.telnyx.example", ["+14155550123"])
+        ("conn_a", "sip.telnyx.com", ["+14155550123"], "sip-user", "sip-secret")
     ]
+
 
 
 def test_configure_outbound_trunk_requires_provider_number_identity():

@@ -3,11 +3,13 @@
 Phase 4 & 5 verification suite.
 """
 
+import json
 import sys
 import types
 
 import pytest
-from tenant_portal_api.livekit_sip import LiveKitSipClient
+from tenant_portal_api.livekit_sip import LiveKitSipClient, livekit_agent_name
+
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 
 
@@ -278,7 +280,7 @@ def test_livekit_dispatch_rule_created_without_inbound_numbers_and_bound_to_trun
     assert created_request.trunk_ids == ["ST_5NPaEZ43u4BS"]
     assert created_request.inbound_numbers == []
     assert created_request.rule.dispatch_rule_individual.room_prefix == "telephony-inbound-phone_12345678-"
-    assert created_request.room_config.agents[0].agent_name == "uva-dev-agent"
+    assert created_request.room_config.agents[0].agent_name == livekit_agent_name()
     assert '"phone_number_id": "phone_12345678"' in created_request.room_config.agents[0].metadata
     assert '"+14755587853"' in created_request.room_config.agents[0].metadata
 
@@ -293,7 +295,7 @@ def test_livekit_dispatch_rule_repairs_stale_inbound_numbers_rule(monkeypatch):
         trunk_ids=["ST_5NPaEZ43u4BS"],
         inbound_numbers=["+14755587853"],
         room_config=_FakeRoomConfiguration(
-            agents=[_FakeRoomAgentDispatch(agent_name="uva-dev-agent", metadata='{"direction":"inbound"}')]
+            agents=[_FakeRoomAgentDispatch(agent_name=livekit_agent_name(), metadata='{"direction":"inbound"}')]
         ),
     )
     dispatch_service = _FakeDispatchService(items=[stale_rule])
@@ -318,7 +320,7 @@ def test_livekit_dispatch_rule_repairs_stale_inbound_numbers_rule(monkeypatch):
     assert updated_rule.trunk_ids == ["ST_5NPaEZ43u4BS"]
     assert updated_rule.inbound_numbers == []
     assert updated_rule.rule.dispatch_rule_individual.room_prefix == "telephony-inbound-phone_12345678-"
-    assert updated_rule.room_config.agents[0].agent_name == "uva-dev-agent"
+    assert updated_rule.room_config.agents[0].agent_name == livekit_agent_name()
     assert '"agent_id": "agent_123"' in updated_rule.room_config.agents[0].metadata
     assert '"+14755587853"' in updated_rule.room_config.agents[0].metadata
     assert dispatch_service.created_requests == []
@@ -336,8 +338,17 @@ def test_livekit_dispatch_rule_removes_duplicate_same_name_rules(monkeypatch):
         room_config=_FakeRoomConfiguration(
             agents=[
                 _FakeRoomAgentDispatch(
-                    agent_name="uva-dev-agent",
-                    metadata='{"direction":"inbound","phone_number_id":"phone_12345678","e164_number":"+14755587853","tenant_id":"tenant_123","agent_id":"agent_123"}',
+                    agent_name=livekit_agent_name(),
+                    metadata=json.dumps(
+                        {
+                            "direction": "inbound",
+                            "phone_number_id": "phone_12345678",
+                            "e164_number": "+14755587853",
+                            "tenant_id": "tenant_123",
+                            "agent_id": "agent_123",
+                        }
+                    ),
+
                 )
             ]
         ),
@@ -351,9 +362,10 @@ def test_livekit_dispatch_rule_removes_duplicate_same_name_rules(monkeypatch):
         trunk_ids=["ST_OLD"],
         inbound_numbers=["+14755587853"],
         room_config=_FakeRoomConfiguration(
-            agents=[_FakeRoomAgentDispatch(agent_name="uva-dev-agent", metadata='{"direction":"inbound"}')]
+            agents=[_FakeRoomAgentDispatch(agent_name=livekit_agent_name(), metadata='{"direction":"inbound"}')]
         ),
     )
+
     dispatch_service = _FakeDispatchService(items=[primary_rule, duplicate_rule])
     _install_fake_livekit_api(monkeypatch, dispatch_service)
 

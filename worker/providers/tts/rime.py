@@ -10,7 +10,8 @@ Extra kwargs are filtered against inspect.signature so an older plugin without `
 or `segment` still constructs. The installed plugin hardcodes ``audioFormat=pcm``; we do not
 pass Cartesia-style ``encoding=pcm_mulaw``.
 
-Requires RIME_API_KEY (env var, or api_key= kwarg).
+Requires RIME_API_KEY (env var, or api_key= kwarg). WebSocket streaming defaults live in
+rime_options.py (use_websocket=True).
 """
 
 from __future__ import annotations

@@ -206,7 +206,12 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
                 conn.execute(
                     """
                     update telephony_calls
-                    set platform_status = %s,
+                    set platform_status = case
+                            when telephony_calls.platform_status in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
+                              and %s not in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
+                            then telephony_calls.platform_status
+                            else %s
+                        end,
                         provider_status = %s,
                         error_code = coalesce(%s, error_code),
                         error_message = coalesce(%s, error_message),
@@ -219,6 +224,7 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
                     """,
                     (
                         mapped,
+                        mapped,
                         provider_status or event_type,
                         error_code,
                         error_message,
@@ -227,6 +233,7 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
                         call_control_id,
                     ),
                 )
+
 
 
 def _persist_telnyx_webhook_event(
@@ -275,24 +282,35 @@ def _persist_telnyx_webhook_event(
             ),
         ).fetchone()
         if matched:
-            conn.execute(
-                """
-                insert into telephony_call_events (
-                    tenant_id, telephony_call_id, source, event_type, provider_event_id, payload
-                ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
-                on conflict do nothing
-                """,
-                (
-                    matched[1],
-                    matched[0],
-                    event_type,
-                    str(event_id),
-                    json.dumps(data),
-                ),
-            )
+            tenant_id = matched[1]
+            try:
+                inserted = conn.execute(
+                    """
+                    insert into telephony_call_events (
+                        tenant_id, telephony_call_id, source, event_type, provider_event_id, payload
+                    ) values (%s, %s, 'telnyx', %s, %s, %s::jsonb)
+                    on conflict do nothing
+                    returning id
+                    """,
+                    (
+                        tenant_id,
+                        matched[0],
+                        event_type,
+                        str(event_id),
+                        json.dumps(data),
+                    ),
+                ).fetchone()
+                if not inserted:
+                    logger.info("Skipping duplicate webhook event %s for tenant %s", event_id, tenant_id)
+                    conn.commit()
+                    return None
+            except Exception:
+                # Handle databases without partial index constraint gracefully
+                pass
         _apply_webhook_side_effects(conn, event_type, data)
         conn.commit()
     return None
+
 
 
 @router.post("/webhooks/telephony/telnyx")

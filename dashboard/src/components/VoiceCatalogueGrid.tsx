@@ -24,15 +24,23 @@ function capitalize(value: string): string {
  * `mode: 'copy'` — tapping a card copies its id (shows a toast + temporary checkmark).
  * `mode: 'select'` — tapping a card calls `onSelect(voice)` and highlights `selectedVoiceId`;
  * no clipboard/toast involved, since selecting a voice for an agent is the point, not copying.
+ *
+ * `allowedVoiceIds`, when passed, scopes the grid to exactly those ids — the authoritative
+ * "which voices work with this agent's tts_provider+agent_language" list, from
+ * `getProviderCapabilities()`. Without it, every enabled voice in the catalogue is shown
+ * regardless of provider — fine for browsing, wrong for picking a voice for a specific agent
+ * (nothing would otherwise stop assigning e.g. a Cartesia voice id to an `uplift` agent).
  */
 export function VoiceCatalogueGrid({
   mode,
   selectedVoiceId,
   onSelect,
+  allowedVoiceIds,
 }: {
   mode: 'copy' | 'select';
   selectedVoiceId?: string;
   onSelect?: (voice: ApiVoice) => void;
+  allowedVoiceIds?: string[];
 }) {
   const { data: voices, isLoading: voicesLoading, error: voicesError } = useSWR(
     swrKeys.voices,
@@ -69,7 +77,10 @@ export function VoiceCatalogueGrid({
 
   const filteredVoices = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (voices ?? []).filter((voice) => {
+    const scoped = allowedVoiceIds
+      ? (voices ?? []).filter((voice) => allowedVoiceIds.includes(voice.id))
+      : (voices ?? []);
+    return scoped.filter((voice) => {
       if (gender !== 'all' && voice.gender !== gender) return false;
       if (
         query &&
@@ -80,7 +91,7 @@ export function VoiceCatalogueGrid({
       }
       return true;
     });
-  }, [voices, search, gender]);
+  }, [voices, search, gender, allowedVoiceIds]);
 
   const handlePlayAudio = (voice: ApiVoice, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -177,6 +188,10 @@ export function VoiceCatalogueGrid({
               <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
             </div>
           ))}
+        </div>
+      ) : allowedVoiceIds && allowedVoiceIds.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">No voices available for this provider yet</p>
         </div>
       ) : filteredVoices.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-1 py-12 text-center">

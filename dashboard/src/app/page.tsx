@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { Mic, Phone, Radio, Play } from 'lucide-react';
 
@@ -22,9 +23,11 @@ import {
   TableRow,
   TableHead,
   TableCell,
+  RowOpenButton,
 } from '@/components/ui/table';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { data: agents, isLoading: agentsLoading, error: agentsError } = useSWR(
     swrKeys.agents,
     swrFetchers.agents,
@@ -56,7 +59,7 @@ export default function DashboardPage() {
   const totalNumbers = managedNumbers?.length ?? 0;
 
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <PageHeader
         title="Overview"
         description="Manage your Urdu voice agents, telephony numbers, credentials, and real-time usage quotas."
@@ -84,7 +87,12 @@ export default function DashboardPage() {
         {agentsLoading ? (
           <StatCardSkeleton />
         ) : (
-          <StatCard label="Active Agents" value={agents?.length ?? 0} />
+          <StatCard
+            label="Active Agents"
+            value={agents?.length ?? 0}
+            href="/agents"
+            linkLabel="View all agents"
+          />
         )}
         <StatCard label="Phone Numbers" value={totalNumbers} href="/telephony" linkLabel="Manage numbers" />
         {usageLoading ? (
@@ -160,27 +168,45 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
+      <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-[2fr_1fr]">
+        <Card className="relative flex h-full flex-col overflow-hidden">
+          <Link
+            href="/agents"
+            aria-label="View all agents"
+            className="absolute inset-0 z-0 rounded-lg hover:bg-muted/20"
+          />
+
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
             <h2 className="text-lg font-semibold text-foreground">Configured Voice Agents</h2>
-            <Link
-              href="/agents"
-              className={cn(
-                'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                'bg-primary text-primary-foreground hover:bg-primary/90',
-              )}
-            >
-              + New Agent
-            </Link>
+            {!agentsLoading && (agents ?? []).length > 0 ? (
+              <Link
+                href="/agents"
+                className={cn(
+                  'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  'bg-primary text-primary-foreground hover:bg-primary/90',
+                )}
+              >
+                View All Agents
+              </Link>
+            ) : null}
           </div>
-          <CardContent className="pt-6">
+          <CardContent className="relative z-10 min-h-[340px] flex-1 overflow-y-auto pt-6">
             {agentsLoading ? (
               <DataTableSkeleton rows={4} />
             ) : (agents ?? []).length === 0 ? (
               <EmptyState
-                title="No agents found for this tenant"
-                description="Create your first agent to get started."
+                title="Create your first agent now"
+                action={
+                  <Link
+                    href="/agents?new=1"
+                    className={cn(
+                      'inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                      'bg-primary text-primary-foreground hover:bg-primary/90',
+                    )}
+                  >
+                    Create Agent
+                  </Link>
+                }
               />
             ) : (
               <Table>
@@ -188,18 +214,21 @@ export default function DashboardPage() {
                   <TableRow>
                     <TableHead>Agent Name</TableHead>
                     <TableHead>Selected Voice</TableHead>
-                    <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(agents ?? []).map((agent) => (
-                    <TableRow key={agent.id}>
-                      <TableCell className="font-medium">{agent.name}</TableCell>
-                      <TableCell>
-                        <Badge>{agent.voice_id}</Badge>
+                    <TableRow key={agent.id} onClick={() => router.push(`/agents/${agent.id}`)}>
+                      <TableCell className="font-medium">
+                        <RowOpenButton
+                          onClick={() => router.push(`/agents/${agent.id}`)}
+                          ariaLabel={`Open agent ${agent.name}`}
+                        >
+                          {agent.name}
+                        </RowOpenButton>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">Active</Badge>
+                        <Badge>{agent.voice_id}</Badge>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -209,8 +238,8 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="flex flex-col gap-4 pt-6">
+        <Card className="flex h-full flex-col overflow-hidden">
+          <CardContent className="flex flex-col gap-4 overflow-y-auto pt-6">
             <h2 className="text-lg font-semibold text-foreground">Integration Specs</h2>
             <p className="text-sm text-muted-foreground">
               Your host backend signs HMAC tokens using your assigned secret key before

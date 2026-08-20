@@ -47,6 +47,20 @@ _PERSONA_FRAME = (
     "follow the spoken-output rules.\n\n"
 )
 
+_LANGUAGE_NAMES = {"ur": "Urdu", "en": "English"}
+
+
+def _language_directive(agent_language: str) -> str:
+    """Response language was previously governed entirely by whatever the tenant's free-text
+    persona prompt happened to imply (e.g. a prompt that says "Urdu customer support assistant"
+    made the model reply in Urdu even for an agent_language="en" agent whose STT/TTS were
+    correctly configured for English) — there was no structural link between `agent_language`
+    and what language the LLM actually responds in. This appends an explicit, trusted directive
+    (never influenced by tenant text) so the configured language is guaranteed regardless of
+    persona wording."""
+    name = _LANGUAGE_NAMES.get(agent_language, agent_language)
+    return f" Respond only in {name}, regardless of what language the agent persona below is written in or claims."
+
 
 def build_agent(cfg: AgentConfig) -> Any:
     """Build the Agent: OUR fixed instructions + the tenant persona as framed DATA in chat_ctx +
@@ -63,7 +77,8 @@ def build_agent(cfg: AgentConfig) -> Any:
     persona_ctx.add_message(role="system", content=_PERSONA_FRAME + cfg.prompt)
     agent_cls = _sanitizing_agent_class(cfg.tts_provider)
     return agent_cls(
-        instructions=build_system_instructions(cfg),
+        instructions=build_system_instructions(cfg)
+        + _language_directive(cfg.agent_language),
         chat_ctx=persona_ctx,
         tools=FIXED_TOOLS,
     )

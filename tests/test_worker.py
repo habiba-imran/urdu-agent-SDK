@@ -107,8 +107,11 @@ def test_persona_injected_as_data_not_system_instructions():
         llm_model="gemini-2.5-flash",
     )
     agent = build_agent(cfg)
-    # our instructions are authoritative and unpolluted by the tenant prompt
-    assert agent.instructions == SYSTEM_INSTRUCTIONS
+    # our instructions are authoritative and unpolluted by the tenant prompt -- instructions is
+    # SYSTEM_INSTRUCTIONS plus an appended, trusted language directive (worker/main.py::
+    # _language_directive), never the tenant's own text, so startswith proves the same
+    # "uncontaminated by tenant prompt" property without hardcoding the directive text here too.
+    assert agent.instructions.startswith(SYSTEM_INSTRUCTIONS)
     assert inject not in agent.instructions
     # the tenant prompt lives in the persona chat_ctx (framed as data), not in instructions
     ctx_text = " ".join(

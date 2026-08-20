@@ -144,7 +144,8 @@ class StatefulTelephonyDb:
         return FakeCursor(row=self._connection_row(tenant_id))
 
     def _upsert_number(self, params: tuple[Any, ...]):
-        tenant_id, connection_id, provider_id, e164, country, number_type, features, provider_status = params
+        tenant_id, connection_id, provider_id, e164, country, number_type, features, provider_status, *rest = params
+
         existing = next(
             (
                 number
@@ -502,8 +503,9 @@ def test_provider_number_unique_constraint_works_against_real_postgres_schema():
     except Exception as exc:  # pragma: no cover - environment dependent
         pytest.skip(f"PostgreSQL connection not available for constraint check: {exc}")
 
-    with conn:
+    with conn.transaction():
         conn.execute("drop table if exists pg_temp.telephony_provider_unique_test")
+
         conn.execute(
             """
             create temporary table telephony_provider_unique_test (
@@ -551,16 +553,18 @@ def test_provider_number_unique_constraint_works_against_real_postgres_schema():
             ("provider_a_1", TENANT_A, "pn_shared_real", "+14155550142"),
         )
         with pytest.raises(psycopg.errors.UniqueViolation):
-            conn.execute(
-                """
-                insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
-                values (%s, %s, %s, %s)
-                """,
-                ("provider_a_2", TENANT_A, "pn_shared_real", "+14155550143"),
-            )
-        conn.rollback()
+            with conn.transaction():
+                conn.execute(
+                    """
+                    insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
+                    values (%s, %s, %s, %s)
+                    """,
+                    ("provider_a_2", TENANT_A, "pn_shared_real", "+14155550143"),
+                )
+
 
         conn.execute(
+
             """
             insert into telephony_provider_unique_test (id, tenant_id, provider_number_id, e164_number)
             values (%s, %s, %s, %s)

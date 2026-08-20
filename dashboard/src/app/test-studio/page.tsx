@@ -1,10 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { Mic, MicOff, PhoneOff, Play, Volume2, RefreshCw, Bot, Sparkles, MessageSquare, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Play, Volume2, Bot, Sparkles, MessageSquare, AlertCircle } from 'lucide-react';
+import { AwaazLabsUvaVoice, AwaazLabsUvaVoiceError, type AwaazLabsUvaVoiceErrorCode } from '@awaazlabs-uva/voice';
+
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
-import { getAgents, getCredentials } from '@/lib/portalApi';
+
+const CONTROL_PLANE_URL = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL;
 
 type TranscriptTurn = {
   id: string;
@@ -13,14 +16,35 @@ type TranscriptTurn = {
   timestamp: string;
 };
 
+type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
+
+function friendlyError(code: AwaazLabsUvaVoiceErrorCode, message: string): string {
+  // The SDK constructs some errors with no message at all, in which case Error's own
+  // constructor falls back to the code string itself (`new Error(message ?? code)`) — so
+  // `message === code` means "no real detail", not an actual message worth showing verbatim.
+  const hasRealDetail = Boolean(message) && message !== code;
+  switch (code) {
+    case 'quota_exceeded':
+      return 'This tenant is out of concurrency or monthly minutes quota — the session was refused.';
+    case 'agent_not_found':
+      return 'That agent could not be found (it may have been deleted). Pick another agent.';
+    case 'session_failed':
+    default:
+      return hasRealDetail
+        ? message
+        : 'Could not start the voice session. Check that control_plane is reachable and this tenant has a signing secret configured.';
+  }
+}
+
 export default function TestStudioPage() {
   const { data: agents, isLoading: loadingAgents } = useSWR(swrKeys.agents, swrFetchers.agents);
   const { data: credentials } = useSWR(swrKeys.credentials, swrFetchers.credentials);
 
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [statusText, setStatusText] = useState<string>('Disconnected');
+  const [agentSpeaking, setAgentSpeaking] = useState<boolean>(false);
+  const [audioBlocked, setAudioBlocked] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -31,56 +55,158 @@ export default function TestStudioPage() {
     }
   }, [agents, selectedAgentId]);
 
+  // One real client per publishableKey. Zero secrets held here — same SDK, same session
+  // endpoint (control_plane's dev-mint) any real host backend's browser code would use.
+  const client = useMemo(() => {
+    if (!credentials?.publishable_key || !CONTROL_PLANE_URL) return null;
+    return new AwaazLabsUvaVoice({
+      publishableKey: credentials.publishable_key,
+      sessionEndpoint: `${CONTROL_PLANE_URL.replace(/\/$/, '')}/v1/session/dev-mint`,
+    });
+  }, [credentials?.publishable_key]);
+
+  const clientRef = useRef<AwaazLabsUvaVoice | null>(null);
+  clientRef.current = client;
+
+  useEffect(() => {
+    if (!client) return;
+
+    const onConnected = () => {
+      setConnectionState('connected');
+      setErrorMsg(null);
+      setTranscripts((prev) => [
+        ...prev,
+        {
+          id: `sys-connected-${Date.now()}`,
+          role: 'system',
+          text: 'Voice session connected — start talking.',
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
+    };
+    const onDisconnected = () => {
+      setConnectionState('idle');
+      setAgentSpeaking(false);
+      setAudioBlocked(false);
+      setTranscripts((prev) => [
+        ...prev,
+        {
+          id: `sys-disconnected-${Date.now()}`,
+          role: 'system',
+          text: 'Voice session ended.',
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
+    };
+    const onTranscript = ({
+      id,
+      text,
+      final,
+      speaker,
+    }: {
+      id: string;
+      text: string;
+      final: boolean;
+      speaker: 'user' | 'agent';
+    }) => {
+      setTranscripts((prev) => {
+        const idx = prev.findIndex((t) => t.id === id);
+        const role = speaker === 'user' ? 'user' : 'assistant';
+        if (idx === -1) {
+          return [...prev, { id, role, text, timestamp: new Date().toLocaleTimeString() }];
+        }
+        const next = [...prev];
+        next[idx] = { ...next[idx], text };
+        return next;
+      });
+      void final; // interim segments are replaced in place above; nothing extra needed on final
+    };
+    const onAgentSpeaking = (speaking: boolean) => setAgentSpeaking(speaking);
+    const onAudioBlocked = (blocked: boolean) => setAudioBlocked(blocked);
+    const onError = (err: AwaazLabsUvaVoiceError) => {
+      setErrorMsg(friendlyError(err.code, err.message));
+    };
+
+    client.on('connected', onConnected);
+    client.on('disconnected', onDisconnected);
+    client.on('transcript', onTranscript);
+    client.on('agent_speaking', onAgentSpeaking);
+    client.on('audio_blocked', onAudioBlocked);
+    client.on('error', onError);
+
+    return () => {
+      client.off('connected', onConnected);
+      client.off('disconnected', onDisconnected);
+      client.off('transcript', onTranscript);
+      client.off('agent_speaking', onAgentSpeaking);
+      client.off('audio_blocked', onAudioBlocked);
+      client.off('error', onError);
+    };
+  }, [client]);
+
+  // Disconnect on unmount (route change) rather than leaking an open room + quota slot.
+  useEffect(() => {
+    return () => {
+      if (clientRef.current?.isConnected) {
+        void clientRef.current.disconnect();
+      }
+    };
+  }, []);
+
   const handleStartSession = async () => {
+    if (!client) {
+      setErrorMsg('Voice client not ready yet — waiting for credentials to load.');
+      return;
+    }
     if (!selectedAgentId) {
       setErrorMsg('Please select a voice agent to test.');
       return;
     }
     setErrorMsg(null);
-    setStatusText('Connecting to Voice Agent...');
-    setIsConnected(true);
-
-    // Mock/Simulated WebRTC turn loop for dashboard test studio
-    const initialTurn: TranscriptTurn = {
-      id: '1',
-      role: 'system',
-      text: 'Voice WebRTC session connected successfully.',
-      timestamp: new Date().toLocaleTimeString(),
-    };
-    setTranscripts([initialTurn]);
-
-    setTimeout(() => {
-      setStatusText('Session Active (Listening...)');
-      const agentObj = agents?.find(a => a.id === selectedAgentId);
-      const greetingTurn: TranscriptTurn = {
-        id: '2',
-        role: 'assistant',
-        text: `Assalam-o-Alaikum! Main ${agentObj?.name || 'Urdu Voice Agent'} hoon. Main aap ki kya madad kar sakta hoon?`,
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      setTranscripts(prev => [...prev, greetingTurn]);
-    }, 1500);
+    setConnectionState('connecting');
+    setTranscripts([]);
+    try {
+      await client.connect({ agentId: selectedAgentId });
+    } catch (err) {
+      setConnectionState('idle');
+      if (err instanceof AwaazLabsUvaVoiceError) {
+        setErrorMsg(friendlyError(err.code, err.message));
+      } else {
+        setErrorMsg('Failed to start session.');
+      }
+    }
   };
 
-  const handleEndSession = () => {
-    setIsConnected(false);
-    setStatusText('Disconnected');
-    setTranscripts(prev => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        role: 'system',
-        text: 'Voice WebRTC session ended cleanly.',
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
+  const handleEndSession = async () => {
+    if (!client) return;
+    setConnectionState('disconnecting');
+    await client.disconnect();
   };
 
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
+  const toggleMute = async () => {
+    if (!client) return;
+    const next = !isMuted;
+    await client.setMicMuted(next);
+    setIsMuted(next);
   };
 
-  const selectedAgent = agents?.find(a => a.id === selectedAgentId);
+  const selectedAgent = agents?.find((a) => a.id === selectedAgentId);
+  const isConnected = connectionState === 'connected';
+  const isBusy = connectionState === 'connecting' || connectionState === 'disconnecting';
+  // Broader than isConnected: keep showing the mute/end-call panel while tearing down too, so
+  // "End Call" doesn't flicker back into "Start WebRTC Call" mid-disconnect.
+  const showInCallControls = connectionState === 'connected' || connectionState === 'disconnecting';
+
+  const statusText =
+    connectionState === 'connecting'
+      ? 'Connecting to Voice Agent...'
+      : connectionState === 'disconnecting'
+        ? 'Ending session...'
+        : connectionState === 'connected'
+          ? agentSpeaking
+            ? 'Agent speaking...'
+            : 'Session Active (Listening...)'
+          : 'Disconnected';
 
   return (
     <div>
@@ -93,7 +219,7 @@ export default function TestStudioPage() {
               WebRTC Voice Test Studio
             </h1>
             <p className="text-sm text-muted-foreground">
-              Test your Urdu Voice Agents in real-time directly inside the dashboard with browser microphone input.
+              Test your voice agents in real-time directly inside the dashboard with browser microphone input.
             </p>
           </div>
           {credentials && (
@@ -108,6 +234,15 @@ export default function TestStudioPage() {
             <AlertCircle className="h-4 w-4" />
             {errorMsg}
           </div>
+        )}
+
+        {audioBlocked && isConnected && (
+          <button
+            onClick={() => void clientRef.current?.startAudio()}
+            className="w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 flex items-center justify-center gap-2 hover:bg-amber-100 transition-colors"
+          >
+            <Volume2 className="h-4 w-4" /> Browser blocked audio playback — click to enable sound
+          </button>
         )}
 
         <div className="grid gap-6 md:grid-cols-3">
@@ -125,12 +260,14 @@ export default function TestStudioPage() {
               ) : (
                 <select
                   value={selectedAgentId}
-                  onChange={e => setSelectedAgentId(e.target.value)}
-                  disabled={isConnected}
+                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                  disabled={isConnected || isBusy}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
                 >
-                  {agents?.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.llm_model})</option>
+                  {agents?.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.llm_model})
+                    </option>
                   ))}
                 </select>
               )}
@@ -150,18 +287,19 @@ export default function TestStudioPage() {
             )}
 
             <div className="pt-4 border-t border-border space-y-3">
-              {!isConnected ? (
+              {!showInCallControls ? (
                 <button
-                  onClick={handleStartSession}
-                  disabled={!selectedAgentId}
+                  onClick={() => void handleStartSession()}
+                  disabled={!selectedAgentId || !client || isBusy}
                   className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
-                  <Play className="h-4 w-4" /> Start WebRTC Call
+                  <Play className="h-4 w-4" />
+                  {connectionState === 'connecting' ? 'Connecting...' : 'Start WebRTC Call'}
                 </button>
               ) : (
                 <div className="space-y-2">
                   <button
-                    onClick={toggleMute}
+                    onClick={() => void toggleMute()}
                     className={`w-full flex items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
                       isMuted ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-border bg-background text-foreground hover:bg-accent'
                     }`}
@@ -170,8 +308,9 @@ export default function TestStudioPage() {
                     {isMuted ? 'Microphone Muted' : 'Mute Microphone'}
                   </button>
                   <button
-                    onClick={handleEndSession}
-                    className="w-full flex items-center justify-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                    onClick={() => void handleEndSession()}
+                    disabled={connectionState === 'disconnecting'}
+                    className="w-full flex items-center justify-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
                   >
                     <PhoneOff className="h-4 w-4" /> End Call
                   </button>
@@ -187,9 +326,11 @@ export default function TestStudioPage() {
                 <MessageSquare className="h-5 w-5 text-primary" />
                 <h2 className="text-base font-semibold text-foreground">Live Conversation Transcript</h2>
               </div>
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                isConnected ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-muted text-muted-foreground'
-              }`}>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  isConnected ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-muted text-muted-foreground'
+                }`}
+              >
                 <span className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground'}`} />
                 {statusText}
               </span>
@@ -199,18 +340,18 @@ export default function TestStudioPage() {
               {transcripts.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground space-y-2">
                   <Sparkles className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="text-sm">Click "Start WebRTC Call" to initiate conversation test.</p>
+                  <p className="text-sm">Click &quot;Start WebRTC Call&quot; to initiate conversation test.</p>
                 </div>
               ) : (
-                transcripts.map(turn => (
+                transcripts.map((turn) => (
                   <div
                     key={turn.id}
                     className={`flex flex-col gap-1 p-3 rounded-lg text-sm ${
                       turn.role === 'user'
                         ? 'bg-primary/10 text-foreground ml-8 border border-primary/20'
                         : turn.role === 'assistant'
-                        ? 'bg-muted text-foreground mr-8 border border-border'
-                        : 'bg-accent/40 text-muted-foreground text-center text-xs'
+                          ? 'bg-muted text-foreground mr-8 border border-border'
+                          : 'bg-accent/40 text-muted-foreground text-center text-xs'
                     }`}
                   >
                     <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">

@@ -295,7 +295,7 @@ class TelephonyService:
                     features = %s::text[],
                     provisioning_status = case
                         when disabled_at is not null
-                          or provisioning_status in ('released', 'deleted')
+                          or provisioning_status in ('purchase_pending', 'discovered', 'import_pending', 'released', 'deleted')
                         then %s
                         else telephony_phone_numbers.provisioning_status
                     end,
@@ -347,19 +347,23 @@ class TelephonyService:
                     features = excluded.features,
                     provisioning_status = case
                         when telephony_phone_numbers.disabled_at is not null
-                          or telephony_phone_numbers.provisioning_status in ('released', 'deleted')
+                          or telephony_phone_numbers.provisioning_status = 'disabled'
+                        then telephony_phone_numbers.provisioning_status
+                        when telephony_phone_numbers.provisioning_status in ('purchase_pending', 'discovered', 'import_pending', 'released', 'deleted')
                         then excluded.provisioning_status
                         else telephony_phone_numbers.provisioning_status
                     end,
                     routing_status = case
                         when telephony_phone_numbers.disabled_at is not null
-                        then excluded.routing_status
-                        else telephony_phone_numbers.routing_status
+                          or telephony_phone_numbers.provisioning_status = 'disabled'
+                        then telephony_phone_numbers.routing_status
+                        else excluded.routing_status
                     end,
                     provider_status = excluded.provider_status,
                     external_customer_ref = coalesce(excluded.external_customer_ref, telephony_phone_numbers.external_customer_ref),
-                    disabled_at = null,
+                    disabled_at = telephony_phone_numbers.disabled_at,
                     updated_at = now()
+
                     {last_synced_sql}
                 returning id
                 """,
@@ -388,7 +392,7 @@ class TelephonyService:
                 features = %s::text[],
                 provisioning_status = case
                     when disabled_at is not null
-                      or provisioning_status in ('released', 'deleted')
+                      or provisioning_status in ('purchase_pending', 'discovered', 'import_pending', 'released', 'deleted')
                     then %s
                     else telephony_phone_numbers.provisioning_status
                 end,
@@ -416,6 +420,8 @@ class TelephonyService:
                 tenant_id,
                 e164_number,
             ),
+
+
         ).fetchone()
         if row:
             return str(row[0])
@@ -692,11 +698,44 @@ class TelephonyService:
                             code=TelephonyErrorCode.CALL_STATE_CONFLICT,
                             message="Idempotency key was reused with a different purchase payload.",
                         )
-                    return existing["response_body"]
+                    if existing.get("platform_status") == "completed" and existing.get("response_body") is not None:
+                        return existing["response_body"]
+                    if existing.get("platform_status") in ("in_progress", "pending"):
+                        raise TelephonyError(
+                            status=409,
+                            code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                            message="Concurrent request in progress for this idempotency key.",
+                        )
 
-            client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
-            order_res = client.purchase_number(e164_number)
-            order_res, owned = self._reconcile_number_purchase(client, e164_number, order_res)
+                is_leader = queries.try_insert_idempotency_lock(
+                    conn, tenant_id, idempotency_key, action, request_hash, status="in_progress"
+                )
+                if not is_leader:
+                    existing = queries.get_idempotency_key(conn, tenant_id, idempotency_key, action)
+                    if existing:
+                        if existing.get("request_hash") != request_hash:
+                            raise TelephonyError(
+                                status=409,
+                                code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                                message="Idempotency key was reused with a different purchase payload.",
+                            )
+                        if existing.get("platform_status") == "completed" and existing.get("response_body") is not None:
+                            return existing["response_body"]
+                    raise TelephonyError(
+                        status=409,
+                        code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                        message="Concurrent purchase request in progress for this idempotency key.",
+                    )
+
+            try:
+                client, conn_data = self._tenant_telnyx_client(conn, tenant_id)
+                order_res = client.purchase_number(e164_number)
+                order_res, owned = self._reconcile_number_purchase(client, e164_number, order_res)
+            except Exception:
+                if conn is not None:
+                    queries.fail_idempotency_key(conn, tenant_id, idempotency_key, action)
+                raise
+
 
             if conn is None:
                 num_id = f"num_{uuid.uuid4().hex[:12]}"
@@ -767,8 +806,13 @@ class TelephonyService:
                     provisioning_status=(
                         NumberProvisioningStatus.OWNED.value
                         if order_res.get("platform_status") == "purchased"
-                        else NumberProvisioningStatus.PURCHASE_PENDING.value
+                        else (
+                            NumberProvisioningStatus.PURCHASE_FAILED.value
+                            if order_res.get("platform_status") in ("failed", "cancelled", "deleted", "action_required")
+                            else NumberProvisioningStatus.PURCHASE_PENDING.value
+                        )
                     ),
+
                     routing_status=NumberRoutingStatus.NOT_CONFIGURED.value,
                     provider_status=order_res.get("provider_status"),
                     external_customer_ref=external_customer_ref,
@@ -1010,6 +1054,11 @@ class TelephonyService:
     ) -> dict[str, Any]:
         """Initiate outbound PSTN call idempotently."""
         idemp_id = f"{tenant_id}:{idempotency_key}:call"
+        action = "telephony.outbound_calls.create"
+        request_hash = hashlib.sha256(
+            f"{tenant_id}:{agent_id}:{from_number_id}:{to_number}".encode()
+        ).hexdigest()
+
         if not to_number.startswith("+"):
             raise TelephonyError(
                 status=400,
@@ -1021,23 +1070,61 @@ class TelephonyService:
             if conn is None and idemp_id in self._idempotency:
                 return self._idempotency[idemp_id]
 
-            if conn is None:
-                phone = next(
-                    (n for n in self._numbers.get(tenant_id, []) if n["id"] == from_number_id),
-                    None,
+            if conn is not None:
+                existing = queries.get_idempotency_key(conn, tenant_id, idempotency_key, action)
+                if existing:
+                    if existing.get("request_hash") != request_hash:
+                        raise TelephonyError(
+                            status=409,
+                            code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                            message="Idempotency key was reused with a different call payload.",
+                        )
+                    if existing.get("platform_status") == "completed" and existing.get("response_body") is not None:
+                        return existing["response_body"]
+                    if existing.get("platform_status") in ("in_progress", "pending"):
+                        raise TelephonyError(
+                            status=409,
+                            code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                            message="Concurrent request in progress for this idempotency key.",
+                        )
+
+                is_leader = queries.try_insert_idempotency_lock(
+                    conn, tenant_id, idempotency_key, action, request_hash, status="in_progress"
                 )
-                if not phone:
+                if not is_leader:
+                    existing = queries.get_idempotency_key(conn, tenant_id, idempotency_key, action)
+                    if existing:
+                        if existing.get("request_hash") != request_hash:
+                            raise TelephonyError(
+                                status=409,
+                                code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                                message="Idempotency key was reused with a different call payload.",
+                            )
+                        if existing.get("platform_status") == "completed" and existing.get("response_body") is not None:
+                            return existing["response_body"]
                     raise TelephonyError(
-                        status=404,
-                        code=TelephonyErrorCode.NUMBER_NOT_FOUND,
-                        message=f"Number {from_number_id} not found for tenant.",
+                        status=409,
+                        code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                        message="Concurrent request in progress for this idempotency key.",
                     )
-                self._assert_number_bound_to_agent(phone, agent_id)
-                outbound_trunk_id = "lk_tr_out_mock_123"
-                phone_e164 = phone["e164_number"]
-                outbound_trunk_record_id = None
-            else:
-                try:
+
+            try:
+                if conn is None:
+                    phone = next(
+                        (n for n in self._numbers.get(tenant_id, []) if n["id"] == from_number_id),
+                        None,
+                    )
+                    if not phone:
+                        raise TelephonyError(
+                            status=404,
+                            code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                            message=f"Number {from_number_id} not found for tenant.",
+                        )
+                    self._assert_number_bound_to_agent(phone, agent_id)
+                    outbound_trunk_id = "lk_tr_out_mock_123"
+                    phone_e164 = phone["e164_number"]
+                    outbound_trunk_record_id = None
+                else:
                     number_row = conn.execute(
                         """
                         select id, tenant_id, provider_number_id, e164_number, country, number_type,
@@ -1089,66 +1176,61 @@ class TelephonyService:
                             code=TelephonyErrorCode.OUTBOUND_CONCURRENCY_LIMIT_REACHED,
                             message="Tenant outbound concurrency limit is reached.",
                         )
-                except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
-                    self._raise_database_conflict("create outbound call", exc)
 
-            call_id = str(uuid.uuid4())
-            room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
-            lk_client = self._get_livekit_sip_client()
-            # Dispatch the named worker into the room BEFORE dialing so the agent is
-            # present when the PSTN party answers (job metadata carries tenant/agent).
-            lk_client.create_agent_dispatch(
-                room_name,
-                metadata={
-                    "direction": "outbound",
-                    "tenant_id": tenant_id,
-                    "agent_id": agent_id,
-                    "telephony_call_id": call_id,
-                    "from_number_id": from_number_id,
-                    "from_number": phone_e164,
-                    "to_number": to_number,
-                },
-            )
-            try:
-                sip_part = lk_client.create_sip_participant(
-                    room_name=room_name,
-                    outbound_trunk_id=outbound_trunk_id,
-                    to_number=to_number,
-                )
-            except TelephonyError as exc:
-                if conn is not None:
-                    queries.release_call_quota_unpersisted(conn, tenant_id)
-                detail = exc.detail if isinstance(exc.detail, dict) else {}
-                provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
-                raise TelephonyError(
-                    status=exc.status,
-                    code=exc.code,
-                    message=exc.message,
-                    detail={
-                        **detail,
+                call_id = str(uuid.uuid4())
+                room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
+                lk_client = self._get_livekit_sip_client()
+                lk_client.create_agent_dispatch(
+                    room_name,
+                    metadata={
+                        "direction": "outbound",
+                        "tenant_id": tenant_id,
+                        "agent_id": agent_id,
+                        "telephony_call_id": call_id,
+                        "from_number_id": from_number_id,
                         "from_number": phone_e164,
                         "to_number": to_number,
-                        "room_name": room_name,
-                        "outbound_trunk_id": outbound_trunk_id,
-                        **({"provider_message": provider_message} if provider_message else {}),
                     },
-                ) from exc
+                )
+                try:
+                    sip_part = lk_client.create_sip_participant(
+                        room_name=room_name,
+                        outbound_trunk_id=outbound_trunk_id,
+                        to_number=to_number,
+                    )
+                except TelephonyError as exc:
+                    if conn is not None:
+                        queries.release_call_quota_unpersisted(conn, tenant_id)
+                    detail = exc.detail if isinstance(exc.detail, dict) else {}
+                    provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
+                    raise TelephonyError(
+                        status=exc.status,
+                        code=exc.code,
+                        message=exc.message,
+                        detail={
+                            **detail,
+                            "from_number": phone_e164,
+                            "to_number": to_number,
+                            "room_name": room_name,
+                            "outbound_trunk_id": outbound_trunk_id,
+                            **({"provider_message": provider_message} if provider_message else {}),
+                        },
+                    ) from exc
 
-            res = {
-                "telephony_call_id": call_id,
-                "session_id": None,
-                "room_name": room_name,
-                "platform_status": CallPublicStatus.DIALING.value,
-                "direction": "outbound",
-                "error_code": None,
-                "error_message": None,
-            }
-            if conn is None:
-                self._idempotency[idemp_id] = res
-                self._calls[call_id] = {**res, "id": call_id, "tenant_id": tenant_id, "agent_id": agent_id}
-                return res
+                res = {
+                    "telephony_call_id": call_id,
+                    "session_id": None,
+                    "room_name": room_name,
+                    "platform_status": CallPublicStatus.DIALING.value,
+                    "direction": "outbound",
+                    "error_code": None,
+                    "error_message": None,
+                }
+                if conn is None:
+                    self._idempotency[idemp_id] = res
+                    self._calls[call_id] = {**res, "id": call_id, "tenant_id": tenant_id, "agent_id": agent_id}
+                    return res
 
-            try:
                 conn.execute(
                     """
                     insert into telephony_calls (
@@ -1178,9 +1260,19 @@ class TelephonyService:
                         sip_part.get("status"),
                     ),
                 )
-            except (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference) as exc:
-                self._raise_database_conflict("persist outbound call", exc)
-            return res
+                queries.save_idempotency_key(
+                    conn, tenant_id, idempotency_key, action, request_hash, res
+                )
+                return res
+            except Exception as exc:
+                if conn is not None:
+                    queries.fail_idempotency_key(conn, tenant_id, idempotency_key, action)
+                if isinstance(exc, (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference)) or "InvalidColumnReference" in exc.__class__.__name__ or "UniqueViolation" in exc.__class__.__name__:
+                    self._raise_database_conflict("create outbound call", exc)
+                raise
+
+
+
     def reverify_telnyx_account(self, tenant_id: str) -> dict[str, Any]:
         """Re-verify permissions and platform status of existing connection."""
         with self._connection() as conn:
@@ -2125,8 +2217,8 @@ class TelephonyService:
             sql += " order by created_at desc limit %s"
             params.append(limit)
             return [self._call_from_row(row) for row in conn.execute(sql, tuple(params)).fetchall()]
-    def disable_number(self, tenant_id: str, number_id: str) -> dict[str, Any]:
-        """Soft-disable managed phone number."""
+    def disable_number(self, tenant_id: str, number_id: str, force: bool = False) -> dict[str, Any]:
+        """Soft-disable managed phone number with active-call safeguards and LiveKit routing cleanup."""
         with self._connection() as conn:
             if conn is None:
                 nums = self._numbers.get(tenant_id, [])
@@ -2141,6 +2233,46 @@ class TelephonyService:
                 target["routing_status"] = NumberRoutingStatus.DISABLED.value
                 target["disabled_at"] = "2026-01-01T00:00:00Z"
                 return target
+
+            active_calls_row = conn.execute(
+                """
+                select count(*) from telephony_calls
+                where tenant_id = %s and phone_number_id = %s
+                  and platform_status in ('queued', 'dialing', 'ringing', 'in_progress')
+                """,
+                (tenant_id, number_id),
+            ).fetchone()
+            active_count = active_calls_row[0] if active_calls_row else 0
+            if active_count > 0 and not force:
+                raise TelephonyError(
+                    status=409,
+                    code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                    message=f"Cannot disable number while {active_count} active calls are in progress. Pass force=true to drain.",
+                )
+
+            rules = conn.execute(
+                """
+                select id, livekit_sip_dispatch_rule_id from livekit_sip_dispatch_rules
+                where tenant_id = %s and phone_number_id = %s and disabled_at is null
+                """,
+                (tenant_id, number_id),
+            ).fetchall()
+            lk_client = self._get_livekit_sip_client()
+            for r in rules:
+                rule_record_id, lk_rule_id = r[0], r[1]
+                try:
+                    lk_client.delete_sip_dispatch_rule(lk_rule_id)
+                except Exception as err:
+                    logger.warning("Failed to delete LiveKit dispatch rule %s on number disable: %s", lk_rule_id, err)
+                conn.execute(
+                    "update livekit_sip_dispatch_rules set platform_status = 'disabled', disabled_at = now(), updated_at = now() where id = %s",
+                    (rule_record_id,),
+                )
+            conn.execute(
+                "update livekit_inbound_trunks set platform_status = 'disabled', disabled_at = now(), updated_at = now() where tenant_id = %s and phone_number_id = %s and disabled_at is null",
+                (tenant_id, number_id),
+            )
+
             row = conn.execute(
                 """
                 update telephony_phone_numbers
@@ -2155,6 +2287,7 @@ class TelephonyService:
             if not row:
                 raise TelephonyError(status=404, code=TelephonyErrorCode.NUMBER_NOT_FOUND, message=f"Number {number_id} not found.")
             return self._number_from_row(row)
+
 
 
     def _number_from_row(self, row: Any) -> dict[str, Any]:

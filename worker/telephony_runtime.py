@@ -163,6 +163,16 @@ def resolve_inbound_sip_call(
     if routing_status != "ready":
         raise ValueError(f"Number {e164_num} routing is not ready")
 
+    try:
+        from tenant_portal_api import telephony_queries as queries
+        if not queries.reserve_call_quota(db_conn, str(tenant_id)):
+            logger.warning("Rejecting inbound call for tenant %s: concurrency limit reached", tenant_id)
+            raise ValueError(f"Tenant {tenant_id} concurrency limit reached")
+    except Exception as err:
+        if isinstance(err, ValueError):
+            raise
+        logger.warning("Could not verify call quota during inbound resolution: %s", err)
+
     return {
         "tenant_id": str(tenant_id),
         "agent_id": str(agent_id),
@@ -186,6 +196,8 @@ def session_audio_channel(resolved: dict[str, Any]) -> str:
     return "webrtc"
 
 
+
+
 def resolve_session_metadata(
     *,
     job_metadata: Any = None,
@@ -201,11 +213,42 @@ def resolve_session_metadata(
     """
     from_job = parse_job_telephony_metadata(job_metadata)
     if from_job:
+        if db_conn:
+            e164 = from_job.get("e164_number")
+            if e164:
+                try:
+                    row = db_conn.execute(
+                        """
+                        select n.tenant_id, n.assigned_agent_id, n.provisioning_status, n.routing_status
+                        from telephony_phone_numbers n
+                        where n.e164_number = %s
+                        """,
+                        (e164,),
+
+                    ).fetchone()
+                    if row:
+                        db_tenant_id, db_agent_id, db_prov_status, db_route_status = row
+                        if db_prov_status == "disabled" or db_route_status == "disabled":
+                            logger.warning("Rejecting job metadata: phone number %s is disabled in DB", e164)
+                            raise ValueError(f"Phone number {e164} is disabled")
+                        if str(db_tenant_id) != from_job["tenant_id"] or (db_agent_id and str(db_agent_id) != from_job["agent_id"]):
+                            logger.warning(
+                                "Job metadata divergence detected for %s: enqueued tenant/agent (%s, %s) vs DB (%s, %s)",
+                                e164, from_job["tenant_id"], from_job["agent_id"], db_tenant_id, db_agent_id
+                            )
+                            from_job["tenant_id"] = str(db_tenant_id)
+                            if db_agent_id:
+                                from_job["agent_id"] = str(db_agent_id)
+                except ValueError:
+                    raise
+                except Exception as err:
+                    logger.warning("Could not revalidate job metadata against DB: %s", err)
         return {
             "tenant_id": from_job["tenant_id"],
             "agent_id": from_job["agent_id"],
             "telephony": from_job,
         }
+
 
     participant_metadata = (
         getattr(participant, "metadata", None) if participant is not None else None

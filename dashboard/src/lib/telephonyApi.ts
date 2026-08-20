@@ -1,4 +1,4 @@
-import { getStoredTenantToken, clearStoredTenantToken } from '@/lib/portalAuth';
+import { getStoredTenantToken } from '@/lib/portalAuth';
 
 const API_BASE = process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL;
 
@@ -104,8 +104,11 @@ async function telephonyRequest<T>(path: string, init?: RequestInit): Promise<T>
 
   if (!response.ok) {
     if (response.status === 401) {
-      clearStoredTenantToken();
-      throw new TelephonyApiError('Session expired. Please sign in again.', 401);
+      // Deliberately does NOT clear the shared tenant token here (unlike portalApi.ts's
+      // request()): telephony endpoints 401 for tenants that simply haven't configured
+      // telephony yet, which is not the same as the portal session being invalid. Clearing
+      // the token here previously logged the whole dashboard out from under the user.
+      throw new TelephonyApiError('Telephony is not configured for this tenant.', 401);
     }
 
     let detail = `${response.status} ${response.statusText}`;

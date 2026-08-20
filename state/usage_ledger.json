@@ -3,5 +3,8 @@
   "livekit_agent_min": 149,
   "gladia_stt_sec": 0,
   "supabase_db_mb": 0,
-  "livekit_adaptive_interruption_req": 0
+  "livekit_adaptive_interruption_req": 0,
+  "rime_tts_sec": 28.240000000000002,
+  "elevenlabs_tts_sec": 73.88999999999999,
+  "cartesia_tts_sec": 1277.2799999999993
 }
