@@ -150,7 +150,7 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
                     "moonshotai/kimi-k2-instruct-0905",
                     "qwen/qwen3-32b",
                 ],
-                "default_model": "openai/gpt-oss-120b",
+                "default_model": "openai/gpt-oss-20b",
             },
         },
         "tts": {

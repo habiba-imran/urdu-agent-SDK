@@ -217,6 +217,13 @@ async def build_session(
             "preemptive_generation": {"enabled": False},
         },
     }
+    from livekit.agents.types import APIConnectOptions
+    from livekit.agents.voice.agent_session import SessionConnectOptions
+
+    session_kwargs["conn_options"] = SessionConnectOptions(
+        llm_conn_options=APIConnectOptions(timeout=30.0),
+        tts_conn_options=APIConnectOptions(timeout=30.0),
+    )
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
 
     # turn_handling interruption mode="adaptive" and false_interruption_timeout=1.2: see
@@ -401,12 +408,24 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
             getattr(ev, "resumed", None),
         )
 
+    def _on_metrics(ev: Any) -> None:
+        m = getattr(ev, "metrics", ev)
+        logger.info(
+            "session metrics room=%s type=%s ttft=%s duration=%s cancelled=%s",
+            room_name,
+            type(m).__name__,
+            getattr(m, "ttft", None),
+            getattr(m, "duration", None),
+            getattr(m, "cancelled", None),
+        )
+
     session.on("error", _on_error)
     session.on("agent_state_changed", _on_agent_state)
     session.on("user_state_changed", _on_user_state)
     session.on("agent_false_interruption", _on_false_interruption)
     session.on("conversation_item_added", _on_conversation_item)
     session.on("speech_created", _on_speech_created)
+    session.on("metrics_collected", _on_metrics)
 
 
 async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
@@ -417,11 +436,16 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     2. SIP participant attributes → telephony DB lookup (inbound PSTN)
     3. Joining participant JWT metadata from Phase-2 mint (browser WebRTC)
     """
+    # LiveKit requires ctx.connect() within ~10s of job_entry. A DB stale-check before
+    # connect() delayed the room join by 10–20s on Windows and produced half-initialized
+    # sessions where STT worked but generate_reply never committed (see worker/stale_jobs.py
+    # and the 2026-08-19 Groq client demo). Connect first; abandon stale rooms after.
+    await ctx.connect()
     if await abandon_stale_job_if_needed(ctx):
         return
 
     try:
-        participant = await wait_for_session_participant(ctx)
+        participant = await wait_for_session_participant(ctx, already_connected=True)
     except (asyncio.TimeoutError, RuntimeError):
         return
 

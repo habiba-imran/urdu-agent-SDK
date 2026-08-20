@@ -219,12 +219,20 @@ async def abandon_stale_job_if_needed(ctx: Any) -> bool:
     return True
 
 
-async def wait_for_session_participant(ctx: Any) -> Any:
-    """Connect and wait for the browser/SIP participant with a bounded timeout."""
+async def wait_for_session_participant(
+    ctx: Any, *, already_connected: bool = False
+) -> Any:
+    """Wait for the browser/SIP participant with a bounded timeout.
+
+    ``ctx.connect()`` must happen within ~10s of job_entry (LiveKit's own warning). Callers
+    that already connected (so a slow DB stale-check cannot delay it) pass
+    ``already_connected=True``.
+    """
     from livekit.agents.log import logger
 
     timeout = participant_wait_timeout_sec()
-    await ctx.connect()
+    if not already_connected:
+        await ctx.connect()
     try:
         return await asyncio.wait_for(ctx.wait_for_participant(), timeout=timeout)
     except asyncio.TimeoutError:

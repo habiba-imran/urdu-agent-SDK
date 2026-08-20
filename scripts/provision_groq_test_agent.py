@@ -71,7 +71,7 @@ def main() -> int:
                 agent_language, stt_provider, stt_model, stt_options,
                 llm_provider, llm_options, tts_provider, tts_voice_id, tts_options
             ) values (
-                %s, %s, 'Groq EN Test', %s, 'v_meklc281', 'openai/gpt-oss-120b',
+                %s, %s, 'Groq EN Test', %s, 'v_meklc281', 'openai/gpt-oss-20b',
                 'en', 'deepgram', 'nova-3', %s,
                 'groq', %s, 'uplift', 'v_meklc281', %s
             )
