@@ -2178,18 +2178,44 @@ class TelephonyService:
                         "duration_sec": 45,
                     }
                 return call
-            row = conn.execute(
-                """
-                select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                       from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at,
-                       raw_livekit_sip_participant_status
-                from telephony_calls
-                where tenant_id = %s and id = %s
-                """,
-                (tenant_id, telephony_call_id),
-            ).fetchone()
+
+            import uuid
+            is_uuid = False
+            try:
+                uuid.UUID(str(telephony_call_id))
+                is_uuid = True
+            except (ValueError, AttributeError, TypeError):
+                is_uuid = False
+
+            if is_uuid:
+                row = conn.execute(
+                    """
+                    select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
+                           from_number, to_number, recipient, platform_status, provider_status, outcome,
+                           duration_sec, error_code, error_message, started_at, ended_at,
+                           raw_livekit_sip_participant_status
+                    from telephony_calls
+                    where tenant_id = %s and (id = %s or livekit_sip_call_id = %s or room_name = %s)
+                    """,
+                    (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
+                           from_number, to_number, recipient, platform_status, provider_status, outcome,
+                           duration_sec, error_code, error_message, started_at, ended_at,
+                           raw_livekit_sip_participant_status
+                    from telephony_calls
+                    where tenant_id = %s and (livekit_sip_call_id = %s or livekit_sip_call_id_full = %s or livekit_agent_dispatch_id = %s or room_name = %s or external_customer_ref = %s)
+                    """,
+                    (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id),
+                ).fetchone()
+
             if not row:
+                call = self._calls.get(telephony_call_id)
+                if call and call.get("tenant_id") == tenant_id:
+                    return call
                 raise TelephonyError(status=404, code=TelephonyErrorCode.CALL_SETUP_FAILED, message="Telephony call record not found.")
             return self._call_from_row(row)
     def list_call_records(

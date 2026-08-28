@@ -78,13 +78,13 @@ async def apply_session_opening(session: Any, cfg: AgentConfig, logger: Any) -> 
         )
         # Mic echo/noise during connect was falsely interrupting the greeting (client heard
         # silence while STT still worked). Opening speech must not be interruptible.
-        handle = session.say(opening.text, allow_interruptions=False)
+        handle = session.say(opening.text, allow_interruptions=True)
         await _await_opening_speech(handle, logger, label="custom_greeting")
         return opening
     logger.info("session opening first_speaker=agent generated_greeting")
     handle = session.generate_reply(
         instructions=opening.instructions,
-        allow_interruptions=False,
+        allow_interruptions=True,
     )
     await _await_opening_speech(handle, logger, label="generated_greeting")
     return opening

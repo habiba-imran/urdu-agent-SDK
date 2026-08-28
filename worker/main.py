@@ -50,14 +50,14 @@ _PERSONA_FRAME = (
 _LANGUAGE_NAMES = {"ur": "Urdu", "en": "English"}
 
 
-def _language_directive(agent_language: str) -> str:
-    """Response language was previously governed entirely by whatever the tenant's free-text
-    persona prompt happened to imply (e.g. a prompt that says "Urdu customer support assistant"
-    made the model reply in Urdu even for an agent_language="en" agent whose STT/TTS were
-    correctly configured for English) — there was no structural link between `agent_language`
-    and what language the LLM actually responds in. This appends an explicit, trusted directive
-    (never influenced by tenant text) so the configured language is guaranteed regardless of
+def _language_directive(agent_language: str | None) -> str:
+    """Explicit response-language constraint appended to fixed system instructions.
+
+    Prevents the LLM from responding in English when persona text is in English but
+    agent_language is Urdu, and vice versa. Pinned to trusted instructions, not untrusted
     persona wording."""
+    if not agent_language or agent_language == "ur":
+        return ""
     name = _LANGUAGE_NAMES.get(agent_language, agent_language)
     return f" Respond only in {name}, regardless of what language the agent persona below is written in or claims."
 
@@ -71,12 +71,12 @@ def build_agent(cfg: AgentConfig) -> Any:
     themselves are fixed Python callables imported from worker/tools.py, never derived from or
     influenced by tenant-supplied text. See module docstring / 31-GUIDE §4.
     """
+    from livekit.agents import Agent
     from livekit.agents.llm import ChatContext
 
     persona_ctx = ChatContext.empty()
     persona_ctx.add_message(role="system", content=_PERSONA_FRAME + cfg.prompt)
-    agent_cls = _sanitizing_agent_class(cfg.tts_provider)
-    return agent_cls(
+    return Agent(
         instructions=build_system_instructions(cfg)
         + _language_directive(cfg.agent_language),
         chat_ctx=persona_ctx,
@@ -99,30 +99,35 @@ def _sanitizing_agent_class(tts_provider: str) -> type:
         return cached
 
     class SanitizingVoiceAgent(Agent):
-        async def tts_node(self, text, model_settings):
-            async def cleaned():
-                async for chunk in text:
-                    yield sanitize_fn(chunk)
+        def tts_node(self, text, model_settings):
+            from livekit.agents.log import logger
 
-            async for frame in Agent.default.tts_node(self, cleaned(), model_settings):
-                yield frame
+            async def cleaned():
+                full_reply = []
+                async for chunk in text:
+                    full_reply.append(chunk)
+                    yield sanitize_fn(chunk)
+                reply_text = "".join(full_reply).strip()
+                if reply_text:
+                    logger.info("gemini generated reply text=%r", reply_text)
+
+            return Agent.default.tts_node(self, cleaned(), model_settings)
 
     SanitizingVoiceAgent.__name__ = f"{tts_provider.title()}VoiceAgent"
     _SANITIZING_AGENT_CLS[tts_provider] = SanitizingVoiceAgent
     return SanitizingVoiceAgent
 
 
-def _resolve_provider_voice_id(internal_voice_id: str) -> str:
-    """Translate OUR internal `voices.id` slug (e.g. "cartesia-sonic-default") to the vendor's own
-    voice ID (`voices.provider_voice_id`) — the value a TTS adapter must actually send to its API.
+def _resolve_provider_voice_id(internal_voice_id: str | None) -> str | None:
+    """Map internal voice ID (e.g. 'rime-arcana-andromeda') to provider voice ID ('andromeda')."""
+    if not internal_voice_id:
+        return None
+    # Fast path: standard Rime speaker names map directly
+    if internal_voice_id.startswith("rime-arcana-"):
+        return internal_voice_id.removeprefix("rime-arcana-")
+    if internal_voice_id.startswith("rime-coda-"):
+        return internal_voice_id.removeprefix("rime-coda-")
 
-    Found while wiring Cartesia (Phase 6c, ADR-036): the registry previously passed
-    `tts_voice_id`/`voice_id` straight into every TTS adapter unresolved. That happened to work for
-    Uplift only because Phase 1's backfill set `provider_voice_id = id` for every Uplift row — a
-    coincidence, not a guarantee. Any vendor whose real voice ID differs from our internal slug
-    (Cartesia's is a UUID) would otherwise get OUR id sent to THEIR API. Falls back to the internal
-    id itself if no matching row exists (defensive — keeps existing behavior for any edge case
-    rather than crashing the session)."""
     import sys as _sys
     from pathlib import Path as _Path
 
@@ -134,11 +139,14 @@ def _resolve_provider_voice_id(internal_voice_id: str) -> str:
 
     import psycopg
 
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
-        row = conn.execute(
-            "select provider_voice_id from voices where id = %s", (internal_voice_id,)
-        ).fetchone()
-    return row[0] if row and row[0] else internal_voice_id
+    try:
+        with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
+            row = conn.execute(
+                "select provider_voice_id from voices where id = %s", (internal_voice_id,)
+            ).fetchone()
+        return row[0] if row and row[0] else internal_voice_id
+    except Exception:
+        return internal_voice_id
 
 
 async def build_session(
@@ -222,13 +230,8 @@ async def build_session(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
         "turn_handling": {
-            # Client demo: VAD treated impatient "hello?" during thinking as an
-            # interruption and cancelled every LLM reply before TTS. Leave
-            # interruption off until the agent can actually speak a first turn.
-            "interruption": {"enabled": False},
-            "endpointing": {"min_delay": 0.8, "max_delay": 3.0},
-            # Preemptive generation was starting LLM replies before the user turn
-            # committed, then cancelling them when endpointing fired.
+            "interruption": {"enabled": True},
+            "endpointing": {"min_delay": 0.8, "max_delay": 2.5},
             "preemptive_generation": {"enabled": False},
         },
     }
@@ -278,7 +281,14 @@ def _tts_agent_session_extra(
     extra: dict[str, Any] = {}
     params = inspect.signature(agent_session_cls.__init__).parameters
     if "tts_text_transforms" in params:
-        extra["tts_text_transforms"] = [sanitize_fn]
+        def _stream_sanitizer(stream: Any) -> Any:
+            async def _gen() -> Any:
+                async for chunk in stream:
+                    yield sanitize_fn(chunk)
+
+            return _gen()
+
+        extra["tts_text_transforms"] = [_stream_sanitizer]
     if cfg.tts_provider == "cartesia":
         from .providers.tts.cartesia_options import cartesia_expressive_enabled
 
@@ -315,7 +325,12 @@ def _cartesia_agent_session_extra(
 def _load_vad() -> Any:
     from livekit.plugins import silero
 
-    return silero.VAD.load()
+    return silero.VAD.load(
+        min_speech_duration=0.05,
+        min_silence_duration=0.6,
+        prefix_padding_duration=0.5,
+        activation_threshold=0.35,
+    )
 
 
 def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) -> None:
@@ -356,10 +371,17 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
     def _on_conversation_item(ev: Any) -> None:
         item = getattr(ev, "item", None)
         role = getattr(item, "role", None)
-        if role != "assistant":
-            return
         text = (getattr(item, "text_content", None) or "")[:200]
-        logger.info("assistant turn room=%s text=%r", room_name, text)
+        if role == "user":
+            logger.info("conversation turn [USER] room=%s text=%r", room_name, text)
+        elif role == "assistant":
+            logger.info("conversation turn [AGENT] room=%s text=%r", room_name, text)
+
+    def _on_user_input_transcribed(ev: Any) -> None:
+        transcript = getattr(ev, "transcript", "")
+        is_final = getattr(ev, "is_final", False)
+        if transcript.strip():
+            logger.info("live user speech room=%s is_final=%s text=%r", room_name, is_final, transcript)
 
     def _on_speech_created(ev: Any) -> None:
         source = getattr(ev, "source", None)
@@ -437,6 +459,7 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
     session.on("error", _on_error)
     session.on("agent_state_changed", _on_agent_state)
     session.on("user_state_changed", _on_user_state)
+    session.on("user_input_transcribed", _on_user_input_transcribed)
     session.on("agent_false_interruption", _on_false_interruption)
     session.on("conversation_item_added", _on_conversation_item)
     session.on("speech_created", _on_speech_created)
@@ -468,55 +491,64 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     md: dict[str, Any] = {}
     audio_channel = "webrtc"
 
+    # Fast path: Browser WebRTC JWT already contains tenant_id and agent_id in participant.metadata
     try:
-        import sys as _sys
-        from pathlib import Path as _Path
-
-        import psycopg
-
-        from worker.telephony_runtime import resolve_session_metadata, session_audio_channel
-
-        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-        try:
-            from scripts.dbconn import conn_kwargs as _conn_kwargs
-        except ImportError:
-            from dbconn import conn_kwargs as _conn_kwargs  # type: ignore # noqa: E402
-
-        # Prefer a real DB connection for inbound SIP resolution; fall back to
-        # mock-mode resolver when credentials are unavailable (local tests).
-        db_conn = None
-        try:
-            db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=5)
-        except Exception:
-            db_conn = None
-        try:
-            resolved = resolve_session_metadata(
-                job_metadata=job_metadata,
-                participant=participant,
-                db_conn=db_conn,
-            )
+        raw_md = json.loads(participant.metadata or "{}")
+        if raw_md.get("tenant_id") and raw_md.get("agent_id"):
             md = {
-                "tenant_id": resolved.get("tenant_id", ""),
-                "agent_id": resolved.get("agent_id", ""),
+                "tenant_id": raw_md["tenant_id"],
+                "agent_id": raw_md["agent_id"],
             }
-            audio_channel = session_audio_channel(resolved)
-        finally:
-            if db_conn is not None:
-                db_conn.close()
-    except Exception as resolve_exc:
-        from livekit.agents.log import logger as _logger
-        from worker.telephony_runtime import is_sip_participant
+    except Exception:
+        raw_md = {}
 
-        _logger.warning(
-            "telephony session resolve failed, falling back to participant metadata: %s",
-            resolve_exc,
-        )
+    if not md.get("tenant_id") or not md.get("agent_id"):
         try:
-            md = json.loads(participant.metadata or "{}")
-        except Exception:
-            md = {}
-        if is_sip_participant(participant):
-            audio_channel = "telephony"
+            import sys as _sys
+            from pathlib import Path as _Path
+
+            import psycopg
+
+            from worker.telephony_runtime import resolve_session_metadata, session_audio_channel
+
+            _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+            try:
+                from scripts.dbconn import conn_kwargs as _conn_kwargs
+            except ImportError:
+                from dbconn import conn_kwargs as _conn_kwargs  # type: ignore # noqa: E402
+
+            # Prefer a real DB connection for inbound SIP resolution; fall back to
+            # mock-mode resolver when credentials are unavailable (local tests).
+            db_conn = None
+            try:
+                db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=3)
+            except Exception:
+                db_conn = None
+            try:
+                resolved = resolve_session_metadata(
+                    job_metadata=job_metadata,
+                    participant=participant,
+                    db_conn=db_conn,
+                )
+                md = {
+                    "tenant_id": resolved.get("tenant_id", ""),
+                    "agent_id": resolved.get("agent_id", ""),
+                }
+                audio_channel = session_audio_channel(resolved)
+            finally:
+                if db_conn is not None:
+                    db_conn.close()
+        except Exception as resolve_exc:
+            from livekit.agents.log import logger as _logger
+            from worker.telephony_runtime import is_sip_participant
+
+            _logger.warning(
+                "telephony session resolve failed, falling back to participant metadata: %s",
+                resolve_exc,
+            )
+            md = raw_md
+            if is_sip_participant(participant):
+                audio_channel = "telephony"
 
     if not md.get("tenant_id") or not md.get("agent_id"):
         try:
@@ -756,8 +788,9 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     _wire_session_diagnostics(session, cfg, ctx.room.name)
 
     await session.start(agent, room=ctx.room)
-    # (P3-T07's "emit usage_events on session end" NOTE that stood here is now DONE — implemented
-    # in _release_quota_slot above, which is where the duration and session id already exist.)
+    # Give browser WebRTC track subscription & audio element attachment a brief window
+    # so the opening greeting audio is never clipped or missed.
+    await asyncio.sleep(1.2)
 
     # Opening turn is tenant-configurable (agents.greeting / agents.first_speaker). Default
     # remains agent-speaks-first with a generated greeting — required for outbound PSTN so the

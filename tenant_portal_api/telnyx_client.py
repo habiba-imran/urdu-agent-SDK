@@ -379,11 +379,27 @@ class TelnyxClient:
                     }
                 )
             return results
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                err_json = e.response.json()
+                errors = err_json.get("errors", [])
+                if errors and isinstance(errors, list):
+                    detail = f": {errors[0].get('detail', errors[0].get('title', ''))}"
+                elif "message" in err_json:
+                    detail = f": {err_json['message']}"
+            except Exception:
+                detail = f": {e.response.text[:200]}"
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message=f"Failed to search available numbers from Telnyx{detail}",
+            ) from e
         except httpx.HTTPError as e:
             raise TelephonyError(
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
-                message="Failed to search available numbers from Telnyx.",
+                message=f"Failed to search available numbers from Telnyx: {e}",
             ) from e
 
     def purchase_number(self, e164_number: str) -> dict[str, Any]:

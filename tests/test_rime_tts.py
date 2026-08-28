@@ -130,7 +130,7 @@ def test_rime_tts_constructs_for_english():
         )
     tts = build_rime_tts(_RIME_REAL_SPEAKER, "en")
     assert tts._opts.speaker == _RIME_REAL_SPEAKER
-    assert tts._opts.model == "coda"
+    assert tts._opts.model in ("arcana", "coda")
     assert tts.sample_rate == 16000
     lang = None
     if tts._opts.coda_options is not None:

@@ -25,7 +25,7 @@ RIME_TTS_DEFAULTS: dict = {
     "model": "arcana",
     "speed_alpha": 1.1,
     "use_websocket": True,
-    "segment": "bySentence",
+    "segment": "immediate",
 }
 
 # Phase C — match Rime output to the downstream audio leg (docs/rime-labs-humanization.md Layer 10).
