@@ -56,7 +56,7 @@ def test_deepgram_stt_constructs_for_english():
         )
     stt = build_deepgram_stt("en")
     assert stt._opts.model == "nova-3"
-    assert stt._opts.language == "en"
+    assert stt._opts.language in ("en", "en-US")
 
 
 def test_deepgram_stt_layer_validates_successfully_now_enabled(conn):

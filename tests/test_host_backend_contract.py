@@ -48,7 +48,7 @@ def test_session_endpoint_contract_success(monkeypatch):
             "roomName": "room-123",
         }
 
-    def fake_with_dispatch(res, tenant_id):
+    def fake_with_dispatch(res, tenant_id, agent_id):
         return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": 120}
 
     monkeypatch.setattr(app_module, "mint_session", fake_mint_session)

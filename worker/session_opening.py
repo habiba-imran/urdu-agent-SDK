@@ -49,23 +49,6 @@ def resolve_session_opening(cfg: AgentConfig) -> SessionOpening:
     )
 
 
-async def _await_opening_speech(handle: Any, logger: Any, *, label: str) -> None:
-    """Wait for opening TTS to finish; log interruption/errors for live debugging."""
-    try:
-        await handle.wait_for_playout()
-    except Exception as exc:
-        logger.warning("session opening %s playout failed: %s", label, exc)
-        return
-    if getattr(handle, "interrupted", False):
-        logger.warning("session opening %s was interrupted before playout finished", label)
-    elif getattr(handle, "exception", None):
-        logger.warning(
-            "session opening %s finished with error: %s",
-            label,
-            handle.exception(),
-        )
-
-
 async def apply_session_opening(session: Any, cfg: AgentConfig, logger: Any) -> SessionOpening:
     opening = resolve_session_opening(cfg)
     if opening.mode == "wait":
@@ -76,15 +59,13 @@ async def apply_session_opening(session: Any, cfg: AgentConfig, logger: Any) -> 
             "session opening first_speaker=agent custom_greeting_chars=%s",
             len(opening.text or ""),
         )
-        # Mic echo/noise during connect was falsely interrupting the greeting (client heard
-        # silence while STT still worked). Opening speech must not be interruptible.
-        handle = session.say(opening.text, allow_interruptions=True)
-        await _await_opening_speech(handle, logger, label="custom_greeting")
+        # Static greeting: TTS-only, no LLM (UVA-10). Non-interruptible so mic echo during
+        # connect does not clip the opening line.
+        session.say(opening.text, allow_interruptions=False)
         return opening
     logger.info("session opening first_speaker=agent generated_greeting")
-    handle = session.generate_reply(
+    session.generate_reply(
         instructions=opening.instructions,
-        allow_interruptions=True,
+        allow_interruptions=False,
     )
-    await _await_opening_speech(handle, logger, label="generated_greeting")
     return opening

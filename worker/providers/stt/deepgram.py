@@ -21,4 +21,14 @@ from typing import Any
 def build(language: str) -> Any:
     from livekit.plugins import deepgram
 
-    return deepgram.STT(model="nova-3", language=language)
+    # Voice-optimized Nova-3: no_delay + low endpointing_ms for streaming finals (UVA-6).
+    # interim_results=True feeds partial transcripts into LiveKit preemptive generation (UVA-14).
+    lang = "en-US" if language.startswith("en") else language
+    return deepgram.STT(
+        model="nova-3",
+        language=lang,
+        no_delay=True,
+        endpointing_ms=25,
+        interim_results=True,
+        smart_format=True,
+    )

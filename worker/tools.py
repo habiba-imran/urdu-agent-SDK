@@ -22,10 +22,14 @@ arguments), never from anything the model or the tenant prompt could influence.
 
 from __future__ import annotations
 
+import os
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+import httpx
 import psycopg
 from livekit.agents import RunContext
 from livekit.agents.llm.tool_context import function_tool
@@ -43,10 +47,8 @@ class AgentUserdata:
     tenant_id: str
     agent_id: str
     room_name: str
-    # Set by end_conversation_summary so the shutdown path can record WHY the call ended.
-    # Without it an agent-ended call lands in the DB as LiveKit's generic "user_initiated"
-    # (its term for "closed via API"), which reads on the dashboard as if the caller hung up.
     ended_by_agent: bool = False
+    latency_tracker: Any = None
 
 
 @function_tool
@@ -114,4 +116,57 @@ async def escalate_to_human(
     return {"status": "escalated"}
 
 
+def _tools_base_url() -> str | None:
+    raw = (os.getenv("UVA_TOOLS_BASE_URL") or "").strip()
+    return raw.rstrip("/") if raw else None
+
+
+@function_tool
+async def lookup_business_info(ctx: RunContext[AgentUserdata], query: str) -> dict:
+    """Look up business hours, policies, and FAQ answers from the tenant knowledge base.
+
+    Call ONLY when the caller asks a specific factual question you cannot answer from your
+    persona or operating instructions. Do NOT call for greetings, hello, or small talk.
+
+    Args:
+        query: The caller's factual question in their own words.
+    """
+    base = _tools_base_url()
+    if not base:
+        return {"error": "lookup_business_info is not configured on this worker"}
+
+    ud = ctx.userdata
+    tracker = getattr(ud, "latency_tracker", None)
+    t0 = time.monotonic()
+    url = f"{base}/api/tools/lookup_business_info"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "tenant_id": ud.tenant_id,
+                    "agent_id": ud.agent_id,
+                    "query": query,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+    except Exception as exc:
+        return {"error": f"lookup failed: {exc}"}
+    finally:
+        if tracker is not None:
+            duration_ms = int(round((time.monotonic() - t0) * 1000))
+            tracker.record_tool_duration("lookup_business_info", duration_ms)
+
+    return body if isinstance(body, dict) else {"result": body}
+
+
 FIXED_TOOLS = [end_conversation_summary, escalate_to_human]
+
+
+def session_tools() -> list[Any]:
+    """Platform-owned tools for a live session, plus optional RAG when configured (UVA-8)."""
+    tools: list[Any] = list(FIXED_TOOLS)
+    if _tools_base_url():
+        tools.append(lookup_business_info)
+    return tools

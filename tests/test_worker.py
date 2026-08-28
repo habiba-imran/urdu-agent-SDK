@@ -123,10 +123,12 @@ def test_persona_injected_as_data_not_system_instructions():
 # --- P3-T09 (ADR-013 deferred pass, scope ADR-029): worker/tools.py's two fixed tools --------
 
 
-def test_build_agent_wires_fixed_tools():
+def test_build_agent_wires_fixed_tools(monkeypatch):
     from worker.config import AgentConfig
     from worker.main import build_agent
+    from worker.tools import FIXED_TOOLS, session_tools
 
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
     cfg = AgentConfig(
         agent_id="a",
         tenant_id="t",
@@ -136,6 +138,7 @@ def test_build_agent_wires_fixed_tools():
         llm_model="gemini-2.5-flash",
     )
     agent = build_agent(cfg)
+    assert list(agent.tools) == session_tools()
     assert list(agent.tools) == FIXED_TOOLS
 
 

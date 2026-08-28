@@ -90,6 +90,8 @@ export interface AwaazLabsUvaVoiceEventMap {
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
+  /** Per-turn stage breakdown emitted by the worker on every user turn (UVA-5). */
+  turn_latency: [MetricsEvent];
   /**
    * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
    * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
@@ -322,12 +324,12 @@ export class AwaazLabsUvaVoice {
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
       const metrics = this.tryParseMetrics(metadata);
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     // Browsers block audio autoplay without a prior user gesture.
@@ -444,6 +446,15 @@ export class AwaazLabsUvaVoice {
       return `${this.options.sessionEndpoint}/refresh`;
     }
     return `${this.options.sessionEndpoint.replace(/\/$/, '')}/refresh`;
+  }
+
+  private emitLatencyEvents(metrics: MetricsEvent): void {
+    if (metrics.type === 'turn_latency') {
+      this.emit('turn_latency', metrics);
+    }
+    if (metrics.type === 'metrics_updated' || metrics.type === 'turn_latency') {
+      this.emit('metrics_updated', metrics);
+    }
   }
 
   private decodePayload(payload: Uint8Array): string {

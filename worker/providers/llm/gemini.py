@@ -34,9 +34,7 @@ def build(model: str) -> Any:
         # livekit-plugins-google copies this onto generateContent; LiveKit's default
         # conn_options.timeout is 10s and produced DEADLINE_EXCEEDED in the demo.
         "http_options": types.HttpOptions(timeout=30_000),
+        # Voice path: no reasoning/thinking — keeps TTFT within budget (UVA-7).
+        "thinking_config": types.ThinkingConfig(thinking_budget=0),
     }
-    if "gemini-3" in resolved_model.lower():
-        kwargs["thinking_config"] = {"thinking_level": "minimal"}
-    else:
-        kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
     return google.LLM(**kwargs)

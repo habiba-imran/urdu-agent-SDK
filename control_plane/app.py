@@ -43,6 +43,7 @@ except ImportError:
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
+from .warm import run_warm_probe  # noqa: E402
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -152,6 +153,19 @@ def deep_health_check():
         health["status"] = "unhealthy"
 
     status_code = 200 if health["status"] == "healthy" else 503
+    return JSONResponse(status_code=status_code, content=health)
+
+
+@app.get("/healthz/warm")
+async def warm_health_check():
+    """Warm probe — pings DB + LiveKit API to keep staging instances hot (UVA-9)."""
+    health = await run_warm_probe(
+        lk_url=_LK_URL,
+        lk_key=_LK_KEY,
+        lk_secret=_LK_SECRET,
+        agent_name=_LK_AGENT_NAME,
+    )
+    status_code = 200 if health["status"] == "warm" else 503
     return JSONResponse(status_code=status_code, content=health)
 
 
@@ -334,7 +348,9 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
     )
 
 
-async def _dispatch_agent(room_name: str) -> None:
+async def _dispatch_agent(
+    room_name: str, *, tenant_id: str, agent_id: str
+) -> None:
     async with api.LiveKitAPI(
         url=_LK_URL,
         api_key=_LK_KEY,
@@ -344,6 +360,9 @@ async def _dispatch_agent(room_name: str) -> None:
             api.CreateAgentDispatchRequest(
                 agent_name=_LK_AGENT_NAME,
                 room=room_name,
+                metadata=json.dumps(
+                    {"tenant_id": tenant_id, "agent_id": agent_id}
+                ),
             )
         )
 
@@ -377,9 +396,15 @@ def _session_response(payload: dict) -> JSONResponse:
     )
 
 
-def _with_dispatch(res: dict, tenant_id: str) -> dict:
+def _with_dispatch(res: dict, tenant_id: str, agent_id: str) -> dict:
     try:
-        asyncio.run(_dispatch_agent(res["roomName"]))
+        asyncio.run(
+            _dispatch_agent(
+                res["roomName"],
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+            )
+        )
     except Exception as e:
         _rollback_dispatched_session(tenant_id=tenant_id, room_name=res["roomName"])
         raise HTTPException(
@@ -446,7 +471,7 @@ def _dev_mint_session(
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
-    return _with_dispatch(res, tenant_id)
+    return _with_dispatch(res, tenant_id, agent_id)
 
 
 @app.post("/v1/session")
@@ -476,7 +501,9 @@ def create_session(
                 signature=x_signature,
                 origin=request.headers.get("origin"),
             )
-            return _session_response(_with_dispatch(res, x_tenant_id))
+            return _session_response(
+                _with_dispatch(res, x_tenant_id, body.agent_id)
+            )
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
