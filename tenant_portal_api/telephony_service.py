@@ -645,6 +645,28 @@ class TelephonyService:
                     nums = [n for n in nums if n.get("assigned_agent_id") == assigned_agent_id]
                 return nums
             return queries.list_managed_numbers(conn, tenant_id, assigned_agent_id)
+
+    def get_managed_number(self, tenant_id: str, number_id: str) -> dict[str, Any]:
+        """Fetch a single managed phone number by id."""
+        with self._connection() as conn:
+            if conn is None:
+                nums = self._numbers.get(tenant_id, [])
+                target = next((n for n in nums if n.get("id") == number_id), None)
+                if not target:
+                    raise TelephonyError(
+                        status=404,
+                        code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                        message=f"Managed number {number_id} not found for tenant.",
+                    )
+                return target
+            number = queries.get_managed_number(conn, tenant_id, number_id)
+            if not number:
+                raise TelephonyError(
+                    status=404,
+                    code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                    message=f"Managed number {number_id} not found for tenant.",
+                )
+            return number
     def search_available_numbers(
         self,
         tenant_id: str,

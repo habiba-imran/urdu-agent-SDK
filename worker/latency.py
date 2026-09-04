@@ -39,6 +39,50 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
     },
 }
 
+# PSTN/SIP: no browser AEC — false-interruption resume causes mid-utterance flicker.
+# Keep barge-in enabled; do not discard caller audio after an intentional interrupt.
+TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
+    **TURN_HANDLING_OPTIONS,
+    "interruption": {
+        "enabled": True,
+        "discard_audio_if_uninterruptible": False,
+        "min_duration": 0.3,
+        "resume_false_interruption": False,
+        "false_interruption_timeout": 0.7,
+    },
+}
+
+
+def turn_handling_for_channel(audio_channel: str) -> dict[str, Any]:
+    """Return turn-handling defaults for WebRTC vs telephony audio legs."""
+    if audio_channel == "telephony":
+        return TELEPHONY_TURN_HANDLING_OPTIONS
+    return TURN_HANDLING_OPTIONS
+
+
+def is_telephony_job(
+    *,
+    room_name: str | None = None,
+    job_metadata: Any = None,
+) -> bool:
+    """Detect PSTN/SIP jobs from room prefix or dispatch metadata."""
+    if isinstance(room_name, str) and room_name.startswith("telephony-"):
+        return True
+    if not job_metadata:
+        return False
+    try:
+        parsed = job_metadata if isinstance(job_metadata, dict) else json.loads(job_metadata)
+    except Exception:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    direction = str(parsed.get("direction") or "").lower()
+    if direction in {"inbound", "outbound"}:
+        return True
+    if parsed.get("e164_number") or parsed.get("phone_number_id") or parsed.get("sip_call_id"):
+        return True
+    return False
+
 # Tighter VAD silence gate for in-call turns — less dead air after the caller stops.
 VAD_OPTIONS: dict[str, float] = {
     "min_speech_duration": 0.05,
@@ -82,17 +126,30 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
 
 
 def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
-    """Parse ``tenant_id`` / ``agent_id`` from a LiveKit job or dispatch metadata JSON blob."""
+    """Parse ``tenant_id`` / ``agent_id`` from a LiveKit job or dispatch metadata JSON blob.
+
+    Also preserves a ``direction`` hint when present so the early telephony path can
+    select the correct audio profile without waiting for the SIP participant.
+    """
     if not raw:
         return None
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(raw) if not isinstance(raw, dict) else raw
     except Exception:
+        return None
+    if not isinstance(parsed, dict):
         return None
     tenant_id = parsed.get("tenant_id")
     agent_id = parsed.get("agent_id")
     if tenant_id and agent_id:
-        return {"tenant_id": str(tenant_id), "agent_id": str(agent_id)}
+        out: dict[str, str] = {
+            "tenant_id": str(tenant_id),
+            "agent_id": str(agent_id),
+        }
+        direction = parsed.get("direction")
+        if direction:
+            out["direction"] = str(direction)
+        return out
     return None
 
 
@@ -139,6 +196,9 @@ def wire_barge_in_flush(session: Any, logger: Any) -> None:
 
     LiveKit's adaptive interruption handles most cases; ``interrupt(force=True)`` ensures
     buffered outbound audio is flushed and generation is cancelled promptly.
+
+    Safe with telephony because greetings are interruptible and
+    ``discard_audio_if_uninterruptible`` is disabled on the PSTN turn-handling profile.
     """
     agent_state: dict[str, str | None] = {"current": None}
 

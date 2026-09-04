@@ -149,6 +149,22 @@ def test_portal_unassign_agent_transitions_routing_status_to_not_configured():
     assert unassigned["routing_status"] == "not_configured"
 
 
+def test_portal_get_managed_number():
+    num = client.post(
+        "/portal/telephony/numbers/import",
+        json={"e164_number": "+15557650004"},
+    ).json()
+    num_id = num["id"]
+
+    got = client.get(f"/portal/telephony/numbers/{num_id}")
+    assert got.status_code == 200
+    assert got.json()["id"] == num_id
+    assert got.json()["e164_number"] == "+15557650004"
+
+    missing = client.get("/portal/telephony/numbers/missing-number-id")
+    assert missing.status_code == 404
+
+
 def test_portal_disconnect():
     resp = client.delete("/portal/telephony/telnyx/connection")
     assert resp.status_code == 200

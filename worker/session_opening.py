@@ -49,23 +49,39 @@ def resolve_session_opening(cfg: AgentConfig) -> SessionOpening:
     )
 
 
-async def apply_session_opening(session: Any, cfg: AgentConfig, logger: Any) -> SessionOpening:
+async def apply_session_opening(
+    session: Any,
+    cfg: AgentConfig,
+    logger: Any,
+    *,
+    allow_interruptions: bool | None = None,
+) -> SessionOpening:
+    """Speak or generate the opening turn.
+
+    WebRTC defaults to non-interruptible greetings (mic echo during connect).
+    Telephony should pass ``allow_interruptions=True`` so barge-in does not leave
+    the caller in a discarded-audio / deaf window.
+    """
     opening = resolve_session_opening(cfg)
+    interruptible = False if allow_interruptions is None else bool(allow_interruptions)
     if opening.mode == "wait":
         logger.info("session opening first_speaker=user — waiting for caller")
         return opening
     if opening.mode == "say":
         logger.info(
-            "session opening first_speaker=agent custom_greeting_chars=%s",
+            "session opening first_speaker=agent custom_greeting_chars=%s allow_interruptions=%s",
             len(opening.text or ""),
+            interruptible,
         )
-        # Static greeting: TTS-only, no LLM (UVA-10). Non-interruptible so mic echo during
-        # connect does not clip the opening line.
-        session.say(opening.text, allow_interruptions=False)
+        # Static greeting: TTS-only, no LLM (UVA-10).
+        session.say(opening.text, allow_interruptions=interruptible)
         return opening
-    logger.info("session opening first_speaker=agent generated_greeting")
+    logger.info(
+        "session opening first_speaker=agent generated_greeting allow_interruptions=%s",
+        interruptible,
+    )
     session.generate_reply(
         instructions=opening.instructions,
-        allow_interruptions=False,
+        allow_interruptions=interruptible,
     )
     return opening

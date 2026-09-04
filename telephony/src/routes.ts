@@ -8,6 +8,7 @@ export const TELEPHONY_MACHINE_OPERATIONS = {
   getConnectionStatus: route('GET', '/machine/telephony/telnyx/connection', 'telephony.telnyx_connection.status'),
   listTelnyxOwnedNumbers: route('POST', '/machine/telephony/telnyx/owned-numbers/list', 'telephony.telnyx_owned_numbers.list'),
   listManagedPhoneNumbers: route('POST', '/machine/telephony/numbers/list', 'telephony.managed_numbers.list'),
+  getManagedPhoneNumber: route('POST', '/machine/telephony/numbers/get', 'telephony.managed_numbers.get'),
   importTelnyxNumber: route('POST', '/machine/telephony/numbers/import', 'telephony.managed_numbers.import'),
   syncTelnyxOwnedNumbers: route('POST', '/machine/telephony/numbers/sync', 'telephony.managed_numbers.sync'),
   getTelnyxNumberDrift: route('POST', '/machine/telephony/numbers/drift', 'telephony.managed_numbers.drift'),

@@ -23,6 +23,27 @@ from worker.providers.capabilities import CAPABILITIES  # noqa: E402
 
 _LANGUAGE_LABELS = {"ur": "Urdu", "en": "English"}
 
+# Prefer receptionist-friendly defaults over alphabetical first voice id.
+_PREFERRED_DEFAULT_VOICES: dict[str, tuple[str, ...]] = {
+    "cartesia": (
+        "cartesia-sonic-default",
+        "cartesia-katie-friendly-fixer",
+        "cartesia-cindy-baker-receptionist",
+        "cartesia-skylar-friendly-guide",
+    ),
+    "rime": ("rime-arcana-andromeda",),
+}
+
+
+def _pick_default_voice(voice_ids: list[str], provider: str) -> str | None:
+    if not voice_ids:
+        return None
+    preferred = _PREFERRED_DEFAULT_VOICES.get(provider, ())
+    for voice_id in preferred:
+        if voice_id in voice_ids:
+            return voice_id
+    return voice_ids[0]
+
 
 def get_public_capabilities(conn: psycopg.Connection) -> dict:
     languages: dict = {}
@@ -56,7 +77,7 @@ def get_public_capabilities(conn: psycopg.Connection) -> dict:
             tts_enabled[provider] = {
                 "state": cap["state"],
                 "voices": voice_ids,
-                "defaultVoice": voice_ids[0] if voice_ids else None,
+                "defaultVoice": _pick_default_voice(voice_ids, provider),
             }
         if tts_enabled:
             entry["tts"] = tts_enabled

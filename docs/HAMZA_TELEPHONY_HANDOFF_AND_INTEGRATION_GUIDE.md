@@ -90,6 +90,7 @@ When `@awaazlabs-uva/telephony` makes requests to `/machine/telephony/*`, it sig
 | `getConnectionStatus` | GET | `/machine/telephony/telnyx/connection` | `telephony.telnyx_connection.status` |
 | `listTelnyxOwnedNumbers` | POST | `/machine/telephony/telnyx/owned-numbers/list` | `telephony.telnyx_owned_numbers.list` |
 | `listManagedPhoneNumbers` | POST | `/machine/telephony/numbers/list` | `telephony.managed_numbers.list` |
+| `getManagedPhoneNumber` | POST | `/machine/telephony/numbers/get` | `telephony.managed_numbers.get` |
 | `importTelnyxNumber` | POST | `/machine/telephony/numbers/import` | `telephony.managed_numbers.import` |
 | `syncTelnyxOwnedNumbers` | POST | `/machine/telephony/numbers/sync` | `telephony.managed_numbers.sync` |
 | `getTelnyxNumberDrift` | POST | `/machine/telephony/numbers/drift` | `telephony.managed_numbers.drift` |

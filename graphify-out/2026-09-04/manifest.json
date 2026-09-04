@@ -66,10 +66,10 @@
     "semantic_hash": "4e48e76a92e346a8138087a6c7302899"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/telephony/src/index.ts": {
-    "mtime": 1786464275.724845,
-    "seen": 1788206142.353233,
-    "ast_hash": "a6c74c074375e009d1edbef2e526ba42",
-    "semantic_hash": "a6c74c074375e009d1edbef2e526ba42"
+    "mtime": 1788529469.5731277,
+    "seen": 1788529722.5281272,
+    "ast_hash": "d4b2fadadd5d2ac9e99ca030e7df61aa",
+    "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/telephony/src/node-crypto.d.ts": {
     "mtime": 1786464275.724845,
@@ -78,10 +78,10 @@
     "semantic_hash": "0be475e370692b22747d68d91f6d620b"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/telephony/src/routes.ts": {
-    "mtime": 1786464275.724845,
-    "seen": 1788206142.353233,
-    "ast_hash": "5d23d9038228873b78748b7d4f7cdaa5",
-    "semantic_hash": "5d23d9038228873b78748b7d4f7cdaa5"
+    "mtime": 1788529469.4481628,
+    "seen": 1788529722.5281272,
+    "ast_hash": "e2bb41b9e783a7ace06c990ffb66150f",
+    "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/telephony/src/signing.ts": {
     "mtime": 1786464275.724845,
@@ -108,16 +108,16 @@
     "semantic_hash": "cc202cfe5a7229325d5baea28fc2f395"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/package.json": {
-    "mtime": 1786464275.7582078,
-    "seen": 1788206142.353233,
-    "ast_hash": "c948e03d1bace558952d05f074013b2b",
-    "semantic_hash": "c948e03d1bace558952d05f074013b2b"
+    "mtime": 1788514208.7810276,
+    "seen": 1788518148.2810097,
+    "ast_hash": "6560ccf12e4f605f3be9f76a8a026fb1",
+    "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/src/index.ts": {
-    "mtime": 1786464275.7602193,
-    "seen": 1788206142.353233,
-    "ast_hash": "f300775e2664308f91911ff0d0070063",
-    "semantic_hash": "f300775e2664308f91911ff0d0070063"
+    "mtime": 1788514219.166908,
+    "seen": 1788518148.2810097,
+    "ast_hash": "b4d815e17b384d3dbc5d5de005f79e4c",
+    "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/tsconfig.json": {
     "mtime": 1786464275.7602193,
@@ -420,10 +420,10 @@
     "semantic_hash": "76a8e5466379239aaebc0567596b116d"
   },
   "dashboard/src/lib/telephonyApi.ts": {
-    "mtime": 1787249464.6467257,
-    "seen": 1788206142.353233,
-    "ast_hash": "a723092a5e7090277ab301ab9ae5bfe0",
-    "semantic_hash": "a723092a5e7090277ab301ab9ae5bfe0"
+    "mtime": 1788529541.3392143,
+    "seen": 1788529722.5506077,
+    "ast_hash": "a7367227905be8ea3ff8c2810405670e",
+    "semantic_hash": ""
   },
   "dashboard/src/lib/utils.ts": {
     "mtime": 1785633301.3914955,
@@ -804,9 +804,9 @@
     "semantic_hash": "696c971dba553020918fac8ecb9bafea"
   },
   "state/usage_ledger.json": {
-    "mtime": 1788445499.6824825,
-    "seen": 1788513692.4219804,
-    "ast_hash": "ca72e164c7739e2dd60fbf119fb55e57",
+    "mtime": 1788523842.9450488,
+    "seen": 1788529722.5749795,
+    "ast_hash": "c11a335c21197e40e0168efa9d199cfb",
     "semantic_hash": ""
   },
   "supabase/.temp/linked-project.json": {
@@ -828,10 +828,10 @@
     "semantic_hash": "4e48e76a92e346a8138087a6c7302899"
   },
   "telephony/src/index.ts": {
-    "mtime": 1786464276.1663506,
-    "seen": 1788206142.3557062,
-    "ast_hash": "a6c74c074375e009d1edbef2e526ba42",
-    "semantic_hash": "a6c74c074375e009d1edbef2e526ba42"
+    "mtime": 1788529467.0864437,
+    "seen": 1788529722.5759792,
+    "ast_hash": "d4b2fadadd5d2ac9e99ca030e7df61aa",
+    "semantic_hash": ""
   },
   "telephony/src/node-crypto.d.ts": {
     "mtime": 1786464276.1703758,
@@ -840,10 +840,10 @@
     "semantic_hash": "0be475e370692b22747d68d91f6d620b"
   },
   "telephony/src/routes.ts": {
-    "mtime": 1786464276.1744063,
-    "seen": 1788206142.3557062,
-    "ast_hash": "5d23d9038228873b78748b7d4f7cdaa5",
-    "semantic_hash": "5d23d9038228873b78748b7d4f7cdaa5"
+    "mtime": 1788529465.1169932,
+    "seen": 1788529722.5759792,
+    "ast_hash": "e2bb41b9e783a7ace06c990ffb66150f",
+    "semantic_hash": ""
   },
   "telephony/src/signing.ts": {
     "mtime": 1786464276.179093,
@@ -864,16 +864,16 @@
     "semantic_hash": "4a8ffd5f7f84d5591e2f3d7345db907b"
   },
   "telephony/test/phase8-smoke.mjs": {
-    "mtime": 1786464276.2644606,
-    "seen": 1788206142.3557062,
-    "ast_hash": "c0b6ccc50a697cf3aabe401e601b17d6",
-    "semantic_hash": "c0b6ccc50a697cf3aabe401e601b17d6"
+    "mtime": 1788529643.542743,
+    "seen": 1788529722.5769782,
+    "ast_hash": "e1b01b8123a5ba9973178f913255cbb0",
+    "semantic_hash": ""
   },
   "telephony/test/phase9-contract.mjs": {
-    "mtime": 1786464276.2644606,
-    "seen": 1788206142.3557062,
-    "ast_hash": "95fd2e1fe6eba03f5c018362c0573718",
-    "semantic_hash": "95fd2e1fe6eba03f5c018362c0573718"
+    "mtime": 1788529642.8517957,
+    "seen": 1788529722.5769782,
+    "ast_hash": "4bddd743cdc51e0fa57b6df2a683b955",
+    "semantic_hash": ""
   },
   "telephony/tsconfig.json": {
     "mtime": 1786464276.2644606,
@@ -966,10 +966,10 @@
     "semantic_hash": "213774fd00b63240e37ac02540eae768"
   },
   "tenant_portal_api/telephony_queries.py": {
-    "mtime": 1787249464.7187023,
-    "seen": 1788206142.3557062,
-    "ast_hash": "360342698ed640e18cedda142e7dac99",
-    "semantic_hash": "360342698ed640e18cedda142e7dac99"
+    "mtime": 1788529451.127711,
+    "seen": 1788529722.5829804,
+    "ast_hash": "5c545c4a45b35e1701b02ed932eaafbc",
+    "semantic_hash": ""
   },
   "tenant_portal_api/telephony_reconcile.py": {
     "mtime": 1787249464.7207015,
@@ -978,16 +978,16 @@
     "semantic_hash": "b938675035ccad5e4ff1eff2f6513af9"
   },
   "tenant_portal_api/telephony_routes.py": {
-    "mtime": 1786464276.323816,
-    "seen": 1788206142.3557062,
-    "ast_hash": "e2c1ee4c40d6fe0fe472ed42d04237c4",
-    "semantic_hash": "e2c1ee4c40d6fe0fe472ed42d04237c4"
+    "mtime": 1788529463.138846,
+    "seen": 1788529722.5829804,
+    "ast_hash": "65b0e8d18cb8b647b895abb3ff5d1af6",
+    "semantic_hash": ""
   },
   "tenant_portal_api/telephony_service.py": {
-    "mtime": 1787884703.826239,
-    "seen": 1788206142.3557062,
-    "ast_hash": "ec2d03561912dc9b3692a75a8195a832",
-    "semantic_hash": "ec2d03561912dc9b3692a75a8195a832"
+    "mtime": 1788529454.7497222,
+    "seen": 1788529722.5829804,
+    "ast_hash": "77e3eb6938e40c323c4d690a777cb3a6",
+    "semantic_hash": ""
   },
   "tenant_portal_api/telephony_status.py": {
     "mtime": 1786464276.3290944,
@@ -1074,16 +1074,16 @@
     "semantic_hash": "1fe5f47825c01d5db8a083b2fe34d501"
   },
   "tests/test_cartesia_tts.py": {
-    "mtime": 1788512717.657714,
-    "seen": 1788513692.440505,
-    "ast_hash": "cf1ebaed83cd769e1ee4b808061a0060",
-    "semantic_hash": "cf1ebaed83cd769e1ee4b808061a0060"
+    "mtime": 1788518087.0455544,
+    "seen": 1788518148.3633204,
+    "ast_hash": "185d53c2484b1266af0eef03a4067b81",
+    "semantic_hash": ""
   },
   "tests/test_cartesia_tts_options.py": {
-    "mtime": 1788512717.657714,
-    "seen": 1788513692.440505,
-    "ast_hash": "6773a928dc5b6465adce8b307c4a6b98",
-    "semantic_hash": "6773a928dc5b6465adce8b307c4a6b98"
+    "mtime": 1788518086.8851929,
+    "seen": 1788518148.3633204,
+    "ast_hash": "1f8b18f2ddc9d59166282bc2939a0d1a",
+    "semantic_hash": ""
   },
   "tests/test_cross_tenant_read_live.py": {
     "mtime": 1785292419.9586203,
@@ -1176,9 +1176,9 @@
     "semantic_hash": "cd8e90f802aa3f8aca7f17d5d263ae65"
   },
   "tests/test_latency_phase1.py": {
-    "mtime": 1788513644.4041066,
-    "seen": 1788513692.4466326,
-    "ast_hash": "6ae232367c672fe6db0ae7f068f989ac",
+    "mtime": 1788513704.5939023,
+    "seen": 1788518148.3717017,
+    "ast_hash": "ae1f6f621d8d3e16581bfd622201b471",
     "semantic_hash": ""
   },
   "tests/test_latency_phase2.py": {
@@ -1380,10 +1380,10 @@
     "semantic_hash": "8b53e0355d7ddfa80eb9d9ed19abfd8e"
   },
   "tests/test_telephony_machine_routes_full.py": {
-    "mtime": 1787249464.7787948,
-    "seen": 1788206142.3557062,
-    "ast_hash": "75c6e2882f3ac08b613dbaccc4c92dd5",
-    "semantic_hash": "75c6e2882f3ac08b613dbaccc4c92dd5"
+    "mtime": 1788529485.8898058,
+    "seen": 1788529722.6084359,
+    "ast_hash": "9a3bc47778e3eb4f2cab7982b206b8c8",
+    "semantic_hash": ""
   },
   "tests/test_telephony_outbound_conflicts.py": {
     "mtime": 1787249464.7817936,
@@ -1428,10 +1428,10 @@
     "semantic_hash": "233a24e70955cf1b6003bb66c5288748"
   },
   "tests/test_telephony_routes.py": {
-    "mtime": 1786464276.4581952,
-    "seen": 1788206142.3557062,
-    "ast_hash": "df683fec9fbab5650ec9ad0ff6044a75",
-    "semantic_hash": "df683fec9fbab5650ec9ad0ff6044a75"
+    "mtime": 1788529561.9521909,
+    "seen": 1788529722.611436,
+    "ast_hash": "dadcf02bc4aef49c2e5b46539e23e21b",
+    "semantic_hash": ""
   },
   "tests/test_telephony_runtime_and_reconcile.py": {
     "mtime": 1787249464.7926476,
@@ -1494,10 +1494,10 @@
     "semantic_hash": "934be8862f30f71759132d5ae1dbe298"
   },
   "worker/cartesia_spoken_output.py": {
-    "mtime": 1788512717.657714,
-    "seen": 1788513692.4712627,
-    "ast_hash": "dcb90529452d5307168641c2d0348c21",
-    "semantic_hash": "dcb90529452d5307168641c2d0348c21"
+    "mtime": 1788518035.955628,
+    "seen": 1788518148.3954005,
+    "ast_hash": "b8c008ef83acead52b52748db88a24b2",
+    "semantic_hash": ""
   },
   "worker/cartesia_spoken_sanitize.py": {
     "mtime": 1787249464.798658,
@@ -1518,15 +1518,15 @@
     "semantic_hash": "526e15a43e19bdc32655bbc56874224d"
   },
   "worker/latency.py": {
-    "mtime": 1788513425.0093534,
-    "seen": 1788513692.4712627,
-    "ast_hash": "eb0b7be63d571963237d0e704e7af3d5",
+    "mtime": 1788514093.4585004,
+    "seen": 1788518148.3954005,
+    "ast_hash": "9d5f3315cba46f8bf1bd7fad0a22743a",
     "semantic_hash": ""
   },
   "worker/main.py": {
-    "mtime": 1788513496.7382476,
-    "seen": 1788513692.4712627,
-    "ast_hash": "03bde1549daa41a84fdbbe3a3f1c4d93",
+    "mtime": 1788518037.6249442,
+    "seen": 1788518148.3954005,
+    "ast_hash": "0bf158478810d87595231215a3cd72cb",
     "semantic_hash": ""
   },
   "worker/providers/__init__.py": {
@@ -1602,10 +1602,10 @@
     "semantic_hash": "fdbd45867eda8ae593b9be7ee252be08"
   },
   "worker/providers/tts/cartesia_options.py": {
-    "mtime": 1788512717.657714,
-    "seen": 1788513692.4712627,
-    "ast_hash": "ca0414f712a5326b37537f7027aa13e6",
-    "semantic_hash": "ca0414f712a5326b37537f7027aa13e6"
+    "mtime": 1788518095.4834807,
+    "seen": 1788518148.4035926,
+    "ast_hash": "c5ba602d59dd60d09fa99bbcf7241142",
+    "semantic_hash": ""
   },
   "worker/providers/tts/elevenlabs.py": {
     "mtime": 1786464276.5267155,
@@ -1764,9 +1764,9 @@
     "semantic_hash": ""
   },
   "client-submission_v2/README.md": {
-    "mtime": 1787249464.544076,
-    "seen": 1788513692.4836767,
-    "ast_hash": "c38f4511ac06110f726a1bebd2d027c1",
+    "mtime": 1788514254.2368524,
+    "seen": 1788518148.4161108,
+    "ast_hash": "dff7a0bba1127fb4c30dd81028a39b19",
     "semantic_hash": ""
   },
   "client-submission_v2/docs/INTEGRATION_GUIDE.md": {
@@ -1776,9 +1776,9 @@
     "semantic_hash": ""
   },
   "client-submission_v2/docs/SDK_CAPABILITIES_REFERENCE.md": {
-    "mtime": 1787249464.549091,
-    "seen": 1788513692.4836767,
-    "ast_hash": "0687ab4a11a52c882efdf7681e88d6c6",
+    "mtime": 1788529580.355943,
+    "seen": 1788529722.6308374,
+    "ast_hash": "adc23537458b21385745cbe166b22c52",
     "semantic_hash": ""
   },
   "client-submission_v2/docs/TELNYX_SETUP_AND_PLATFORM_CONSTRAINTS.md": {
@@ -1806,9 +1806,9 @@
     "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/telephony/README.md": {
-    "mtime": 1786464275.7244356,
-    "seen": 1788513692.4836767,
-    "ast_hash": "626e293f8851515d38ddac89ac4d7eb6",
+    "mtime": 1788529580.1496654,
+    "seen": 1788529722.6318362,
+    "ast_hash": "478937d2177d7bc6589733ed7b490a1c",
     "semantic_hash": ""
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/README.md": {
@@ -2058,9 +2058,9 @@
     "semantic_hash": ""
   },
   "docs/HAMZA_TELEPHONY_HANDOFF_AND_INTEGRATION_GUIDE.md": {
-    "mtime": 1786464275.9256256,
-    "seen": 1788513692.4836767,
-    "ast_hash": "14b9e0a8ff9295761640cf68cdf36d53",
+    "mtime": 1788529568.5601993,
+    "seen": 1788529722.6462986,
+    "ast_hash": "c189306ac5d95c5fae2fd2757bf88dd9",
     "semantic_hash": ""
   },
   "docs/HAMZA_TELEPHONY_IMPLEMENTATION_WORKFLOW.md": {
@@ -2100,9 +2100,9 @@
     "semantic_hash": ""
   },
   "docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md": {
-    "mtime": 1786464275.9511328,
-    "seen": 1788513692.4836767,
-    "ast_hash": "9298e58ed8f2c94e54d7aff1db864b5f",
+    "mtime": 1788529666.3173199,
+    "seen": 1788529722.648299,
+    "ast_hash": "9a41b4f645803f03c4c754cfdb39c9f2",
     "semantic_hash": ""
   },
   "docs/TELEPHONY_CODEBASE_ANALYSIS_AND_INTEGRATION_PLAN.md": {
@@ -2238,9 +2238,9 @@
     "semantic_hash": ""
   },
   "telephony/README.md": {
-    "mtime": 1786464276.15144,
-    "seen": 1788513692.4836767,
-    "ast_hash": "9c140659a46bd68be3f3b0d4c48a6c06",
+    "mtime": 1788529569.026853,
+    "seen": 1788529722.6565073,
+    "ast_hash": "c32c76c23527a12bcbd0f7a067ed28ea",
     "semantic_hash": ""
   },
   "telephonygapsfix/PHASE_1_CRITICAL.md": {

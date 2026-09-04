@@ -349,6 +349,7 @@ Machine routes are the active SDK surface. Machine requests use the existing HMA
 | DELETE | `/portal/telephony/telnyx/connection` | Disconnect/disable active connection |
 | GET | `/portal/telephony/telnyx/owned-numbers` | Telnyx-owned inventory |
 | GET | `/portal/telephony/numbers` | AwaazLabs-managed numbers |
+| GET | `/portal/telephony/numbers/{number_id}` | Single managed number status/detail |
 | POST | `/portal/telephony/numbers/import` | Import existing Telnyx-owned number |
 | POST | `/portal/telephony/numbers/sync` | Sync owned numbers/drift |
 | GET | `/portal/telephony/numbers/drift` | Drift report |
@@ -380,6 +381,7 @@ Machine routes are the active SDK surface. Machine requests use the existing HMA
 | `getConnectionStatus` | GET | `/machine/telephony/telnyx/connection` | `telephony.telnyx_connection.status` |
 | `listTelnyxOwnedNumbers` | POST | `/machine/telephony/telnyx/owned-numbers/list` | `telephony.telnyx_owned_numbers.list` |
 | `listManagedPhoneNumbers` | POST | `/machine/telephony/numbers/list` | `telephony.managed_numbers.list` |
+| `getManagedPhoneNumber` | POST | `/machine/telephony/numbers/get` | `telephony.managed_numbers.get` |
 | `importTelnyxNumber` | POST | `/machine/telephony/numbers/import` | `telephony.managed_numbers.import` |
 | `syncTelnyxOwnedNumbers` | POST | `/machine/telephony/numbers/sync` | `telephony.managed_numbers.sync` |
 | `getTelnyxNumberDrift` | POST | `/machine/telephony/numbers/drift` | `telephony.managed_numbers.drift` |
@@ -403,7 +405,7 @@ Machine routes are the active SDK surface. Machine requests use the existing HMA
 
 For `unassignAgentFromNumber`, the request body uses `agent_id: null`.
 
-For `getNumberOrderStatus` and `getCallStatus`, the request body includes the target ID even when the route is not path-based. This keeps machine request payloads fully HMAC-bound.
+For `getNumberOrderStatus`, `getManagedPhoneNumber`, and `getCallStatus`, the request body includes the target ID even when the route is not path-based. This keeps machine request payloads fully HMAC-bound.
 
 ## SDK Method Contract
 
@@ -429,6 +431,7 @@ Methods:
 - `getConnectionStatus()`
 - `listTelnyxOwnedNumbers(filters?)`
 - `listManagedPhoneNumbers(filters?)`
+- `getManagedPhoneNumber(numberId)`
 - `importTelnyxNumber({ e164Number, externalCustomerRef? })`
 - `syncTelnyxOwnedNumbers()`
 - `getTelnyxNumberDrift()`

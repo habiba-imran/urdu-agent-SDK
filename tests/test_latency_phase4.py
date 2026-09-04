@@ -29,6 +29,31 @@ def test_turn_handling_barge_in_and_preemptive_partial_feed():
     assert preemptive["max_speech_duration"] >= 10.0
 
 
+def test_telephony_turn_handling_disables_false_interruption_resume():
+    from worker.latency import TELEPHONY_TURN_HANDLING_OPTIONS, turn_handling_for_channel
+
+    tel = turn_handling_for_channel("telephony")
+    assert tel is TELEPHONY_TURN_HANDLING_OPTIONS
+    interruption = tel["interruption"]
+    assert interruption["enabled"] is True
+    assert interruption["discard_audio_if_uninterruptible"] is False
+    assert interruption["resume_false_interruption"] is False
+    assert interruption["false_interruption_timeout"] <= 0.7
+    assert turn_handling_for_channel("webrtc") is TURN_HANDLING_OPTIONS
+
+
+def test_is_telephony_job_from_room_or_metadata():
+    from worker.latency import is_telephony_job
+
+    assert is_telephony_job(room_name="telephony-inbound-abc") is True
+    assert is_telephony_job(room_name="browser-room") is False
+    assert (
+        is_telephony_job(job_metadata='{"direction":"inbound","tenant_id":"t","agent_id":"a"}')
+        is True
+    )
+    assert is_telephony_job(job_metadata='{"tenant_id":"t","agent_id":"a"}') is False
+
+
 def test_session_room_options_fast_teardown():
     opts = session_room_options()
     assert opts.close_on_disconnect is True

@@ -72,6 +72,7 @@ const routeCases = [
   ['getConnectionStatus', 'GET', '/machine/telephony/telnyx/connection', 'telephony.telnyx_connection.status', (c) => c.getConnectionStatus(), {}],
   ['listTelnyxOwnedNumbers', 'POST', '/machine/telephony/telnyx/owned-numbers/list', 'telephony.telnyx_owned_numbers.list', (c) => c.listTelnyxOwnedNumbers({ platformStatus: 'active', limit: 5 }), { limit: 5, platform_status: 'active' }],
   ['listManagedPhoneNumbers', 'POST', '/machine/telephony/numbers/list', 'telephony.managed_numbers.list', (c) => c.listManagedPhoneNumbers({ providerStatus: 'verified', cursor: 'cursor-contract' }), { cursor: 'cursor-contract', provider_status: 'verified' }],
+  ['getManagedPhoneNumber', 'POST', '/machine/telephony/numbers/get', 'telephony.managed_numbers.get', (c) => c.getManagedPhoneNumber(numberId), { number_id: numberId }],
   ['importTelnyxNumber', 'POST', '/machine/telephony/numbers/import', 'telephony.managed_numbers.import', (c) => c.importTelnyxNumber({ e164Number, externalCustomerRef: '<OPAQUE_CUSTOMER_REF>' }), { e164_number: e164Number, external_customer_ref: '<OPAQUE_CUSTOMER_REF>' }],
   ['syncTelnyxOwnedNumbers', 'POST', '/machine/telephony/numbers/sync', 'telephony.managed_numbers.sync', (c) => c.syncTelnyxOwnedNumbers(), {}],
   ['getTelnyxNumberDrift', 'POST', '/machine/telephony/numbers/drift', 'telephony.managed_numbers.drift', (c) => c.getTelnyxNumberDrift(), {}],
@@ -107,8 +108,8 @@ function assertSnakeCase(value) {
 }
 
 async function testAllSdkMethodsMatchFrozenContract() {
-  assert.equal(routeCases.length, 27);
-  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 27);
+  assert.equal(routeCases.length, 28);
+  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 28);
 
   for (const [name, method, path, action, call, expectedBody] of routeCases) {
     const { client, seen } = createCapturedClient({ id: `${name}-response`, platform_status: 'ok' });

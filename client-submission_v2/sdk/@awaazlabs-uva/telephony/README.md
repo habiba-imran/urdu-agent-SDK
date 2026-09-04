@@ -80,6 +80,7 @@ client.getConnectionStatus()
 
 client.listTelnyxOwnedNumbers({ cursor?, limit?, platformStatus?, providerStatus? })
 client.listManagedPhoneNumbers({ cursor?, limit?, platformStatus?, providerStatus? })
+client.getManagedPhoneNumber(numberId)
 client.importTelnyxNumber({ e164Number, externalCustomerRef? })
 client.syncTelnyxOwnedNumbers()
 client.getTelnyxNumberDrift()

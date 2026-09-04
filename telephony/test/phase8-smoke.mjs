@@ -69,7 +69,7 @@ async function testSigningAndCanonicalJson() {
 }
 
 async function testFixedOperationsStayMachineScoped() {
-  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 27);
+  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 28);
   assert.equal(
     TELEPHONY_MACHINE_OPERATIONS.createOutboundCall.action,
     'telephony.outbound_calls.create',

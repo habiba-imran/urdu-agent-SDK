@@ -113,6 +113,18 @@ def test_apply_session_opening_dispatches():
     assert say_session.say_kwargs == {"allow_interruptions": False}
     assert say_session.generated is None
 
+    tel_session = FakeSession()
+    asyncio.run(
+        apply_session_opening(
+            tel_session,
+            _cfg(greeting="Hello there."),
+            logger,
+            allow_interruptions=True,
+        )
+    )
+    assert tel_session.said == "Hello there."
+    assert tel_session.say_kwargs == {"allow_interruptions": True}
+
     gen_session = FakeSession()
     asyncio.run(apply_session_opening(gen_session, _cfg(), logger))
     assert gen_session.said is None

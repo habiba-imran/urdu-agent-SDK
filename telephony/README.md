@@ -100,7 +100,7 @@ try {
 - Telnyx account: `connectTelnyxAccount`, `rotateTelnyxAccountKey`,
   `reverifyTelnyxAccount`, `disconnectTelnyxAccount`, `getConnectionStatus`
 - Number inventory and purchase: `listTelnyxOwnedNumbers`,
-  `listManagedPhoneNumbers`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
+  `listManagedPhoneNumbers`, `getManagedPhoneNumber`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
   `getTelnyxNumberDrift`, `searchAvailableNumbers`,
   `purchaseNumber`, `getNumberOrderStatus`
 - Routing and trunks: `assignAgentToNumber`, `unassignAgentFromNumber`,

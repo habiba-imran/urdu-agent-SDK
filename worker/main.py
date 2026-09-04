@@ -28,13 +28,14 @@ from .spoken_sanitize import sanitizer_for_provider
 from .providers.registry import build_components
 from .providers.types import AgentRuntimeConfig
 from .latency import (
-    TURN_HANDLING_OPTIONS,
     VAD_OPTIONS,
     await_greeting_prewarm,
+    is_telephony_job,
     load_session_identity,
     parse_dispatch_metadata,
     schedule_provider_prewarm,
     session_room_options,
+    turn_handling_for_channel,
     wire_barge_in_flush,
     wire_turn_latency,
 )
@@ -265,7 +266,7 @@ async def build_session(
         "userdata": AgentUserdata(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
-        "turn_handling": TURN_HANDLING_OPTIONS,
+        "turn_handling": turn_handling_for_channel(audio_channel),
         "use_tts_aligned_transcript": False,
     }
     from livekit.agents.types import APIConnectOptions
@@ -618,12 +619,18 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     _connect_at = time.monotonic()
     room_name = ctx.room.name
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
-    audio_channel = "webrtc"
+    audio_channel = (
+        "telephony"
+        if is_telephony_job(room_name=room_name, job_metadata=job_metadata)
+        else "webrtc"
+    )
 
     # UVA-2: build the pipeline in parallel with waiting for the browser/SIP participant.
     # Mint stamps a sessions row and dispatch metadata before the user joins, so STT/LLM/TTS
     # + Cartesia prewarm can run while wait_for_participant blocks.
     early_md = await _early_session_identity(ctx, room_name)
+    if early_md and early_md.pop("direction", None) in {"inbound", "outbound"}:
+        audio_channel = "telephony"
 
     async def _setup_and_start(
         session_obj: Any, cfg_obj: AgentConfig, agent_obj: Any, md_obj: dict[str, str]
@@ -811,7 +818,12 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         except (asyncio.TimeoutError, RuntimeError):
             return
 
-        await apply_session_opening(session, cfg, _opening_logger)
+        await apply_session_opening(
+            session,
+            cfg,
+            _opening_logger,
+            allow_interruptions=(audio_channel == "telephony"),
+        )
 
     else:
         # Fallback Path: Wait for participant to extract identity (e.g., SIP inbound)
@@ -837,7 +849,12 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         await await_greeting_prewarm(
             greeting_prewarm, logger=_opening_logger, room_name=room_name
         )
-        await apply_session_opening(session, cfg, _opening_logger)
+        await apply_session_opening(
+            session,
+            cfg,
+            _opening_logger,
+            allow_interruptions=(resolved_channel == "telephony"),
+        )
 
 
 def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None

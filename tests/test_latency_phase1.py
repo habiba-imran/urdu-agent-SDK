@@ -35,10 +35,11 @@ def test_turn_handling_enables_preemptive_generation_and_faster_endpointing():
 
 
 def test_parse_dispatch_metadata_round_trip():
-    raw = json.dumps({"tenant_id": "t1", "agent_id": "a1"})
+    raw = json.dumps({"tenant_id": "t1", "agent_id": "a1", "direction": "inbound"})
     assert parse_dispatch_metadata(raw) == {
         "tenant_id": "t1",
         "agent_id": "a1",
+        "direction": "inbound",
     }
     assert parse_dispatch_metadata(None) is None
     assert parse_dispatch_metadata("{bad") is None
