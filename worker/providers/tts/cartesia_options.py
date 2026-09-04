@@ -7,7 +7,7 @@ baseline emotion/speed without a DB migration.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 ALLOWED_CARTESIA_TTS_OPTION_KEYS = frozenset(
     {"model", "speed", "volume", "emotion", "expressive"}
@@ -19,9 +19,14 @@ CARTESIA_TTS_DEFAULTS: dict = {
     "model": "sonic-3.5",
     "speed": 0.95,
     "emotion": ["calm", "content"],
-    # Default on for lower LLM token cost — LiveKit injects delivery markup (latency §UVA-7).
-    # Set ``tts_options.expressive=false`` on an agent to use manual SSML prompt rules instead.
-    "expressive": True,
+    # Manual SSML is the working humanization path with ``livekit.plugins.cartesia.TTS``.
+    # LiveKit's expressive pipeline is framework-internal, hardcoded off on AgentSession, and
+    # only resolves for ``inference.TTS`` — not the Cartesia plugin. Defaulting expressive=True
+    # previously selected the "don't emit <emotion>/<break>" prompt while nothing injected
+    # tags → flat calm TTS with no tone shifts. Opt in with ``tts_options.expressive=true``
+    # only when a future livekit-agents build exposes a public AgentSession expressive kwarg
+    # (and you are on inference TTS).
+    "expressive": False,
 }
 
 # Phase C — match Cartesia output to the downstream audio leg (docs/cartesia_humanization.md Layer 6).
@@ -101,11 +106,35 @@ def validate_cartesia_tts_options(options: dict) -> dict:
     return normalized
 
 
+def cartesia_expressive_available() -> bool:
+    """True only if this livekit-agents build exposes public AgentSession expressive.
+
+    In 1.6.5 the session hardcodes ``_expressive=False`` and
+    ``_resolve_expressive_options`` only activates for ``inference.TTS`` — so the
+    Cartesia plugin never receives injected markup even if we wished it on.
+    """
+    import inspect
+
+    try:
+        from livekit.agents import AgentSession
+    except Exception:
+        return False
+    return "expressive" in inspect.signature(AgentSession.__init__).parameters
+
+
 def cartesia_expressive_enabled(stored_options: dict | None) -> bool:
-    """Session-level expressive flag — merged with platform default (True unless overridden)."""
+    """Whether to use the expressive (no-manual-SSML) prompt profile.
+
+    Requires both an explicit/merged ``expressive=True`` option *and* a LiveKit
+    build that can actually run the expressive pipeline. Otherwise we fall back
+    to manual ``<emotion>`` / ``<break>`` instructions so voice stays humanized.
+    """
     overrides = validate_cartesia_tts_options(stored_options or {})
     merged = {**CARTESIA_TTS_DEFAULTS, **overrides}
-    return bool(merged.get("expressive", True))
+    want = bool(merged.get("expressive", False))
+    if not want:
+        return False
+    return cartesia_expressive_available()
 
 
 def resolve_cartesia_tts_kwargs(

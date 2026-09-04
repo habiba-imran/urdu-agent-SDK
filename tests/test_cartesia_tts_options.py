@@ -61,12 +61,16 @@ def test_validate_rejects_out_of_range_speed():
         assert "speed" in str(exc)
 
 
-def test_expressive_defaults_on_and_opt_out():
+def test_expressive_defaults_off_and_unavailable_on_cartesia_plugin():
+    assert CARTESIA_TTS_DEFAULTS["expressive"] is False
     assert validate_cartesia_tts_options({"expressive": True}) == {"expressive": True}
     assert validate_cartesia_tts_options({"expressive": False}) == {"expressive": False}
-    assert cartesia_expressive_enabled({"expressive": True}) is True
-    assert cartesia_expressive_enabled({}) is True
+    # Empty options → manual SSML path (expressive off by default).
+    assert cartesia_expressive_enabled({}) is False
     assert cartesia_expressive_enabled({"expressive": False}) is False
+    # Requesting expressive still requires a LiveKit build that exposes it; on 1.6.5
+    # AgentSession has no public expressive kwarg, so this stays False.
+    assert cartesia_expressive_enabled({"expressive": True}) is False
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {"expressive": True})
     assert "expressive" not in kwargs
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]

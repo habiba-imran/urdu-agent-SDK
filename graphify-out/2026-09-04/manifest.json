@@ -108,16 +108,16 @@
     "semantic_hash": "cc202cfe5a7229325d5baea28fc2f395"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/package.json": {
-    "mtime": 1788514208.7810276,
-    "seen": 1788518148.2810097,
-    "ast_hash": "6560ccf12e4f605f3be9f76a8a026fb1",
-    "semantic_hash": ""
+    "mtime": 1786464275.7582078,
+    "seen": 1788206142.353233,
+    "ast_hash": "c948e03d1bace558952d05f074013b2b",
+    "semantic_hash": "c948e03d1bace558952d05f074013b2b"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/src/index.ts": {
-    "mtime": 1788514219.166908,
-    "seen": 1788518148.2810097,
-    "ast_hash": "b4d815e17b384d3dbc5d5de005f79e4c",
-    "semantic_hash": ""
+    "mtime": 1786464275.7602193,
+    "seen": 1788206142.353233,
+    "ast_hash": "f300775e2664308f91911ff0d0070063",
+    "semantic_hash": "f300775e2664308f91911ff0d0070063"
   },
   "client-submission_v2/sdk/@awaazlabs-uva/voice/tsconfig.json": {
     "mtime": 1786464275.7602193,
@@ -804,9 +804,9 @@
     "semantic_hash": "696c971dba553020918fac8ecb9bafea"
   },
   "state/usage_ledger.json": {
-    "mtime": 1788517894.9740107,
-    "seen": 1788518148.3428433,
-    "ast_hash": "08eded2f84bf3fb1b97ef7fdf09ee493",
+    "mtime": 1788445499.6824825,
+    "seen": 1788513692.4219804,
+    "ast_hash": "ca72e164c7739e2dd60fbf119fb55e57",
     "semantic_hash": ""
   },
   "supabase/.temp/linked-project.json": {
@@ -1074,16 +1074,16 @@
     "semantic_hash": "1fe5f47825c01d5db8a083b2fe34d501"
   },
   "tests/test_cartesia_tts.py": {
-    "mtime": 1788518087.0455544,
-    "seen": 1788518148.3633204,
-    "ast_hash": "185d53c2484b1266af0eef03a4067b81",
-    "semantic_hash": ""
+    "mtime": 1788512717.657714,
+    "seen": 1788513692.440505,
+    "ast_hash": "cf1ebaed83cd769e1ee4b808061a0060",
+    "semantic_hash": "cf1ebaed83cd769e1ee4b808061a0060"
   },
   "tests/test_cartesia_tts_options.py": {
-    "mtime": 1788518086.8851929,
-    "seen": 1788518148.3633204,
-    "ast_hash": "1f8b18f2ddc9d59166282bc2939a0d1a",
-    "semantic_hash": ""
+    "mtime": 1788512717.657714,
+    "seen": 1788513692.440505,
+    "ast_hash": "6773a928dc5b6465adce8b307c4a6b98",
+    "semantic_hash": "6773a928dc5b6465adce8b307c4a6b98"
   },
   "tests/test_cross_tenant_read_live.py": {
     "mtime": 1785292419.9586203,
@@ -1176,9 +1176,9 @@
     "semantic_hash": "cd8e90f802aa3f8aca7f17d5d263ae65"
   },
   "tests/test_latency_phase1.py": {
-    "mtime": 1788513704.5939023,
-    "seen": 1788518148.3717017,
-    "ast_hash": "ae1f6f621d8d3e16581bfd622201b471",
+    "mtime": 1788513644.4041066,
+    "seen": 1788513692.4466326,
+    "ast_hash": "6ae232367c672fe6db0ae7f068f989ac",
     "semantic_hash": ""
   },
   "tests/test_latency_phase2.py": {
@@ -1494,10 +1494,10 @@
     "semantic_hash": "934be8862f30f71759132d5ae1dbe298"
   },
   "worker/cartesia_spoken_output.py": {
-    "mtime": 1788518035.955628,
-    "seen": 1788518148.3954005,
-    "ast_hash": "b8c008ef83acead52b52748db88a24b2",
-    "semantic_hash": ""
+    "mtime": 1788512717.657714,
+    "seen": 1788513692.4712627,
+    "ast_hash": "dcb90529452d5307168641c2d0348c21",
+    "semantic_hash": "dcb90529452d5307168641c2d0348c21"
   },
   "worker/cartesia_spoken_sanitize.py": {
     "mtime": 1787249464.798658,
@@ -1518,15 +1518,15 @@
     "semantic_hash": "526e15a43e19bdc32655bbc56874224d"
   },
   "worker/latency.py": {
-    "mtime": 1788514093.4585004,
-    "seen": 1788518148.3954005,
-    "ast_hash": "9d5f3315cba46f8bf1bd7fad0a22743a",
+    "mtime": 1788513425.0093534,
+    "seen": 1788513692.4712627,
+    "ast_hash": "eb0b7be63d571963237d0e704e7af3d5",
     "semantic_hash": ""
   },
   "worker/main.py": {
-    "mtime": 1788518037.6249442,
-    "seen": 1788518148.3954005,
-    "ast_hash": "0bf158478810d87595231215a3cd72cb",
+    "mtime": 1788513496.7382476,
+    "seen": 1788513692.4712627,
+    "ast_hash": "03bde1549daa41a84fdbbe3a3f1c4d93",
     "semantic_hash": ""
   },
   "worker/providers/__init__.py": {
@@ -1602,10 +1602,10 @@
     "semantic_hash": "fdbd45867eda8ae593b9be7ee252be08"
   },
   "worker/providers/tts/cartesia_options.py": {
-    "mtime": 1788518095.4834807,
-    "seen": 1788518148.4035926,
-    "ast_hash": "c5ba602d59dd60d09fa99bbcf7241142",
-    "semantic_hash": ""
+    "mtime": 1788512717.657714,
+    "seen": 1788513692.4712627,
+    "ast_hash": "ca0414f712a5326b37537f7027aa13e6",
+    "semantic_hash": "ca0414f712a5326b37537f7027aa13e6"
   },
   "worker/providers/tts/elevenlabs.py": {
     "mtime": 1786464276.5267155,
@@ -1764,9 +1764,9 @@
     "semantic_hash": ""
   },
   "client-submission_v2/README.md": {
-    "mtime": 1788514254.2368524,
-    "seen": 1788518148.4161108,
-    "ast_hash": "dff7a0bba1127fb4c30dd81028a39b19",
+    "mtime": 1787249464.544076,
+    "seen": 1788513692.4836767,
+    "ast_hash": "c38f4511ac06110f726a1bebd2d027c1",
     "semantic_hash": ""
   },
   "client-submission_v2/docs/INTEGRATION_GUIDE.md": {

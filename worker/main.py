@@ -323,22 +323,32 @@ def _tts_agent_session_extra(
 
         extra["tts_text_transforms"] = [_stream_sanitizer]
     if cfg.tts_provider == "cartesia":
-        from .providers.tts.cartesia_options import cartesia_expressive_enabled
+        from .providers.tts.cartesia_options import (
+            cartesia_expressive_available,
+            cartesia_expressive_enabled,
+            validate_cartesia_tts_options,
+            CARTESIA_TTS_DEFAULTS,
+        )
 
-        want_expressive = cartesia_expressive_enabled(cfg.tts_options)
-        if want_expressive:
-            if "expressive" in params:
-                extra["expressive"] = True
-            else:
-                logger.warning(
-                    "tts_options.expressive=true but AgentSession has no expressive parameter "
-                    "(livekit-agents %s) — staying on manual SSML prompt rules",
-                    getattr(agent_session_cls, "__module__", "unknown"),
-                )
+        overrides = validate_cartesia_tts_options(cfg.tts_options or {})
+        merged = {**CARTESIA_TTS_DEFAULTS, **overrides}
+        want_expressive = bool(merged.get("expressive", False))
+        use_expressive = cartesia_expressive_enabled(cfg.tts_options)
+        if want_expressive and not use_expressive:
+            logger.warning(
+                "tts_options.expressive=true ignored — LiveKit expressive is not available "
+                "for cartesia.TTS on this livekit-agents build (public AgentSession "
+                "expressive=%s). Using manual SSML prompt so <emotion>/<break> still work.",
+                cartesia_expressive_available(),
+            )
+        if use_expressive and "expressive" in params:
+            extra["expressive"] = True
         logger.info(
-            "cartesia session extras sanitizer=%s expressive=%s",
+            "cartesia session extras sanitizer=%s expressive_effective=%s "
+            "expressive_requested=%s",
             "tts_text_transforms" in extra,
-            extra.get("expressive", False),
+            use_expressive,
+            want_expressive,
         )
     else:
         logger.info(
