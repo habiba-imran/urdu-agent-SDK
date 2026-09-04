@@ -46,6 +46,7 @@ from .stale_jobs import (
     reject_stale_job_request,
     wait_for_session_participant,
 )
+from .prompt_compact import compact_prompt_for_groq
 from .tools import FIXED_TOOLS, AgentUserdata, session_tools
 
 # OUR fixed operating instructions (Uplift default). Cartesia/Rime agents get an extended block
@@ -87,14 +88,26 @@ def build_agent(cfg: AgentConfig) -> Any:
     """
     from livekit.agents import Agent
     from livekit.agents.llm import ChatContext
+    from livekit.agents.log import logger
+
+    persona_prompt = cfg.prompt
+    if (cfg.llm_provider or "").lower() == "groq":
+        persona_prompt, compacted = compact_prompt_for_groq(cfg.prompt)
+        if compacted:
+            logger.info(
+                "groq prompt compacted agent=%s before=%s after=%s",
+                cfg.agent_id,
+                len(cfg.prompt or ""),
+                len(persona_prompt),
+            )
 
     persona_ctx = ChatContext.empty()
-    persona_ctx.add_message(role="system", content=_PERSONA_FRAME + cfg.prompt)
+    persona_ctx.add_message(role="system", content=_PERSONA_FRAME + persona_prompt)
     return Agent(
         instructions=build_system_instructions(cfg)
         + _language_directive(cfg.agent_language),
         chat_ctx=persona_ctx,
-        tools=session_tools(),
+        tools=session_tools(tools_base_url=cfg.tools_base_url),
     )
 
 
@@ -286,9 +299,15 @@ async def build_session(
         "tts": components.tts,
         "vad": _load_vad(),
         "userdata": AgentUserdata(
-            tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
+            tenant_id=cfg.tenant_id,
+            agent_id=cfg.agent_id,
+            room_name=room_name,
+            tools_base_url=cfg.tools_base_url,
+            tools_auth_secret=cfg.tools_auth_secret,
         ),
-        "turn_handling": turn_handling_for_channel(audio_channel),
+        "turn_handling": turn_handling_for_channel(
+            audio_channel, llm_provider=cfg.llm_provider
+        ),
         "use_tts_aligned_transcript": False,
     }
     from livekit.agents.types import APIConnectOptions

@@ -45,6 +45,10 @@ export interface AgentRecord {
   tts_options: Record<string, unknown>;
   greeting: string | null;
   first_speaker: FirstSpeaker;
+  /** Client tool gateway base URL (no trailing slash). */
+  tools_base_url: string | null;
+  /** True when a tools auth secret is stored (raw secret is never returned). */
+  tools_auth_secret_configured: boolean;
 }
 
 export interface CreateAgentParams {
@@ -67,6 +71,14 @@ export interface CreateAgentParams {
   greeting?: string;
   /** Who speaks first. Default 'agent'. 'user' waits for the caller. */
   firstSpeaker?: FirstSpeaker;
+  /**
+   * HTTPS (or http for local) base URL of THIS client's tool gateway.
+   * Worker POSTs RAG/FAQ/scheduling to `{toolsBaseUrl}/api/tools/*`.
+   * Per-agent so one UVA worker can serve many client backends.
+   */
+  toolsBaseUrl?: string;
+  /** Shared secret sent as x-tool-gateway-secret. Must match the client backend TOOL_GATEWAY_SECRET. */
+  toolsAuthSecret?: string;
 }
 
 export interface UpdateAgentParams {
@@ -86,6 +98,8 @@ export interface UpdateAgentParams {
   /** Exact opening line when firstSpeaker is 'agent'. Empty string clears it. */
   greeting?: string;
   firstSpeaker?: FirstSpeaker;
+  toolsBaseUrl?: string;
+  toolsAuthSecret?: string;
 }
 
 /** Shape returned by GET /machine/provider-capabilities (== GET /portal/provider-capabilities),
@@ -192,6 +206,8 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
     if (params.greeting !== undefined) body.greeting = params.greeting;
     if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
+    if (params.toolsBaseUrl !== undefined) body.tools_base_url = params.toolsBaseUrl;
+    if (params.toolsAuthSecret !== undefined) body.tools_auth_secret = params.toolsAuthSecret;
     return this.request<AgentRecord>('POST', '/machine/agents', 'agent.create', body);
   }
 
@@ -216,6 +232,8 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
     if (params.greeting !== undefined) body.greeting = params.greeting;
     if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
+    if (params.toolsBaseUrl !== undefined) body.tools_base_url = params.toolsBaseUrl;
+    if (params.toolsAuthSecret !== undefined) body.tools_auth_secret = params.toolsAuthSecret;
     return this.request<AgentRecord>('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
   }
 

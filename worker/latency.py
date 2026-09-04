@@ -41,6 +41,8 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
 
 # PSTN/SIP: no browser AEC — false-interruption resume causes mid-utterance flicker.
 # Keep barge-in enabled; do not discard caller audio after an intentional interrupt.
+# Disable preemptive LLM on telephony: cancelled preemptives still burn Groq free-tier TPM
+# (8k/min) and were the main source of 429s mid-call with ~3–5k-token front-desk prompts.
 TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
     **TURN_HANDLING_OPTIONS,
     "interruption": {
@@ -50,14 +52,37 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.7,
     },
+    "preemptive_generation": {
+        "enabled": False,
+        "preemptive_tts": False,
+        "max_speech_duration": 12.0,
+        "max_retries": 0,
+    },
 }
 
 
-def turn_handling_for_channel(audio_channel: str) -> dict[str, Any]:
-    """Return turn-handling defaults for WebRTC vs telephony audio legs."""
+def turn_handling_for_channel(
+    audio_channel: str,
+    *,
+    llm_provider: str | None = None,
+) -> dict[str, Any]:
+    """Return turn-handling defaults for WebRTC vs telephony audio legs.
+
+    Groq free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
+    partial turns do not burn tokens before EOU.
+    """
     if audio_channel == "telephony":
-        return TELEPHONY_TURN_HANDLING_OPTIONS
-    return TURN_HANDLING_OPTIONS
+        options = dict(TELEPHONY_TURN_HANDLING_OPTIONS)
+    else:
+        options = dict(TURN_HANDLING_OPTIONS)
+    if (llm_provider or "").lower() == "groq":
+        options["preemptive_generation"] = {
+            "enabled": False,
+            "preemptive_tts": False,
+            "max_speech_duration": 12.0,
+            "max_retries": 0,
+        }
+    return options
 
 
 def is_telephony_job(
@@ -232,8 +257,16 @@ def wire_barge_in_flush(session: Any, logger: Any) -> None:
 
 
 async def prewarm_llm(llm: Any) -> None:
-    """One-token LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7)."""
+    """One-token LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7).
+
+    Skip Groq entirely — free-tier TPM is 8k/min and a warm-up call plus front-desk prompts
+    429 within the first conversational turns.
+    """
     from livekit.agents.llm import ChatContext
+
+    module = type(llm).__module__
+    if "groq" in module.lower():
+        return
 
     try:
         chat_ctx = ChatContext.empty()

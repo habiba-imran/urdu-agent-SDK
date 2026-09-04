@@ -33,13 +33,18 @@ def test_telephony_turn_handling_disables_false_interruption_resume():
     from worker.latency import TELEPHONY_TURN_HANDLING_OPTIONS, turn_handling_for_channel
 
     tel = turn_handling_for_channel("telephony")
-    assert tel is TELEPHONY_TURN_HANDLING_OPTIONS
     interruption = tel["interruption"]
     assert interruption["enabled"] is True
     assert interruption["discard_audio_if_uninterruptible"] is False
     assert interruption["resume_false_interruption"] is False
     assert interruption["false_interruption_timeout"] <= 0.7
-    assert turn_handling_for_channel("webrtc") is TURN_HANDLING_OPTIONS
+    # Telephony disables preemptive LLM so free-tier Groq TPM is not burned on cancels.
+    assert tel["preemptive_generation"]["enabled"] is False
+    assert TELEPHONY_TURN_HANDLING_OPTIONS["preemptive_generation"]["enabled"] is False
+    web = turn_handling_for_channel("webrtc")
+    assert web["preemptive_generation"]["enabled"] is True
+    groq_web = turn_handling_for_channel("webrtc", llm_provider="groq")
+    assert groq_web["preemptive_generation"]["enabled"] is False
 
 
 def test_is_telephony_job_from_room_or_metadata():

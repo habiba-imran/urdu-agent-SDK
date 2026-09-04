@@ -64,6 +64,9 @@ class AgentConfig:
     # to "agent" so existing AgentConfig(...) callers keep the current greet-immediately behavior.
     greeting: str | None = None
     first_speaker: str = "agent"
+    # Client tool gateway (per-agent). Worker POSTs RAG/scheduling here.
+    tools_base_url: str | None = None
+    tools_auth_secret: str | None = None
 
 
 def clear_agent_config_cache() -> None:
@@ -101,6 +104,8 @@ def _row_to_config(row: tuple) -> AgentConfig:
         tts_options=row[14],
         greeting=row[15],
         first_speaker=row[16] or "agent",
+        tools_base_url=row[17],
+        tools_auth_secret=row[18],
     )
 
 
@@ -118,7 +123,7 @@ def _load_agent_and_provider_voice(
                 "select id, tenant_id, name, prompt, voice_id, llm_model, "
                 "agent_language, stt_provider, stt_model, stt_options, "
                 "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-                "greeting, first_speaker "
+                "greeting, first_speaker, tools_base_url, tools_auth_secret "
                 "from agents where id = %s",
                 (agent_id,),
             )

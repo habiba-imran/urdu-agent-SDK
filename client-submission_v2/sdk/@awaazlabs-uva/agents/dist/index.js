@@ -83,6 +83,10 @@ export class AwaazLabsUvaAgentsClient {
             body.greeting = params.greeting;
         if (params.firstSpeaker !== undefined)
             body.first_speaker = params.firstSpeaker;
+        if (params.toolsBaseUrl !== undefined)
+            body.tools_base_url = params.toolsBaseUrl;
+        if (params.toolsAuthSecret !== undefined)
+            body.tools_auth_secret = params.toolsAuthSecret;
         return this.request('POST', '/machine/agents', 'agent.create', body);
     }
     async listAgents() {
@@ -120,6 +124,10 @@ export class AwaazLabsUvaAgentsClient {
             body.greeting = params.greeting;
         if (params.firstSpeaker !== undefined)
             body.first_speaker = params.firstSpeaker;
+        if (params.toolsBaseUrl !== undefined)
+            body.tools_base_url = params.toolsBaseUrl;
+        if (params.toolsAuthSecret !== undefined)
+            body.tools_auth_secret = params.toolsAuthSecret;
         return this.request('PATCH', `/machine/agents/${agentId}`, 'agent.update', body);
     }
     async request(method, path, action, body) {

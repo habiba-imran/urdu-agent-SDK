@@ -24,8 +24,6 @@ SYSTEM_INSTRUCTIONS_BASE = (
     "TOOL DISCIPLINE (latency — always obey):\n"
     "- Never call any tool for greetings, hello, hi, thanks, or small talk.\n"
     "- Never call a tool when the answer is already in your persona or these operating rules.\n"
-    "- Only call lookup_business_info for a specific factual business question you cannot answer "
-    "from context (hours, location, policies) — not for scheduling intake or chitchat.\n"
     "- Only call escalate_to_human when the caller explicitly needs a human or you cannot resolve "
     "their request.\n"
     "- Only call end_conversation_summary after you have already said goodbye and the call is over.\n\n"
@@ -35,6 +33,18 @@ SYSTEM_INSTRUCTIONS_BASE = (
     "- If you must call a tool, speak one brief line first (e.g. let me check that), then call "
     "the tool — never sit in silence while deciding.\n"
     "- Prefer two or three short sentences over one long sentence so the caller hears audio quickly."
+)
+
+# Appended only when the agent has a client tools gateway (RAG + scheduling).
+CLIENT_TOOLS_DISCIPLINE = (
+    "CLIENT TOOLS (only when needed — each call adds latency):\n"
+    "- lookup_business_info: FAQs, policies, pricing, document facts NOT already in your persona. "
+    "Never for greetings or booking.\n"
+    "- check_availability: live open slots for a concrete date. Not for 'what are your hours'.\n"
+    "- book_appointment: only after name + phone + confirmed slot from check_availability.\n"
+    "- reschedule_appointment / cancel_appointment: only when the caller clearly asks to move "
+    "or cancel an existing booking and you have their phone.\n"
+    "- Call at most one scheduling tool per turn. Prefer persona facts over tools when they suffice."
 )
 
 # Manual SSML path — LLM emits Cartesia tags; sanitizer keeps them for Sonic.
@@ -99,6 +109,12 @@ CARTESIA_GREETING_INSTRUCTIONS_EXPRESSIVE = (
 
 def build_system_instructions(cfg: AgentConfig) -> str:
     """Return trusted system instructions, with provider spoken-output rules when applicable."""
+    from .tools import resolve_tools_base_url
+
+    base = SYSTEM_INSTRUCTIONS_BASE
+    if resolve_tools_base_url(cfg.tools_base_url):
+        base = f"{base}\n\n{CLIENT_TOOLS_DISCIPLINE}"
+
     if cfg.tts_provider == "cartesia":
         from .providers.tts.cartesia_options import cartesia_expressive_enabled
 
@@ -107,12 +123,12 @@ def build_system_instructions(cfg: AgentConfig) -> str:
             if cartesia_expressive_enabled(cfg.tts_options)
             else CARTESIA_SPOKEN_OUTPUT_RULES
         )
-        return f"{SYSTEM_INSTRUCTIONS_BASE}\n\n{rules}"
+        return f"{base}\n\n{rules}"
     if cfg.tts_provider == "rime":
         from .rime_spoken_output import RIME_SPOKEN_OUTPUT_RULES
 
-        return f"{SYSTEM_INSTRUCTIONS_BASE}\n\n{RIME_SPOKEN_OUTPUT_RULES}"
-    return SYSTEM_INSTRUCTIONS_BASE
+        return f"{base}\n\n{RIME_SPOKEN_OUTPUT_RULES}"
+    return base
 
 
 def greeting_instructions(cfg: AgentConfig) -> str:

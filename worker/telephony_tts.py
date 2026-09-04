@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 TELEPHONY_CARTESIA_VOICE_ID = "cartesia-katie-friendly-fixer"
 TELEPHONY_CARTESIA_PROVIDER_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
 
-# Voice-proven Groq model (~0.5s content TTFT vs Gemini 3.6 Flash ~1.5–3s+ on PSTN).
-TELEPHONY_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-20b")
+# Voice-proven Groq model for free-tier TPM (qwen, no reasoning channel).
+TELEPHONY_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
 
 
 def force_cartesia_for_telephony(

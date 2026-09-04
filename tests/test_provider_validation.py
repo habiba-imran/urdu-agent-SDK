@@ -85,7 +85,7 @@ def test_english_create_defaults_to_groq_llm(conn):
         voice_id=None,
     )
     assert resolved["llm_provider"] == "groq"
-    assert resolved["llm_model"] == "openai/gpt-oss-20b"
+    assert resolved["llm_model"] == "qwen/qwen3.6-27b"
 
 
 def test_voice_id_and_tts_voice_id_both_get_the_resolved_value(conn):

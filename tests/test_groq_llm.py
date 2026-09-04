@@ -53,9 +53,12 @@ def test_groq_llm_constructs_for_english():
             "instance, not only to make a live call. Add it to .env.local to run this."
         )
     llm = build_groq_llm("llama-3.3-70b-versatile")
-    assert llm.model == "openai/gpt-oss-20b"
-    live = build_groq_llm("openai/gpt-oss-20b")
-    assert live.model == "openai/gpt-oss-20b"
+    assert llm.model == "qwen/qwen3.6-27b"
+    live = build_groq_llm("qwen/qwen3.6-27b")
+    assert live.model == "qwen/qwen3.6-27b"
+    # Free-tier: gpt-oss remaps to qwen unless GROQ_ALLOW_GPT_OSS=1
+    remapped = build_groq_llm("openai/gpt-oss-20b")
+    assert remapped.model == "qwen/qwen3.6-27b"
 
 
 def test_groq_llm_layer_validates_successfully_now_enabled(conn):

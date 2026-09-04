@@ -53,7 +53,7 @@ _CREATE_DEFAULTS = {
 
 _EN_CREATE_DEFAULTS = {
     "llm_provider": "groq",
-    "llm_model": "openai/gpt-oss-20b",
+    "llm_model": "qwen/qwen3.6-27b",
 }
 
 

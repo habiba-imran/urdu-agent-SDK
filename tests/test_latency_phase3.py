@@ -95,18 +95,41 @@ def test_session_tools_excludes_rag_without_base_url(monkeypatch):
     assert tools == FIXED_TOOLS
 
 
-def test_session_tools_includes_rag_when_configured(monkeypatch):
+def test_session_tools_includes_client_tools_when_configured(monkeypatch):
     monkeypatch.setenv("UVA_TOOLS_BASE_URL", "https://self-serve.example.com")
     tools = session_tools()
     names = [getattr(t, "__name__", str(t)) for t in tools]
     assert "lookup_business_info" in names
-    assert len(tools) == len(FIXED_TOOLS) + 1
+    assert "check_availability" in names
+    assert "book_appointment" in names
+    assert "reschedule_appointment" in names
+    assert "cancel_appointment" in names
+    assert len(tools) == len(FIXED_TOOLS) + 5
 
 
 def test_system_instructions_include_tool_discipline():
     assert "Never call any tool for greetings" in SYSTEM_INSTRUCTIONS_BASE
-    assert "lookup_business_info" in SYSTEM_INSTRUCTIONS_BASE
     assert "Begin speaking the first short clause" in SYSTEM_INSTRUCTIONS_BASE
+
+
+def test_system_instructions_append_client_tools_when_configured(monkeypatch):
+    from worker.cartesia_spoken_output import CLIENT_TOOLS_DISCIPLINE, build_system_instructions
+    from worker.config import AgentConfig
+
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
+    cfg = AgentConfig(
+        agent_id="a",
+        tenant_id="t",
+        name="n",
+        prompt="p",
+        voice_id="v",
+        llm_model="m",
+        tools_base_url="https://client.example.com",
+    )
+    text = build_system_instructions(cfg)
+    assert CLIENT_TOOLS_DISCIPLINE in text
+    assert "check_availability" in text
+    assert "lookup_business_info" in text
 
 
 def test_wire_turn_latency_registers_tool_handler():
@@ -126,21 +149,30 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
             return None
 
         def json(self):
-            return {"answer": "We open at 9am."}
+            return {"success": True, "result": "We open at 9am."}
 
     class FakeClient:
-        async def __aenter__(self):
-            return self
+        def __init__(self, **kwargs):
+            pass
 
-        async def __aexit__(self, *args):
+        @property
+        def is_closed(self):
+            return False
+
+        async def aclose(self):
             return None
 
-        async def post(self, url, json):
+        async def post(self, url, json=None, headers=None):
             assert url == "https://self-serve.example.com/api/tools/lookup_business_info"
             assert json["query"] == "hours?"
+            assert json["agent_id"] == "a1"
+            assert json["tenant_id"] == "t1"
             return FakeResponse()
 
-    monkeypatch.setattr(tools_mod.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    async def fake_shared():
+        return FakeClient()
+
+    monkeypatch.setattr(tools_mod, "_shared_http_client", fake_shared)
 
     tracker = MagicMock()
     ud = tools_mod.AgentUserdata(
@@ -148,5 +180,49 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
     )
     ctx = SimpleNamespace(userdata=ud)
     result = await tools_mod.lookup_business_info(ctx, "hours?")
-    assert result["answer"] == "We open at 9am."
+    assert result["result"] == "We open at 9am."
     tracker.record_tool_duration.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_availability_posts_slim_payload(monkeypatch):
+    import worker.tools as tools_mod
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "success": True,
+                "voiceSummary": "I have 10 AM and 2 PM open.",
+                "slots": [{"startTime": "2026-09-05T10:00:00Z"}] * 8,
+                "hugeInternal": "x" * 5000,
+            }
+
+    class FakeClient:
+        @property
+        def is_closed(self):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            assert url.endswith("/api/tools/check_availability")
+            assert json["date"] == "2026-09-05"
+            assert json["hold_offered_slots"] is True
+            return FakeResponse()
+
+    async def fake_shared():
+        return FakeClient()
+
+    monkeypatch.setattr(tools_mod, "_shared_http_client", fake_shared)
+    ud = tools_mod.AgentUserdata(
+        tenant_id="t1",
+        agent_id="a1",
+        room_name="r1",
+        tools_base_url="https://client.example.com",
+    )
+    ctx = SimpleNamespace(userdata=ud)
+    result = await tools_mod.check_availability(ctx, "2026-09-05", "morning")
+    assert result["voiceSummary"] == "I have 10 AM and 2 PM open."
+    assert "hugeInternal" not in result
+    assert len(result["slots"]) <= 4

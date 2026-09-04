@@ -12,11 +12,12 @@ _AGENT_COLUMNS = (
     "id, name, prompt, voice_id, llm_model, created_at, "
     "agent_language, stt_provider, stt_model, stt_options, "
     "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-    "greeting, first_speaker"
+    "greeting, first_speaker, tools_base_url, tools_auth_secret"
 )
 
 
 def _agent_row_to_dict(row) -> dict:
+    secret = row[18]
     return {
         "id": str(row[0]),
         "name": row[1],
@@ -35,7 +36,17 @@ def _agent_row_to_dict(row) -> dict:
         "tts_options": row[14],
         "greeting": row[15],
         "first_speaker": row[16],
+        "tools_base_url": row[17],
+        # Never return the raw secret over the API — only whether one is configured.
+        "tools_auth_secret_configured": bool(secret),
     }
+
+
+def _agent_row_internal(row) -> dict:
+    """Full row including tools_auth_secret — worker / internal use only."""
+    d = _agent_row_to_dict(row)
+    d["tools_auth_secret"] = row[18]
+    return d
 
 
 def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
@@ -44,7 +55,7 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
         select a.id, a.name, a.prompt, a.voice_id, a.llm_model, a.created_at,
                a.agent_language, a.stt_provider, a.stt_model, a.stt_options,
                a.llm_provider, a.llm_options, a.tts_provider, a.tts_voice_id, a.tts_options,
-               a.greeting, a.first_speaker,
+               a.greeting, a.first_speaker, a.tools_base_url, a.tools_auth_secret,
                coalesce(u.total_agent_sec, 0) as total_agent_sec
         from agents a
         left join (
@@ -61,8 +72,8 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
     ).fetchall()
     out = []
     for r in rows:
-        d = _agent_row_to_dict(r[:17])
-        d["total_agent_sec"] = float(r[17])
+        d = _agent_row_to_dict(r[:19])
+        d["total_agent_sec"] = float(r[19])
         out.append(d)
     return out
 
@@ -74,7 +85,7 @@ def get_agent(conn: psycopg.Connection, tenant_id: str, agent_id: str) -> dict |
         f"select {_AGENT_COLUMNS} from agents where id = %s and tenant_id = %s",
         (agent_id, tenant_id),
     ).fetchone()
-    return _agent_row_to_dict(row) if row is not None else None
+    return _agent_row_internal(row) if row is not None else None
 
 
 def create_agent(
@@ -96,6 +107,8 @@ def create_agent(
     tts_options: dict,
     greeting: str | None = None,
     first_speaker: str = "agent",
+    tools_base_url: str | None = None,
+    tools_auth_secret: str | None = None,
 ) -> dict:
     row = conn.execute(
         f"""
@@ -103,9 +116,9 @@ def create_agent(
             tenant_id, name, prompt, voice_id, llm_model,
             agent_language, stt_provider, stt_model, stt_options,
             llm_provider, llm_options, tts_provider, tts_voice_id, tts_options,
-            greeting, first_speaker
+            greeting, first_speaker, tools_base_url, tools_auth_secret
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning {_AGENT_COLUMNS}
         """,
         (
@@ -125,6 +138,8 @@ def create_agent(
             Jsonb(tts_options),
             greeting,
             first_speaker,
+            tools_base_url,
+            tools_auth_secret,
         ),
     ).fetchone()
     return _agent_row_to_dict(row)
@@ -150,6 +165,8 @@ def update_agent(
     tts_options: dict | None = None,
     greeting=_UNSET,
     first_speaker=_UNSET,
+    tools_base_url=_UNSET,
+    tools_auth_secret=_UNSET,
 ) -> dict:
     current = get_agent(conn, tenant_id, agent_id)
     if current is None:
@@ -172,7 +189,9 @@ def update_agent(
             tts_voice_id = %s,
             tts_options = %s,
             greeting = %s,
-            first_speaker = %s
+            first_speaker = %s,
+            tools_base_url = %s,
+            tools_auth_secret = %s
         where id = %s and tenant_id = %s
         returning {_AGENT_COLUMNS}
         """,
@@ -192,6 +211,10 @@ def update_agent(
             Jsonb(tts_options if tts_options is not None else current["tts_options"]),
             current["greeting"] if greeting is _UNSET else greeting,
             current["first_speaker"] if first_speaker is _UNSET else first_speaker,
+            current["tools_base_url"] if tools_base_url is _UNSET else tools_base_url,
+            current["tools_auth_secret"]
+            if tools_auth_secret is _UNSET
+            else tools_auth_secret,
             agent_id,
             tenant_id,
         ),
