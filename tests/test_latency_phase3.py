@@ -106,6 +106,7 @@ def test_session_tools_includes_rag_when_configured(monkeypatch):
 def test_system_instructions_include_tool_discipline():
     assert "Never call any tool for greetings" in SYSTEM_INSTRUCTIONS_BASE
     assert "lookup_business_info" in SYSTEM_INSTRUCTIONS_BASE
+    assert "Begin speaking the first short clause" in SYSTEM_INSTRUCTIONS_BASE
 
 
 def test_wire_turn_latency_registers_tool_handler():

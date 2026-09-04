@@ -54,6 +54,12 @@ export class AwaazLabsUvaVoice {
             throw new AwaazLabsUvaVoiceError('session_failed', 'agentId is required');
         }
         this.state = 'connecting';
+        const room = new Room();
+        this.wireRoomEvents(room);
+        // Acquire microphone access concurrently with fetching the session token
+        const micPromise = room.localParticipant.setMicrophoneEnabled(true).catch(() => {
+            // Ignore here; we retry after connect if needed.
+        });
         let body;
         try {
             const res = await fetch(this.options.sessionEndpoint, {
@@ -81,23 +87,30 @@ export class AwaazLabsUvaVoice {
         }
         catch (err) {
             this.state = 'idle';
+            await room.localParticipant.setMicrophoneEnabled(false).catch(() => { });
             if (err instanceof AwaazLabsUvaVoiceError)
                 throw err;
             throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
         }
-        const room = new Room();
-        this.wireRoomEvents(room);
         try {
             await room.connect(body.wsUrl, body.token);
         }
         catch {
             this.state = 'idle';
+            await room.localParticipant.setMicrophoneEnabled(false).catch(() => { });
             throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
         }
-        try {
-            await room.localParticipant.setMicrophoneEnabled(true);
+        await micPromise;
+        if (!room.localParticipant.isMicrophoneEnabled) {
+            // Pre-connect enable often no-ops; retry after the room is connected.
+            try {
+                await room.localParticipant.setMicrophoneEnabled(true);
+            }
+            catch {
+                // Fall through to the enabled check below.
+            }
         }
-        catch {
+        if (!room.localParticipant.isMicrophoneEnabled) {
             await room.disconnect();
             this.state = 'idle';
             throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
@@ -196,12 +209,12 @@ export class AwaazLabsUvaVoice {
         room.on(RoomEvent.RoomMetadataChanged, (metadata) => {
             const metrics = this.tryParseMetrics(metadata);
             if (metrics)
-                this.emit('metrics_updated', metrics);
+                this.emitLatencyEvents(metrics);
         });
         room.on(RoomEvent.DataReceived, (payload) => {
             const metrics = this.tryParseMetrics(this.decodePayload(payload));
             if (metrics)
-                this.emit('metrics_updated', metrics);
+                this.emitLatencyEvents(metrics);
         });
         // Browsers block audio autoplay without a prior user gesture.
         // LiveKit signals this via AudioPlaybackStatusChanged when its internal
@@ -303,6 +316,14 @@ export class AwaazLabsUvaVoice {
             return `${this.options.sessionEndpoint}/refresh`;
         }
         return `${this.options.sessionEndpoint.replace(/\/$/, '')}/refresh`;
+    }
+    emitLatencyEvents(metrics) {
+        if (metrics.type === 'turn_latency') {
+            this.emit('turn_latency', metrics);
+        }
+        if (metrics.type === 'metrics_updated' || metrics.type === 'turn_latency') {
+            this.emit('metrics_updated', metrics);
+        }
     }
     decodePayload(payload) {
         try {

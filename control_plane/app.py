@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import os
 import sys
 import time
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -396,26 +397,44 @@ def _session_response(payload: dict) -> JSONResponse:
     )
 
 
-def _with_dispatch(res: dict, tenant_id: str, agent_id: str) -> dict:
+def _run_dispatch_background(room_name: str, tenant_id: str, agent_id: str) -> None:
+    log = logging.getLogger("control_plane.dispatch")
     try:
         asyncio.run(
             _dispatch_agent(
-                res["roomName"],
+                room_name,
                 tenant_id=tenant_id,
                 agent_id=agent_id,
             )
         )
-    except Exception as e:
-        _rollback_dispatched_session(tenant_id=tenant_id, room_name=res["roomName"])
-        raise HTTPException(
-            status_code=502,
-            detail=f"agent dispatch failed: {e}",
-        ) from e
+        log.info(
+            "agent dispatch ok room=%s tenant=%s agent=%s",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+    except Exception:
+        log.exception(
+            "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+
+
+def _with_dispatch(res: dict, tenant_id: str, agent_id: str, background_tasks: BackgroundTasks) -> dict:
+    background_tasks.add_task(
+        _run_dispatch_background,
+        res["roomName"],
+        tenant_id,
+        agent_id,
+    )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
 
 def _dev_mint_session(
-    *, tenant_id: str, agent_id: str, request: Request, auto_reset_quota: bool
+    *, tenant_id: str, agent_id: str, request: Request, background_tasks: BackgroundTasks, auto_reset_quota: bool
 ) -> dict:
     secret = _secrets.get(tenant_id)
     if not secret:
@@ -471,13 +490,14 @@ def _dev_mint_session(
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
-    return _with_dispatch(res, tenant_id, agent_id)
+    return _with_dispatch(res, tenant_id, agent_id, background_tasks)
 
 
 @app.post("/v1/session")
 def create_session(
     body: SessionBody,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(...),
     x_timestamp: str = Header(...),
     x_nonce: str = Header(...),
@@ -502,7 +522,7 @@ def create_session(
                 origin=request.headers.get("origin"),
             )
             return _session_response(
-                _with_dispatch(res, x_tenant_id, body.agent_id)
+                _with_dispatch(res, x_tenant_id, body.agent_id, background_tasks)
             )
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
@@ -510,13 +530,14 @@ def create_session(
 
 
 @app.post("/v1/session/dev-mint")
-def create_dev_session(body: DevSessionBody, request: Request):
+def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
     return _session_response(
         _dev_mint_session(
             tenant_id=tenant_id,
             agent_id=body.agentId,
             request=request,
+            background_tasks=background_tasks,
             auto_reset_quota=True,
         )
     )

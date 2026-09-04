@@ -28,7 +28,7 @@ def build(language: str) -> Any:
         model="nova-3",
         language=lang,
         no_delay=True,
-        endpointing_ms=25,
+        endpointing_ms=10,
         interim_results=True,
         smart_format=True,
     )

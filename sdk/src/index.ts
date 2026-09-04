@@ -38,7 +38,8 @@ export type AwaazLabsUvaVoiceEvent =
   | 'disconnected'
   | 'agent_speaking'
   | 'metrics_updated'
-  | 'audio_blocked';
+  | 'audio_blocked'
+  | 'turn_latency';
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
 
@@ -167,6 +168,14 @@ export class AwaazLabsUvaVoice {
 
     this.state = 'connecting';
 
+    const room = new Room();
+    this.wireRoomEvents(room);
+
+    // Acquire microphone access concurrently with fetching the session token
+    const micPromise = room.localParticipant.setMicrophoneEnabled(true).catch(() => {
+      // Ignore here, we will check isMicrophoneEnabled after connecting
+    });
+
     let body: SessionResponse;
     try {
       const res = await fetch(this.options.sessionEndpoint, {
@@ -193,23 +202,29 @@ export class AwaazLabsUvaVoice {
       body = parsed as SessionResponse;
     } catch (err) {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
       if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
-
-    const room = new Room();
-    this.wireRoomEvents(room);
 
     try {
       await room.connect(body.wsUrl, body.token);
     } catch {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
       throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
 
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-    } catch {
+    await micPromise;
+    if (!room.localParticipant.isMicrophoneEnabled) {
+      // Pre-connect enable often no-ops; retry after the room is connected.
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+      } catch {
+        // Fall through to the enabled check below.
+      }
+    }
+    if (!room.localParticipant.isMicrophoneEnabled) {
       await room.disconnect();
       this.state = 'idle';
       throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');

@@ -38,7 +38,8 @@ export type AwaazLabsUvaVoiceEvent =
   | 'disconnected'
   | 'agent_speaking'
   | 'metrics_updated'
-  | 'audio_blocked';
+  | 'audio_blocked'
+  | 'turn_latency';
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
 
@@ -85,6 +86,8 @@ export interface AwaazLabsUvaVoiceEventMap {
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
+  /** Per-turn stage breakdown emitted by the worker on every user turn. */
+  turn_latency: [MetricsEvent];
   /**
    * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
    * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
@@ -149,6 +152,14 @@ export class AwaazLabsUvaVoice {
 
     this.state = 'connecting';
 
+    const room = new Room();
+    this.wireRoomEvents(room);
+
+    // Acquire microphone access concurrently with fetching the session token
+    const micPromise = room.localParticipant.setMicrophoneEnabled(true).catch(() => {
+      // Ignore here; we retry after connect if needed.
+    });
+
     let body: SessionResponse;
     try {
       const res = await fetch(this.options.sessionEndpoint, {
@@ -175,23 +186,29 @@ export class AwaazLabsUvaVoice {
       body = parsed as SessionResponse;
     } catch (err) {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
       if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
-
-    const room = new Room();
-    this.wireRoomEvents(room);
 
     try {
       await room.connect(body.wsUrl, body.token);
     } catch {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
       throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
 
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-    } catch {
+    await micPromise;
+    if (!room.localParticipant.isMicrophoneEnabled) {
+      // Pre-connect enable often no-ops; retry after the room is connected.
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+      } catch {
+        // Fall through to the enabled check below.
+      }
+    }
+    if (!room.localParticipant.isMicrophoneEnabled) {
       await room.disconnect();
       this.state = 'idle';
       throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
@@ -305,12 +322,12 @@ export class AwaazLabsUvaVoice {
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
       const metrics = this.tryParseMetrics(metadata);
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     // Browsers block audio autoplay without a prior user gesture.
@@ -413,6 +430,15 @@ export class AwaazLabsUvaVoice {
       return `${this.options.sessionEndpoint}/refresh`;
     }
     return `${this.options.sessionEndpoint.replace(/\/$/, '')}/refresh`;
+  }
+
+  private emitLatencyEvents(metrics: MetricsEvent): void {
+    if (metrics.type === 'turn_latency') {
+      this.emit('turn_latency', metrics);
+    }
+    if (metrics.type === 'metrics_updated' || metrics.type === 'turn_latency') {
+      this.emit('metrics_updated', metrics);
+    }
   }
 
   private decodePayload(payload: Uint8Array): string {

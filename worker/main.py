@@ -16,24 +16,24 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 from .cartesia_spoken_output import (
     SYSTEM_INSTRUCTIONS_BASE,
     build_system_instructions,
 )
-from .config import AgentConfig, load_agent_config
+from .config import AgentConfig, load_agent_session_bundle, resolve_provider_voice_id_local
 from .spoken_sanitize import sanitizer_for_provider
 from .providers.registry import build_components
 from .providers.types import AgentRuntimeConfig
 from .latency import (
     TURN_HANDLING_OPTIONS,
     VAD_OPTIONS,
+    await_greeting_prewarm,
     load_session_identity,
     parse_dispatch_metadata,
-    prewarm_llm,
-    prewarm_stt,
-    prewarm_tts,
+    schedule_provider_prewarm,
     session_room_options,
     wire_barge_in_flush,
     wire_turn_latency,
@@ -131,14 +131,14 @@ def _sanitizing_agent_class(tts_provider: str) -> type:
 
 
 def _resolve_provider_voice_id(internal_voice_id: str | None) -> str | None:
-    """Map internal voice ID (e.g. 'rime-arcana-andromeda') to provider voice ID ('andromeda')."""
-    if not internal_voice_id:
-        return None
-    # Fast path: standard Rime speaker names map directly
-    if internal_voice_id.startswith("rime-arcana-"):
-        return internal_voice_id.removeprefix("rime-arcana-")
-    if internal_voice_id.startswith("rime-coda-"):
-        return internal_voice_id.removeprefix("rime-coda-")
+    """Map internal voice ID (e.g. 'rime-arcana-andromeda') to provider voice ID ('andromeda').
+
+    Prefer ``load_agent_session_bundle`` on the session path (one DB round-trip). This helper
+    remains for tests and one-off lookups.
+    """
+    local = resolve_provider_voice_id_local(internal_voice_id)
+    if local is not None or not internal_voice_id:
+        return local
 
     import sys as _sys
     from pathlib import Path as _Path
@@ -161,14 +161,34 @@ def _resolve_provider_voice_id(internal_voice_id: str | None) -> str | None:
         return internal_voice_id
 
 
+# Process-wide Silero VAD — loaded once in ``prewarm()`` (UVA-2 cold-start).
+_vad_singleton: Any | None = None
+
+
+def preload_vad() -> Any:
+    """Load Silero VAD into the process cache. Safe to call repeatedly."""
+    global _vad_singleton
+    from livekit.plugins import silero
+
+    if _vad_singleton is None:
+        _vad_singleton = silero.VAD.load(**VAD_OPTIONS)
+    return _vad_singleton
+
+
 async def build_session(
     md: dict[str, str],
     room_name: str,
     *,
     audio_channel: str = "webrtc",
-) -> tuple[Any, AgentConfig]:
-    """Load config and construct the session pipeline (stt/llm/tts/vad). Does not start it."""
-    cfg = await asyncio.to_thread(load_agent_config, md["agent_id"], md["tenant_id"])
+) -> tuple[Any, AgentConfig, asyncio.Task[None]]:
+    """Load config and construct the session pipeline (stt/llm/tts/vad). Does not start it.
+
+    Returns ``(session, cfg, greeting_prewarm_task)``. Await ``greeting_prewarm_task`` before
+    ``apply_session_opening`` so the first utterance does not hit a cold TTS websocket.
+    """
+    cfg, provider_voice_id = await asyncio.to_thread(
+        load_agent_session_bundle, md["agent_id"], md["tenant_id"]
+    )
 
     from livekit.agents import AgentSession  # lazy: needs the livekit runtime
     from livekit.agents.log import logger
@@ -177,9 +197,6 @@ async def build_session(
     # app-layer sync ships (docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md Phase 1 finding,
     # ADR-036) — resolve the fallback ONCE here, so every adapter downstream can trust it's set.
     internal_voice_id = cfg.tts_voice_id or cfg.voice_id
-    provider_voice_id = await asyncio.to_thread(
-        _resolve_provider_voice_id, internal_voice_id
-    )
     runtime_cfg = AgentRuntimeConfig(
         agent_language=cfg.agent_language,
         stt_provider=cfg.stt_provider,
@@ -194,10 +211,12 @@ async def build_session(
         audio_channel=audio_channel,
     )
     components = build_components(runtime_cfg)
-    await asyncio.gather(
-        prewarm_tts(components.tts),
-        prewarm_llm(components.llm),
-        prewarm_stt(components.stt),
+    greeting_prewarm = schedule_provider_prewarm(
+        tts=components.tts,
+        llm=components.llm,
+        stt=components.stt,
+        logger=logger,
+        room_name=room_name,
     )
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
@@ -247,6 +266,7 @@ async def build_session(
             tenant_id=cfg.tenant_id, agent_id=cfg.agent_id, room_name=room_name
         ),
         "turn_handling": TURN_HANDLING_OPTIONS,
+        "use_tts_aligned_transcript": False,
     }
     from livekit.agents.types import APIConnectOptions
     from livekit.agents.voice.agent_session import SessionConnectOptions
@@ -272,7 +292,7 @@ async def build_session(
         "active, or a WARNING line if it fell back to VAD)",
         session.interruption_detection,
     )
-    return session, cfg
+    return session, cfg, greeting_prewarm
 
 
 def _tts_agent_session_extra(
@@ -336,9 +356,11 @@ def _cartesia_agent_session_extra(
 
 
 def _load_vad() -> Any:
-    from livekit.plugins import silero
-
-    return silero.VAD.load(**VAD_OPTIONS)
+    """Reuse process-prewarmed Silero VAD when available."""
+    global _vad_singleton
+    if _vad_singleton is not None:
+        return _vad_singleton
+    return preload_vad()
 
 
 async def _early_session_identity(ctx: Any, room_name: str) -> dict[str, str] | None:
@@ -581,6 +603,9 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     if await abandon_stale_job_if_needed(ctx):
         return
 
+    from livekit.agents.log import logger as _entry_logger
+
+    _connect_at = time.monotonic()
     room_name = ctx.room.name
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
     audio_channel = "webrtc"
@@ -589,278 +614,220 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # Mint stamps a sessions row and dispatch metadata before the user joins, so STT/LLM/TTS
     # + Cartesia prewarm can run while wait_for_participant blocks.
     early_md = await _early_session_identity(ctx, room_name)
-    build_task: asyncio.Task[tuple[Any, AgentConfig]] | None = None
-    if early_md:
-        build_task = asyncio.create_task(
-            build_session(early_md, room_name, audio_channel=audio_channel)
-        )
 
-    try:
-        participant = await wait_for_session_participant(ctx, already_connected=True)
-    except (asyncio.TimeoutError, RuntimeError):
-        if build_task is not None:
-            build_task.cancel()
-        return
+    async def _setup_and_start(
+        session_obj: Any, cfg_obj: AgentConfig, agent_obj: Any, md_obj: dict[str, str]
+    ) -> None:
+        import time as _time
 
-    participant_md, resolved_channel = await _resolve_session_from_participant(
-        participant,
-        job_metadata=job_metadata,
-        audio_channel=audio_channel,
-    )
-    if build_task is not None and resolved_channel == audio_channel:
-        md = early_md or participant_md
-        audio_channel = resolved_channel
-    else:
-        if build_task is not None:
-            build_task.cancel()
-        md = participant_md
-        audio_channel = resolved_channel
-        build_task = asyncio.create_task(
-            build_session(md, room_name, audio_channel=audio_channel)
-        )
+        _session_started_at = _time.monotonic()
 
-    session, cfg = await build_task
-    agent = build_agent(cfg)
+        async def _release_quota_slot(reason: str = "") -> None:
+            import sys as _sys
+            from pathlib import Path as _Path
 
-    # Dev free-tier ledger instrumentation (ADR-016): livekit_agent_min was a perpetual,
-    # unmeasured 0 (flagged in ADR-014) because nothing recorded real session duration. Uses
-    # JobContext.add_shutdown_callback (livekit/agents/job.py L525-535), which fires when the
-    # job is actually shutting down — the accurate end-of-session signal, not entrypoint() return
-    # (session.start() does not block until the conversation ends). Rounding to whole minutes,
-    # rounded UP, is an ASSUMED billing convention (common cloud-metering pattern), NOT verified
-    # against LiveKit's actual billing rules — flagged as an assumption, not fact.
-    import time as _time
+            _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+            try:
+                from scripts.dbconn import conn_kwargs
+            except ImportError:
+                from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
-    _session_started_at = _time.monotonic()
+            import psycopg
+            from psycopg.types.json import Jsonb
 
-    async def _release_quota_slot(reason: str = "") -> None:
-        import sys as _sys
-        from pathlib import Path as _Path
+            tenant_id = md_obj.get("tenant_id", "")
+            local_room_name = ctx.room.name
 
-        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-        try:
-            from scripts.dbconn import conn_kwargs
-        except ImportError:
-            from dbconn import conn_kwargs  # type: ignore # noqa: E402
+            elapsed_sec = int(_time.monotonic() - _session_started_at)
+            end_reason = reason or "normal"
 
-        import psycopg
-        from psycopg.types.json import Jsonb
+            try:
+                transcript = [
+                    {"role": m.role, "text": m.text_content, "at": m.created_at}
+                    for m in session_obj.history.messages()
+                    if m.role in ("user", "assistant") and (m.text_content or "").strip()
+                ]
+            except Exception as e:
+                from livekit.agents.log import logger
 
-        tenant_id = md.get("tenant_id", "")
-        room_name = ctx.room.name
+                logger.warning("failed to build transcript for room %s: %s", local_room_name, e)
+                transcript = []
 
-        # Do NOT bail out when tenant_id is missing. This used to `return` here, which skipped
-        # closing the session row too — leaking an open row (and a "live call" on the dashboard)
-        # forever over what is only a metadata problem. Closing the row is keyed on room_name and
-        # never needed tenant_id; only the quota decrement does. So: always close the row, and
-        # decrement the counter only when we actually know whose counter it is.
-        elapsed_sec = int(_time.monotonic() - _session_started_at)
-        end_reason = reason or "normal"
+            try:
+                with psycopg.connect(
+                    **conn_kwargs(), connect_timeout=5, autocommit=True
+                ) as conn:
+                    updated = conn.execute(
+                        "update sessions set ended_at = now(), duration_sec = %s, end_reason = %s, "
+                        "transcript = %s "
+                        "where room_name = %s and ended_at is null returning id",
+                        (elapsed_sec, end_reason, Jsonb(transcript), local_room_name),
+                    ).fetchone()
 
-        # Transcript: only the real user/assistant turns — never the system messages, which
-        # hold OUR fixed instructions and the tenant's own (untrusted) persona prompt, not
-        # anything the caller or agent actually said. `session.history` is the live
-        # ChatContext AgentSession has been accumulating all along (verified against
-        # installed livekit-agents source: AgentSession.history -> self._chat_ctx;
-        # ChatContext.messages() filters to ChatMessage items only, dropping function
-        # calls). Built in its own try/except, separate from the DB block below — a
-        # transcript-building bug must not cost the session close or the concurrency slot
-        # release, same principle this function already applies to the usage-billing write.
-        try:
-            transcript = [
-                {"role": m.role, "text": m.text_content, "at": m.created_at}
-                for m in session.history.messages()
-                if m.role in ("user", "assistant") and (m.text_content or "").strip()
-            ]
-        except Exception as e:
-            from livekit.agents.log import logger
-
-            logger.warning("failed to build transcript for room %s: %s", room_name, e)
-            transcript = []
-
-        try:
-            with psycopg.connect(
-                **conn_kwargs(), connect_timeout=5, autocommit=True
-            ) as conn:
-                updated = conn.execute(
-                    "update sessions set ended_at = now(), duration_sec = %s, end_reason = %s, "
-                    "transcript = %s "
-                    "where room_name = %s and ended_at is null returning id",
-                    (elapsed_sec, end_reason, Jsonb(transcript), room_name),
-                ).fetchone()
-
-                if updated and tenant_id:
-                    conn.execute(
-                        "update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
-                        "where tenant_id = %s",
-                        (tenant_id,),
-                    )
-
-                    # --- BILLING: emit usage_events + advance the monthly counter ---
-                    # This closes P3-T07, which had sat as a NOTE below session.start() since
-                    # Phase 3: worker/usage.py existed and was tested, but had ZERO production
-                    # callers, so `usage_events` only ever held test-fixture rows. Every provider
-                    # number on the dashboard (STT/TTS/LLM/agent seconds) read a real SQL query
-                    # over an empty table and therefore showed 0 forever, no matter how many real
-                    # calls ran. Verified before this change: 3 real calls today -> 0 usage rows.
-                    #
-                    # Done HERE because this is the one place that already has all three of
-                    # tenant_id, the session row's id, and the true elapsed duration, on a
-                    # connection that is already open.
-                    try:
-                        from worker.usage import collect_model_usage, record_usage_many
-
-                        items = collect_model_usage(session)
-                        items["agent_sec"] = float(elapsed_sec)
-                        n = record_usage_many(conn, tenant_id, str(updated[0]), items)
-
-                        # minutes_this_month is what the MINT enforces the monthly cap against
-                        # (control_plane/mint.py: `if minutes >= max_minutes`). Nothing had ever
-                        # incremented it, so that cap could never fire — non-negotiable #5 was
-                        # only half-enforced. Fractional minutes, not ceil-per-call: the column is
-                        # `numeric`, the dashboard renders it .toFixed(1), and rounding every
-                        # 6-second call up to a whole minute would burn a tenant's quota ~10x too
-                        # fast. (ADR-016's ceil convention is for the free-tier LEDGER, which
-                        # tracks what LiveKit bills US — a different question from what we charge
-                        # a tenant.)
-                        #
-                        # period_start is in the schema but was read/written by NOTHING, so
-                        # "this month" was never actually scoped to a month and the counter would
-                        # have grown forever until the tenant was permanently capped. The CASE
-                        # below rolls it over atomically: a stored period older than the current
-                        # month is replaced rather than added to.
+                    if updated and tenant_id:
                         conn.execute(
-                            """
-                            insert into quota_state (tenant_id, minutes_this_month, period_start)
-                            values (%s, %s, date_trunc('month', now())::date)
-                            on conflict (tenant_id) do update set
-                              minutes_this_month = case
-                                when quota_state.period_start < date_trunc('month', now())::date
-                                  then excluded.minutes_this_month
-                                else quota_state.minutes_this_month + excluded.minutes_this_month
-                              end,
-                              period_start = date_trunc('month', now())::date
-                            """,
-                            (tenant_id, elapsed_sec / 60.0),
+                            "update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
+                            "where tenant_id = %s",
+                            (tenant_id,),
                         )
-                        from livekit.agents.log import logger
+                        try:
+                            from worker.usage import collect_model_usage, record_usage_many
 
-                        logger.info(
-                            "recorded usage for room %s: %d event(s), +%.2f min",
-                            room_name,
-                            n,
-                            elapsed_sec / 60.0,
-                        )
-                    except Exception as e:
-                        from livekit.agents.log import logger
+                            items = collect_model_usage(session_obj)
+                            items["agent_sec"] = float(elapsed_sec)
+                            n = record_usage_many(conn, tenant_id, str(updated[0]), items)
 
-                        # Never let a billing-write failure cost us the session close or the
-                        # concurrency slot above — those already committed (autocommit).
+                            conn.execute(
+                                """
+                                insert into quota_state (tenant_id, minutes_this_month, period_start)
+                                values (%s, %s, date_trunc('month', now())::date)
+                                on conflict (tenant_id) do update set
+                                  minutes_this_month = case
+                                    when quota_state.period_start < date_trunc('month', now())::date
+                                      then excluded.minutes_this_month
+                                    else quota_state.minutes_this_month + excluded.minutes_this_month
+                                  end,
+                                  period_start = date_trunc('month', now())::date
+                                """,
+                                (tenant_id, elapsed_sec / 60.0),
+                            )
+                            from livekit.agents.log import logger
+
+                            logger.info(
+                                "recorded usage for room %s: %d event(s), +%.2f min",
+                                local_room_name,
+                                n,
+                                elapsed_sec / 60.0,
+                            )
+                        except Exception as e:
+                            from livekit.agents.log import logger
+                            logger.warning(
+                                "failed to record usage for room %s: %s", local_room_name, e
+                            )
+                    elif updated and not tenant_id:
+                        from livekit.agents.log import logger
                         logger.warning(
-                            "failed to record usage for room %s: %s", room_name, e
+                            "closed session for room %s but participant metadata had no tenant_id — "
+                            "concurrency counter NOT decremented; reconcile_sessions.py will correct it",
+                            local_room_name,
                         )
-                elif updated and not tenant_id:
-                    from livekit.agents.log import logger
+            except Exception as e:
+                from livekit.agents.log import logger
+                logger.warning("failed to release quota slot for room %s: %s", local_room_name, e)
+            finally:
+                import gc
+                gc.collect()
 
-                    logger.warning(
-                        "closed session for room %s but participant metadata had no tenant_id — "
-                        "concurrency counter NOT decremented; reconcile_sessions.py will correct it",
-                        room_name,
-                    )
-        except Exception as e:
+        async def _record_agent_minutes(reason: str = "") -> None:
+            import math
+            import sys as _sys
+            from pathlib import Path as _Path
+
+            _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+            try:
+                from scripts.usage_guard import increment
+            except ImportError:
+                from usage_guard import increment  # type: ignore # noqa: E402
+
+            elapsed_sec = _time.monotonic() - _session_started_at
+            minutes = max(1, math.ceil(elapsed_sec / 60))
+            increment("livekit_agent_min", minutes)
+
+        ctx.add_shutdown_callback(_release_quota_slot)
+        ctx.add_shutdown_callback(_record_agent_minutes)
+
+        def _on_session_close(ev: Any) -> None:
             from livekit.agents.log import logger
 
-            logger.warning("failed to release quota slot for room %s: %s", room_name, e)
-        finally:
-            import gc
+            close_error = getattr(ev, "error", None)
+            if close_error is not None:
+                logger.error(
+                    "agent session closed with error room=%s: %r",
+                    ctx.room.name,
+                    close_error,
+                )
 
-            gc.collect()
-
-    async def _record_agent_minutes(reason: str = "") -> None:
-        import math
-
-        import sys as _sys
-        from pathlib import Path as _Path
-
-        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-        try:
-            from scripts.usage_guard import increment
-        except ImportError:
-            from usage_guard import increment  # type: ignore # noqa: E402
-
-        elapsed_sec = _time.monotonic() - _session_started_at
-        minutes = max(1, math.ceil(elapsed_sec / 60))
-        increment("livekit_agent_min", minutes)
-
-    ctx.add_shutdown_callback(_release_quota_slot)
-    ctx.add_shutdown_callback(_record_agent_minutes)
-
-    # Ending the JOB is the only thing that fires the two callbacks above. Closing the
-    # AgentSession does NOT end the job, which is why a real hangup never released the slot.
-    #
-    # Verified against the installed livekit-agents 1.6.5 source, not assumed:
-    #   * on participant disconnect, RoomIO calls
-    #     `AgentSession._close_soon(CloseReason.PARTICIPANT_DISCONNECTED)`
-    #     (voice/room_io/room_io.py L398-421). `close_on_disconnect` already defaults to True,
-    #     so the session DOES close.
-    #   * but the only thing hooked to that close is `_on_agent_session_close` (same file L472),
-    #     which deletes the room ONLY if `delete_room_on_close` is set — and that defaults to
-    #     **False** (voice/room_io/types.py L129/L268).
-    #   * nothing in that path calls `JobContext.shutdown` (job.py L742), so the job stayed alive
-    #     and the shutdown callbacks did not run until the whole worker process exited.
-    #
-    # The DB showed this plainly before the fix: 19 sessions closed with end_reason
-    # "parent process shutdown" (the IPC path in ipc/job_proc_lazy_main.py L251 — i.e. the worker
-    # process being killed) against just 2 "normal". Every real hangup leaked an open session row
-    # and a held concurrency slot until reconcile_sessions.py swept it, which is what surfaced on
-    # the dashboard as calls that stayed "live" after the caller had gone.
-    #
-    # Passing the close reason through means end_reason records WHY it ended
-    # ("participant_disconnected") instead of a blanket "normal".
-    def _on_session_close(ev: Any) -> None:
-        from livekit.agents.log import logger
-
-        close_error = getattr(ev, "error", None)
-        if close_error is not None:
-            logger.error(
-                "agent session closed with error room=%s: %r",
-                ctx.room.name,
-                close_error,
+            reason = getattr(getattr(ev, "reason", None), "value", None) or "session_closed"
+            if getattr(getattr(session_obj, "userdata", None), "ended_by_agent", False):
+                reason = "agent_ended"
+            logger.info(
+                "agent session closed (reason=%s) — shutting the job down so the session row is "
+                "closed and the concurrency slot released",
+                reason,
             )
+            ctx.shutdown(reason=reason)
 
-        reason = getattr(getattr(ev, "reason", None), "value", None) or "session_closed"
-        # An agent-ended call closes via AgentSession.shutdown(), whose CloseReason is the
-        # generic USER_INITIATED ("closed via API") — indistinguishable from any other
-        # programmatic close, and actively misleading on a dashboard where "user" means the
-        # caller. worker/tools.py sets this flag when IT ended the call, so the two cases stay
-        # distinguishable in sessions.end_reason.
-        if getattr(getattr(session, "userdata", None), "ended_by_agent", False):
-            reason = "agent_ended"
-        logger.info(
-            "agent session closed (reason=%s) — shutting the job down so the session row is "
-            "closed and the concurrency slot released",
-            reason,
+        session_obj.on("close", _on_session_close)
+        _wire_session_diagnostics(session_obj, cfg_obj, ctx.room.name)
+        from livekit.agents.log import logger as _opening_logger
+
+        latency_tracker = wire_turn_latency(session_obj, ctx.room, _opening_logger)
+        wire_barge_in_flush(session_obj, _opening_logger)
+        if getattr(session_obj, "userdata", None) is not None:
+            session_obj.userdata.latency_tracker = latency_tracker
+
+        await session_obj.start(
+            agent_obj,
+            room=ctx.room,
+            room_options=session_room_options(),
         )
-        ctx.shutdown(reason=reason)
+        _entry_logger.info(
+            "entrypoint session.start room=%s ms=%s",
+            room_name,
+            int(round((time.monotonic() - _connect_at) * 1000)),
+        )
 
-    session.on("close", _on_session_close)
-    _wire_session_diagnostics(session, cfg, ctx.room.name)
-    from livekit.agents.log import logger as _opening_logger
+    # Fast Path: If we have early identity (e.g. from dispatch metadata), build and start
+    # the session BEFORE waiting for the participant. This publishes the audio track early (UVA-2).
+    if early_md:
+        session, cfg, greeting_prewarm = await build_session(
+            early_md, room_name, audio_channel=audio_channel
+        )
+        agent = build_agent(cfg)
 
-    latency_tracker = wire_turn_latency(session, ctx.room, _opening_logger)
-    wire_barge_in_flush(session, _opening_logger)
-    if getattr(session, "userdata", None) is not None:
-        session.userdata.latency_tracker = latency_tracker
+        await _setup_and_start(session, cfg, agent, early_md)
 
-    await session.start(
-        agent,
-        room=ctx.room,
-        room_options=session_room_options(),
-    )
+        from livekit.agents.log import logger as _opening_logger
 
-    # Opening turn is tenant-configurable (agents.greeting / agents.first_speaker). Static
-    # greetings use session.say() only — no LLM on turn zero (UVA-10).
-    await apply_session_opening(session, cfg, _opening_logger)
+        # Warm TTS while waiting for the browser/SIP participant (overlaps when user is late).
+        wait_task = asyncio.create_task(
+            wait_for_session_participant(ctx, already_connected=True)
+        )
+        await await_greeting_prewarm(
+            greeting_prewarm, logger=_opening_logger, room_name=room_name
+        )
+        try:
+            await wait_task
+        except (asyncio.TimeoutError, RuntimeError):
+            return
+
+        await apply_session_opening(session, cfg, _opening_logger)
+
+    else:
+        # Fallback Path: Wait for participant to extract identity (e.g., SIP inbound)
+        try:
+            participant = await wait_for_session_participant(ctx, already_connected=True)
+        except (asyncio.TimeoutError, RuntimeError):
+            return
+
+        participant_md, resolved_channel = await _resolve_session_from_participant(
+            participant,
+            job_metadata=job_metadata,
+            audio_channel=audio_channel,
+        )
+
+        session, cfg, greeting_prewarm = await build_session(
+            participant_md, room_name, audio_channel=resolved_channel
+        )
+        agent = build_agent(cfg)
+
+        await _setup_and_start(session, cfg, agent, participant_md)
+        from livekit.agents.log import logger as _opening_logger
+
+        await await_greeting_prewarm(
+            greeting_prewarm, logger=_opening_logger, room_name=room_name
+        )
+        await apply_session_opening(session, cfg, _opening_logger)
 
 
 def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
@@ -966,6 +933,14 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
         from livekit.plugins import upliftai  # noqa: F401
 
         imported.append("livekit.plugins.upliftai")
+
+    # Load Silero once per process so the first session.start() skips model init (~300ms).
+    try:
+        preload_vad()
+        if proc is not None and getattr(proc, "userdata", None) is not None:
+            proc.userdata["vad"] = _vad_singleton
+    except Exception:
+        pass
 
     return imported
 

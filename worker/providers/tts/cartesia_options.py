@@ -19,6 +19,9 @@ CARTESIA_TTS_DEFAULTS: dict = {
     "model": "sonic-3.5",
     "speed": 0.95,
     "emotion": ["calm", "content"],
+    # Default on for lower LLM token cost — LiveKit injects delivery markup (latency §UVA-7).
+    # Set ``tts_options.expressive=false`` on an agent to use manual SSML prompt rules instead.
+    "expressive": True,
 }
 
 # Phase C — match Cartesia output to the downstream audio leg (docs/cartesia_humanization.md Layer 6).
@@ -99,8 +102,10 @@ def validate_cartesia_tts_options(options: dict) -> dict:
 
 
 def cartesia_expressive_enabled(stored_options: dict | None) -> bool:
-    """Session-level A/B flag — never passed to cartesia.TTS()."""
-    return bool((stored_options or {}).get("expressive") is True)
+    """Session-level expressive flag — merged with platform default (True unless overridden)."""
+    overrides = validate_cartesia_tts_options(stored_options or {})
+    merged = {**CARTESIA_TTS_DEFAULTS, **overrides}
+    return bool(merged.get("expressive", True))
 
 
 def resolve_cartesia_tts_kwargs(
@@ -130,3 +135,22 @@ def resolve_cartesia_tts_kwargs(
     if "volume" in merged:
         kwargs["volume"] = merged["volume"]
     return kwargs
+
+
+def low_latency_cartesia_tokenizer() -> Any:
+    """Cartesia stream tokenizer tuned for voice latency (UVA-4).
+
+    LiveKit's default blingfire ``SentenceTokenizer`` waits for sentence boundaries and
+    ``stream_context_len=10`` before pushing text to the Cartesia websocket. That batches
+    LLM tokens into multi-second silence before the first audio chunk.
+    """
+    from livekit.agents import tokenize
+
+    return tokenize.blingfire.SentenceTokenizer(
+        min_sentence_len=1,
+        stream_context_len=1,
+        min_token_len=1,
+        max_token_len=100,
+        retain_format=True,
+        xml_aware=True,
+    )

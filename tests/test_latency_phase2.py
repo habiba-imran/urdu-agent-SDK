@@ -20,13 +20,14 @@ from worker.providers.llm import gemini as gemini_mod
 
 
 def test_phase2_endpointing_tighter_than_phase1_defaults():
-    assert TURN_HANDLING_OPTIONS["endpointing"]["min_delay"] == 0.2
-    assert TURN_HANDLING_OPTIONS["endpointing"]["max_delay"] == 1.8
+    assert TURN_HANDLING_OPTIONS["endpointing"]["min_delay"] == 0.15
+    assert TURN_HANDLING_OPTIONS["endpointing"]["max_delay"] == 1.5
+    assert TURN_HANDLING_OPTIONS["preemptive_generation"]["preemptive_tts"] is True
 
 
 def test_vad_silence_gate_tuned_for_eou():
-    assert VAD_OPTIONS["min_silence_duration"] <= 0.5
-    assert VAD_OPTIONS["min_silence_duration"] >= 0.35
+    assert VAD_OPTIONS["min_silence_duration"] <= 0.4
+    assert VAD_OPTIONS["min_silence_duration"] >= 0.3
 
 
 def test_gemini_voice_path_disables_thinking(monkeypatch):
@@ -36,16 +37,19 @@ def test_gemini_voice_path_disables_thinking(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
+    def _thinking_config(**kwargs):
+        return kwargs
+
     fake_types = SimpleNamespace(
         HttpOptions=lambda timeout: SimpleNamespace(timeout=timeout),
-        ThinkingConfig=lambda thinking_budget: {"thinking_budget": thinking_budget},
+        ThinkingConfig=_thinking_config,
     )
     fake_google = SimpleNamespace(LLM=FakeLLM)
     monkeypatch.setitem(sys.modules, "livekit.plugins.google", fake_google)
     monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
     monkeypatch.setitem(sys.modules, "google.genai", SimpleNamespace(types=fake_types))
     gemini_mod.build("gemini-2.5-flash")
-    assert captured["thinking_config"] == {"thinking_budget": 0}
+    assert captured["thinking_config"] == {"thinking_level": "minimal"}
 
 
 def test_deepgram_stt_voice_options(monkeypatch):
@@ -64,7 +68,7 @@ def test_deepgram_stt_voice_options(monkeypatch):
     dg.build("en")
     assert created["model"] == "nova-3"
     assert created["no_delay"] is True
-    assert created["endpointing_ms"] == 25
+    assert created["endpointing_ms"] == 10
 
 
 @pytest.mark.asyncio

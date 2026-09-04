@@ -20,7 +20,7 @@ export interface Voice {
     enabled: boolean;
 }
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
-export type AwaazLabsUvaVoiceEvent = 'transcript' | 'speaking' | 'error' | 'ended' | 'connected' | 'disconnected' | 'agent_speaking' | 'metrics_updated' | 'audio_blocked';
+export type AwaazLabsUvaVoiceEvent = 'transcript' | 'speaking' | 'error' | 'ended' | 'connected' | 'disconnected' | 'agent_speaking' | 'metrics_updated' | 'audio_blocked' | 'turn_latency';
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
 export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
 export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
@@ -46,6 +46,8 @@ export interface AwaazLabsUvaVoiceEventMap {
     disconnected: [unknown];
     agent_speaking: [boolean];
     metrics_updated: [MetricsEvent];
+    /** Per-turn stage breakdown emitted by the worker on every user turn. */
+    turn_latency: [MetricsEvent];
     /**
      * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
      * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
@@ -87,6 +89,7 @@ export declare class AwaazLabsUvaVoice {
     private clearRefreshTimer;
     private refreshToken;
     private resolveRefreshEndpoint;
+    private emitLatencyEvents;
     private decodePayload;
     private tryParseMetrics;
 }

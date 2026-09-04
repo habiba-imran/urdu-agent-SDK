@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,10 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from dbconn import conn_kwargs  # noqa: E402
+
+# Short process cache so repeat connects / warm demos skip a remote TLS+RLS round-trip.
+_CONFIG_CACHE_TTL_SEC = 45.0
+_config_cache: dict[tuple[str, str], tuple[float, "AgentConfig", str | None]] = {}
 
 
 class AgentNotFound(Exception):
@@ -61,24 +66,23 @@ class AgentConfig:
     first_speaker: str = "agent"
 
 
-def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
-    """Read this tenant's agent, RLS-scoped. Raises AgentNotFound if it isn't the tenant's."""
-    claims = json.dumps({"tenant_id": tenant_id})
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
-        cur = conn.cursor()
-        cur.execute("set local role authenticated")
-        cur.execute("select set_config('request.jwt.claims', %s, true)", (claims,))
-        cur.execute(
-            "select id, tenant_id, name, prompt, voice_id, llm_model, "
-            "agent_language, stt_provider, stt_model, stt_options, "
-            "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-            "greeting, first_speaker "
-            "from agents where id = %s",
-            (agent_id,),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise AgentNotFound(f"agent {agent_id} not visible to tenant {tenant_id}")
+def clear_agent_config_cache() -> None:
+    """Drop the in-process agent config cache (tests / after admin edits)."""
+    _config_cache.clear()
+
+
+def resolve_provider_voice_id_local(internal_voice_id: str | None) -> str | None:
+    """Fast path for known slug prefixes — no DB. Returns None when a DB lookup is still needed."""
+    if not internal_voice_id:
+        return None
+    if internal_voice_id.startswith("rime-arcana-"):
+        return internal_voice_id.removeprefix("rime-arcana-")
+    if internal_voice_id.startswith("rime-coda-"):
+        return internal_voice_id.removeprefix("rime-coda-")
+    return None
+
+
+def _row_to_config(row: tuple) -> AgentConfig:
     return AgentConfig(
         agent_id=str(row[0]),
         tenant_id=str(row[1]),
@@ -98,3 +102,65 @@ def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
         greeting=row[15],
         first_speaker=row[16] or "agent",
     )
+
+
+def _load_agent_and_provider_voice(
+    agent_id: str, tenant_id: str
+) -> tuple[AgentConfig, str | None]:
+    """One TCP/TLS connection: RLS agent row + optional ``voices.provider_voice_id``."""
+    claims = json.dumps({"tenant_id": tenant_id})
+    with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
+        with conn.transaction():
+            cur = conn.cursor()
+            cur.execute("set local role authenticated")
+            cur.execute("select set_config('request.jwt.claims', %s, true)", (claims,))
+            cur.execute(
+                "select id, tenant_id, name, prompt, voice_id, llm_model, "
+                "agent_language, stt_provider, stt_model, stt_options, "
+                "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
+                "greeting, first_speaker "
+                "from agents where id = %s",
+                (agent_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise AgentNotFound(f"agent {agent_id} not visible to tenant {tenant_id}")
+        cfg = _row_to_config(row)
+
+        internal_voice_id = cfg.tts_voice_id or cfg.voice_id
+        local = resolve_provider_voice_id_local(internal_voice_id)
+        if local is not None or not internal_voice_id:
+            return cfg, local if internal_voice_id else None
+
+        # Outside the RLS transaction — voices is looked up as the DB owner (same as
+        # worker/main._resolve_provider_voice_id historically).
+        voice_row = conn.execute(
+            "select provider_voice_id from voices where id = %s",
+            (internal_voice_id,),
+        ).fetchone()
+        provider_voice_id = (
+            voice_row[0] if voice_row and voice_row[0] else internal_voice_id
+        )
+        return cfg, provider_voice_id
+
+
+def load_agent_session_bundle(
+    agent_id: str, tenant_id: str, *, use_cache: bool = True
+) -> tuple[AgentConfig, str | None]:
+    """Return ``(AgentConfig, provider_voice_id)`` with optional short process cache."""
+    key = (tenant_id, agent_id)
+    now = time.monotonic()
+    if use_cache:
+        hit = _config_cache.get(key)
+        if hit is not None and (now - hit[0]) < _CONFIG_CACHE_TTL_SEC:
+            return hit[1], hit[2]
+
+    cfg, provider_voice_id = _load_agent_and_provider_voice(agent_id, tenant_id)
+    _config_cache[key] = (now, cfg, provider_voice_id)
+    return cfg, provider_voice_id
+
+
+def load_agent_config(agent_id: str, tenant_id: str) -> AgentConfig:
+    """Read this tenant's agent, RLS-scoped. Raises AgentNotFound if it isn't the tenant's."""
+    cfg, _provider_voice = load_agent_session_bundle(agent_id, tenant_id)
+    return cfg

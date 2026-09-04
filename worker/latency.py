@@ -16,9 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Phase 2 (UVA-6): 0.2s min endpointing — LiveKit streaming turn-detector tradeoff
-# (ADR-011: lower toward 0.15–0.2 for response time vs false-boundary risk).
-# Preemptive generation streams LLM tokens to TTS before EOU finalizes (UVA-4).
+# Phase 2 (UVA-6): 0.15s min endpointing — commit turns faster during conversation.
+# Preemptive generation starts LLM while the user is still speaking (UVA-14).
+# preemptive_tts=True starts Cartesia synthesis on streamed tokens *before* EOU
+# confirms — without this, TTS waits for full turn commit (+ seconds of dead air).
 TURN_HANDLING_OPTIONS: dict[str, Any] = {
     # UVA-13: faster barge-in — discard buffered TTS and cancel in-flight generation.
     "interruption": {
@@ -28,21 +29,21 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
         "resume_false_interruption": True,
         "false_interruption_timeout": 1.5,
     },
-    "endpointing": {"min_delay": 0.2, "max_delay": 1.8},
-    # UVA-14: preemptive LLM on interim Deepgram transcripts (requires interim_results=True).
+    "turn_detection": "stt",
+    "endpointing": {"min_delay": 0.15, "max_delay": 1.5},
     "preemptive_generation": {
         "enabled": True,
+        "preemptive_tts": True,
         "max_speech_duration": 12.0,
         "max_retries": 3,
     },
 }
 
-# Phase 2 (UVA-6): tighter VAD silence gate — was 0.6s min_silence, adding dead air
-# after the user stops speaking before EOU fires.
+# Tighter VAD silence gate for in-call turns — less dead air after the caller stops.
 VAD_OPTIONS: dict[str, float] = {
     "min_speech_duration": 0.05,
-    "min_silence_duration": 0.45,
-    "prefix_padding_duration": 0.4,
+    "min_silence_duration": 0.35,
+    "prefix_padding_duration": 0.35,
     "activation_threshold": 0.35,
 }
 
@@ -95,12 +96,24 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
     return None
 
 
+async def _invoke_provider_prewarm(prewarm: Any) -> None:
+    """Call a provider ``prewarm`` hook on the event-loop thread.
+
+    LiveKit websocket pools schedule work via ``asyncio.create_task`` and raise
+    ``RuntimeError: no running event loop`` when invoked from ``asyncio.to_thread``.
+    """
+    if asyncio.iscoroutinefunction(prewarm):
+        await prewarm()
+    else:
+        prewarm()
+
+
 async def prewarm_tts(tts: Any) -> None:
     """Open the TTS provider websocket pool before the first utterance (UVA-11)."""
     prewarm = getattr(tts, "prewarm", None)
     if prewarm is None:
         return
-    await asyncio.to_thread(prewarm)
+    await _invoke_provider_prewarm(prewarm)
 
 
 async def prewarm_stt(stt: Any) -> None:
@@ -108,7 +121,7 @@ async def prewarm_stt(stt: Any) -> None:
     prewarm = getattr(stt, "prewarm", None)
     if prewarm is None:
         return
-    await asyncio.to_thread(prewarm)
+    await _invoke_provider_prewarm(prewarm)
 
 
 def session_room_options() -> Any:
@@ -160,6 +173,157 @@ async def prewarm_llm(llm: Any) -> None:
         await stream.aclose()
     except Exception:
         pass
+
+
+async def prewarm_greeting_providers(
+    *,
+    tts: Any,
+    stt: Any,
+    logger: Any | None = None,
+    room_name: str | None = None,
+) -> None:
+    """Warm TTS (+ STT) before the opening utterance — required for first-audio TTFB.
+
+    Uses ``asyncio.wait`` on tasks rather than ``gather``: importing LiveKit's
+    ``ChatContext`` (LLM prewarm) concurrent with ``gather`` can stall forever on
+    some Windows / livekit-agents 1.6.x event-loop setups.
+    """
+    started = time.monotonic()
+    tasks = (
+        ("tts", asyncio.create_task(prewarm_tts(tts))),
+        ("stt", asyncio.create_task(prewarm_stt(stt))),
+    )
+    await asyncio.wait([task for _, task in tasks])
+    if logger is not None:
+        for label, task in tasks:
+            if task.cancelled():
+                logger.warning(
+                    "provider prewarm %s cancelled room=%s",
+                    label,
+                    room_name or "?",
+                )
+                continue
+            exc = task.exception()
+            if exc is not None:
+                logger.warning(
+                    "provider prewarm %s failed room=%s: %s",
+                    label,
+                    room_name or "?",
+                    exc,
+                )
+        logger.info(
+            "greeting provider prewarm finished room=%s ms=%s",
+            room_name or "?",
+            int(round((time.monotonic() - started) * 1000)),
+        )
+
+
+async def prewarm_session_providers(
+    *,
+    tts: Any,
+    llm: Any,
+    stt: Any,
+    logger: Any | None = None,
+    room_name: str | None = None,
+) -> None:
+    """Warm STT then TTS then LLM (tests / full warm). Prefer schedule_provider_prewarm at runtime."""
+    started = time.monotonic()
+    # Sequential — avoids gather + LiveKit ChatContext interaction (see prewarm_greeting_providers).
+    results: list[tuple[str, Exception | None]] = []
+    for label, coro in (
+        ("tts", prewarm_tts(tts)),
+        ("stt", prewarm_stt(stt)),
+        ("llm", asyncio.wait_for(prewarm_llm(llm), timeout=5.0)),
+    ):
+        try:
+            await coro
+            results.append((label, None))
+        except Exception as exc:
+            results.append((label, exc))
+    if logger is not None:
+        for label, result in results:
+            if result is not None:
+                logger.warning(
+                    "provider prewarm %s failed room=%s: %s",
+                    label,
+                    room_name or "?",
+                    result,
+                )
+        logger.info(
+            "provider prewarm finished room=%s ms=%s",
+            room_name or "?",
+            int(round((time.monotonic() - started) * 1000)),
+        )
+
+
+def schedule_provider_prewarm(
+    *,
+    tts: Any,
+    llm: Any,
+    stt: Any,
+    logger: Any | None = None,
+    room_name: str | None = None,
+) -> asyncio.Task[None]:
+    """Start provider warm-up without blocking ``session.start()`` (UVA-2).
+
+    Returns a task that completes when **TTS + STT** are warm — await it before
+    ``apply_session_opening`` so the greeting does not pay a cold websocket.
+    LLM warm-up starts only after that (still fire-and-forget for the caller).
+    """
+
+    async def _llm() -> None:
+        try:
+            await asyncio.wait_for(prewarm_llm(llm), timeout=5.0)
+        except Exception as exc:
+            if logger is not None:
+                logger.warning(
+                    "provider prewarm llm failed room=%s: %s",
+                    room_name or "?",
+                    exc,
+                )
+
+    async def _greeting() -> None:
+        try:
+            await prewarm_greeting_providers(
+                tts=tts,
+                stt=stt,
+                logger=logger,
+                room_name=room_name,
+            )
+        except Exception as exc:
+            if logger is not None:
+                logger.warning(
+                    "greeting provider prewarm task failed room=%s: %s",
+                    room_name or "?",
+                    exc,
+                )
+        finally:
+            # Defer LLM cold-start until after greeting providers — concurrent ChatContext
+            # use can stall asyncio.gather/waiters on this stack.
+            asyncio.create_task(_llm())
+
+    return asyncio.create_task(_greeting())
+
+
+async def await_greeting_prewarm(
+    task: asyncio.Task[None] | None,
+    *,
+    timeout: float = 5.0,
+    logger: Any | None = None,
+    room_name: str | None = None,
+) -> None:
+    """Wait for TTS/STT warm-up before the opening turn; never raise into the entrypoint."""
+    if task is None:
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(
+                "greeting prewarm wait failed room=%s: %s",
+                room_name or "?",
+                exc,
+            )
 
 
 def _ms(seconds: float | None) -> int | None:

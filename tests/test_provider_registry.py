@@ -219,7 +219,7 @@ def test_build_session_falls_back_to_voice_id_when_tts_voice_id_is_null(
         "tenant_id": tenant_and_agents["tenant_id"],
         "agent_id": tenant_and_agents["agent_null"],
     }
-    session, cfg = asyncio.run(build_session(md, room_name="test-room-p2"))
+    session, cfg, _greeting_prewarm = asyncio.run(build_session(md, room_name="test-room-p2"))
     assert cfg.tts_voice_id is None  # confirms the NULL scenario was actually exercised
     got_pcm = asyncio.run(_collect_pcm(session.tts))
     from services.tts_cache import require

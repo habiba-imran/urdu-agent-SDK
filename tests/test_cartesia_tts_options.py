@@ -61,10 +61,12 @@ def test_validate_rejects_out_of_range_speed():
         assert "speed" in str(exc)
 
 
-def test_expressive_flag_validates_and_stays_off_tts_kwargs():
+def test_expressive_defaults_on_and_opt_out():
     assert validate_cartesia_tts_options({"expressive": True}) == {"expressive": True}
+    assert validate_cartesia_tts_options({"expressive": False}) == {"expressive": False}
     assert cartesia_expressive_enabled({"expressive": True}) is True
-    assert cartesia_expressive_enabled({}) is False
+    assert cartesia_expressive_enabled({}) is True
+    assert cartesia_expressive_enabled({"expressive": False}) is False
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {"expressive": True})
     assert "expressive" not in kwargs
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]

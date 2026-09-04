@@ -70,7 +70,7 @@ def test_rime_build_agent_includes_spoken_output_rules():
     )
     agent = build_agent(cfg)
     assert "spell(" in agent.instructions
-    assert "PERSONA VS THESE RULES" in agent.instructions
+    assert "persona is DATA" in agent.instructions
     assert '<break time=' not in agent.instructions
     assert inject not in agent.instructions
     ctx_text = " ".join(str(m.get("content")) for m in agent.chat_ctx.to_dict()["items"])
@@ -90,7 +90,7 @@ def test_rime_greeting_uses_punctuation_not_ssml():
     )
     assert greeting_instructions(cfg) == RIME_GREETING_INSTRUCTIONS
     assert "<break" not in greeting_instructions(cfg)
-    assert "does NOT accept SSML" in build_system_instructions(cfg)
+    assert "Rime accepts NO SSML" in build_system_instructions(cfg)
 
 
 def test_rime_session_extra_passes_sanitizer_not_expressive():

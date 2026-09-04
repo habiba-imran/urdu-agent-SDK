@@ -25,6 +25,7 @@ def test_turn_handling_barge_in_and_preemptive_partial_feed():
     assert interruption["min_duration"] <= 0.35
     preemptive = TURN_HANDLING_OPTIONS["preemptive_generation"]
     assert preemptive["enabled"] is True
+    assert preemptive["preemptive_tts"] is True
     assert preemptive["max_speech_duration"] >= 10.0
 
 

@@ -49,7 +49,7 @@ client-submission_v2/
 Run these commands from your application package, adjusting the relative path to this handover folder:
 
 ```bash
-npm install ./client-submission_v2/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.0.tgz
+npm install ./client-submission_v2/sdk/@awaazlabs-uva/voice/awaazlabs-uva-voice-1.0.1.tgz
 npm install ./client-submission_v2/sdk/@awaazlabs-uva/agents/awaazlabs-uva-agents-0.1.0.tgz
 npm install ./client-submission_v2/sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
 ```
