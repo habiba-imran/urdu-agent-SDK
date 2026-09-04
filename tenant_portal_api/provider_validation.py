@@ -37,6 +37,8 @@ from worker.providers.tts.rime_options import (  # noqa: E402
 
 # Mirrors Phase 1's own DB backfill defaults (0016_agents_provider_fields.sql) — the values a
 # CREATE gets when the caller supplies nothing beyond the legacy voice_id/llm_model fields.
+# English CREATE (agent_language=en) overlays voice defaults below so new EN agents match
+# the self-serve test-agent stack (Deepgram + Groq + Cartesia).
 _CREATE_DEFAULTS = {
     "agent_language": "ur",
     "stt_provider": "gladia",
@@ -47,6 +49,11 @@ _CREATE_DEFAULTS = {
     "llm_options": {},
     "tts_provider": "uplift",
     "tts_options": {},
+}
+
+_EN_CREATE_DEFAULTS = {
+    "llm_provider": "groq",
+    "llm_model": "openai/gpt-oss-20b",
 }
 
 
@@ -84,13 +91,27 @@ def resolve_agent_provider_fields(
     both are given (the guide's explicit priority rule), and BOTH columns get the same resolved
     value written, closing the gap Phase 1 flagged (a fresh agent's tts_voice_id was NULL until
     something at this layer started keeping them in sync)."""
-    base = current if current is not None else _CREATE_DEFAULTS
+    base = dict(current if current is not None else _CREATE_DEFAULTS)
 
     language = agent_language if agent_language is not None else base["agent_language"]
     if not is_language_known(language):
         raise ProviderValidationError(
             "unsupported_language", f"language {language!r} is not supported"
         )
+
+    # English CREATE: prefer Groq when caller omits llm_provider. CreateAgentBody still
+    # defaults llm_model to gemini-2.5-flash — treat that legacy Field default as unset
+    # when the resolved provider is Groq so validation does not reject the pair.
+    effective_llm_model = llm_model
+    if current is None and str(language).lower().startswith("en"):
+        if llm_provider is None:
+            base["llm_provider"] = _EN_CREATE_DEFAULTS["llm_provider"]
+        provider_preview = llm_provider if llm_provider is not None else base["llm_provider"]
+        if provider_preview == "groq" and (
+            llm_model is None or llm_model == _CREATE_DEFAULTS["llm_model"]
+        ):
+            base["llm_model"] = _EN_CREATE_DEFAULTS["llm_model"]
+            effective_llm_model = None
 
     resolved_stt_provider = (
         stt_provider if stt_provider is not None else base["stt_provider"]
@@ -137,7 +158,9 @@ def resolve_agent_provider_fields(
             f"llm provider {resolved_llm_provider!r} for {language!r} is {llm_cap['state']!r}, "
             "not enabled",
         )
-    resolved_llm_model = llm_model if llm_model is not None else base["llm_model"]
+    resolved_llm_model = (
+        effective_llm_model if effective_llm_model is not None else base["llm_model"]
+    )
     # llm_model keeps its existing free-text convention (agents.llm_model has always been a plain
     # string, never previously validated against a fixed list) — only checked against the
     # capability's models list when that list is non-empty, so real deprecated-model aliasing

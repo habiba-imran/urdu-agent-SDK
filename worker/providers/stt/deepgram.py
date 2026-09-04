@@ -30,5 +30,7 @@ def build(language: str) -> Any:
         no_delay=True,
         endpointing_ms=10,
         interim_results=True,
-        smart_format=True,
+        # smart_format adds post-processing latency on finals; voice path prefers speed
+        # (numbers/punctuation are fine for Cartesia without it).
+        smart_format=False,
     )

@@ -22,12 +22,13 @@ def test_empty_options_validate_and_apply_defaults():
     assert "volume" not in kwargs
 
 
-def test_telephony_channel_uses_mulaw_8k():
+def test_telephony_channel_uses_linear_pcm_for_livekit():
     kwargs = resolve_cartesia_tts_kwargs(
         "voice-uuid", "en", {}, audio_channel="telephony"
     )
-    assert kwargs["encoding"] == "pcm_mulaw"
-    assert kwargs["sample_rate"] == 8000
+    # Must stay linear PCM — LiveKit cartesia plugin labels frames as audio/pcm.
+    assert kwargs["encoding"] == "pcm_s16le"
+    assert kwargs["sample_rate"] == 16000
 
 
 def test_overrides_merge_with_defaults():

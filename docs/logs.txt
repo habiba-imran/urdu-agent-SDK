@@ -1,174 +1,276 @@
-2026-09-04 21:30:37,369 - INFO livekit.agents - HTTP server listening on :54497 
-2026-09-04 21:30:39,285 - INFO livekit.agents - registered worker {"agent_name": "uva-staging-agent", "deployment": "", "id": "AW_rj7CAnrqAUXg", "url": "wss://urdu-voice-agent-sdk-22to3tyc.livekit.cloud", "region": "India South", "protocol": 17}
-2026-09-04 21:43:05,326 - INFO livekit.agents - received job request {"job_id": "AJ_t2QCTwGb9LKY", "dispatch_id": "AD_KJh3pTABJZGN", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC", "room_id": "RM_VESMPNv7zdCj", "agent_name": "uva-staging-agent", "resuming": false, "enable_recording": false}
-2026-09-04 21:43:06,298 - DEBUG livekit.agents - received assignment {"agent_name": "uva-staging-agent", "room_id": "RM_VESMPNv7zdCj", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC", "job_id": "AJ_t2QCTwGb9LKY", "dispatch_id": "AD_KJh3pTABJZGN", "enable_recording": false}
-2026-09-04 21:43:06,342 - WARNING livekit.agents - no warmed process available for job, waiting for one to be created {"job_id": "AJ_t2QCTwGb9LKY"}
-2026-09-04 21:43:06,496 - INFO livekit.agents - initializing job runner {"tid": 26764}
-2026-09-04 21:43:06,522 - DEBUG asyncio - Using proactor: IocpProactor 
-2026-09-04 21:43:06,522 - INFO livekit.agents - job runner initialized {"tid": 26764, "elapsed_time": 0.02}
-2026-09-04 21:43:22,519 - INFO livekit.agents - session pipeline room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC agent=f46e964e-a300-4e89-bbcf-582dc510d391 llm=gemini/gemini-3.1-flash-lite tts=rime voice=rime-arcana-andromeda first_speaker=agent 
-2026-09-04 21:43:22,520 - INFO livekit.agents - llm model remapped requested=gemini-2.5-flash runtime=gemini-3.1-flash-lite 
-2026-09-04 21:43:22,521 - INFO livekit.agents - rime audio profile channel=webrtc sample_rate=16000 
-2026-09-04 21:43:22,533 - INFO livekit.agents - rime session extras sanitizer=True 
-2026-09-04 21:43:22,550 - INFO livekit.agents - interruption_detection configured=NOT_GIVEN (check startup log for LiveKit's own 'adaptive interruption detector initialized' INFO line to confirm it's actually active, or a WARNING line if it fell back to VAD) 
-2026-09-04 21:43:22,631 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency. 
-2026-09-04 21:43:22,632 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency. 
-2026-09-04 21:43:22,695 - DEBUG livekit.agents - input stream attached {"participant": null, "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
-2026-09-04 21:43:22,803 - INFO livekit.agents - adaptive interruption detector initialized {"base_url": "https://agent-gateway.livekit.cloud/v1", "detection_interval": 0.1, "audio_prefix_duration": 1.0, "max_audio_duration": 3, "min_frames": 2, "threshold": null, "inference_timeout": 0.7}
-2026-09-04 21:43:22,908 - DEBUG livekit.agents - start reading stream {"participant": "sip_+923359164674", "source": "SOURCE_MICROPHONE"}
-2026-09-04 21:43:22,913 - DEBUG livekit.agents - http_session(): creating a new httpclient ctx 
-2026-09-04 21:43:23,731 - INFO livekit.agents - greeting provider prewarm finished room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC ms=985 
-2026-09-04 21:43:23,747 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC initializing -> listening 
-2026-09-04 21:43:23,748 - DEBUG livekit.agents - using audio io: `RoomIO` -> `AgentSession` -> `TranscriptSynchronizer` -> `AudioSinkProxy` -> `RoomIO` 
-2026-09-04 21:43:23,748 - DEBUG livekit.agents - using transcript io: `AgentSession` -> `TranscriptSynchronizer` -> `RoomIO` 
-2026-09-04 21:43:23,749 - INFO livekit.agents - entrypoint session.start room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC ms=7218 
-2026-09-04 21:43:23,760 - INFO google_genai.models - AFC is enabled with max remote calls: 10. 
-2026-09-04 21:43:23,813 - INFO livekit.agents - session opening first_speaker=agent custom_greeting_chars=59 
-2026-09-04 21:43:23,815 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=say user_initiated=True 
-2026-09-04 21:43:24,042 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:24,375 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:24,587 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:24,593 - DEBUG livekit.plugins.deepgram - Established new Deepgram STT WebSocket connection: {"headers": {"dg-project-id": "634aba41-fda4-4398-860a-72c2e9baa323", "dg-request-id": "01a06d4d-af7f-7490-9171-f241bf4da25c", "Date": "Fri, 04 Sep 2026 16:43:22 GMT"}}
-2026-09-04 21:43:24,794 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:24,850 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:25,876 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:26,188 - DEBUG livekit.agents - adaptive interruption session created {"default_threshold": 0.656, "effective_threshold": 0.656, "user_override": false}
-2026-09-04 21:43:26,877 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:27,576 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:27,925 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:28,539 - DEBUG livekit.agents - aec warmup active, disabling interruptions for 3.00s 
-2026-09-04 21:43:28,541 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:28,736 - WARNING livekit.agents - provider prewarm llm failed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC:  
-2026-09-04 21:43:28,739 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:28,827 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:28,927 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:29,975 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:30,673 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=LLMMetrics ttft=6.841013700002804 duration=6.918677799985744 cancelled=False 
-2026-09-04 21:43:30,978 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:31,524 - DEBUG livekit.agents - aec warmup expired, re-enabling interruptions 
-2026-09-04 21:43:32,026 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:33,027 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:33,846 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:34,077 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:35,076 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:36,127 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:37,127 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:38,175 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:38,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:39,126 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:39,127 - INFO livekit.agents - barge-in: interrupted in-flight agent speech 
-2026-09-04 21:43:39,148 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "Hi, thanks for calling final. This is Lena. How can I help?"}
-2026-09-04 21:43:39,149 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC text='Hi, thanks for calling final. This is Lena. How can I help?' 
-2026-09-04 21:43:39,151 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:39,156 - WARNING livekit.agents - speech interrupted room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=say (no audio/text committed — caller may still be speaking or a new turn cancelled this reply) 
-2026-09-04 21:43:39,177 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:40,225 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:40,228 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:41,227 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:42,274 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:43,276 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:43,875 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:44,326 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:45,325 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:45,698 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:46,052 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:46,193 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:46,376 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:46,865 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:47,376 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:48,426 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:48,875 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:49,425 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:50,427 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:51,126 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:51,476 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:52,327 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:52,478 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:53,177 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC is_final=False text='Hello. Who is' 
-2026-09-04 21:43:53,179 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC is_final=True text='Hello? Who is this?' 
-2026-09-04 21:43:53,181 - DEBUG livekit.agents - received user transcript {"user_transcript": "Hello? Who is this?", "language": "en-US", "transcript_delay": 1.2057292461395264}
-2026-09-04 21:43:53,182 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=generate_reply user_initiated=True 
-2026-09-04 21:43:53,189 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788540231.976005, "last_final_transcript_time": 1788540233.1817343, "speech_start_time": 1788540204.311619, "delay_completed": false, "source": "stt", "end_of_turn_probability": null, "unlikely_threshold": null}
-2026-09-04 21:43:53,196 - DEBUG livekit.agents - using preemptive generation {"preemptive_lead_time": 0.013722419738769531}
-2026-09-04 21:43:53,199 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=EOUMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:53,273 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "Hello? Who is this?"}
-2026-09-04 21:43:53,274 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC text='Hello? Who is this?' 
-2026-09-04 21:43:53,274 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> thinking 
-2026-09-04 21:43:53,528 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:53,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:54,529 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:55,575 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:56,577 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:56,854 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=LLMMetrics ttft=3.323121700086631 duration=3.6528838000958785 cancelled=False 
-2026-09-04 21:43:57,628 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:58,077 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:43:58,374 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC thinking -> listening 
-2026-09-04 21:43:58,628 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:58,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:43:59,069 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC is_final=False text='Hello? Am I all the' 
-2026-09-04 21:43:59,375 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:43:59,676 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:59,935 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC is_final=True text='Hello? Am I audible?' 
-2026-09-04 21:43:59,936 - DEBUG livekit.agents - received user transcript {"user_transcript": "Hello? Am I audible?", "language": "en-US", "transcript_delay": 0.9123721122741699}
-2026-09-04 21:43:59,938 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788540239.024604, "last_final_transcript_time": 1788540239.9380171, "speech_start_time": 1788540233.1895528, "delay_completed": false, "source": "stt", "end_of_turn_probability": null, "unlikely_threshold": null}
-2026-09-04 21:43:59,950 - WARNING livekit.agents - speech interrupted room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=generate_reply (no audio/text committed — caller may still be speaking or a new turn cancelled this reply) 
-2026-09-04 21:43:59,951 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=generate_reply user_initiated=True 
-2026-09-04 21:43:59,952 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=EOUMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:43:59,976 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "Hello? Am I audible?"}
-2026-09-04 21:43:59,976 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC text='Hello? Am I audible?' 
-2026-09-04 21:43:59,977 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> thinking 
-2026-09-04 21:44:00,677 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:01,725 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:02,727 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:02,733 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=LLMMetrics ttft=2.6855756000149995 duration=2.7764229000313208 cancelled=False 
-2026-09-04 21:44:03,245 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC listening -> speaking 
-2026-09-04 21:44:03,776 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:03,830 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:44:03,831 - DEBUG livekit.agents - resumed false interrupted speech {"timeout": 0}
-2026-09-04 21:44:03,832 - WARNING livekit.agents - false interruption room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC resumed=True 
-2026-09-04 21:44:03,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:44:04,779 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:05,825 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:05,969 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC thinking -> speaking 
-2026-09-04 21:44:06,829 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:07,878 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:08,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:44:08,877 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:09,926 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:10,927 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:11,977 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:12,976 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:13,876 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:44:14,027 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:15,025 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:16,028 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:17,076 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:18,077 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:18,874 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:44:19,127 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:20,127 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:21,176 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:22,178 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:23,226 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:23,875 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=STTMetrics ttft=None duration=0.0 cancelled=None 
-2026-09-04 21:44:24,227 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:25,274 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:26,277 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:27,326 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC type=VADMetrics ttft=None duration=None cancelled=None 
-2026-09-04 21:44:28,133 - INFO livekit.agents - closing agent session due to participant disconnect (disable via `RoomInputOptions.close_on_disconnect=False`) {"room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC", "participant": "sip_+923359164674", "reason": "CLIENT_INITIATED"}
-2026-09-04 21:44:28,135 - DEBUG livekit.agents - stream closed {"participant": "sip_+923359164674", "source": "SOURCE_MICROPHONE"}
-2026-09-04 21:44:28,153 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "Yes, I can hear you clearly. This is Lena with final, how can I help you today?"}
-2026-09-04 21:44:28,154 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC text='Yes, I can hear you clearly. This is Lena with final, how can I help you today?' 
-2026-09-04 21:44:28,157 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC speaking -> listening 
-2026-09-04 21:44:28,161 - WARNING livekit.agents - speech interrupted room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC source=generate_reply (no audio/text committed — caller may still be speaking or a new turn cancelled this reply) 
-2026-09-04 21:44:28,165 - DEBUG livekit.agents - input stream detached {"participant": "sip_+923359164674", "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
-2026-09-04 21:44:28,356 - INFO livekit.agents - agent session closed (reason=participant_disconnected) — shutting the job down so the session row is closed and the concurrency slot released 
-2026-09-04 21:44:28,356 - INFO livekit.agents - deleting room on agent session close (disable via `RoomInputOptions.delete_room_on_close=False`) {"room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC"}
-2026-09-04 21:44:29,744 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_reliable' closed unexpectedly 
-2026-09-04 21:44:29,745 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_lossy' closed unexpectedly 
-2026-09-04 21:44:29,746 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_data_track' closed unexpectedly 
-2026-09-04 21:44:30,008 - WARNING livekit - livekit_api::signal_client:608:livekit_api::signal_client - dropping pass-through signal — no stream available 
-2026-09-04 21:44:30,223 - DEBUG livekit.agents - session closed {"reason": "participant_disconnected", "error": null}
-2026-09-04 21:44:30,234 - DEBUG livekit.agents - shutting down job task {"reason": "participant_disconnected", "user_initiated": true}
-2026-09-04 21:44:30,236 - DEBUG livekit.agents - job exiting {"reason": "participant_disconnected", "tid": 26764, "job_id": "AJ_t2QCTwGb9LKY", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_feXFRJn829WC"}
-2026-09-04 21:44:36,516 - DEBUG livekit.agents - http_session(): closing the httpclient ctx 
+PS C:\Users\habib\Desktop\SDK\sdk-agent> & c:/Users/habib/Desktop/SDK/sdk-agent/.venv/Scripts/Activate.ps1
+(.venv) PS C:\Users\habib\Desktop\SDK\sdk-agent> .\.venv\Scripts\python.exe scripts/dev_worker.py
+==================================================================
+      LIVEKIT WORKER WATCHDOG — AUTO-RESTART ENABLED
+==================================================================
+Press Ctrl+C twice within 2s to stop. Single Ctrl+C restarts.
+
+[prewarm] confirmed in sys.modules before any job thread: ['livekit.plugins.google', 'livekit.plugins.silero', 'livekit.plugins.groq', 'livekit.plugins.deepgram', 'livekit.plugins.gladia', 'livekit.plugins.cartesia', 'livekit.plugins.elevenlabs', 'livekit.plugins.fishaudio', 'livekit.plugins.rime', 'livekit.plugins.upliftai']
+in-process auto-reload has been removed from the Python CLI; use `lk agent dev` for hot-reload
+2026-09-04 23:04:45,486 - DEBUG asyncio - Using proactor: IocpProactor 
+2026-09-04 23:04:45,489 - DEBUG livekit.agents - no system trust store found, setting SSL_CERT_FILE to the certifi bundle 
+2026-09-04 23:04:45,490 - INFO livekit.agents - starting worker {"version": "1.6.5", "rtc-version": "1.1.13"}
+2026-09-04 23:04:45,490 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.google", "version": "1.6.5"}
+2026-09-04 23:04:45,490 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.silero", "version": "1.6.5"}
+2026-09-04 23:04:45,490 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.openai", "version": "1.6.5"}
+2026-09-04 23:04:45,490 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.groq", "version": "1.6.5"}
+2026-09-04 23:04:45,490 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.deepgram", "version": "1.6.5"}
+2026-09-04 23:04:45,493 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.gladia", "version": "1.6.5"}
+2026-09-04 23:04:45,493 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.cartesia", "version": "1.6.5"}
+2026-09-04 23:04:45,494 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.elevenlabs", "version": "1.6.5"}
+2026-09-04 23:04:45,494 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.fishaudio", "version": "1.6.5"}
+2026-09-04 23:04:45,494 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.rime", "version": "1.6.5"}
+2026-09-04 23:04:45,494 - INFO livekit.agents - plugin registered {"plugin": "livekit.plugins.upliftai", "version": "1.6.5"}
+2026-09-04 23:04:45,521 - INFO livekit.agents - HTTP server listening on :49703
+2026-09-04 23:04:45,544 - INFO livekit.agents - initializing job runner {"tid": 18664}
+2026-09-04 23:04:45,544 - DEBUG asyncio - Using proactor: IocpProactor 
+2026-09-04 23:04:45,544 - INFO livekit.agents - job runner initialized {"tid": 18664, "elapsed_time": 0.0}
+2026-09-04 23:04:48,567 - INFO livekit.agents - registered worker {"agent_name": "uva-staging-agent", "deployment": "", "id": "AW_t2McHnhByZdU", "url": "wss://urdu-voice-agent-sdk-22to3tyc.livekit.cloud", "region": "India South", "protocol": 17}
+2026-09-04 23:05:03,755 - INFO livekit.agents - received job request {"job_id": "AJ_qZY5C3ZoGXnM", "dispatch_id": "AD_uKJ6KTd5tuTp", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf", "room_id": "RM_TNYqaBXnkKDT", "agent_name": "uva-staging-agent", "resuming": false, "enable_recording": false}
+2026-09-04 23:05:03,940 - DEBUG livekit.agents - received assignment {"agent_name": "uva-staging-agent", "room_id": "RM_TNYqaBXnkKDT", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf", "job_id": "AJ_qZY5C3ZoGXnM", "dispatch_id": "AD_uKJ6KTd5tuTp", "enable_recording": false}
+2026-09-04 23:05:04,241 - INFO livekit.agents - initializing job runner {"tid": 19060}
+2026-09-04 23:05:04,243 - DEBUG asyncio - Using proactor: IocpProactor 
+2026-09-04 23:05:04,243 - INFO livekit.agents - job runner initialized {"tid": 19060, "elapsed_time": 0.0}
+2026-09-04 23:05:20,503 - INFO livekit.agents - session pipeline room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf agent=f46e964e-a300-4e89-bbcf-582dc510d391 llm=gemini/gemini-3.6-flash tts=cartesia voice=cartesia-katie-friendly-fixer first_speaker=agent
+2026-09-04 23:05:20,503 - INFO livekit.agents - llm model remapped requested=gemini-2.5-flash runtime=gemini-3.6-flash
+2026-09-04 23:05:20,504 - INFO livekit.agents - cartesia audio profile channel=telephony encoding=pcm_s16le sample_rate=16000
+2026-09-04 23:05:20,507 - INFO livekit.agents - cartesia session extras sanitizer=True expressive_effective=False expressive_requested=False
+2026-09-04 23:05:20,508 - INFO livekit.agents - interruption_detection configured=NOT_GIVEN (check startup log for LiveKit's own 'adaptive interruption detector initialized' INFO line to confirm it's actually active, or a WARNING line if it fell back to VAD)
+2026-09-04 23:05:20,514 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency.
+2026-09-04 23:05:20,516 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency.
+2026-09-04 23:05:20,532 - DEBUG livekit.agents - input stream attached {"participant": null, "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+2026-09-04 23:05:20,545 - INFO livekit.agents - adaptive interruption detector initialized {"base_url": "https://agent-gateway.livekit.cloud/v1", "detection_interval": 0.1, "audio_prefix_duration": 1.0, "max_audio_duration": 3, "min_frames": 2, "threshold": null, "inference_timeout": 0.7}
+2026-09-04 23:05:20,557 - DEBUG livekit.agents - http_session(): creating a new httpclient ctx
+2026-09-04 23:05:21,098 - INFO livekit.agents - greeting provider prewarm finished room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf ms=563
+2026-09-04 23:05:21,100 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:05:21,101 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf initializing -> listening
+2026-09-04 23:05:21,102 - DEBUG livekit.agents - using audio io: `RoomIO` -> `AgentSession` -> `TranscriptSynchronizer` -> `AudioSinkProxy` -> `RoomIO` 
+2026-09-04 23:05:21,102 - DEBUG livekit.agents - using transcript io: `AgentSession` -> `TranscriptSynchronizer` -> `RoomIO`
+2026-09-04 23:05:21,102 - INFO livekit.agents - entrypoint session.start room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf ms=6297
+2026-09-04 23:05:21,107 - INFO google_genai.models - AFC is enabled with max remote calls: 10.
+2026-09-04 23:05:21,640 - DEBUG livekit.plugins.cartesia - Established new Cartesia TTS WebSocket connection {"cartesia_request_id": "9dd8b619-c2d2-458b-8b6d-64420e5e46ea"}
+2026-09-04 23:05:22,344 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:05:22,346 - DEBUG livekit.plugins.deepgram - Established new Deepgram STT WebSocket connection: {"headers": {"dg-project-id": "634aba41-fda4-4398-860a-72c2e9baa323", "dg-request-id": "01a06d98-b83f-7f73-b175-a2fea3e71a68", "Date": "Fri, 04 Sep 2026 18:05:20 GMT"}}
+2026-09-04 23:05:22,861 - DEBUG livekit.agents - adaptive interruption session created {"default_threshold": 0.656, "effective_threshold": 0.656, "user_override": false}
+2026-09-04 23:05:30,347 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf type=LLMMetrics ttft=9.241679699999622 duration=9.242239399999562 cancelled=True
+2026-09-04 23:05:36,637 - INFO livekit.agents - received job request {"job_id": "AJ_V8DKNuv5chaP", "dispatch_id": "AD_4wxgDmSJib4m", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf", "room_id": "RM_TDSaadDsuMgj", "agent_name": "uva-staging-agent", "resuming": false, "enable_recording": false}
+2026-09-04 23:05:36,814 - DEBUG livekit.agents - received assignment {"agent_name": "uva-staging-agent", "room_id": "RM_TDSaadDsuMgj", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf", "job_id": "AJ_V8DKNuv5chaP", "dispatch_id": "AD_4wxgDmSJib4m", "enable_recording": false}
+2026-09-04 23:05:36,938 - INFO livekit.agents - initializing job runner {"tid": 20960}
+2026-09-04 23:05:36,940 - DEBUG asyncio - Using proactor: IocpProactor 
+2026-09-04 23:05:36,940 - INFO livekit.agents - job runner initialized {"tid": 20960, "elapsed_time": 0.0}
+2026-09-04 23:05:39,698 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_reliable' closed unexpectedly
+2026-09-04 23:05:39,700 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_lossy' closed unexpectedly
+2026-09-04 23:05:39,700 - ERROR livekit - livekit::rtc_engine::rtc_session:646:livekit::rtc_engine::rtc_session - publisher data channel '_data_track' closed unexpectedly
+2026-09-04 23:05:39,877 - WARNING livekit - livekit_api::signal_client:608:livekit_api::signal_client - dropping pass-through signal — no stream available
+2026-09-04 23:05:39,885 - WARNING livekit.agents - room telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf disconnected before a participant joined — abandoning job
+2026-09-04 23:05:41,870 - DEBUG livekit.agents - input stream detached {"participant": null, "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+2026-09-04 23:05:42,041 - INFO livekit.agents - agent session closed (reason=user_initiated) — shutting the job down so the session row is closed and the concurrency slot released
+2026-09-04 23:05:42,050 - DEBUG livekit.agents - session closed {"reason": "user_initiated", "error": null}
+2026-09-04 23:05:42,061 - DEBUG livekit.agents - shutting down job task {"reason": "parent process shutdown", "user_initiated": false}
+2026-09-04 23:05:42,064 - DEBUG livekit.agents - job exiting {"reason": "parent process shutdown", "tid": 18664, "job_id": "AJ_qZY5C3ZoGXnM", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_V8y7g46CPpKf"}
+2026-09-04 23:05:44,939 - DEBUG livekit.agents - http_session(): closing the httpclient ctx
+2026-09-04 23:05:47,189 - INFO livekit.agents - session pipeline room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf agent=f46e964e-a300-4e89-bbcf-582dc510d391 llm=gemini/gemini-3.6-flash tts=cartesia voice=cartesia-katie-friendly-fixer first_speaker=agent
+2026-09-04 23:05:47,189 - INFO livekit.agents - llm model remapped requested=gemini-2.5-flash runtime=gemini-3.6-flash
+2026-09-04 23:05:47,190 - INFO livekit.agents - cartesia audio profile channel=telephony encoding=pcm_s16le sample_rate=16000
+2026-09-04 23:05:47,190 - INFO livekit.agents - cartesia session extras sanitizer=True expressive_effective=False expressive_requested=False
+2026-09-04 23:05:47,192 - INFO livekit.agents - interruption_detection configured=NOT_GIVEN (check startup log for LiveKit's own 'adaptive interruption detector initialized' INFO line to confirm it's actually active, or a WARNING line if it fell back to VAD)
+2026-09-04 23:05:47,194 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency.
+2026-09-04 23:05:47,194 - WARNING livekit.agents - metrics_collected is deprecated. Use session_usage_updated for usage tracking and ChatMessage.metrics for per-turn latency.
+2026-09-04 23:05:47,207 - DEBUG livekit.agents - input stream attached {"participant": null, "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+2026-09-04 23:05:47,210 - INFO livekit.agents - adaptive interruption detector initialized {"base_url": "https://agent-gateway.livekit.cloud/v1", "detection_interval": 0.1, "audio_prefix_duration": 1.0, "max_audio_duration": 3, "min_frames": 2, "threshold": null, "inference_timeout": 0.7}
+2026-09-04 23:05:47,214 - DEBUG livekit.agents - start reading stream {"participant": "sip_+923359164674", "source": "SOURCE_MICROPHONE"}
+2026-09-04 23:05:47,216 - DEBUG livekit.agents - http_session(): creating a new httpclient ctx
+2026-09-04 23:05:47,752 - INFO livekit.agents - greeting provider prewarm finished room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf ms=547
+2026-09-04 23:05:47,753 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:05:47,760 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf initializing -> listening
+2026-09-04 23:05:47,760 - DEBUG livekit.agents - using audio io: `RoomIO` -> `AgentSession` -> `TranscriptSynchronizer` -> `AudioSinkProxy` -> `RoomIO` 
+2026-09-04 23:05:47,760 - DEBUG livekit.agents - using transcript io: `AgentSession` -> `TranscriptSynchronizer` -> `RoomIO`
+2026-09-04 23:05:47,761 - INFO livekit.agents - entrypoint session.start room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf ms=2203
+2026-09-04 23:05:47,763 - INFO google_genai.models - AFC is enabled with max remote calls: 10.
+2026-09-04 23:05:47,786 - INFO livekit.agents - session opening first_speaker=agent custom_greeting_chars=59 allow_interruptions=True
+2026-09-04 23:05:47,787 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=say user_initiated=True
+2026-09-04 23:05:48,256 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:48,409 - DEBUG livekit.plugins.cartesia - Established new Cartesia TTS WebSocket connection {"cartesia_request_id": "d93cdf7d-f1f0-4973-9df4-88a660d4ef64"}
+2026-09-04 23:05:48,588 - DEBUG livekit.agents - aec warmup active, disabling interruptions for 3.00s
+2026-09-04 23:05:48,589 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:05:49,256 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:49,508 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:05:49,509 - DEBUG livekit.plugins.deepgram - Established new Deepgram STT WebSocket connection: {"headers": {"dg-project-id": "634aba41-fda4-4398-860a-72c2e9baa323", "dg-request-id": "01a06d99-225a-79e1-a8a8-bf86f82065ac", "Date": "Fri, 04 Sep 2026 18:05:47 GMT"}}
+2026-09-04 23:05:50,157 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=TTSMetrics ttft=None duration=1.727634500000022 cancelled=False        
+2026-09-04 23:05:50,308 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:51,305 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:51,567 - DEBUG livekit.agents - aec warmup expired, re-enabling interruptions
+2026-09-04 23:05:51,917 - DEBUG livekit.agents - adaptive interruption session created {"default_threshold": 0.656, "effective_threshold": 0.656, "user_override": false}
+2026-09-04 23:05:52,356 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:52,605 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "Hi, thanks for calling final. This is Lena. How can I help?"}
+2026-09-04 23:05:52,606 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='Hi, thanks for calling final. This is Lena. How can I help?'
+
+2026-09-04 23:05:52,606 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:05:52,608 - INFO livekit.agents - speech completed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=say
+2026-09-04 23:05:52,752 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:05:53,027 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:05:53,356 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:54,403 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:55,103 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:05:55,405 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:55,507 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:05:56,456 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:57,226 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text="I'm going to an over just a"
+2026-09-04 23:05:57,455 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:57,751 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:05:57,931 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text='Want to know by the services of your company'
+2026-09-04 23:05:58,504 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:58,805 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:05:59,498 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=True text='Want to know by the services of your company. What do you operate?'
+2026-09-04 23:05:59,499 - DEBUG livekit.agents - received user transcript {"user_transcript": "Want to know by the services of your company. What do you operate?", "language": "en-US", "transcript_delay": 1.0457289218902588}    
+2026-09-04 23:05:59,502 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788545158.4533489, "last_final_transcript_time": 1788545159.4990778, "speech_start_time": 1788545153.0277567, "delay_completed": false, "source": "stt", "end_of_turn_probability": null, "unlikely_threshold": null}
+2026-09-04 23:05:59,503 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply user_initiated=True
+2026-09-04 23:05:59,505 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=EOUMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:59,511 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:05:59,536 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "Want to know by the services of your company. What do you operate?"}
+2026-09-04 23:05:59,538 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='Want to know by the services of your company. What do you operate?'
+2026-09-04 23:05:59,539 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> thinking
+2026-09-04 23:05:59,563 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:05:59,750 - WARNING livekit.agents - provider prewarm llm failed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf:
+2026-09-04 23:06:00,554 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:01,554 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:02,168 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=LLMMetrics ttft=2.5000022999993234 duration=2.6553603000002113 cancelled=False
+2026-09-04 23:06:02,383 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf thinking -> speaking
+2026-09-04 23:06:02,603 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:02,760 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:03,157 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=LLMMetrics ttft=15.394832699999824 duration=15.395004500000141 cancelled=False
+2026-09-04 23:06:03,455 - INFO livekit.agents - turn_latency room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf e2e=4815ms stt=1046 turn=1050 llm=2500 tts_ttfb=219 tool=0(None)
+C:\Users\habib\Desktop\SDK\sdk-agent\worker\latency.py:590: RuntimeWarning: coroutine 'LocalParticipant.publish_data' was never awaited
+  self._room.local_participant.publish_data(
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback   
+2026-09-04 23:06:03,466 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=TTSMetrics ttft=None duration=1.2934120999998413 cancelled=False       
+2026-09-04 23:06:03,605 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:04,656 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:05,654 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:06,706 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:07,703 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:07,752 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:08,756 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:09,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:10,803 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:11,340 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "<emotion value=\"content\"/> We offer general consultations, lab work and blood draws, telehealth appointments, and specialist referrals. Which of these services can I help you schedule today?"}      
+2026-09-04 23:06:11,340 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='<emotion value="content"/> We offer general consultations, lab work and blood draws, telehealth appointments, and specialist referrals. Which of these services can I help you schedule today?'
+2026-09-04 23:06:11,340 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:11,343 - INFO livekit.agents - speech completed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply
+2026-09-04 23:06:11,768 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:11,803 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:12,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:12,853 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:13,803 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:13,854 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:13,970 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:14,758 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text='I wanna'
+2026-09-04 23:06:14,856 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:15,803 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text='I want to know if the appointment'
+2026-09-04 23:06:15,904 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:16,773 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text='I want to know about the appointment scheduling.'     
+2026-09-04 23:06:16,855 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:16,905 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:17,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:17,939 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=True text='I want to know about the appointment scheduling.'      
+2026-09-04 23:06:17,939 - DEBUG livekit.agents - received user transcript {"user_transcript": "I want to know about the appointment scheduling.", "language": "en-US", "transcript_delay": 1.4356980323791504}
+2026-09-04 23:06:17,940 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply user_initiated=True
+2026-09-04 23:06:17,943 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788545176.5039842, "last_final_transcript_time": 1788545177.9406626, "speech_start_time": 1788545171.7686863, "delay_completed": false, "source": "stt", "end_of_turn_probability": null, "unlikely_threshold": null}
+2026-09-04 23:06:17,945 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:06:17,948 - DEBUG livekit.agents - using preemptive generation
+ {"preemptive_lead_time": 0.00642848014831543}
+2026-09-04 23:06:17,948 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=EOUMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:17,960 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:17,968 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "I want to know about the appointment scheduling."}   
+2026-09-04 23:06:17,969 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='I want to know about the appointment scheduling.'
+2026-09-04 23:06:17,969 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> thinking
+2026-09-04 23:06:17,982 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:18,156 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:18,954 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:19,664 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=LLMMetrics ttft=1.4702079999997295 duration=1.7162013999995906 cancelled=False
+2026-09-04 23:06:19,794 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf thinking -> speaking
+2026-09-04 23:06:20,003 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:20,744 - INFO livekit.agents - turn_latency room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf e2e=4482ms stt=1437 turn=1440 llm=1470 tts_ttfb=135 tool=0(None)
+2026-09-04 23:06:20,745 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=TTSMetrics ttft=None duration=1.0868551000003208 cancelled=False       
+2026-09-04 23:06:21,004 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:22,054 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:22,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:23,055 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:24,106 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:25,104 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:26,153 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:26,536 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "<emotion value=\"calm\"/> I can help collect your details to set up an appointment for our team to confirm. What service and preferred date or time were you looking for?"}
+2026-09-04 23:06:26,537 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='<emotion value="calm"/> I can help collect your details to set up an appointment for our team to confirm. What service and preferred date or time were you looking for?'
+2026-09-04 23:06:26,537 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:26,541 - INFO livekit.agents - speech completed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply
+2026-09-04 23:06:27,154 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:27,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:28,204 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:29,204 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:29,368 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:30,093 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text="I'm looking"
+2026-09-04 23:06:30,255 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:31,089 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text="I'm looking for tomorrow, three"
+2026-09-04 23:06:31,255 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:32,083 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=True text="I'm looking for tomorrow, 3PM."
+2026-09-04 23:06:32,085 - DEBUG livekit.agents - received user transcript {"user_transcript": "I'm looking for tomorrow, 3PM.", "language": "en-US", "transcript_delay": 0.02975296974182129}
+2026-09-04 23:06:32,086 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply user_initiated=True
+2026-09-04 23:06:32,090 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:06:32,303 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:32,704 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=False text='Is that fine'
+2026-09-04 23:06:32,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:33,106 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:33,107 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788545192.754735, "last_final_transcript_time": 1788545192.0850642, "speech_start_time": 1788545177.9446573, "delay_completed": false, "source": "vad", "end_of_turn_probability": null, "unlikely_threshold": null}
+2026-09-04 23:06:33,109 - DEBUG livekit.agents - using preemptive generation
+ {"preemptive_lead_time": 1.0236577987670898}
+2026-09-04 23:06:33,109 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=EOUMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:33,110 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "I'm looking for tomorrow, 3PM."}
+2026-09-04 23:06:33,111 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text="I'm looking for tomorrow, 3PM."
+2026-09-04 23:06:33,112 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> thinking
+2026-09-04 23:06:33,134 - INFO livekit.agents - live user speech room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf is_final=True text='Is that fine for you?'
+2026-09-04 23:06:33,135 - DEBUG livekit.agents - received user transcript {"user_transcript": "Is that fine for you?", "language": "en-US"}
+2026-09-04 23:06:33,138 - DEBUG livekit.agents - user turn committed {"last_speaking_time": 1788545192.9733253, "last_final_transcript_time": 1788545193.1359596, "speech_start_time": 1788545193.1369598, "delay_completed": false, "source": "stt", "end_of_turn_probability": null, "unlikely_threshold": null}
+2026-09-04 23:06:33,146 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf thinking -> listening
+2026-09-04 23:06:33,147 - WARNING livekit.agents - speech interrupted room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply (no audio/text committed — caller may still be speaking or a new turn cancelled this reply)
+2026-09-04 23:06:33,149 - INFO livekit.agents - speech created room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply user_initiated=True
+2026-09-04 23:06:33,150 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=EOUMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:33,155 - WARNING livekit.plugins.google - Model gemini-3.6-flash is Gemini 3 which does not support thinking_budget. Please use thinking_level ('low' or 'high') instead. Ignoring thinking_budget.
+2026-09-04 23:06:33,182 - DEBUG livekit.agents - conversation_item_added {"role": "user", "text": "Is that fine for you?"}
+2026-09-04 23:06:33,183 - INFO livekit.agents - conversation turn [USER] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='Is that fine for you?'
+2026-09-04 23:06:33,185 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> thinking
+2026-09-04 23:06:33,305 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:34,355 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:35,353 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:35,453 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=LLMMetrics ttft=2.216025699999591 duration=2.2963152000002083 cancelled=False
+2026-09-04 23:06:35,588 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf thinking -> speaking
+2026-09-04 23:06:36,327 - INFO livekit.agents - turn_latency room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf e2e=3234ms stt=0 turn=0 llm=2216 tts_ttfb=210 tool=0(None)
+2026-09-04 23:06:36,327 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=TTSMetrics ttft=None duration=0.9514877999999953 cancelled=False       
+2026-09-04 23:06:36,405 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:37,403 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:37,753 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:38,455 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:39,455 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:40,455 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:40,880 - DEBUG livekit.agents - conversation_item_added {"role": "assistant", "text": "<emotion value=\"content\"/> Tomorrow at three P M works great for an intake request. What is your full name, please?"}     
+2026-09-04 23:06:40,881 - INFO livekit.agents - conversation turn [AGENT] room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf text='<emotion value="content"/> Tomorrow at three P M works great for an intake request. What is your full name, please?'
+2026-09-04 23:06:40,881 - INFO livekit.agents - agent state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:40,884 - INFO livekit.agents - speech completed room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf source=generate_reply
+2026-09-04 23:06:41,219 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:41,504 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:42,435 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:42,436 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:42,506 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:42,751 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=STTMetrics ttft=None duration=0.0 cancelled=None
+2026-09-04 23:06:42,835 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:42,969 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf listening -> speaking
+2026-09-04 23:06:43,553 - INFO livekit.agents - session metrics room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf type=VADMetrics ttft=None duration=None cancelled=None
+2026-09-04 23:06:44,359 - INFO livekit.agents - closing agent session due to participant disconnect (disable via `RoomInputOptions.close_on_disconnect=False`) {"room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf", "participant": "sip_+923359164674", "reason": "CLIENT_INITIATED"}
+2026-09-04 23:06:44,360 - DEBUG livekit.agents - stream closed {"participant": "sip_+923359164674", "source": "SOURCE_MICROPHONE"}
+2026-09-04 23:06:44,368 - DEBUG livekit.agents - input stream detached {"participant": "sip_+923359164674", "source": "SOURCE_UNKNOWN", "accepted_sources": ["SOURCE_MICROPHONE"]}
+2026-09-04 23:06:44,374 - INFO livekit.agents - user state room=telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf speaking -> listening
+2026-09-04 23:06:44,551 - INFO livekit.agents - agent session closed (reason=participant_disconnected) — shutting the job down so the session row is closed and the concurrency slot released
+2026-09-04 23:06:44,552 - DEBUG livekit.agents - session closed {"reason": "participant_disconnected", "error": null}
+2026-09-04 23:06:44,553 - DEBUG livekit.agents - shutting down job task {"reason": "participant_disconnected", "user_initiated": true}
+2026-09-04 23:06:44,555 - DEBUG livekit.agents - job exiting {"reason": "participant_disconnected", "tid": 19060, "job_id": "AJ_V8DKNuv5chaP", "room": "telephony-inbound-c649a6c1-0303-4aff-b086-0fc05960d9ea-_+923359164674_94bqyFHqmYEf"}
+2026-09-04 23:06:44,555 - WARNING livekit - livekit_ffi::server:260:livekit_ffi::server - Attempted to drop unknown FFI handle: 46
+2026-09-04 23:06:49,163 - DEBUG livekit.agents - http_session(): closing the httpclient ctx

@@ -39,6 +39,7 @@ from .latency import (
     wire_barge_in_flush,
     wire_turn_latency,
 )
+from .telephony_tts import force_cartesia_for_telephony, force_groq_for_telephony
 from .session_opening import apply_session_opening
 from .stale_jobs import (
     abandon_stale_job_if_needed,
@@ -194,6 +195,26 @@ async def build_session(
     from livekit.agents import AgentSession  # lazy: needs the livekit runtime
     from livekit.agents.log import logger
 
+    cfg, provider_voice_id, cartesia_forced = force_cartesia_for_telephony(
+        cfg, provider_voice_id, audio_channel=audio_channel
+    )
+    if cartesia_forced:
+        logger.warning(
+            "telephony TTS remapped to Cartesia room=%s agent=%s "
+            "(Rime under-runs realtime on PSTN — matching test-agent Cartesia path)",
+            room_name,
+            cfg.agent_id,
+        )
+    cfg, groq_forced = force_groq_for_telephony(cfg, audio_channel=audio_channel)
+    if groq_forced:
+        logger.warning(
+            "telephony LLM remapped to Groq room=%s agent=%s model=%s "
+            "(Gemini 3.6 Flash TTFT ~1.5–3s+ dominates voice-to-voice on PSTN)",
+            room_name,
+            cfg.agent_id,
+            cfg.llm_model,
+        )
+
     # tts_voice_id can be NULL for an agent created after migration 0016 but before Phase 3's
     # app-layer sync ships (docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md Phase 1 finding,
     # ADR-036) — resolve the fallback ONCE here, so every adapter downstream can trust it's set.
@@ -218,6 +239,7 @@ async def build_session(
         stt=components.stt,
         logger=logger,
         room_name=room_name,
+        await_llm=(audio_channel == "telephony"),
     )
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
@@ -633,7 +655,12 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         audio_channel = "telephony"
 
     async def _setup_and_start(
-        session_obj: Any, cfg_obj: AgentConfig, agent_obj: Any, md_obj: dict[str, str]
+        session_obj: Any,
+        cfg_obj: AgentConfig,
+        agent_obj: Any,
+        md_obj: dict[str, str],
+        *,
+        channel: str,
     ) -> None:
         import time as _time
 
@@ -786,7 +813,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         await session_obj.start(
             agent_obj,
             room=ctx.room,
-            room_options=session_room_options(),
+            room_options=session_room_options(audio_channel=channel),
         )
         _entry_logger.info(
             "entrypoint session.start room=%s ms=%s",
@@ -802,7 +829,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         )
         agent = build_agent(cfg)
 
-        await _setup_and_start(session, cfg, agent, early_md)
+        await _setup_and_start(session, cfg, agent, early_md, channel=audio_channel)
 
         from livekit.agents.log import logger as _opening_logger
 
@@ -811,7 +838,10 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             wait_for_session_participant(ctx, already_connected=True)
         )
         await await_greeting_prewarm(
-            greeting_prewarm, logger=_opening_logger, room_name=room_name
+            greeting_prewarm,
+            logger=_opening_logger,
+            room_name=room_name,
+            timeout=5.0,
         )
         try:
             await wait_task
@@ -843,11 +873,16 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         )
         agent = build_agent(cfg)
 
-        await _setup_and_start(session, cfg, agent, participant_md)
+        await _setup_and_start(
+            session, cfg, agent, participant_md, channel=resolved_channel
+        )
         from livekit.agents.log import logger as _opening_logger
 
         await await_greeting_prewarm(
-            greeting_prewarm, logger=_opening_logger, room_name=room_name
+            greeting_prewarm,
+            logger=_opening_logger,
+            room_name=room_name,
+            timeout=5.0,
         )
         await apply_session_opening(
             session,
@@ -1014,5 +1049,11 @@ if __name__ == "__main__":
             prewarm_fnc=prewarm,
             request_fnc=reject_stale_job_request,
             agent_name=_agent_name,
+            # Dev default is 0 idle processes → every inbound call pays ~15–20s cold start
+            # ("no warmed process available"). Keep at least one warm job runner ready.
+            num_idle_processes=max(1, int(os.getenv("LIVEKIT_NUM_IDLE_PROCESSES", "1"))),
+            initialize_process_timeout=float(
+                os.getenv("LIVEKIT_INITIALIZE_PROCESS_TIMEOUT", "60")
+            ),
         )
     )

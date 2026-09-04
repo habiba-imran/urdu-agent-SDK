@@ -181,10 +181,21 @@ async def prewarm_stt(stt: Any) -> None:
     await _invoke_provider_prewarm(prewarm)
 
 
-def session_room_options() -> Any:
-    """Room I/O options for fast teardown when the browser disconnects (UVA-15)."""
+def session_room_options(*, audio_channel: str = "webrtc") -> Any:
+    """Room I/O options for session teardown.
+
+    Browser WebRTC: close + delete room when the participant disconnects (UVA-15).
+    Telephony: still close on disconnect, but do **not** delete the LiveKit room from
+    the agent side — Telnyx/SIP owns hangup; aggressive room delete mid-playout has
+    cut PSTN legs while TTS was still flushing.
+    """
     from livekit.agents.voice.room_io.types import RoomOptions
 
+    if audio_channel == "telephony":
+        return RoomOptions(
+            close_on_disconnect=True,
+            delete_room_on_close=False,
+        )
     return RoomOptions(
         close_on_disconnect=True,
         delete_room_on_close=True,
@@ -323,17 +334,23 @@ def schedule_provider_prewarm(
     stt: Any,
     logger: Any | None = None,
     room_name: str | None = None,
+    await_llm: bool = False,
 ) -> asyncio.Task[None]:
     """Start provider warm-up without blocking ``session.start()`` (UVA-2).
 
     Returns a task that completes when **TTS + STT** are warm — await it before
     ``apply_session_opening`` so the greeting does not pay a cold websocket.
-    LLM warm-up starts only after that (still fire-and-forget for the caller).
+
+    LLM warm-up always runs in the background after TTS/STT. Never block the
+    opening greeting on LLM prewarm — that added 10–15s of dead air on PSTN when
+    Gemini was slow/failing, while the caller already heard ringing.
+    ``await_llm`` is accepted for API compatibility but ignored.
     """
+    del await_llm  # kept for call-site compatibility; greeting must not wait on LLM
 
     async def _llm() -> None:
         try:
-            await asyncio.wait_for(prewarm_llm(llm), timeout=5.0)
+            await asyncio.wait_for(prewarm_llm(llm), timeout=12.0)
         except Exception as exc:
             if logger is not None:
                 logger.warning(
@@ -357,10 +374,8 @@ def schedule_provider_prewarm(
                     room_name or "?",
                     exc,
                 )
-        finally:
-            # Defer LLM cold-start until after greeting providers — concurrent ChatContext
-            # use can stall asyncio.gather/waiters on this stack.
-            asyncio.create_task(_llm())
+        # Always background LLM — greeting must start as soon as TTS/STT are warm.
+        asyncio.create_task(_llm())
 
     return asyncio.create_task(_greeting())
 

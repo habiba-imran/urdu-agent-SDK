@@ -239,8 +239,10 @@ def test_cartesia_tts_telephony_audio_profile():
     tts = build_cartesia_tts(
         _CARTESIA_REAL_VOICE_ID, "en", audio_channel="telephony"
     )
-    assert tts._opts.encoding == "pcm_mulaw"
-    assert tts._opts.sample_rate == 8000
+    # LiveKit plugin hardcodes AudioEmitter mime_type=audio/pcm (linear).
+    # pcm_mulaw through that path garbles PSTN — keep linear PCM and let LiveKit SIP resample.
+    assert tts._opts.encoding == "pcm_s16le"
+    assert tts._opts.sample_rate == 16000
 
 
 def test_cartesia_tts_applies_stored_options():

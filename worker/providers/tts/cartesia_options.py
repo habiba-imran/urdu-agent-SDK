@@ -29,10 +29,13 @@ CARTESIA_TTS_DEFAULTS: dict = {
     "expressive": False,
 }
 
-# Phase C — match Cartesia output to the downstream audio leg (docs/cartesia_humanization.md Layer 6).
+# Phase C — match Cartesia output to the LiveKit agent audio path.
+# The installed livekit-plugins-cartesia AudioEmitter is hardcoded to mime_type="audio/pcm"
+# (linear). Requesting pcm_mulaw makes LiveKit interpret µ-law bytes as s16le → garbled /
+# unintelligible PSTN audio. LiveKit SIP resamples pcm_s16le → PCMU for Telnyx.
 CARTESIA_AUDIO_PROFILES: dict[str, dict[str, str | int]] = {
     "webrtc": {"encoding": "pcm_s16le", "sample_rate": 16000},
-    "telephony": {"encoding": "pcm_mulaw", "sample_rate": 8000},
+    "telephony": {"encoding": "pcm_s16le", "sample_rate": 16000},
 }
 
 _MIN_SPEED = 0.6

@@ -48,8 +48,32 @@ def test_gemini_voice_path_disables_thinking(monkeypatch):
     monkeypatch.setitem(sys.modules, "livekit.plugins.google", fake_google)
     monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
     monkeypatch.setitem(sys.modules, "google.genai", SimpleNamespace(types=fake_types))
+    # Advertised 2.5-flash remaps to Gemini 3 — must use thinking_level (budget ignored).
     gemini_mod.build("gemini-2.5-flash")
+    assert captured["model"] == gemini_mod._DEFAULT_GEMINI_MODEL
     assert captured["thinking_config"] == {"thinking_level": "minimal"}
+    assert captured["temperature"] == 0.4
+    assert captured["max_output_tokens"] == 256
+
+
+def test_gemini_25_path_uses_thinking_budget(monkeypatch):
+    captured: dict = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    fake_types = SimpleNamespace(
+        HttpOptions=lambda timeout: SimpleNamespace(timeout=timeout),
+        ThinkingConfig=lambda **kwargs: kwargs,
+    )
+    monkeypatch.setitem(sys.modules, "livekit.plugins.google", SimpleNamespace(LLM=FakeLLM))
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
+    monkeypatch.setitem(sys.modules, "google.genai", SimpleNamespace(types=fake_types))
+    monkeypatch.setattr(gemini_mod, "_DEPRECATED_GEMINI_MODELS", {})
+    gemini_mod.build("gemini-2.5-flash-preview")
+    assert captured["model"] == "gemini-2.5-flash-preview"
+    assert captured["thinking_config"] == {"thinking_budget": 0}
 
 
 def test_deepgram_stt_voice_options(monkeypatch):

@@ -60,6 +60,12 @@ def test_session_room_options_fast_teardown():
     assert opts.delete_room_on_close is True
 
 
+def test_session_room_options_telephony_keeps_room():
+    opts = session_room_options(audio_channel="telephony")
+    assert opts.close_on_disconnect is True
+    assert opts.delete_room_on_close is False
+
+
 def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent():
     session = MagicMock()
     logger = MagicMock()

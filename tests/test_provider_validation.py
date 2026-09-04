@@ -72,6 +72,22 @@ def test_defaults_resolve_to_ur_gladia_gemini_uplift(conn):
     assert resolved["tts_options"] == {}
 
 
+def test_english_create_defaults_to_groq_llm(conn):
+    resolved = _call(
+        conn,
+        agent_language="en",
+        # Simulate CreateAgentBody's legacy llm_model Field default with llm_provider omitted.
+        llm_model="gemini-2.5-flash",
+        stt_provider="deepgram",
+        stt_model="nova-3",
+        tts_provider="cartesia",
+        tts_voice_id="cartesia-sonic-default",
+        voice_id=None,
+    )
+    assert resolved["llm_provider"] == "groq"
+    assert resolved["llm_model"] == "openai/gpt-oss-20b"
+
+
 def test_voice_id_and_tts_voice_id_both_get_the_resolved_value(conn):
     """The sync fix this phase closes: whichever of voice_id/tts_voice_id the caller gave, BOTH
     columns must end up with the same resolved value."""
