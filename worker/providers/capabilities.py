@@ -150,7 +150,7 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
                     "meta-llama/llama-4-scout-17b-16e-instruct",
                     "moonshotai/kimi-k2-instruct-0905",
                 ],
-                # Free-tier default: qwen without reasoning (gpt-oss 8k TPM + reasoning 429s).
+                # Live free-tier default (llama-3.1-8b-instant retired 2026-08-16).
                 "default_model": "qwen/qwen3.6-27b",
             },
         },

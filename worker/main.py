@@ -47,6 +47,7 @@ from .stale_jobs import (
     wait_for_session_participant,
 )
 from .prompt_compact import compact_prompt_for_groq
+from .prompt_dump import dump_session_prompt
 from .tools import FIXED_TOOLS, AgentUserdata, session_tools
 
 # OUR fixed operating instructions (Uplift default). Cartesia/Rime agents get an extended block
@@ -90,7 +91,8 @@ def build_agent(cfg: AgentConfig) -> Any:
     from livekit.agents.llm import ChatContext
     from livekit.agents.log import logger
 
-    persona_prompt = cfg.prompt
+    persona_prompt = cfg.prompt or ""
+    compacted = False
     if (cfg.llm_provider or "").lower() == "groq":
         persona_prompt, compacted = compact_prompt_for_groq(cfg.prompt)
         if compacted:
@@ -101,13 +103,36 @@ def build_agent(cfg: AgentConfig) -> Any:
                 len(persona_prompt),
             )
 
+    system_instructions = build_system_instructions(cfg) + _language_directive(
+        cfg.agent_language
+    )
+    tools = session_tools(tools_base_url=cfg.tools_base_url)
+    tool_names = [getattr(t, "__name__", str(t)) for t in tools]
+    dump_path = dump_session_prompt(
+        agent_id=cfg.agent_id,
+        llm_provider=cfg.llm_provider or "",
+        llm_model=cfg.llm_model or "",
+        system_instructions=system_instructions,
+        persona_raw=cfg.prompt or "",
+        persona_effective=_PERSONA_FRAME + persona_prompt,
+        tools_registered=tool_names,
+        compacted=compacted,
+    )
+    if dump_path is not None:
+        logger.info(
+            "session prompt dumped path=%s system_chars=%s persona_chars=%s tools=%s",
+            dump_path,
+            len(system_instructions),
+            len(persona_prompt),
+            ",".join(tool_names),
+        )
+
     persona_ctx = ChatContext.empty()
     persona_ctx.add_message(role="system", content=_PERSONA_FRAME + persona_prompt)
     return Agent(
-        instructions=build_system_instructions(cfg)
-        + _language_directive(cfg.agent_language),
+        instructions=system_instructions,
         chat_ctx=persona_ctx,
-        tools=session_tools(tools_base_url=cfg.tools_base_url),
+        tools=tools,
     )
 
 

@@ -4,15 +4,16 @@ Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py is
 file. `model` constructor arg verified directly against the installed livekit-plugins-groq==1.6.5
 package (inspect.signature), not assumed from docs: real keyword-only param.
 
-``getProviderCapabilities()`` still advertises the historical Groq Llama IDs so existing agent
-rows and client pickers keep validating. Groq retired those IDs on 2026-08-16 (developer/free
-tier), so this adapter remaps them to Groq's documented replacements — same pattern as
-``worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS``.
+``getProviderCapabilities()`` still advertises historical Groq Llama IDs so existing agent rows
+and client pickers keep validating. Groq retired those IDs on 2026-08-16 (developer/free tier),
+including ``llama-3.1-8b-instant`` — this adapter remaps them to a live model (same pattern as
+``worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS``).
 
 Free-tier voice default is ``qwen/qwen3.6-27b`` with ``reasoning_effort=none`` and a tight
-``max_completion_tokens`` cap. ``openai/gpt-oss-20b`` is still remapped here because free-tier
-TPM is only 8k and gpt-oss spends completion budget on a reasoning channel — PSTN prompts of
-~3–5k tokens then 429 within 1–2 turns. Paid/dev tier can override via ``GROQ_LLM_MODEL``.
+``max_completion_tokens`` cap. ``openai/gpt-oss-20b`` is remapped unless ``GROQ_ALLOW_GPT_OSS=1``
+because free-tier ITPM is tight and gpt-oss burns tokens on reasoning. Override via
+``GROQ_LLM_MODEL``. Prompt size (not model "size") is what usually causes 429s — keep
+``GROQ_PROMPT_SOFT_CHARS`` low and check ``docs/last_session_prompt.txt``.
 
 Installing this package also pulls in livekit-plugins-openai as a real dependency — Groq's plugin
 is built on the OpenAI-compatible interface (base_url defaults to
@@ -34,18 +35,17 @@ from typing import Any
 
 import httpx
 
-# Free-tier voice: qwen3.6-27b + reasoning none. gpt-oss-20b is fast but burns TPM on
-# reasoning tokens and 429s under 8k TPM with front-desk-sized prompts.
+# Live free-tier default. llama-3.1-8b-instant was decommissioned 2026-08-16 — do not use it.
 _DEFAULT_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
 # Spoken replies stay short; reserving a large completion budget inflates free-tier TPM use.
 _MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "96"))
 _DEPRECATED_GROQ_MODELS = {
+    # Retired 2026-08-16 (and related legacy IDs) → current free-tier default.
     "llama-3.3-70b-versatile": _DEFAULT_GROQ_MODEL,
     "llama-3.1-8b-instant": _DEFAULT_GROQ_MODEL,
     "meta-llama/llama-4-scout-17b-16e-instruct": _DEFAULT_GROQ_MODEL,
     "qwen/qwen3-32b": _DEFAULT_GROQ_MODEL,
     "moonshotai/kimi-k2-instruct-0905": _DEFAULT_GROQ_MODEL,
-    # Free-tier TPM: prefer qwen without reasoning unless caller sets GROQ_LLM_MODEL=gpt-oss.
     "openai/gpt-oss-20b": _DEFAULT_GROQ_MODEL,
     "openai/gpt-oss-120b": _DEFAULT_GROQ_MODEL,
 }
@@ -55,7 +55,7 @@ def build(model: str) -> Any:
     from livekit.plugins import groq
 
     resolved_model = _DEPRECATED_GROQ_MODELS.get(model, model or _DEFAULT_GROQ_MODEL)
-    # If env pins gpt-oss explicitly as the default, honor a direct request for it.
+    # If env pins gpt-oss explicitly, honor a direct request for it.
     if model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b") and os.getenv(
         "GROQ_ALLOW_GPT_OSS", ""
     ).strip() in ("1", "true", "yes"):

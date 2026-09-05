@@ -54,6 +54,9 @@ def test_groq_llm_constructs_for_english():
         )
     llm = build_groq_llm("llama-3.3-70b-versatile")
     assert llm.model == "qwen/qwen3.6-27b"
+    # Retired 2026-08-16 — must remap, never call Groq with this id.
+    retired = build_groq_llm("llama-3.1-8b-instant")
+    assert retired.model == "qwen/qwen3.6-27b"
     live = build_groq_llm("qwen/qwen3.6-27b")
     assert live.model == "qwen/qwen3.6-27b"
     # Free-tier: gpt-oss remaps to qwen unless GROQ_ALLOW_GPT_OSS=1
