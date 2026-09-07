@@ -226,9 +226,17 @@ async def build_session(
     Returns ``(session, cfg, greeting_prewarm_task)``. Await ``greeting_prewarm_task`` before
     ``apply_session_opening`` so the first utterance does not hit a cold TTS websocket.
     """
+    from dataclasses import replace
+
     cfg, provider_voice_id = await asyncio.to_thread(
         load_agent_session_bundle, md["agent_id"], md["tenant_id"]
     )
+
+    # Mint/dispatch may carry a greeting override — prefer it so turn-zero never races
+    # a just-synced agents.greeting row (and never falls into LLM generate_reply).
+    mint_greeting = (md.get("greeting") or "").strip()
+    if mint_greeting and mint_greeting != (cfg.greeting or "").strip():
+        cfg = replace(cfg, greeting=mint_greeting, first_speaker="agent")
 
     from livekit.agents import AgentSession  # lazy: needs the livekit runtime
     from livekit.agents.log import logger
@@ -821,8 +829,18 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             minutes = max(1, math.ceil(elapsed_sec / 60))
             increment("livekit_agent_min", minutes)
 
+        async def _persist_session_recording(reason: str = "") -> None:
+            from worker.session_recording import finalize_and_persist_session_recording
+
+            await finalize_and_persist_session_recording(
+                job_ctx=ctx,
+                room_name=ctx.room.name,
+                tenant_id=md_obj.get("tenant_id", ""),
+            )
+
         ctx.add_shutdown_callback(_release_quota_slot)
         ctx.add_shutdown_callback(_record_agent_minutes)
+        ctx.add_shutdown_callback(_persist_session_recording)
 
         def _on_session_close(ev: Any) -> None:
             from livekit.agents.log import logger
@@ -854,10 +872,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         if getattr(session_obj, "userdata", None) is not None:
             session_obj.userdata.latency_tracker = latency_tracker
 
+        # Force local RecorderIO audio capture even when LiveKit Cloud sends
+        # enable_recording=false on the job. Audio-only — skip Cloud OTLP upload.
         await session_obj.start(
             agent_obj,
             room=ctx.room,
             room_options=session_room_options(audio_channel=channel),
+            record={"audio": True, "traces": False, "logs": False, "transcript": False},
         )
         _entry_logger.info(
             "entrypoint session.start room=%s ms=%s",
@@ -1093,9 +1114,9 @@ if __name__ == "__main__":
             prewarm_fnc=prewarm,
             request_fnc=reject_stale_job_request,
             agent_name=_agent_name,
-            # Dev default is 0 idle processes → every inbound call pays ~15–20s cold start
-            # ("no warmed process available"). Keep at least one warm job runner ready.
-            num_idle_processes=max(1, int(os.getenv("LIVEKIT_NUM_IDLE_PROCESSES", "1"))),
+            # Keep at least two warm job runners ready — first inbound call after idle
+            # otherwise pays ~15–20s ("no warmed process available") on local Windows.
+            num_idle_processes=max(2, int(os.getenv("LIVEKIT_NUM_IDLE_PROCESSES", "2"))),
             initialize_process_timeout=float(
                 os.getenv("LIVEKIT_INITIALIZE_PROCESS_TIMEOUT", "60")
             ),

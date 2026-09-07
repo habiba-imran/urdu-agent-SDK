@@ -2212,24 +2212,30 @@ class TelephonyService:
             if is_uuid:
                 row = conn.execute(
                     """
-                    select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                           from_number, to_number, recipient, platform_status, provider_status, outcome,
-                           duration_sec, error_code, error_message, started_at, ended_at,
-                           raw_livekit_sip_participant_status
-                    from telephony_calls
-                    where tenant_id = %s and (id = %s or livekit_sip_call_id = %s or room_name = %s)
+                    select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                           tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                           tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                           tc.raw_livekit_sip_participant_status,
+                           coalesce(tc.recording_url, s.recording_url) as recording_url,
+                           s.transcript
+                    from telephony_calls tc
+                    left join sessions s on s.room_name = tc.room_name
+                    where tc.tenant_id = %s and (tc.id = %s or tc.livekit_sip_call_id = %s or tc.room_name = %s)
                     """,
                     (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id),
                 ).fetchone()
             else:
                 row = conn.execute(
                     """
-                    select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                           from_number, to_number, recipient, platform_status, provider_status, outcome,
-                           duration_sec, error_code, error_message, started_at, ended_at,
-                           raw_livekit_sip_participant_status
-                    from telephony_calls
-                    where tenant_id = %s and (livekit_sip_call_id = %s or livekit_sip_call_id_full = %s or livekit_agent_dispatch_id = %s or room_name = %s or external_customer_ref = %s)
+                    select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                           tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                           tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                           tc.raw_livekit_sip_participant_status,
+                           coalesce(tc.recording_url, s.recording_url) as recording_url,
+                           s.transcript
+                    from telephony_calls tc
+                    left join sessions s on s.room_name = tc.room_name
+                    where tc.tenant_id = %s and (tc.livekit_sip_call_id = %s or tc.livekit_sip_call_id_full = %s or tc.livekit_agent_dispatch_id = %s or tc.room_name = %s or tc.external_customer_ref = %s)
                     """,
                     (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id),
                 ).fetchone()
@@ -2251,18 +2257,21 @@ class TelephonyService:
                     res = [c for c in res if c.get("agent_id") == assigned_agent_id]
                 return res[:limit]
             sql = """
-                select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                       from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at,
-                       raw_livekit_sip_participant_status
-                from telephony_calls
-                where tenant_id = %s
+                select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                       tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                       tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                       tc.raw_livekit_sip_participant_status,
+                       coalesce(tc.recording_url, s.recording_url) as recording_url,
+                       s.transcript
+                from telephony_calls tc
+                left join sessions s on s.room_name = tc.room_name
+                where tc.tenant_id = %s
             """
             params: list[Any] = [tenant_id]
             if assigned_agent_id:
-                sql += " and agent_id = %s"
+                sql += " and tc.agent_id = %s"
                 params.append(assigned_agent_id)
-            sql += " order by created_at desc limit %s"
+            sql += " order by tc.created_at desc limit %s"
             params.append(limit)
             return [self._call_from_row(row) for row in conn.execute(sql, tuple(params)).fetchall()]
     def disable_number(self, tenant_id: str, number_id: str, force: bool = False) -> dict[str, Any]:
@@ -2413,7 +2422,7 @@ class TelephonyService:
         }
 
     def _call_from_row(self, row: Any) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "id": row[0],
             "tenant_id": row[1],
             "session_id": row[2],
@@ -2434,3 +2443,9 @@ class TelephonyService:
             "ended_at": str(row[17]) if row[17] else None,
             "raw_livekit_sip_participant_status": row[18] if len(row) > 18 else None,
         }
+        if len(row) > 19 and row[19]:
+            out["recording_url"] = row[19]
+            out["recordingUrl"] = row[19]
+        if len(row) > 20 and row[20] is not None:
+            out["transcript"] = row[20]
+        return out

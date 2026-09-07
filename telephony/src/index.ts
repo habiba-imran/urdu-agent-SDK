@@ -215,6 +215,11 @@ export class TelephonyClient {
     return this.request('listCallRecords', toSnakeCaseBody(filters));
   }
 
+  getSessionByRoom(roomName: string): Promise<JsonObject> {
+    assertNonEmpty(roomName, 'roomName');
+    return this.request('getSessionByRoom', { room_name: roomName });
+  }
+
   disableNumber(numberId: string): Promise<JsonObject> {
     assertNonEmpty(numberId, 'numberId');
     return this.request('disableNumber', { number_id: numberId }, { number_id: numberId });

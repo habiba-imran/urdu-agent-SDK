@@ -25,7 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from dbconn import conn_kwargs  # noqa: E402
 
 # Short process cache so repeat connects / warm demos skip a remote TLS+RLS round-trip.
-_CONFIG_CACHE_TTL_SEC = 45.0
+# Keep short: prepare may sync ``agents.greeting`` seconds before Connect; a long TTL
+# would serve a stale empty greeting and force LLM ``generate_reply`` on turn zero.
+_CONFIG_CACHE_TTL_SEC = 8.0
 _config_cache: dict[tuple[str, str], tuple[float, "AgentConfig", str | None]] = {}
 
 
@@ -161,7 +163,11 @@ def load_agent_session_bundle(
             return hit[1], hit[2]
 
     cfg, provider_voice_id = _load_agent_and_provider_voice(agent_id, tenant_id)
-    _config_cache[key] = (now, cfg, provider_voice_id)
+    # Never cache empty-greeting rows — prepare may write greeting moments later.
+    if (cfg.greeting or "").strip():
+        _config_cache[key] = (now, cfg, provider_voice_id)
+    else:
+        _config_cache.pop(key, None)
     return cfg, provider_voice_id
 
 

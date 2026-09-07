@@ -255,11 +255,25 @@ _hits: dict[str, list[float]] = defaultdict(list)
 
 class SessionBody(BaseModel):
     agent_id: str
+    greeting: str | None = None
+    custom_greeting: str | None = None
+    greeting_mode: str | None = None
 
 
 class DevSessionBody(BaseModel):
     agentId: str
     publishableKey: str | None = None
+    greeting: str | None = None
+    customGreeting: str | None = None
+    greetingMode: str | None = None
+
+
+def _opening_greeting(*candidates: str | None) -> str | None:
+    for value in candidates:
+        text = (value or "").strip()
+        if text:
+            return text
+    return None
 
 
 class RefreshBody(BaseModel):
@@ -350,8 +364,15 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
 
 
 async def _dispatch_agent(
-    room_name: str, *, tenant_id: str, agent_id: str
+    room_name: str,
+    *,
+    tenant_id: str,
+    agent_id: str,
+    greeting: str | None = None,
 ) -> None:
+    metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
+    if greeting:
+        metadata["greeting"] = greeting
     async with api.LiveKitAPI(
         url=_LK_URL,
         api_key=_LK_KEY,
@@ -361,9 +382,7 @@ async def _dispatch_agent(
             api.CreateAgentDispatchRequest(
                 agent_name=_LK_AGENT_NAME,
                 room=room_name,
-                metadata=json.dumps(
-                    {"tenant_id": tenant_id, "agent_id": agent_id}
-                ),
+                metadata=json.dumps(metadata),
             )
         )
 
@@ -397,7 +416,9 @@ def _session_response(payload: dict) -> JSONResponse:
     )
 
 
-def _run_dispatch_background(room_name: str, tenant_id: str, agent_id: str) -> None:
+def _run_dispatch_background(
+    room_name: str, tenant_id: str, agent_id: str, greeting: str | None = None
+) -> None:
     log = logging.getLogger("control_plane.dispatch")
     try:
         asyncio.run(
@@ -405,6 +426,7 @@ def _run_dispatch_background(room_name: str, tenant_id: str, agent_id: str) -> N
                 room_name,
                 tenant_id=tenant_id,
                 agent_id=agent_id,
+                greeting=greeting,
             )
         )
         log.info(
@@ -423,18 +445,32 @@ def _run_dispatch_background(room_name: str, tenant_id: str, agent_id: str) -> N
         _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
 
 
-def _with_dispatch(res: dict, tenant_id: str, agent_id: str, background_tasks: BackgroundTasks) -> dict:
+def _with_dispatch(
+    res: dict,
+    tenant_id: str,
+    agent_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    greeting: str | None = None,
+) -> dict:
     background_tasks.add_task(
         _run_dispatch_background,
         res["roomName"],
         tenant_id,
         agent_id,
+        greeting,
     )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
 
 def _dev_mint_session(
-    *, tenant_id: str, agent_id: str, request: Request, background_tasks: BackgroundTasks, auto_reset_quota: bool
+    *,
+    tenant_id: str,
+    agent_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    auto_reset_quota: bool,
+    greeting: str | None = None,
 ) -> dict:
     secret = _secrets.get(tenant_id)
     if not secret:
@@ -490,7 +526,9 @@ def _dev_mint_session(
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
-    return _with_dispatch(res, tenant_id, agent_id, background_tasks)
+    return _with_dispatch(
+        res, tenant_id, agent_id, background_tasks, greeting=greeting
+    )
 
 
 @app.post("/v1/session")
@@ -506,6 +544,7 @@ def create_session(
     if _rate_limited(x_tenant_id):
         record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
+    greeting = _opening_greeting(body.greeting, body.custom_greeting)
     try:
         with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
             res = mint_session(
@@ -522,7 +561,13 @@ def create_session(
                 origin=request.headers.get("origin"),
             )
             return _session_response(
-                _with_dispatch(res, x_tenant_id, body.agent_id, background_tasks)
+                _with_dispatch(
+                    res,
+                    x_tenant_id,
+                    body.agent_id,
+                    background_tasks,
+                    greeting=greeting,
+                )
             )
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
@@ -532,6 +577,7 @@ def create_session(
 @app.post("/v1/session/dev-mint")
 def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
+    greeting = _opening_greeting(body.greeting, body.customGreeting)
     return _session_response(
         _dev_mint_session(
             tenant_id=tenant_id,
@@ -539,6 +585,7 @@ def create_dev_session(body: DevSessionBody, request: Request, background_tasks:
             request=request,
             background_tasks=background_tasks,
             auto_reset_quota=True,
+            greeting=greeting,
         )
     )
 

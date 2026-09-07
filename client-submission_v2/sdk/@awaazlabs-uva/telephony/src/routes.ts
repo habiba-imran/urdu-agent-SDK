@@ -29,6 +29,7 @@ export const TELEPHONY_MACHINE_OPERATIONS = {
   getCallStatus: route('POST', '/machine/telephony/calls/get', 'telephony.calls.get'),
   listCallRecords: route('POST', '/machine/telephony/calls/list', 'telephony.calls.list'),
   disableNumber: route('POST', '/machine/telephony/numbers/{number_id}/disable', 'telephony.numbers.disable'),
+  getSessionByRoom: route('POST', '/machine/sessions/get', 'session.get'),
 } as const;
 
 export type OperationName = keyof typeof TELEPHONY_MACHINE_OPERATIONS;

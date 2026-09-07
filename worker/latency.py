@@ -154,7 +154,8 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
     """Parse ``tenant_id`` / ``agent_id`` from a LiveKit job or dispatch metadata JSON blob.
 
     Also preserves a ``direction`` hint when present so the early telephony path can
-    select the correct audio profile without waiting for the SIP participant.
+    select the correct audio profile without waiting for the SIP participant, and an
+    optional ``greeting`` override so turn-zero can use mint-time text without a DB race.
     """
     if not raw:
         return None
@@ -174,6 +175,9 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
         direction = parsed.get("direction")
         if direction:
             out["direction"] = str(direction)
+        greeting = parsed.get("greeting")
+        if isinstance(greeting, str) and greeting.strip():
+            out["greeting"] = greeting.strip()
         return out
     return None
 

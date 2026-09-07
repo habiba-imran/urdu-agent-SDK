@@ -13,10 +13,11 @@ import os
 import secrets as _pysecrets
 import sys
 from pathlib import Path
+from typing import Any
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -416,6 +417,35 @@ def sessions_route(limit: int = 50, authorization: str | None = Header(default=N
     claims = _require_tenant(authorization)
     with _conn() as conn:
         return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
+
+
+@app.post("/machine/sessions/get")
+def machine_get_session_route(
+    body: dict[str, Any] = Body(default_factory=dict),
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    """SDK/host CRM: fetch a session (incl. recording_url) by LiveKit room_name."""
+    payload = body or {}
+    room_name = str(payload.get("room_name") or payload.get("roomName") or "").strip()
+    if not room_name:
+        raise HTTPException(status_code=400, detail="room_name is required")
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="session.get",
+            body={"room_name": room_name},
+        )
+        session = queries.get_session_by_room(conn, x_tenant_id, room_name)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session
 
 
 @app.get("/portal/usage-summary")

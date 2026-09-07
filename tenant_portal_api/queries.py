@@ -287,7 +287,7 @@ def list_recent_sessions(
                  s.ended_at is null
                  and s.started_at > now() - (%s || ' minutes')::interval
                ) as live,
-               s.summary, s.transcript
+               s.summary, s.transcript, s.recording_url, s.recording_storage_path
         from sessions s
         join agents a on a.id = s.agent_id
         where s.tenant_id = %s
@@ -316,9 +316,44 @@ def list_recent_sessions(
             # session that never reached a clean agent-initiated or shutdown-callback close.
             "summary": r[9],
             "transcript": r[10],
+            "recording_url": r[11],
+            "recording_storage_path": r[12],
         }
         for r in rows
     ]
+
+
+def get_session_by_room(
+    conn: psycopg.Connection, tenant_id: str, room_name: str
+) -> dict | None:
+    """Tenant-scoped session lookup by LiveKit room name (includes recording fields)."""
+    row = conn.execute(
+        """
+        select s.id, s.agent_id, s.room_name, s.started_at, s.ended_at,
+               s.duration_sec, s.end_reason, s.summary, s.transcript,
+               s.recording_url, s.recording_storage_path
+        from sessions s
+        where s.tenant_id = %s and s.room_name = %s
+        limit 1
+        """,
+        (tenant_id, room_name),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": str(row[0]),
+        "agent_id": str(row[1]) if row[1] else None,
+        "room_name": row[2],
+        "started_at": row[3].isoformat() if row[3] else None,
+        "ended_at": row[4].isoformat() if row[4] else None,
+        "duration_sec": row[5],
+        "end_reason": row[6],
+        "summary": row[7],
+        "transcript": row[8],
+        "recording_url": row[9],
+        "recordingUrl": row[9],
+        "recording_storage_path": row[10],
+    }
 
 
 def usage_summary(conn: psycopg.Connection, tenant_id: str) -> dict:
