@@ -13,10 +13,11 @@ import os
 import secrets as _pysecrets
 import sys
 from pathlib import Path
+from typing import Any
 
 import psycopg
-from dotenv import dotenv_values
-from fastapi import FastAPI, Header, HTTPException
+from dotenv import dotenv_values, load_dotenv
+from fastapi import FastAPI, Header, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -28,7 +29,17 @@ except ImportError:
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .machine_auth import MachineAuthError, verify_machine_request
+from .provider_capabilities import get_public_capabilities
+from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
+from .greeting_fields import GreetingConfigError, normalize_first_speaker, normalize_greeting
+from .tools_webhook import (
+    ToolsWebhookError,
+    normalize_tools_auth_secret,
+    normalize_tools_base_url,
+)
 from . import queries
+from .telephony_routes import router as telephony_router
+from .telephony_webhooks import router as telephony_webhook_router
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
@@ -36,6 +47,7 @@ from control_plane.secrets_db import DbSecretProvider  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _ROOT / ".env.local"
+load_dotenv(_ENV_PATH, override=False)
 
 
 def _ensure_portal_jwt_secret() -> str:
@@ -73,8 +85,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=TENANT_PORTAL_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Tenant-Id",
+        "X-Timestamp",
+        "X-Nonce",
+        "X-Signature",
+    ],
 )
 
 
@@ -88,6 +107,25 @@ class CreateAgentBody(BaseModel):
     prompt: str = Field(..., min_length=1)
     voice_id: str = Field(..., min_length=1)
     llm_model: str = Field(default="gemini-2.5-flash", min_length=1)
+    # Additive, Phase 3 of docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md (ADR-036). All
+    # optional — omitting them keeps the exact pre-Phase-3 behavior (ur+gladia+gemini+uplift).
+    # tts_voice_id takes priority over voice_id when both are given (guide's explicit rule),
+    # resolved in resolve_agent_provider_fields, never here.
+    agent_language: str | None = Field(default=None, min_length=1)
+    stt_provider: str | None = Field(default=None, min_length=1)
+    stt_model: str | None = Field(default=None, min_length=1)
+    stt_options: dict | None = Field(default=None)
+    llm_provider: str | None = Field(default=None, min_length=1)
+    llm_options: dict | None = Field(default=None)
+    tts_provider: str | None = Field(default=None, min_length=1)
+    tts_voice_id: str | None = Field(default=None, min_length=1)
+    tts_options: dict | None = Field(default=None)
+    greeting: str | None = Field(default=None)
+    first_speaker: str | None = Field(default=None)
+    # Client backend tool gateway (RAG/FAQ/scheduling). Per-agent so multi-client SDK
+    # workers call the right host — not a single global worker env URL.
+    tools_base_url: str | None = Field(default=None)
+    tools_auth_secret: str | None = Field(default=None)
 
 
 class UpdateAgentBody(BaseModel):
@@ -95,10 +133,113 @@ class UpdateAgentBody(BaseModel):
     prompt: str | None = Field(default=None, min_length=1)
     voice_id: str | None = Field(default=None, min_length=1)
     llm_model: str | None = Field(default=None, min_length=1)
+    agent_language: str | None = Field(default=None, min_length=1)
+    stt_provider: str | None = Field(default=None, min_length=1)
+    stt_model: str | None = Field(default=None, min_length=1)
+    stt_options: dict | None = Field(default=None)
+    llm_provider: str | None = Field(default=None, min_length=1)
+    llm_options: dict | None = Field(default=None)
+    tts_provider: str | None = Field(default=None, min_length=1)
+    tts_voice_id: str | None = Field(default=None, min_length=1)
+    tts_options: dict | None = Field(default=None)
+    greeting: str | None = Field(default=None)
+    first_speaker: str | None = Field(default=None)
+    tools_base_url: str | None = Field(default=None)
+    tools_auth_secret: str | None = Field(default=None)
 
 
 def _conn() -> psycopg.Connection:
-    return psycopg.connect(**conn_kwargs(), connect_timeout=10)
+    # Fail fast on DB stalls so Render workers do not sit blocked long enough for
+    # health checks to start timing out behind queued requests.
+    return psycopg.connect(**conn_kwargs(), connect_timeout=3)
+
+
+def _resolve_provider_fields(
+    conn: psycopg.Connection,
+    body: CreateAgentBody | UpdateAgentBody,
+    *,
+    current: dict | None,
+) -> dict:
+    """Wraps resolve_agent_provider_fields with the HTTP error mapping every route needs —
+    ProviderValidationError -> 422 with its stable code, same pattern TenantAuthError/
+    MachineAuthError already use below for their own exception types."""
+    try:
+        return resolve_agent_provider_fields(
+            conn,
+            agent_language=body.agent_language,
+            stt_provider=body.stt_provider,
+            stt_model=body.stt_model,
+            stt_options=body.stt_options,
+            llm_provider=body.llm_provider,
+            llm_model=body.llm_model,
+            llm_options=body.llm_options,
+            tts_provider=body.tts_provider,
+            tts_voice_id=body.tts_voice_id,
+            tts_options=body.tts_options,
+            voice_id=body.voice_id,
+            current=current,
+        )
+    except ProviderValidationError as e:
+        raise HTTPException(
+            status_code=e.status, detail={"code": e.code, "reason": e.reason}
+        ) from e
+
+
+def _opening_from_body(
+    body: CreateAgentBody | UpdateAgentBody, current: dict | None
+) -> dict[str, str | None]:
+    """Resolve greeting / first_speaker. Omit keeps current (PATCH); blank greeting clears."""
+    try:
+        if current is None:
+            return {
+                "greeting": normalize_greeting(body.greeting),
+                "first_speaker": normalize_first_speaker(body.first_speaker),
+            }
+        greeting = (
+            normalize_greeting(body.greeting)
+            if body.greeting is not None
+            else current.get("greeting")
+        )
+        first_speaker = (
+            normalize_first_speaker(body.first_speaker)
+            if body.first_speaker is not None
+            else current.get("first_speaker")
+        )
+        return {"greeting": greeting, "first_speaker": first_speaker}
+    except GreetingConfigError as e:
+        raise HTTPException(
+            status_code=422, detail={"code": e.code, "reason": e.reason}
+        ) from e
+
+
+def _tools_webhook_from_body(
+    body: CreateAgentBody | UpdateAgentBody, current: dict | None
+) -> dict:
+    """Resolve tools_base_url / tools_auth_secret. Omit keeps current on PATCH; blank clears."""
+    try:
+        if current is None:
+            return {
+                "tools_base_url": normalize_tools_base_url(body.tools_base_url),
+                "tools_auth_secret": normalize_tools_auth_secret(body.tools_auth_secret),
+            }
+        tools_base_url = (
+            normalize_tools_base_url(body.tools_base_url)
+            if body.tools_base_url is not None
+            else queries._UNSET
+        )
+        tools_auth_secret = (
+            normalize_tools_auth_secret(body.tools_auth_secret)
+            if body.tools_auth_secret is not None
+            else queries._UNSET
+        )
+        return {
+            "tools_base_url": tools_base_url,
+            "tools_auth_secret": tools_auth_secret,
+        }
+    except ToolsWebhookError as e:
+        raise HTTPException(
+            status_code=e.status, detail={"code": e.code, "reason": e.reason}
+        ) from e
 
 
 def _require_tenant(authorization: str | None) -> dict:
@@ -139,7 +280,7 @@ def _require_machine(
 
 
 @app.get("/healthz")
-def tenant_portal_health():
+async def tenant_portal_health():
     return {"status": "ok", "service": "uva-tenant-portal-api"}
 
 
@@ -170,13 +311,29 @@ def create_agent_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
+        resolved = _resolve_provider_fields(conn, body, current=None)
+        opening = _opening_from_body(body, None)
+        tools = _tools_webhook_from_body(body, None)
         created = queries.create_agent(
             conn,
             claims["sub"],
             name=body.name,
             prompt=body.prompt,
-            voice_id=body.voice_id,
-            llm_model=body.llm_model,
+            voice_id=resolved["voice_id"],
+            llm_model=resolved["llm_model"],
+            agent_language=resolved["agent_language"],
+            stt_provider=resolved["stt_provider"],
+            stt_model=resolved["stt_model"],
+            stt_options=resolved["stt_options"],
+            llm_provider=resolved["llm_provider"],
+            llm_options=resolved["llm_options"],
+            tts_provider=resolved["tts_provider"],
+            tts_voice_id=resolved["tts_voice_id"],
+            tts_options=resolved["tts_options"],
+            greeting=opening["greeting"],
+            first_speaker=opening["first_speaker"],
+            tools_base_url=tools["tools_base_url"],
+            tools_auth_secret=tools["tools_auth_secret"],
         )
         conn.commit()
         return created
@@ -190,6 +347,12 @@ def update_agent_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
+        current = queries.get_agent(conn, claims["sub"], agent_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        resolved = _resolve_provider_fields(conn, body, current=current)
+        opening = _opening_from_body(body, current)
+        tools = _tools_webhook_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -197,13 +360,36 @@ def update_agent_route(
                 agent_id,
                 name=body.name,
                 prompt=body.prompt,
-                voice_id=body.voice_id,
-                llm_model=body.llm_model,
+                voice_id=resolved["voice_id"],
+                llm_model=resolved["llm_model"],
+                agent_language=resolved["agent_language"],
+                stt_provider=resolved["stt_provider"],
+                stt_model=resolved["stt_model"],
+                stt_options=resolved["stt_options"],
+                llm_provider=resolved["llm_provider"],
+                llm_options=resolved["llm_options"],
+                tts_provider=resolved["tts_provider"],
+                tts_voice_id=resolved["tts_voice_id"],
+                tts_options=resolved["tts_options"],
+                greeting=opening["greeting"],
+                first_speaker=opening["first_speaker"],
+                tools_base_url=tools["tools_base_url"],
+                tools_auth_secret=tools["tools_auth_secret"],
             )
             conn.commit()
             return updated
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.get("/portal/provider-capabilities")
+def provider_capabilities_route(authorization: str | None = Header(default=None)):
+    """Phase 4, ADR-036. Tenant JWT required (Phase 0's decision: matches the existing dual-route
+    auth pattern for /portal + /machine rather than a new unauthenticated route). Only `enabled`
+    combinations are ever returned — see provider_capabilities.py's own docstring."""
+    _require_tenant(authorization)
+    with _conn() as conn:
+        return get_public_capabilities(conn)
 
 
 @app.get("/portal/credentials")
@@ -216,6 +402,16 @@ def credentials_route(authorization: str | None = Header(default=None)):
             raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+@app.get("/portal/credentials/secret")
+def credentials_secret_route(authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        try:
+            return {"hmac_secret": queries.get_raw_secret(conn, claims["sub"])}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 @app.get("/portal/sessions")
 def sessions_route(limit: int = 50, authorization: str | None = Header(default=None)):
     claims = _require_tenant(authorization)
@@ -223,14 +419,44 @@ def sessions_route(limit: int = 50, authorization: str | None = Header(default=N
         return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
 
 
-@app.get("/portal/usage-summary")
-def usage_summary_route(
-    days: int = 30, authorization: str | None = Header(default=None)
+@app.post("/machine/sessions/get")
+def machine_get_session_route(
+    body: dict[str, Any] = Body(default_factory=dict),
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
 ):
+    """SDK/host CRM: fetch a session (incl. recording_url) by LiveKit room_name."""
+    payload = body or {}
+    room_name = str(payload.get("room_name") or payload.get("roomName") or "").strip()
+    if not room_name:
+        raise HTTPException(status_code=400, detail="room_name is required")
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="session.get",
+            body={"room_name": room_name},
+        )
+        session = queries.get_session_by_room(conn, x_tenant_id, room_name)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session
+
+
+@app.get("/portal/usage-summary")
+def usage_summary_route(authorization: str | None = Header(default=None)):
+    """Always the CURRENT CALENDAR MONTH (1st through the end of the month) — see
+    queries.usage_summary's docstring. No `days` param: this used to be an arbitrary rolling
+    window that disagreed with the monthly cap the mint actually enforces."""
     claims = _require_tenant(authorization)
     with _conn() as conn:
         try:
-            return queries.usage_summary(conn, claims["sub"], days=days)
+            return queries.usage_summary(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -258,18 +484,62 @@ def machine_create_agent_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="agent.create",
-            body=body.model_dump(),
+            # exclude_none=True (matches agent.update below): CreateAgentBody now has optional
+            # provider/language fields (Phase 3, ADR-036) that default to None when omitted.
+            # model_dump() without this would include those None-valued keys in the signed
+            # payload, but the signing client (sdk-server, this file's own test suite) only ever
+            # signs the fields it explicitly set — the mismatch silently broke every create-agent
+            # HMAC signature the moment the first optional field was added. Caught by re-running
+            # the existing machine-auth test suite, not assumed safe.
+            body=body.model_dump(exclude_none=True),
         )
+        resolved = _resolve_provider_fields(conn, body, current=None)
+        opening = _opening_from_body(body, None)
+        tools = _tools_webhook_from_body(body, None)
         created = queries.create_agent(
             conn,
             x_tenant_id,
             name=body.name,
             prompt=body.prompt,
-            voice_id=body.voice_id,
-            llm_model=body.llm_model,
+            voice_id=resolved["voice_id"],
+            llm_model=resolved["llm_model"],
+            agent_language=resolved["agent_language"],
+            stt_provider=resolved["stt_provider"],
+            stt_model=resolved["stt_model"],
+            stt_options=resolved["stt_options"],
+            llm_provider=resolved["llm_provider"],
+            llm_options=resolved["llm_options"],
+            tts_provider=resolved["tts_provider"],
+            tts_voice_id=resolved["tts_voice_id"],
+            tts_options=resolved["tts_options"],
+            greeting=opening["greeting"],
+            first_speaker=opening["first_speaker"],
+            tools_base_url=tools["tools_base_url"],
+            tools_auth_secret=tools["tools_auth_secret"],
         )
         conn.commit()
         return created
+
+
+@app.get("/machine/provider-capabilities")
+def machine_provider_capabilities_route(
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    """Phase 4, ADR-036 — machine-auth mirror of /portal/provider-capabilities, same content."""
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="provider_capabilities.get",
+            body={},
+        )
+        return get_public_capabilities(conn)
 
 
 @app.get("/machine/agents")
@@ -311,6 +581,12 @@ def machine_update_agent_route(
             action="agent.update",
             body=body.model_dump(exclude_none=True),
         )
+        current = queries.get_agent(conn, x_tenant_id, agent_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="agent not found")
+        resolved = _resolve_provider_fields(conn, body, current=current)
+        opening = _opening_from_body(body, current)
+        tools = _tools_webhook_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -318,10 +594,27 @@ def machine_update_agent_route(
                 agent_id,
                 name=body.name,
                 prompt=body.prompt,
-                voice_id=body.voice_id,
-                llm_model=body.llm_model,
+                voice_id=resolved["voice_id"],
+                llm_model=resolved["llm_model"],
+                agent_language=resolved["agent_language"],
+                stt_provider=resolved["stt_provider"],
+                stt_model=resolved["stt_model"],
+                stt_options=resolved["stt_options"],
+                llm_provider=resolved["llm_provider"],
+                llm_options=resolved["llm_options"],
+                tts_provider=resolved["tts_provider"],
+                tts_voice_id=resolved["tts_voice_id"],
+                tts_options=resolved["tts_options"],
+                greeting=opening["greeting"],
+                first_speaker=opening["first_speaker"],
+                tools_base_url=tools["tools_base_url"],
+                tools_auth_secret=tools["tools_auth_secret"],
             )
             conn.commit()
             return updated
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+app.include_router(telephony_router)
+app.include_router(telephony_webhook_router)

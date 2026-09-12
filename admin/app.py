@@ -91,7 +91,6 @@ def admin_health():
     return {"status": "ok", "service": "uva-admin"}
 
 
-
 class LoginBody(BaseModel):
     email: str
     password: str
@@ -248,4 +247,3 @@ def tenant_credentials_route(
             return creds
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
-

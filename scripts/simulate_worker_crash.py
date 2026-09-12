@@ -15,8 +15,8 @@ import psycopg
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from dbconn import conn_kwargs
-from reconcile_sessions import reconcile_sessions
+from dbconn import conn_kwargs  # noqa: E402
+from reconcile_sessions import reconcile_sessions  # noqa: E402
 
 
 def run_failure_recovery_drill() -> dict:
@@ -88,10 +88,12 @@ def run_failure_recovery_drill() -> dict:
         conn.execute("DELETE FROM quota_state WHERE tenant_id = %s", (tenant_id,))
         conn.execute("DELETE FROM tenants WHERE id = %s", (tenant_id,))
 
-
-    drill_success = (final_concurrency == 0) and (final_end_reason in ("reconciled_stale", "stale_reconciled"))
-    print(f"[DRILL RESULT] Concurrency reset to {final_concurrency}, end_reason: {final_end_reason}. Success: {drill_success}")
-
+    drill_success = (final_concurrency == 0) and (
+        final_end_reason in ("reconciled_stale", "stale_reconciled")
+    )
+    print(
+        f"[DRILL RESULT] Concurrency reset to {final_concurrency}, end_reason: {final_end_reason}. Success: {drill_success}"
+    )
 
     return {
         "success": drill_success,

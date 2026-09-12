@@ -20,7 +20,9 @@
 
 | If your task touches… | Read |
 |---|---|
+| **telephony, PSTN, SIP, Telnyx, LiveKit** | `TELEPHONY_TRANSITION_AND_ARCHITECTURE_GUIDE.md` & `HAMZA_TELEPHONY_HANDOFF_AND_INTEGRATION_GUIDE.md` |
 | **any** paid API (TTS/STT/LLM) | `30-GUIDE-FREE-TIER.md` ← **read before your first API call, always** |
+
 | auth, tokens, keys, RLS, tenancy | `31-GUIDE-SECURITY.md` |
 | writing/changing a test | `32-GUIDE-TESTING.md` |
 | schema, migrations, MCP | `33-GUIDE-SUPABASE.md` |

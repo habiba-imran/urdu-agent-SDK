@@ -107,8 +107,11 @@ def test_persona_injected_as_data_not_system_instructions():
         llm_model="gemini-2.5-flash",
     )
     agent = build_agent(cfg)
-    # our instructions are authoritative and unpolluted by the tenant prompt
-    assert agent.instructions == SYSTEM_INSTRUCTIONS
+    # our instructions are authoritative and unpolluted by the tenant prompt -- instructions is
+    # SYSTEM_INSTRUCTIONS plus an appended, trusted language directive (worker/main.py::
+    # _language_directive), never the tenant's own text, so startswith proves the same
+    # "uncontaminated by tenant prompt" property without hardcoding the directive text here too.
+    assert agent.instructions.startswith(SYSTEM_INSTRUCTIONS)
     assert inject not in agent.instructions
     # the tenant prompt lives in the persona chat_ctx (framed as data), not in instructions
     ctx_text = " ".join(
@@ -120,10 +123,12 @@ def test_persona_injected_as_data_not_system_instructions():
 # --- P3-T09 (ADR-013 deferred pass, scope ADR-029): worker/tools.py's two fixed tools --------
 
 
-def test_build_agent_wires_fixed_tools():
+def test_build_agent_wires_fixed_tools(monkeypatch):
     from worker.config import AgentConfig
     from worker.main import build_agent
+    from worker.tools import FIXED_TOOLS, session_tools
 
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
     cfg = AgentConfig(
         agent_id="a",
         tenant_id="t",
@@ -133,6 +138,7 @@ def test_build_agent_wires_fixed_tools():
         llm_model="gemini-2.5-flash",
     )
     agent = build_agent(cfg)
+    assert list(agent.tools) == session_tools()
     assert list(agent.tools) == FIXED_TOOLS
 
 
@@ -152,14 +158,28 @@ def test_fixed_tool_schemas_exclude_runcontext_and_expose_only_real_args():
     assert escalate_schema["required"] == ["reason"]
 
 
-class _FakeRunContext:
-    """Duck-types the one attribute these tools read (`ctx.userdata`) -- FunctionTool.__call__
-    just forwards args to the plain function, so a real livekit.agents.RunContext (which needs a
-    live AgentSession/SpeechHandle/FunctionCall to construct) isn't needed to unit-test our own
-    tool logic; that's LiveKit's own dispatch machinery, not ours to re-test here."""
+class _FakeSession:
+    """Records AgentSession.shutdown() calls. end_conversation_summary now actually ends the
+    call, and that is the whole point of the tool -- so the unit test asserts it, rather than
+    letting a silent no-op pass."""
 
-    def __init__(self, userdata):
+    def __init__(self):
+        self.shutdown_calls: list[dict] = []
+
+    def shutdown(self, **kwargs):
+        self.shutdown_calls.append(kwargs)
+
+
+class _FakeRunContext:
+    """Duck-types the two attributes these tools read (`ctx.userdata`, `ctx.session`) --
+    FunctionTool.__call__ just forwards args to the plain function, so a real
+    livekit.agents.RunContext (which needs a live AgentSession/SpeechHandle/FunctionCall to
+    construct) isn't needed to unit-test our own tool logic; that's LiveKit's own dispatch
+    machinery, not ours to re-test here."""
+
+    def __init__(self, userdata, session=None):
         self.userdata = userdata
+        self.session = session
 
 
 def _mk_session_row(conn, tenant_id, agent_id):
@@ -180,7 +200,8 @@ def test_end_conversation_summary_writes_to_the_real_session_row(two_tenants):
     ud = AgentUserdata(
         tenant_id=two_tenants["a"], agent_id=two_tenants["ag_a"], room_name=room_name
     )
-    ctx = _FakeRunContext(ud)
+    fake_session = _FakeSession()
+    ctx = _FakeRunContext(ud, session=fake_session)
 
     result = asyncio.run(
         end_conversation_summary(ctx, summary="caller asked about pricing")
@@ -191,6 +212,17 @@ def test_end_conversation_summary_writes_to_the_real_session_row(two_tenants):
         "select summary from sessions where id=%s", (session_id,)
     ).fetchone()
     assert row[0] == "caller asked about pricing"
+
+    # The tool must actually END the call, not just save a string. Before this it only wrote the
+    # summary: the session stayed open and the dashboard kept showing a live call until the
+    # caller happened to hang up.
+    assert len(fake_session.shutdown_calls) == 1, (
+        "end_conversation_summary must shut the AgentSession down"
+    )
+    # drain=True so the agent's closing line finishes playing instead of being cut mid-word.
+    assert fake_session.shutdown_calls[0] == {"drain": True}
+    # and the shutdown path must be able to tell an agent-ended call from a caller hangup
+    assert ud.ended_by_agent is True
 
 
 def test_escalate_to_human_writes_a_real_row_linked_to_the_session(two_tenants):

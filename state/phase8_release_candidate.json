@@ -3,10 +3,10 @@
   "track": "habiba",
   "git_commit": "bc1ced2e6fff549007cb19419c5a6410a7aee33b",
   "sdk": {
-    "package_name": "@uva/voice",
+    "package_name": "@awaazlabs-uva/voice",
     "version_candidate": "0.1.0",
     "tarballs": [
-      "uva-voice-0.1.0.tgz"
+      "awaazlabs-uva-voice-0.1.0.tgz"
     ],
     "has_dist": true
   },
@@ -25,7 +25,7 @@
     "package_name": "host-backend-node",
     "version": "0.1.0",
     "tag_or_ref": "bc1ced2e6fff549007cb19419c5a6410a7aee33b",
-    "path": "examples/host-backend-node"
+    "path": "examples/host-backend"
   },
   "notes": null
 }

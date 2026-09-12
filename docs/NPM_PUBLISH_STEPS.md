@@ -1,6 +1,6 @@
 # NPM Publish Steps
 
-> Internal Finova reference — how to publish `@uva/voice` and `@uva/agents` to the npm registry.
+> Internal Finova reference — how to publish `@awaazlabs-uva/voice` and `@awaazlabs-uva/agents` to the npm registry.
 
 ---
 
@@ -14,10 +14,10 @@ npm is a central server where you upload a folder of code. Anyone who knows the 
 
 Go to [npmjs.com](https://www.npmjs.com) → Sign Up.
 
-Pick an **organisation name** (called a "scope" in npm). Since the packages are named `@uva/voice` and `@uva/agents`, the scope is `@uva`. Create an organisation called `uva` on npm.
+Pick an **organisation name** (called a "scope" in npm). Since the packages are named `@awaazlabs-uva/voice` and `@awaazlabs-uva/agents`, the scope is `@awaazlabs-uva`. Create an organisation called `awaazlabs-uva` on npm.
 
 ```
-npmjs.com/org/uva   ← this needs to exist before publishing
+npmjs.com/org/awaazlabs-uva   ← this needs to exist before publishing
 ```
 
 Then on your machine, log in once:
@@ -29,37 +29,35 @@ npm login
 
 ---
 
-## Step 2 — Fix `package.json` in `@uva/voice`
+## Step 2 - Verify `package.json` publishing fields
 
-`@uva/voice` currently has `"private": true` which **blocks publishing**. Remove that line and add `publishConfig`.
+Both packages must have the correct AwaazLabs-UVA package names and public publish configuration before publishing.
 
 ```json
-// BEFORE — blocks publishing
+// Browser SDK
 {
-  "name": "@uva/voice",
-  "version": "1.0.0",
-  "private": true,
-  ...
-}
-
-// AFTER — ready to publish
-{
-  "name": "@uva/voice",
-  "version": "1.0.0",
+  "name": "@awaazlabs-uva/voice",
   "publishConfig": {
     "access": "public"
-  },
-  ...
+  }
+}
+
+// Server SDK
+{
+  "name": "@awaazlabs-uva/agents",
+  "publishConfig": {
+    "access": "public"
+  }
 }
 ```
 
-> `@uva/agents` already has `"publishConfig": { "access": "public" }` — no change needed there.
+Neither package should include `"private": true` in the publishable repository package.
 
 ---
 
 ## Step 3 — Control What Gets Uploaded (`"files"` field)
 
-Only files listed in the `"files"` field of `package.json` are uploaded to npm. `@uva/agents` already has this set correctly:
+Only files listed in the `"files"` field of `package.json` are uploaded to npm. Both packages should keep this narrow:
 
 ```json
 "files": [
@@ -68,7 +66,7 @@ Only files listed in the `"files"` field of `package.json` are uploaded to npm. 
 ]
 ```
 
-Add the same to `@uva/voice`'s `package.json`. This ensures npm uploads only the compiled `dist/` output and the README — **not** `src/`, `node_modules/`, or anything else.
+Keep this in both publishable package manifests. This ensures npm uploads only the compiled `dist/` output and the README - **not** `src/`, `node_modules/`, or anything else.
 
 ---
 
@@ -78,11 +76,11 @@ The `dist/` folder must be up-to-date before publishing. Run the TypeScript comp
 
 ```bash
 # Browser SDK
-cd client_deliverables-urdu-sdk/packages/sdk
+cd sdk
 npm run build        # runs tsc → outputs compiled JS to dist/
 
 # Server SDK
-cd client_deliverables-urdu-sdk/packages/sdk-server
+cd ../sdk-server
 npm run build
 ```
 
@@ -96,11 +94,11 @@ Run from inside each package folder:
 
 ```bash
 # Browser SDK
-cd client_deliverables-urdu-sdk/packages/sdk
+cd sdk
 npm publish
 
 # Server SDK
-cd client_deliverables-urdu-sdk/packages/sdk-server
+cd ../sdk-server
 npm publish
 ```
 
@@ -108,7 +106,7 @@ npm will:
 1. Read `package.json` to get the name and version
 2. Bundle only the files listed in `"files"`
 3. Upload to the registry
-4. Make it available instantly at `npmjs.com/package/@uva/voice`
+4. Make it available instantly at `npmjs.com/package/@awaazlabs-uva/voice`
 
 ---
 
@@ -118,10 +116,10 @@ Once published, the client no longer needs the `sdk/` folder in the delivery pac
 
 ```bash
 # In their frontend project
-npm install @uva/voice livekit-client@^2.0.0
+npm install @awaazlabs-uva/voice livekit-client@^2.0.0
 
 # In their backend project (server-side only)
-npm install @uva/agents
+npm install @awaazlabs-uva/agents
 ```
 
 The `docs/` folder (INTEGRATION_GUIDE, ai-integration-guide, credentials-template) is still delivered — just without the `sdk/` folder alongside it.
@@ -154,8 +152,8 @@ Clients who run `npm update` will receive the new version automatically within t
 | **GitHub Packages** | GitHub users you authorise | Free for public repos |
 | **Self-hosted** (Verdaccio, JFrog) | Internal network only | Hosting cost only |
 
-For `@uva/voice` (zero secrets) — **public npm is perfectly fine.**  
-For `@uva/agents` — also safe to publish publicly. The package holds no hardcoded Finova secrets; clients supply their own credentials via `.env` at runtime.
+For `@awaazlabs-uva/voice` (zero secrets) — **public npm is perfectly fine.**
+For `@awaazlabs-uva/agents` — also safe to publish publicly. The package holds no hardcoded Finova secrets; clients supply their own credentials via `.env` at runtime.
 
 ---
 
@@ -171,8 +169,8 @@ npm version patch        # or minor / major
 npm publish
 
 # Client installs (after publishing)
-npm install @uva/voice
-npm install @uva/agents
+npm install @awaazlabs-uva/voice
+npm install @awaazlabs-uva/agents
 ```
 
 ---
@@ -181,5 +179,5 @@ npm install @uva/agents
 
 | Package | `private` flag | `publishConfig` | Status |
 |---|---|---|---|
-| `@uva/voice` | ✅ `true` (must remove) | ❌ Missing (must add) | Not publishable yet |
-| `@uva/agents` | ❌ Not set | ✅ `"access": "public"` | Ready to publish |
+| `@awaazlabs-uva/voice` | Not set | `"access": "public"` | Ready to publish after build |
+| `@awaazlabs-uva/agents` | Not set | `"access": "public"` | Ready to publish after build |

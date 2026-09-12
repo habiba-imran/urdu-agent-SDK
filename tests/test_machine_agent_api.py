@@ -147,6 +147,143 @@ def test_happy_path_update_agent(env):
     assert res.json()["name"] == "Renamed Agent"
 
 
+def test_create_agent_old_style_payload_syncs_new_fields(env):
+    """Phase 3 (ADR-036): the machine surface shares resolve_agent_provider_fields with /portal —
+    proves that's actually wired here too, not just on the JWT-authenticated routes."""
+    client = TestClient(app)
+    body = {
+        "name": "Old Style Machine Agent",
+        "prompt": "Answer politely",
+        "voice_id": env["voice_id"],
+        "llm_model": "gemini-2.5-flash",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 200
+    created = res.json()
+    assert created["agent_language"] == "ur"
+    assert created["tts_provider"] == "uplift"
+    assert created["tts_voice_id"] == env["voice_id"] == created["voice_id"]
+    assert created["greeting"] is None
+    assert created["first_speaker"] == "agent"
+
+
+def test_create_and_update_custom_greeting_and_first_speaker(env):
+    client = TestClient(app)
+    body = {
+        "name": "Greeter",
+        "prompt": "Answer politely",
+        "voice_id": env["voice_id"],
+        "llm_model": "gemini-2.5-flash",
+        "greeting": "  Hi, thanks for calling Acme. How can I help?  ",
+        "first_speaker": "agent",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 200
+    created = res.json()
+    assert created["greeting"] == "Hi, thanks for calling Acme. How can I help?"
+    assert created["first_speaker"] == "agent"
+
+    wait_body = {"first_speaker": "user"}
+    wait_headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.update",
+        body=wait_body,
+    )
+    waited = client.patch(
+        f"/machine/agents/{created['id']}", json=wait_body, headers=wait_headers
+    )
+    assert waited.status_code == 200
+    assert waited.json()["first_speaker"] == "user"
+    assert waited.json()["greeting"] == created["greeting"]
+
+    clear_body = {"greeting": ""}
+    clear_headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.update",
+        body=clear_body,
+    )
+    cleared = client.patch(
+        f"/machine/agents/{created['id']}", json=clear_body, headers=clear_headers
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["greeting"] is None
+    assert cleared.json()["first_speaker"] == "user"
+
+
+def test_create_rejects_invalid_first_speaker(env):
+    client = TestClient(app)
+    body = {
+        "name": "Bad Speaker",
+        "prompt": "x",
+        "voice_id": env["voice_id"],
+        "llm_model": "gemini-2.5-flash",
+        "first_speaker": "both",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "invalid_first_speaker"
+
+
+def test_create_agent_rejects_unsupported_provider_combo(env):
+    client = TestClient(app)
+    body = {
+        "name": "Bad Combo Machine Agent",
+        "prompt": "x",
+        "voice_id": env["voice_id"],
+        # llm_model has a non-None Pydantic default ("gemini-2.5-flash"), so it's always present
+        # in the server's resolved body.model_dump(exclude_none=True) even when omitted from the
+        # wire JSON — must be signed explicitly, same as every other happy-path test here already
+        # does (pre-existing behavior, not something Phase 3 changed).
+        "llm_model": "gemini-2.5-flash",
+        "tts_provider": "elevenlabs",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "unsupported_provider_for_language"
+
+
+def test_machine_provider_capabilities_requires_signature_and_returns_ur(env):
+    client = TestClient(app)
+    no_auth = client.get("/machine/provider-capabilities")
+    assert no_auth.status_code == 401
+
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="provider_capabilities.get",
+        body={},
+    )
+    res = client.get("/machine/provider-capabilities", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["languages"]["ur"]["stt"]["gladia"]["state"] == "enabled"
+
+
 def test_wrong_signature_401(env):
     client = TestClient(app)
     body = {

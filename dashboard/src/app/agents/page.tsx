@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
-import { Search, Play, Square, Copy, Check, Download, AlertCircle } from 'lucide-react';
+import { Check, Copy, Download, Plus } from 'lucide-react';
 
-import { type PortalAgent, createAgent, updateAgent } from '@/lib/portalApi';
-import { type ApiVoice } from '@/lib/voicesApi';
+import { createAgent, type LanguageCapabilities } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { PageHeader } from '@/components/ui/page-header';
@@ -15,184 +14,190 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
-import { Select } from '@/components/ui/select';
-import { Skeleton, DataTableSkeleton } from '@/components/ui/skeleton';
+import { Select, type SelectOption } from '@/components/ui/select';
+import { DataTableSkeleton, Skeleton } from '@/components/ui/skeleton';
+import { VoiceCatalogueGrid } from '@/components/VoiceCatalogueGrid';
 import { cn } from '@/lib/utils';
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-  RowOpenButton,
-} from '@/components/ui/table';
+import { RowOpenButton } from '@/components/ui/table';
 
 function capitalize(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
+/** Options for a provider `Select` from one capability layer (e.g. `langEntry.stt`) — the
+ *  provider keys themselves are the only source of truth for what's actually enabled. */
+function providerOptions(
+  layer: Record<string, { models?: string[]; voices?: string[] }> | undefined,
+): SelectOption[] {
+  return Object.keys(layer ?? {}).map((provider) => ({ value: provider, label: capitalize(provider) }));
+}
+
+// The starting prompt text for a new agent, keyed by agent_language -- "polite Urdu customer
+// support voice assistant" doesn't make sense as the default for an English agent (ADR-036
+// added English/multi-provider support after this text was written).
+const DEFAULT_PROMPTS: Record<string, string> = {
+  ur: 'You are a polite Urdu customer support voice assistant.',
+  en: 'You are a polite, helpful customer support voice assistant.',
+};
+
+function defaultPromptFor(lang: string): string {
+  return DEFAULT_PROMPTS[lang] ?? 'You are a polite, helpful voice assistant.';
+}
+
 export default function AgentsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     data: agents,
     isLoading: agentsLoading,
     error: agentsSWRError,
     mutate: mutateAgents,
   } = useSWR(swrKeys.agents, swrFetchers.agents);
-  const { data: voices, isLoading: voicesLoading, error: voicesSWRError } = useSWR(
-    swrKeys.voices,
-    swrFetchers.voices,
+  const { data: capabilities } = useSWR(
+    swrKeys.providerCapabilities,
+    swrFetchers.providerCapabilities,
   );
 
-  const [selectedVoice, setSelectedVoice] = useState('v_meklc281');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [genderFilter, setGenderFilter] = useState('All');
-  const [agentName, setAgentName] = useState('Customer Care Agent');
-  const [systemPrompt, setSystemPrompt] = useState(
-    'You are a polite Urdu customer support voice assistant.',
-  );
-  const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
-  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
-  const [playErrorVoiceId, setPlayErrorVoiceId] = useState<string | null>(null);
-  const [copiedVoiceId, setCopiedVoiceId] = useState<string | null>(null);
-  const [copyToastPosition, setCopyToastPosition] = useState<{ top: number; right: number } | null>(
-    null,
-  );
+  const [agentName, setAgentName] = useState('New Portal Agent');
+  // Real values for all of these come from applyLanguageDefaults(), always called before the
+  // modal is shown (openCreateModal / handleLanguageChange) -- these initializers are never
+  // actually seen by the user, so they're left empty rather than baking in stale Uplift-only
+  // constants (a legacy voice id, a fixed model name) that predate multi-provider support.
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [language, setLanguage] = useState('ur');
+  const [sttProvider, setSttProvider] = useState('');
+  const [sttModel, setSttModel] = useState('');
+  const [llmProvider, setLlmProvider] = useState('');
+  const [selectedVoice, setSelectedVoice] = useState('');
+  const [llmModel, setLlmModel] = useState('');
+  const [ttsProvider, setTtsProvider] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [saveSuccessMessage, setSaveSuccessMessage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const seededFromFirstAgent = useRef(false);
+  const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Default the modal's fields to the tenant's first agent once, the first time the list
-  // loads — mirrors the original behavior, but only runs once (not on every background
-  // SWR revalidation) so it never clobbers in-progress edits.
-  useEffect(() => {
-    if (seededFromFirstAgent.current || !agents || agents.length === 0) return;
-    seededFromFirstAgent.current = true;
-    const first = agents[0];
-    setEditingAgentId(first.id);
-    setAgentName(first.name);
-    setSystemPrompt(first.prompt);
-    setSelectedVoice(first.voice_id);
-    setLlmModel(first.llm_model);
-  }, [agents]);
-
-  // Stop any in-flight preview if the page is left mid-playback.
   useEffect(() => {
     return () => {
-      audioRef.current?.pause();
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     };
   }, []);
 
-  const filteredVoices = (voices ?? []).filter((voice) => {
-    const matchesSearch =
-      voice.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      voice.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesGender =
-      genderFilter === 'All' || voice.gender.toLowerCase() === genderFilter.toLowerCase();
-    return matchesSearch && matchesGender;
-  });
+  const languageOptions: SelectOption[] = Object.entries(capabilities?.languages ?? {}).map(
+    ([code, entry]) => ({ value: code, label: entry.label }),
+  );
+  const langEntry = capabilities?.languages[language];
+  const sttModelOptions: SelectOption[] = (langEntry?.stt?.[sttProvider]?.models ?? []).map((m) => ({
+    value: m,
+    label: m,
+  }));
+  const llmModelOptions: SelectOption[] = (langEntry?.llm?.[llmProvider]?.models ?? []).map((m) => ({
+    value: m,
+    label: m,
+  }));
+  const allowedVoiceIds = langEntry?.tts?.[ttsProvider]?.voices ?? [];
+  const canCreate = Boolean(
+    agentName.trim() &&
+      systemPrompt.trim() &&
+      selectedVoice &&
+      sttProvider &&
+      llmProvider &&
+      ttsProvider &&
+      !saving,
+  );
 
-  const handlePlayAudio = (voice: ApiVoice, e: React.MouseEvent) => {
+  const handleCopyAgentId = (agentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!voice.previewUrl) return;
-
-    audioRef.current?.pause();
-    setPlayErrorVoiceId(null);
-
-    if (playingVoice === voice.id) {
-      // Clicking the currently-playing voice again just stops it.
-      setPlayingVoice(null);
-      return;
-    }
-
-    const audio = new Audio(voice.previewUrl);
-    audioRef.current = audio;
-    setPlayingVoice(voice.id);
-
-    const handleFailure = () => {
-      setPlayingVoice((current) => (current === voice.id ? null : current));
-      setPlayErrorVoiceId(voice.id);
-      setTimeout(() => {
-        setPlayErrorVoiceId((current) => (current === voice.id ? null : current));
-      }, 3000);
-    };
-
-    audio.addEventListener('ended', () => {
-      setPlayingVoice((current) => (current === voice.id ? null : current));
-    });
-    // Signed preview URLs expire (7 days from generation) — a stale one fails here rather
-    // than silently doing nothing, so the user gets a visible "preview unavailable" cue.
-    audio.addEventListener('error', handleFailure);
-    audio.play().catch(handleFailure);
+    navigator.clipboard.writeText(agentId);
+    setCopiedAgentId(agentId);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopiedAgentId((current) => (current === agentId ? null : current));
+    }, 1500);
   };
 
-  const handleCopyId = (voiceId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setCopyToastPosition({ top: rect.top, right: window.innerWidth - rect.right });
-    navigator.clipboard.writeText(voiceId);
-    setCopiedVoiceId(voiceId);
-    setTimeout(() => {
-      setCopiedVoiceId((current) => (current === voiceId ? null : current));
-    }, 2000);
+  // Switching language invalidates every provider/model/voice choice below it — recompute all
+  // of them to that language's first enabled option, same "no silent fallback" rule test-app's
+  // AgentForm applies to its own picker. The starting prompt text is language-specific too
+  // (see DEFAULT_PROMPTS), so it resets here alongside everything else.
+  const applyLanguageDefaults = (lang: string, entry: LanguageCapabilities | undefined) => {
+    setLanguage(lang);
+    setSystemPrompt(defaultPromptFor(lang));
+    const firstStt = Object.keys(entry?.stt ?? {})[0] ?? '';
+    const firstLlm = Object.keys(entry?.llm ?? {})[0] ?? '';
+    const firstTts = Object.keys(entry?.tts ?? {})[0] ?? '';
+    setSttProvider(firstStt);
+    setSttModel(entry?.stt?.[firstStt]?.defaultModel ?? '');
+    setLlmProvider(firstLlm);
+    setLlmModel(entry?.llm?.[firstLlm]?.defaultModel ?? '');
+    setTtsProvider(firstTts);
+    setSelectedVoice(entry?.tts?.[firstTts]?.defaultVoice ?? '');
+  };
+
+  const handleLanguageChange = (lang: string) => {
+    applyLanguageDefaults(lang, capabilities?.languages[lang]);
+  };
+
+  const handleSttProviderChange = (next: string) => {
+    setSttProvider(next);
+    setSttModel(langEntry?.stt?.[next]?.defaultModel ?? '');
+  };
+
+  const handleLlmProviderChange = (next: string) => {
+    setLlmProvider(next);
+    setLlmModel(langEntry?.llm?.[next]?.defaultModel ?? '');
+  };
+
+  const handleTtsProviderChange = (next: string) => {
+    setTtsProvider(next);
+    setSelectedVoice(langEntry?.tts?.[next]?.defaultVoice ?? '');
   };
 
   const openCreateModal = () => {
-    setEditingAgentId(null);
     setAgentName('New Portal Agent');
-    setSystemPrompt('You are a polite Urdu customer support voice assistant.');
-    setSelectedVoice('v_meklc281');
-    setLlmModel('gemini-2.5-flash');
+    const langCode = capabilities ? Object.keys(capabilities.languages)[0] ?? 'ur' : 'ur';
+    applyLanguageDefaults(langCode, capabilities?.languages[langCode]);
     setShowModal(true);
   };
 
-  const openEditModal = (agent: PortalAgent) => {
-    setEditingAgentId(agent.id);
-    setAgentName(agent.name);
-    setSystemPrompt(agent.prompt);
-    setSelectedVoice(agent.voice_id);
-    setLlmModel(agent.llm_model);
-    setShowModal(true);
-  };
+  // Lets other pages (e.g. Overview's empty state) link straight into the create flow via
+  // /agents?new=1, instead of landing on the list and requiring a second click. Waits for
+  // capabilities so the modal opens with real language/provider defaults already populated,
+  // not the pre-load empty state. Consumed once, then stripped from the URL so navigating
+  // back here later (or refreshing) doesn't reopen it.
+  const autoOpenedCreateModal = useRef(false);
+  useEffect(() => {
+    if (autoOpenedCreateModal.current || !capabilities) return;
+    if (searchParams.get('new') === '1') {
+      autoOpenedCreateModal.current = true;
+      openCreateModal();
+      router.replace('/agents');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capabilities, searchParams]);
 
-  const handleSave = async () => {
+  const handleCreate = async () => {
     try {
       setSaving(true);
-
-      if (editingAgentId) {
-        const updated = await updateAgent(editingAgentId, {
-          name: agentName,
-          prompt: systemPrompt,
-          voice_id: selectedVoice,
-          llm_model: llmModel,
-        });
-        await mutateAgents(
-          (current) =>
-            (current ?? []).map((agent) =>
-              agent.id === updated.id ? { ...agent, ...updated } : agent,
-            ),
-          { revalidate: false },
-        );
-      } else {
-        const created = await createAgent({
-          name: agentName,
-          prompt: systemPrompt,
-          voice_id: selectedVoice,
-          llm_model: llmModel,
-        });
-        await mutateAgents((current) => [created, ...(current ?? [])], { revalidate: false });
-        setEditingAgentId(created.id);
-      }
+      const created = await createAgent({
+        name: agentName,
+        prompt: systemPrompt,
+        voice_id: selectedVoice,
+        llm_model: llmModel,
+        agent_language: language,
+        stt_provider: sttProvider,
+        stt_model: sttModel,
+        llm_provider: llmProvider,
+        tts_provider: ttsProvider,
+        tts_voice_id: selectedVoice,
+      });
+      await mutateAgents((current) => [created, ...(current ?? [])], { revalidate: false });
 
       setShowModal(false);
-      setSaveSuccessMessage(true);
       setSaveError(null);
-      setTimeout(() => setSaveSuccessMessage(false), 3000);
+      router.push(`/agents/${created.id}`);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save agent');
+      setSaveError(err instanceof Error ? err.message : 'Failed to create agent');
     } finally {
       setSaving(false);
     }
@@ -203,12 +208,11 @@ export default function AgentsPage() {
 
   const handleExportAgents = () => {
     const csv = toCsv(
-      ['Agent ID', 'Agent Name', 'Voice', 'LLM Model', 'Minutes Used', 'Created At'],
+      ['Agent ID', 'Agent Name', 'Voice', 'Minutes Used', 'Created At'],
       (agents ?? []).map((agent) => [
         agent.id,
         agent.name,
         agent.voice_id,
-        agent.llm_model,
         ((agent.total_agent_sec ?? 0) / 60).toFixed(1),
         agent.created_at ?? '',
       ]),
@@ -217,17 +221,20 @@ export default function AgentsPage() {
   };
 
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <PageHeader
         title="Manage Agent Configurations"
-        description="Configure LLM system instructions, assigned Urdu voices, and connection settings."
+        description="Configure system instructions, language, providers, and assigned voices."
         actions={
           <>
             <Button variant="secondary" onClick={handleExportAgents}>
               <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
               Export CSV
             </Button>
-            <Button onClick={openCreateModal}>+ Configure Agent</Button>
+            <Button onClick={openCreateModal}>
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              New Agent
+            </Button>
           </>
         }
       />
@@ -240,14 +247,8 @@ export default function AgentsPage() {
         </div>
       ) : null}
 
-      {saveSuccessMessage ? (
-        <div className="mb-6 rounded-md border border-border bg-muted px-4 py-3 text-sm font-medium text-foreground">
-          Agent configuration updated successfully.
-        </div>
-      ) : null}
-
-      <Card className="mb-6">
-        <CardContent className="pt-6">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
           {agentsLoading ? (
             <DataTableSkeleton rows={4} />
           ) : (agents ?? []).length === 0 ? (
@@ -256,183 +257,77 @@ export default function AgentsPage() {
               description="Create one to begin."
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="hidden md:table-cell">Agent ID</TableHead>
-                  <TableHead>Agent Name</TableHead>
-                  <TableHead>Assigned Voice</TableHead>
-                  <TableHead>Minutes Used</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(agents ?? []).map((agent) => (
-                  <TableRow key={agent.id} onClick={() => openEditModal(agent)}>
-                    <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
-                      {agent.id}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <RowOpenButton
-                        onClick={() => openEditModal(agent)}
-                        ariaLabel={`Edit settings and voice for ${agent.name}`}
-                      >
-                        {agent.name}
-                      </RowOpenButton>
-                    </TableCell>
-                    <TableCell>
-                      <Badge>{agent.voice_id}</Badge>
-                    </TableCell>
-                    <TableCell>{((agent.total_agent_sec ?? 0) / 60).toFixed(1)} min</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="pt-6">
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">
-                Complete Uplift Urdu Voice Catalogue ({(voices ?? []).length} Primary Voices)
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Select an Urdu voice entry for your AI agent.
-              </p>
-            </div>
-            <Badge variant="outline">Voice Picker</Badge>
-          </div>
-
-          <div className="mb-4 flex flex-wrap gap-3">
-            <div className="relative min-w-[240px] flex-1">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <input
-                type="text"
-                placeholder="Search voices..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={cn(inputClassName, 'pl-9')}
-              />
-            </div>
-
-            <div className="flex gap-2">
-              {['All', 'Male', 'Female'].map((gender) => (
-                <Button
-                  key={gender}
-                  size="sm"
-                  variant={genderFilter === gender ? 'default' : 'outline'}
-                  onClick={() => setGenderFilter(gender)}
-                >
-                  {gender}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          {voicesSWRError ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              <strong>Voice catalogue error:</strong>{' '}
-              {voicesSWRError instanceof Error
-                ? voicesSWRError.message
-                : 'Failed to load voice catalogue'}
-            </div>
-          ) : voicesLoading ? (
-            <div className="divide-y divide-border rounded-md border border-slate-300">
-              {Array.from({ length: 6 }, (_, i) => (
-                <div key={i} className="flex items-center gap-3 px-3 py-3 sm:gap-4 sm:px-4">
-                  <Skeleton className="h-9 w-9 shrink-0 rounded-full" />
-                  <div className="min-w-0 flex-1">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="mt-2 h-3 w-48" />
-                  </div>
-                  <Skeleton className="h-8 w-8 shrink-0 rounded-md" />
+            <div className="flex min-h-0 flex-1 flex-col text-sm">
+              <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)_3.25rem] border-b border-border">
+                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+                  Agent Name
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="max-h-[560px] divide-y divide-border overflow-y-auto rounded-md border border-slate-300">
-              {filteredVoices.map((voice) => {
-                const isPlaying = playingVoice === voice.id;
-                const isCopied = copiedVoiceId === voice.id;
-                const hasPreview = Boolean(voice.previewUrl);
-                const failedToPlay = playErrorVoiceId === voice.id;
+                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+                  Language
+                </div>
+                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+                  Assigned Voice
+                </div>
+                <div className="h-10 px-3 text-center align-middle font-medium text-muted-foreground">
+                  Minutes Used
+                </div>
+                <div className="h-10 px-3 align-middle">
+                  <span className="sr-only">Actions</span>
+                </div>
+              </div>
 
-                return (
-                  <div
-                    key={voice.id}
-                    className="flex items-start gap-3 px-3 py-3 sm:items-center sm:gap-4 sm:px-4"
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => handlePlayAudio(voice, e)}
-                      disabled={!hasPreview}
-                      aria-label={
-                        !hasPreview
-                          ? `No preview available for ${voice.displayName}`
-                          : isPlaying
-                            ? `Stop sample of ${voice.displayName}`
-                            : `Play sample of ${voice.displayName}`
-                      }
-                      title={!hasPreview ? 'No preview available' : undefined}
-                      className={cn(
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors',
-                        !hasPreview && 'cursor-not-allowed opacity-40',
-                        failedToPlay
-                          ? 'bg-destructive/10 text-destructive'
-                          : isPlaying
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted text-foreground hover:enabled:bg-muted/70',
-                      )}
+              <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
+                {(agents ?? []).map((agent) => {
+                  const isCopied = copiedAgentId === agent.id;
+                  return (
+                    <div
+                      key={agent.id}
+                      onClick={() => router.push(`/agents/${agent.id}`)}
+                      className="group grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)_3.25rem] items-center transition-colors hover:bg-muted/30"
                     >
-                      {failedToPlay ? (
-                        <AlertCircle className="h-4 w-4" aria-hidden="true" />
-                      ) : isPlaying ? (
-                        <Square className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true" />
-                      ) : (
-                        <Play className="h-4 w-4" fill="currentColor" aria-hidden="true" />
-                      )}
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-semibold text-foreground">
-                        {voice.displayName}
+                      <div className="truncate p-3 text-left align-middle font-medium">
+                        <RowOpenButton
+                          onClick={() => router.push(`/agents/${agent.id}`)}
+                          ariaLabel={`Edit settings and voice for ${agent.name}`}
+                        >
+                          {agent.name}
+                        </RowOpenButton>
                       </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <Badge variant="secondary" className="shrink-0">
-                          {capitalize(voice.gender)}
+                      <div className="truncate p-3 text-left align-middle">
+                        <Badge variant="outline">
+                          {(agent.agent_language ?? 'ur').toUpperCase()}
                         </Badge>
-                        <span className="truncate font-mono text-xs text-muted-foreground">
-                          ID: {voice.id}
-                        </span>
-                        {failedToPlay ? (
-                          <span className="shrink-0 text-xs text-destructive">
-                            Preview unavailable
-                          </span>
-                        ) : null}
+                      </div>
+                      <div className="truncate p-3 text-left align-middle">
+                        <Badge>{agent.voice_id}</Badge>
+                      </div>
+                      <div className="truncate p-3 text-center align-middle">
+                        {((agent.total_agent_sec ?? 0) / 60).toFixed(1)} min
+                      </div>
+                      <div className="flex items-center justify-center p-3 align-middle">
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopyAgentId(agent.id, e)}
+                          aria-label={
+                            isCopied ? `Copied ID for ${agent.name}` : `Copy ID for ${agent.name}`
+                          }
+                          title={isCopied ? 'Copied' : 'Copy ID'}
+                          className={cn(
+                            'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100',
+                            isCopied && 'opacity-100',
+                          )}
+                        >
+                          {isCopied ? (
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          )}
+                        </button>
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => handleCopyId(voice.id, e)}
-                      aria-label={isCopied ? `Copied ${voice.displayName}'s ID` : `Copy ${voice.displayName}'s ID`}
-                      title={isCopied ? 'Copied' : 'Copy ID'}
-                      className="inline-flex shrink-0 items-center justify-center self-center rounded-md bg-muted px-2.5 py-1.5 text-foreground transition-colors hover:bg-muted/70"
-                    >
-                      {isCopied ? (
-                        <Check className="h-4 w-4" aria-hidden="true" />
-                      ) : (
-                        <Copy className="h-4 w-4" aria-hidden="true" />
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </CardContent>
@@ -441,74 +336,118 @@ export default function AgentsPage() {
       <Modal
         open={showModal}
         onOpenChange={setShowModal}
-        title={editingAgentId ? 'Edit Agent Configuration' : 'Create Agent'}
+        title="Create Agent"
+        className="max-w-5xl"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowModal(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSave()} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Changes'}
+            <Button onClick={() => void handleCreate()} disabled={!canCreate}>
+              {saving ? 'Saving...' : 'Create Agent'}
             </Button>
           </div>
         }
       >
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Status</label>
-            <div className={cn(inputClassName, 'cursor-not-allowed bg-muted text-muted-foreground')}>
-              Active
+        {!capabilities ? (
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-muted-foreground">Agent Display Name</label>
+                <input
+                  type="text"
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  className={inputClassName}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-muted-foreground">Language</label>
+                <Select
+                  aria-label="Agent language"
+                  value={language}
+                  onValueChange={handleLanguageChange}
+                  options={languageOptions}
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="mb-1 text-sm font-medium text-muted-foreground">Speech-to-text</legend>
+                <Select
+                  aria-label="STT provider"
+                  value={sttProvider}
+                  onValueChange={handleSttProviderChange}
+                  options={providerOptions(langEntry?.stt)}
+                  placeholder="STT provider"
+                  className="w-full"
+                />
+                <Select
+                  aria-label="STT model"
+                  value={sttModel}
+                  onValueChange={setSttModel}
+                  options={sttModelOptions}
+                  placeholder="STT model"
+                  disabled={sttModelOptions.length === 0}
+                  className="mt-1 w-full"
+                />
+              </fieldset>
+
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="mb-1 text-sm font-medium text-muted-foreground">Language model</legend>
+                <Select
+                  aria-label="LLM provider"
+                  value={llmProvider}
+                  onValueChange={handleLlmProviderChange}
+                  options={providerOptions(langEntry?.llm)}
+                  placeholder="LLM provider"
+                  className="w-full"
+                />
+                <Select
+                  aria-label="LLM model"
+                  value={llmModel}
+                  onValueChange={setLlmModel}
+                  options={llmModelOptions}
+                  placeholder="LLM model"
+                  disabled={llmModelOptions.length === 0}
+                  className="mt-1 w-full"
+                />
+              </fieldset>
+            </div>
+
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-sm font-medium text-muted-foreground">Text-to-speech</legend>
+              <Select
+                aria-label="TTS provider"
+                value={ttsProvider}
+                onValueChange={handleTtsProviderChange}
+                options={providerOptions(langEntry?.tts)}
+                placeholder="TTS provider"
+                className="w-full sm:w-64"
+              />
+            </fieldset>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-muted-foreground">Assigned Voice</label>
+              <VoiceCatalogueGrid
+                mode="select"
+                selectedVoiceId={selectedVoice}
+                onSelect={(voice) => setSelectedVoice(voice.id)}
+                allowedVoiceIds={allowedVoiceIds}
+              />
             </div>
           </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Agent Display Name</label>
-            <input
-              type="text"
-              value={agentName}
-              onChange={(e) => setAgentName(e.target.value)}
-              className={inputClassName}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">System Prompt</label>
-            <textarea
-              rows={4}
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              className={inputClassName}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Assigned Urdu Voice</label>
-            <Select
-              value={selectedVoice}
-              onValueChange={setSelectedVoice}
-              options={(voices ?? []).map((voice) => ({
-                value: voice.id,
-                label: `${voice.displayName} (${capitalize(voice.gender)})`,
-              }))}
-              className="w-full"
-            />
-          </div>
-        </div>
+        )}
       </Modal>
-
-      {copiedVoiceId && copyToastPosition && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              role="status"
-              aria-live="polite"
-              style={{ top: copyToastPosition.top - 8, right: copyToastPosition.right }}
-              className="fixed z-[200] -translate-y-full whitespace-nowrap rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background shadow-lg animate-in fade-in slide-in-from-bottom-1"
-            >
-              Voice ID copied
-            </div>,
-            document.body,
-          )
-        : null}
     </div>
   );
 }

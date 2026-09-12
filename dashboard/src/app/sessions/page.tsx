@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import useSWR from 'swr';
-import { Copy, Check, Download } from 'lucide-react';
+import { Copy, Check, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { type PortalSession } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +52,13 @@ const END_REASON_LABELS: Record<string, string> = {
   dispatch_failed: 'Dispatch Failed',
   reconciled_stale: 'Reconciled (Stale)',
   stale_reconciled: 'Reconciled (Stale)',
+  // Written by worker/main.py's session-close handler, from LiveKit's CloseReason.
+  participant_disconnected: 'Caller Hung Up',
+  agent_ended: 'Ended by Agent',
+  task_completed: 'Ended by Agent',
+  job_shutdown: 'Worker Shut Down',
+  'parent process shutdown': 'Worker Shut Down',
+  error: 'Ended on Error',
 };
 
 function humanizeEndReason(reason: string | null): string {
@@ -111,6 +119,8 @@ function CopyableId({
   );
 }
 
+const PAGE_SIZE = 15;
+
 export default function SessionsPage() {
   const { data: sessions, isLoading: loading, error } = useSWR(
     swrKeys.sessions,
@@ -118,6 +128,16 @@ export default function SessionsPage() {
   );
   const [activeSession, setActiveSession] = useState<PortalSession | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil((sessions?.length ?? 0) / PAGE_SIZE));
+  // Clamp rather than reset on every revalidation -- SWR hands back a new array reference on
+  // each background refetch even when the content is unchanged, so resetting unconditionally
+  // would kick the user back to page 1 while they're reading page 3.
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+  const paginatedSessions = (sessions ?? []).slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const handleCopy = (field: string, value: string) => {
     navigator.clipboard.writeText(value);
@@ -134,9 +154,9 @@ export default function SessionsPage() {
         session.id,
         session.agent_name,
         session.room_name,
-        session.live ? 'Live' : 'Ended',
+        session.live ? 'Live' : session.stale ? 'Stale' : 'Ended',
         String(session.duration_sec ?? ''),
-        humanizeEndReason(session.end_reason),
+        session.stale ? 'Never closed' : humanizeEndReason(session.end_reason),
         session.started_at ?? '',
         session.ended_at ?? '',
       ]),
@@ -185,7 +205,7 @@ export default function SessionsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(sessions ?? []).map((session) => (
+                {paginatedSessions.map((session) => (
                   <TableRow key={session.id} onClick={() => setActiveSession(session)}>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       <RowOpenButton
@@ -204,6 +224,10 @@ export default function SessionsPage() {
                     <TableCell>
                       {session.live ? (
                         <Badge className="bg-emerald-600 text-white">Live</Badge>
+                      ) : session.stale ? (
+                        <Badge variant="outline" className="border-amber-500 text-amber-700">
+                          Stale
+                        </Badge>
                       ) : (
                         <Badge variant="outline">Ended</Badge>
                       )}
@@ -216,6 +240,38 @@ export default function SessionsPage() {
               </TableBody>
             </Table>
           )}
+
+          {!loading && (sessions ?? []).length > PAGE_SIZE ? (
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+              <span className="text-xs text-muted-foreground">
+                Showing {(page - 1) * PAGE_SIZE + 1}–
+                {Math.min(page * PAGE_SIZE, (sessions ?? []).length)} of {(sessions ?? []).length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -238,14 +294,48 @@ export default function SessionsPage() {
               </div>
               {activeSession.live ? (
                 <Badge className="shrink-0 bg-emerald-600 text-white">Live</Badge>
+              ) : activeSession.stale ? (
+                <Badge variant="outline" className="shrink-0 border-amber-500 text-amber-700">
+                  Stale
+                </Badge>
               ) : null}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <StatBlock label="Duration" value={formatDuration(activeSession.duration_sec)} />
-              <StatBlock label="End Reason" value={humanizeEndReason(activeSession.end_reason)} />
+              <StatBlock
+                label="End Reason"
+                value={
+                  activeSession.stale
+                    ? 'Never closed'
+                    : humanizeEndReason(activeSession.end_reason)
+                }
+              />
               <StatBlock label="Started" value={formatTimestamp(activeSession.started_at)} />
               <StatBlock label="Ended" value={formatTimestamp(activeSession.ended_at)} />
+            </div>
+
+            {activeSession.stale ? (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+                This session was never closed by the voice worker — it most likely exited
+                ungracefully. It is not an active call and is not consuming a concurrency slot
+                once reconciliation runs.
+              </p>
+            ) : null}
+
+            <div className="flex flex-col gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Call Summary
+              </h3>
+              {activeSession.summary ? (
+                <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+                  {activeSession.summary}
+                </p>
+              ) : (
+                <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  No summary available for this call.
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-3">
@@ -272,9 +362,32 @@ export default function SessionsPage() {
               />
             </div>
 
-            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-              Transcript text is not exposed by the current tenant portal API yet.
-            </p>
+            <div className="flex flex-col gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Transcript
+              </h3>
+              {activeSession.transcript && activeSession.transcript.length > 0 ? (
+                <div className="flex max-h-80 flex-col gap-2 overflow-y-auto rounded-md border border-border p-3">
+                  {activeSession.transcript.map((turn, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'max-w-[85%] rounded-md px-3 py-1.5 text-sm',
+                        turn.role === 'assistant'
+                          ? 'self-start bg-muted text-foreground'
+                          : 'self-end bg-primary text-primary-foreground',
+                      )}
+                    >
+                      {turn.text}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  No transcript available for this call.
+                </p>
+              )}
+            </div>
           </div>
         ) : null}
       </Drawer>

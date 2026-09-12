@@ -35,7 +35,7 @@ def test_release_candidate_script_writes_manifest():
 
     assert manifest["phase"] == 8
     assert manifest["track"] == "habiba"
-    assert manifest["sdk"]["package_name"] == "@uva/voice"
+    assert manifest["sdk"]["package_name"] == "@awaazlabs-uva/voice"
     assert manifest["sdk"]["version_candidate"] == "0.1.0"
     assert "/" in manifest["dashboard"]["routes"]
     assert "/agents" in manifest["dashboard"]["routes"]

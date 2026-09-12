@@ -13,7 +13,7 @@ export class VoicesApiConfigError extends Error {}
 
 /**
  * `/v1/voices` is control_plane's public, unauthenticated catalogue endpoint (the same one
- * @uva/voice's static `listVoices()` calls directly from the browser) — a different service
+ * @awaazlabs-uva/voice's static `listVoices()` calls directly from the browser) - a different service
  * from tenant_portal_api, so it needs its own base URL, not NEXT_PUBLIC_TENANT_PORTAL_API_URL.
  */
 export async function getVoiceCatalogue(): Promise<ApiVoice[]> {

@@ -5,19 +5,16 @@ from __future__ import annotations
 import sys
 import uuid
 from pathlib import Path
-from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import psycopg
-import pytest
-from dbconn import conn_kwargs
-from control_plane.secrets import DictSecretProvider
-from control_plane.secrets_db import DbSecretProvider
-from admin.app import app as admin_app
-from admin.queries import rotate_tenant_secret, get_tenant_credentials_masked
+import psycopg  # noqa: E402
+from dbconn import conn_kwargs  # noqa: E402
+from control_plane.secrets import DictSecretProvider  # noqa: E402
+from control_plane.secrets_db import DbSecretProvider  # noqa: E402
+from admin.queries import rotate_tenant_secret, get_tenant_credentials_masked  # noqa: E402
 
 
 def test_db_secret_provider_fallback():

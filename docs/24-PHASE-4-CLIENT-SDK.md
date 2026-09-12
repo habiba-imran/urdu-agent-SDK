@@ -4,7 +4,7 @@
 
 ## API
 ```ts
-const uva = new UrduVoiceAgent({ publishableKey, sessionEndpoint }); // host's OWN server
+const uva = new AwaazLabsUvaVoice({ publishableKey, sessionEndpoint }); // host's OWN server
 await uva.connect({ agentId });  // host server does the HMAC; we never see their secret
 uva.on('transcript'|'speaking'|'error'|'ended', cb);
 await uva.disconnect();

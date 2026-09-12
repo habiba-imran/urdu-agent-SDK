@@ -1,6 +1,6 @@
 # ngrok Local Testing Runbook
 
-This document explains how to temporarily test the Urdu Voice Agent SDK with:
+This document explains how to temporarily test the AwaazLabs-UVA-Voice SDK with:
 
 - the `worker` running locally on our machine
 - the `host backend` running locally on our machine
@@ -15,7 +15,7 @@ The current blocker is the hosted worker environment.
 
 Right now:
 
-- the control plane is live
+- the backend-only session service is live
 - the dashboard/backend flows are working
 - the SDK/browser flow works locally
 - but the Render worker can run out of memory and restart
@@ -44,7 +44,7 @@ What `ngrok` does **not** do:
 
 So the correct temporary setup is:
 
-`External frontend -> ngrok URL -> our local host backend -> UVA control plane -> our local worker via LiveKit`
+`External frontend -> ngrok URL -> our local host backend -> AwaazLabs-UVA session service -> our local worker via LiveKit`
 
 ## Official ngrok behavior
 
@@ -79,11 +79,11 @@ Use these current demo/staging values:
 
 | Value | Current value |
 |---|---|
-| `publishableKey` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` |
-| `tenantId` | `bb8fa755-4175-4a6f-8789-d315d8d6c449` |
-| raw tenant `HMAC secret` | `7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw` |
-| `agentId` | `aa3898ac-312d-43ea-8930-0b4776475a16` |
-| control-plane base URL | `https://uva-control-plane-staging.onrender.com` |
+| `publishableKey` | `[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]` |
+| `tenantId` | `[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]` |
+| raw tenant `HMAC secret` | `[YOUR_HMAC_SECRET]` |
+| `agentId` | `[YOUR_AGENT_ID]` |
+| backend-only session upstream URL | `[BACKEND_ONLY_SESSION_UPSTREAM_URL]` |
 
 ## Before you start
 
@@ -143,22 +143,22 @@ Important:
 
 Use:
 
-- `examples/host-backend-node/`
+- `examples/host-backend/`
 
 ### Backend `.env`
 
 Create:
 
-`examples/host-backend-node/.env`
+`examples/host-backend/.env`
 
 Use:
 
 ```env
 PORT=3000
-UVA_CONTROL_PLANE_URL=https://uva-control-plane-staging.onrender.com
-UVA_TENANT_ID=bb8fa755-4175-4a6f-8789-d315d8d6c449
-UVA_HMAC_SECRET=7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw
-UVA_PUBLISHABLE_KEY=bb8fa755-4175-4a6f-8789-d315d8d6c449
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
+UVA_TENANT_ID=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
+UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
+UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
 HOST_ALLOWED_ORIGINS=http://localhost:5173
 HOST_PUBLIC_BASE_URL=http://localhost:3000
 ```
@@ -226,10 +226,10 @@ Recommended backend `.env` after ngrok is known:
 
 ```env
 PORT=3000
-UVA_CONTROL_PLANE_URL=https://uva-control-plane-staging.onrender.com
-UVA_TENANT_ID=bb8fa755-4175-4a6f-8789-d315d8d6c449
-UVA_HMAC_SECRET=7PzQCfjC01Ri3f6f88NCnB2qNSEgvNPQ9lGUnZ6Z8iw
-UVA_PUBLISHABLE_KEY=bb8fa755-4175-4a6f-8789-d315d8d6c449
+UVA_SESSION_UPSTREAM_URL=[BACKEND_ONLY_SESSION_UPSTREAM_URL]
+UVA_TENANT_ID=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
+UVA_HMAC_SECRET=[YOUR_HMAC_SECRET]
+UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
 HOST_ALLOWED_ORIGINS=http://localhost:5173
 HOST_PUBLIC_BASE_URL=https://abc123.ngrok-free.app
 ```
@@ -271,10 +271,10 @@ The tester/client does **not** need the HMAC secret.
 They only need these frontend values:
 
 ```env
-VITE_UVA_PUBLISHABLE_KEY=bb8fa755-4175-4a6f-8789-d315d8d6c449
+VITE_UVA_PUBLISHABLE_KEY=[YOUR_PUBLISHABLE_KEY_OR_TENANT_ID]
 VITE_UVA_SESSION_ENDPOINT=https://abc123.ngrok-free.app/api/voice/session
 VITE_UVA_REFRESH_ENDPOINT=https://abc123.ngrok-free.app/api/voice/session/refresh
-VITE_UVA_AGENT_ID=aa3898ac-312d-43ea-8930-0b4776475a16
+VITE_UVA_AGENT_ID=[YOUR_AGENT_ID]
 ```
 
 Replace `https://abc123.ngrok-free.app` with the real ngrok URL.
@@ -283,11 +283,11 @@ Replace `https://abc123.ngrok-free.app` with the real ngrok URL.
 
 Use:
 
-- `examples/basic-web-client/`
+- `examples/web-client/`
 
 Create:
 
-`examples/basic-web-client/.env`
+`examples/web-client/.env`
 
 Then run:
 
@@ -341,8 +341,8 @@ The SDK test is successful if:
 |---|---|
 | frontend calls the ngrok session endpoint | yes |
 | local backend receives the request | yes |
-| backend signs request to control plane | yes |
-| control plane returns session token | yes |
+| backend delegates to the session upstream | yes |
+| session upstream returns session token | yes |
 | browser connects to LiveKit | yes |
 | local worker receives the job | yes |
 | transcript appears in the browser | yes |
@@ -365,7 +365,7 @@ Expected signs:
 Expected signs:
 
 - request hits `/api/voice/session`
-- backend forwards to control plane
+- backend forwards to the session upstream
 - backend returns token + wsUrl + roomName
 
 ### Frontend logs
@@ -411,7 +411,7 @@ Check:
 
 Check:
 
-- control plane is reachable
+- session upstream is reachable
 - `tenantId`, `HMAC secret`, and `agentId` are correct
 - local worker is connected to LiveKit
 

@@ -517,7 +517,7 @@ def test_sdk_bundle_never_references_admin():
 
 
 def test_sdk_bundle_never_references_agents_server():
-    """The browser SDK (@uva/voice) must never reference the server-only @uva/agents package —
+    """The browser SDK (@awaazlabs-uva/voice) must never reference the server-only @awaazlabs-uva/agents package —
     that package holds the tenant HMAC secret, and importing it into a browser bundle would leak
     it. Mirrors test_sdk_bundle_never_references_admin's isolation check."""
     root = Path(__file__).resolve().parent.parent
@@ -531,7 +531,9 @@ def test_sdk_bundle_never_references_agents_server():
                 text = f.read_text(encoding="utf-8", errors="ignore")
                 if (
                     "sdk-server" in text
+                    or "@awaazlabs-uva/agents" in text
                     or "@uva/agents" in text
+                    or "AwaazLabsUvaAgentsClient" in text
                     or "UvaAgentsClient" in text
                 ):
                     hits.append(str(f))

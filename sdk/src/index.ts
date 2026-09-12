@@ -1,21 +1,16 @@
-// UrduVoiceAgent client SDK (docs/24-PHASE-4-CLIENT-SDK.md).
-//
-// This bundle ships into a THIRD-PARTY app and is assumed fully decompiled on day one, so it holds
-// ZERO secrets (no API key, no HMAC secret, no LiveKit secret). It talks only to the HOST
-// platform's own session endpoint (which holds THEIR HMAC secret and calls our control-plane mint)
-// and then to LiveKit directly via livekit-client. It never calls Uplift/Gladia/Gemini/Supabase.
-
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
 
-export interface UrduVoiceAgentOptions {
+export interface AwaazLabsUvaVoiceOptions {
   /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
   publishableKey: string;
-  /** The HOST platform's OWN server (holds their HMAC secret, calls our mint). NOT our server. */
+  /** The HOST platform's OWN server. It returns the short-lived session payload. */
   sessionEndpoint: string;
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
 }
+
+export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
 
 export interface ConnectOptions {
   agentId: string;
@@ -34,7 +29,7 @@ export interface Voice {
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
-export type UvaEvent =
+export type AwaazLabsUvaVoiceEvent =
   | 'transcript'
   | 'speaking'
   | 'error'
@@ -43,13 +38,23 @@ export type UvaEvent =
   | 'disconnected'
   | 'agent_speaking'
   | 'metrics_updated'
-  | 'audio_blocked';
+  | 'audio_blocked'
+  | 'turn_latency';
 
-export type UvaErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+export type UvaEvent = AwaazLabsUvaVoiceEvent;
+
+export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
+
+export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface TranscriptEvent {
+  /** Stable per-segment id from LiveKit — the same id recurs with updated `text`/`final` as a
+   *  segment goes from interim to final. Use it to replace, not append, matching updates. */
+  id: string;
   text: string;
   final: boolean;
+  /** 'user' for the local mic's own transcript, 'agent' for anything from a remote participant. */
+  speaker: 'user' | 'agent';
 }
 
 export interface MetricsEvent {
@@ -57,15 +62,17 @@ export interface MetricsEvent {
   [key: string]: unknown;
 }
 
-export class UvaError extends Error {
+export class AwaazLabsUvaVoiceError extends Error {
   constructor(
-    public readonly code: UvaErrorCode,
+    public readonly code: AwaazLabsUvaVoiceErrorCode,
     message?: string,
   ) {
     super(message ?? code);
-    this.name = 'UvaError';
+    this.name = 'AwaazLabsUvaVoiceError';
   }
 }
+
+export { AwaazLabsUvaVoiceError as UvaError };
 
 interface SessionResponse {
   token: string;
@@ -75,15 +82,17 @@ interface SessionResponse {
   expiresIn?: number;
 }
 
-export interface UvaEventMap {
+export interface AwaazLabsUvaVoiceEventMap {
   transcript: [TranscriptEvent];
   speaking: [boolean];
-  error: [UvaError];
+  error: [AwaazLabsUvaVoiceError];
   ended: [unknown];
   connected: [];
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
+  /** Per-turn stage breakdown emitted by the worker on every user turn (UVA-5). */
+  turn_latency: [MetricsEvent];
   /**
    * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
    * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
@@ -92,38 +101,41 @@ export interface UvaEventMap {
   audio_blocked: [boolean];
 }
 
+export type UvaEventMap = AwaazLabsUvaVoiceEventMap;
+
 type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
-export class UrduVoiceAgent {
+export class AwaazLabsUvaVoice {
   private room: Room | null = null;
-  private readonly listeners = new Map<UvaEvent, Set<Listener>>();
+  private readonly listeners = new Map<AwaazLabsUvaVoiceEvent, Set<Listener>>();
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
   private state: ConnectionState = 'idle';
 
-  static async listVoices(
-    endpointUrl = 'https://uva-control-plane.onrender.com/v1/voices'
-  ): Promise<Voice[]> {
+  static async listVoices(endpointUrl: string): Promise<Voice[]> {
+    if (!endpointUrl.trim()) {
+      throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
+    }
     try {
       const res = await fetch(endpointUrl);
       if (!res.ok) {
-        throw new UvaError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+        throw new AwaazLabsUvaVoiceError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
       }
       return (await res.json()) as Voice[];
     } catch (e) {
-      if (e instanceof UvaError) throw e;
-      throw new UvaError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
+      if (e instanceof AwaazLabsUvaVoiceError) throw e;
+      throw new AwaazLabsUvaVoiceError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
     }
   }
 
-  constructor(private readonly options: UrduVoiceAgentOptions) {
+  constructor(private readonly options: AwaazLabsUvaVoiceOptions) {
 
     if (!options.publishableKey.trim()) {
-      throw new UvaError('session_failed', 'publishableKey is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'publishableKey is required');
     }
     if (!options.sessionEndpoint.trim()) {
-      throw new UvaError('session_failed', 'sessionEndpoint is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'sessionEndpoint is required');
     }
   }
 
@@ -135,15 +147,34 @@ export class UrduVoiceAgent {
     return this.state === 'connected';
   }
 
+  /** Whether the local microphone track is currently enabled. `false` when not connected. */
+  get isMicMuted(): boolean {
+    return this.room ? !this.room.localParticipant.isMicrophoneEnabled : false;
+  }
+
+  /** Enable/disable the local microphone track. No-op if not connected. */
+  async setMicMuted(muted: boolean): Promise<void> {
+    if (!this.room) return;
+    await this.room.localParticipant.setMicrophoneEnabled(!muted);
+  }
+
   async connect(opts: ConnectOptions): Promise<void> {
     if (this.room) {
-      throw new UvaError('session_failed', 'already connected - call disconnect() first');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'already connected - call disconnect() first');
     }
     if (!opts.agentId.trim()) {
-      throw new UvaError('session_failed', 'agentId is required');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'agentId is required');
     }
 
     this.state = 'connecting';
+
+    const room = new Room();
+    this.wireRoomEvents(room);
+
+    // Acquire microphone access concurrently with fetching the session token
+    const micPromise = room.localParticipant.setMicrophoneEnabled(true).catch(() => {
+      // Ignore here, we will check isMicrophoneEnabled after connecting
+    });
 
     let body: SessionResponse;
     try {
@@ -156,41 +187,47 @@ export class UrduVoiceAgent {
         }),
       });
       if (res.status === 429) {
-        throw new UvaError('quota_exceeded');
+        throw new AwaazLabsUvaVoiceError('quota_exceeded');
       }
       if (res.status === 404) {
-        throw new UvaError('agent_not_found');
+        throw new AwaazLabsUvaVoiceError('agent_not_found');
       }
       if (!res.ok) {
-        throw new UvaError('session_failed');
+        throw new AwaazLabsUvaVoiceError('session_failed');
       }
       const parsed = (await res.json()) as Partial<SessionResponse>;
       if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-        throw new UvaError('session_failed', 'session endpoint returned an incomplete response');
+        throw new AwaazLabsUvaVoiceError('session_failed', 'session endpoint returned an incomplete response');
       }
       body = parsed as SessionResponse;
     } catch (err) {
       this.state = 'idle';
-      if (err instanceof UvaError) throw err;
-      throw new UvaError('session_failed', 'could not reach sessionEndpoint');
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      if (err instanceof AwaazLabsUvaVoiceError) throw err;
+      throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
-
-    const room = new Room();
-    this.wireRoomEvents(room);
 
     try {
       await room.connect(body.wsUrl, body.token);
     } catch {
       this.state = 'idle';
-      throw new UvaError('session_failed', 'LiveKit connection failed');
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
 
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-    } catch {
+    await micPromise;
+    if (!room.localParticipant.isMicrophoneEnabled) {
+      // Pre-connect enable often no-ops; retry after the room is connected.
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+      } catch {
+        // Fall through to the enabled check below.
+      }
+    }
+    if (!room.localParticipant.isMicrophoneEnabled) {
       await room.disconnect();
       this.state = 'idle';
-      throw new UvaError('session_failed', 'microphone permission denied or unavailable');
+      throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
     }
 
     this.room = room;
@@ -198,7 +235,7 @@ export class UrduVoiceAgent {
     this.scheduleTokenRefresh(body);
   }
 
-  on<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+  on<K extends AwaazLabsUvaVoiceEvent>(event: K, cb: Listener<AwaazLabsUvaVoiceEventMap[K]>): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
@@ -206,7 +243,7 @@ export class UrduVoiceAgent {
     return this;
   }
 
-  off<K extends UvaEvent>(event: K, cb: Listener<UvaEventMap[K]>): this {
+  off<K extends AwaazLabsUvaVoiceEvent>(event: K, cb: Listener<AwaazLabsUvaVoiceEventMap[K]>): this {
     this.listeners.get(event)?.delete(cb as Listener);
     return this;
   }
@@ -234,9 +271,9 @@ export class UrduVoiceAgent {
     }
   }
 
-  private emit<K extends UvaEvent>(event: K, ...args: UvaEventMap[K]): void {
+  private emit<K extends AwaazLabsUvaVoiceEvent>(event: K, ...args: AwaazLabsUvaVoiceEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      (cb as Listener<UvaEventMap[K]>)(...args);
+      (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
     }
   }
 
@@ -258,9 +295,10 @@ export class UrduVoiceAgent {
 
     room.on(
       RoomEvent.TranscriptionReceived,
-      (segments: TranscriptionSegment[]) => {
+      (segments: TranscriptionSegment[], participant?: Participant) => {
+        const speaker: 'user' | 'agent' = participant?.isLocal ? 'user' : 'agent';
         for (const seg of segments) {
-          this.emit('transcript', { text: seg.text, final: seg.final });
+          this.emit('transcript', { id: seg.id, text: seg.text, final: seg.final, speaker });
         }
       },
     );
@@ -296,17 +334,17 @@ export class UrduVoiceAgent {
     });
 
     room.on(RoomEvent.MediaDevicesError, (error: Error) => {
-      this.emit('error', new UvaError('session_failed', error.message));
+      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', error.message));
     });
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
       const metrics = this.tryParseMetrics(metadata);
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     // Browsers block audio autoplay without a prior user gesture.
@@ -398,17 +436,40 @@ export class UrduVoiceAgent {
       }
       this.scheduleTokenRefresh(this.session);
     } catch {
-      this.emit('error', new UvaError('session_failed', 'token refresh failed'));
+      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', 'token refresh failed'));
     }
   }
 
   private resolveRefreshEndpoint(): string {
-    if (this.session?.refreshUrl) return this.session.refreshUrl;
+    if (this.session?.refreshUrl) {
+      // A relative refreshUrl (e.g. control_plane's own "/v1/session/refresh", meant to be
+      // rewritten by a proxying host backend before it ever reaches a browser — see
+      // examples/host-backend's resolveRefreshUrl()) must resolve against the endpoint that
+      // actually served it (sessionEndpoint), not the current page's origin. A bare
+      // fetch('/v1/session/refresh') from the browser would otherwise hit the PAGE's own
+      // origin, which has no such route. Already-absolute URLs pass through `new URL()`
+      // unchanged regardless of the base, so this is a no-op for well-behaved host backends
+      // that already rewrite it themselves.
+      try {
+        return new URL(this.session.refreshUrl, this.options.sessionEndpoint).toString();
+      } catch {
+        return this.session.refreshUrl;
+      }
+    }
     if (this.options.refreshEndpoint) return this.options.refreshEndpoint;
     if (this.options.sessionEndpoint.endsWith('/v1/session')) {
       return `${this.options.sessionEndpoint}/refresh`;
     }
     return `${this.options.sessionEndpoint.replace(/\/$/, '')}/refresh`;
+  }
+
+  private emitLatencyEvents(metrics: MetricsEvent): void {
+    if (metrics.type === 'turn_latency') {
+      this.emit('turn_latency', metrics);
+    }
+    if (metrics.type === 'metrics_updated' || metrics.type === 'turn_latency') {
+      this.emit('metrics_updated', metrics);
+    }
   }
 
   private decodePayload(payload: Uint8Array): string {
@@ -432,3 +493,5 @@ export class UrduVoiceAgent {
     }
   }
 }
+
+export { AwaazLabsUvaVoice as UrduVoiceAgent };

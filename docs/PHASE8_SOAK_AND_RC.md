@@ -21,8 +21,8 @@ Before running this soak pass:
 
 1. `tenant_portal_api` runs locally or in staging.
 2. `dashboard/` runs locally or in staging.
-3. `@uva/voice` has a built `dist/` directory.
-4. `examples/host-backend-node/` is installable.
+3. `@awaazlabs-uva/voice` has a built `dist/` directory.
+4. `examples/host-backend/` is installable.
 5. At least one active tenant exists with a valid HMAC secret.
 
 ## Scenario 1: Multiple Tenant Agents

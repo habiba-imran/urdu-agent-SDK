@@ -1,0 +1,167 @@
+"""Telephony provider credential reference encoding.
+
+Uses the existing telephony credential reference columns with an application
+encryption key from TELEPHONY_CREDENTIAL_ENCRYPTION_KEY. The raw provider key is
+only present transiently in process memory while handling a trusted backend
+request.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+from typing import Any
+
+from tenant_portal_api.telephony_config import is_mock_provider_mode
+
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
+
+_PREFIX = "enc:v1:"
+
+
+
+def encrypt_provider_secret(secret: str) -> str:
+    if not secret:
+        raise _missing_credentials("Provider credential is empty.")
+    master = _master_key()
+    nonce = os.urandom(16)
+    plaintext = secret.encode("utf-8")
+    ciphertext = _xor(
+        plaintext, _keystream(_derive(master, b"enc"), nonce, len(plaintext))
+    )
+    tag = hmac.new(_derive(master, b"mac"), nonce + ciphertext, hashlib.sha256).digest()
+    payload = {
+        "nonce": _b64(nonce),
+        "ciphertext": _b64(ciphertext),
+        "tag": _b64(tag),
+    }
+    return _PREFIX + _b64(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+
+_LEGACY_PREFIX = "enc:legacy:"
+
+
+def decrypt_provider_secret(secret_ref: str | None) -> str:
+    if not secret_ref:
+        raise _missing_credentials("Tenant provider credential reference is missing.")
+    if is_mock_provider_mode() and not secret_ref.startswith(_PREFIX) and not secret_ref.startswith(_LEGACY_PREFIX):
+        return secret_ref
+    if secret_ref.startswith(_LEGACY_PREFIX):
+        # Backward compatible decoding for legacy prefix format
+        try:
+            return base64.b64decode(secret_ref[len(_LEGACY_PREFIX) :].encode("utf-8")).decode("utf-8")
+        except Exception:
+            if is_mock_provider_mode():
+                return secret_ref[len(_LEGACY_PREFIX) :]
+            raise _missing_credentials("Legacy provider credential reference is invalid.")
+    if not secret_ref.startswith(_PREFIX):
+        raise _missing_credentials(
+            "Tenant provider credential reference format is not supported."
+        )
+
+    try:
+        master = _master_key()
+        payload = json.loads(_unb64(secret_ref[len(_PREFIX) :]).decode("utf-8"))
+        nonce = _unb64(payload["nonce"])
+        ciphertext = _unb64(payload["ciphertext"])
+        tag = _unb64(payload["tag"])
+
+        expected = hmac.new(
+            _derive(master, b"mac"), nonce + ciphertext, hashlib.sha256
+        ).digest()
+        if not hmac.compare_digest(expected, tag):
+            raise _missing_credentials(
+                "Tenant provider credential reference failed integrity verification."
+            )
+
+        plaintext = _xor(
+            ciphertext, _keystream(_derive(master, b"enc"), nonce, len(ciphertext))
+        )
+        return plaintext.decode("utf-8")
+    except Exception as exc:
+        if is_mock_provider_mode():
+            return secret_ref[len(_PREFIX) :]
+        if isinstance(exc, TelephonyError):
+            raise exc
+        raise _missing_credentials(
+            "Tenant provider credential reference is invalid."
+        ) from exc
+
+
+def reencrypt_legacy_provider_secrets(conn: Any) -> int:
+    """Scan and upgrade legacy or raw secret references in telephony_connections to enc:v1: format."""
+    if conn is None or is_mock_provider_mode():
+        return 0
+    rows = conn.execute(
+        """
+        select id, encrypted_api_key_ref from telephony_connections
+        where encrypted_api_key_ref is not null and encrypted_api_key_ref not like %s
+        """,
+        (f"{_PREFIX}%",),
+    ).fetchall()
+    migrated = 0
+    for row in rows:
+        conn_id, old_ref = row[0], row[1]
+        try:
+            raw_secret = decrypt_provider_secret(old_ref)
+            new_ref = encrypt_provider_secret(raw_secret)
+            conn.execute(
+                "update telephony_connections set encrypted_api_key_ref = %s, updated_at = now() where id = %s",
+                (new_ref, conn_id),
+            )
+            migrated += 1
+        except Exception:
+            pass
+    return migrated
+
+
+
+
+def _master_key() -> bytes:
+    value = os.getenv("TELEPHONY_CREDENTIAL_ENCRYPTION_KEY", "").strip()
+    if not value:
+        raise _missing_credentials(
+            "TELEPHONY_CREDENTIAL_ENCRYPTION_KEY is not configured."
+        )
+    return hashlib.sha256(value.encode("utf-8")).digest()
+
+
+def _derive(master: bytes, purpose: bytes) -> bytes:
+    return hmac.new(
+        master, b"telephony-provider-credential:" + purpose, hashlib.sha256
+    ).digest()
+
+
+def _keystream(key: bytes, nonce: bytes, size: int) -> bytes:
+    blocks: list[bytes] = []
+    counter = 0
+    while sum(len(block) for block in blocks) < size:
+        counter_bytes = counter.to_bytes(4, "big")
+        blocks.append(hmac.new(key, nonce + counter_bytes, hashlib.sha256).digest())
+        counter += 1
+    return b"".join(blocks)[:size]
+
+
+def _xor(left: bytes, right: bytes) -> bytes:
+    return bytes(a ^ b for a, b in zip(left, right))
+
+
+def _b64(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii")
+
+
+def _unb64(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value.encode("ascii"))
+
+
+def _missing_credentials(message: str) -> TelephonyError:
+    return TelephonyError(
+        status=503,
+        code=TelephonyErrorCode.PROVIDER_CREDENTIALS_MISSING,
+        message=message,
+    )

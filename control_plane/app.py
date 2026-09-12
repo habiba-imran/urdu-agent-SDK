@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import os
 import sys
 import time
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -31,8 +32,6 @@ try:
     import sentry_sdk  # type: ignore
 except ImportError:
     sentry_sdk = None
-
-
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -45,6 +44,7 @@ except ImportError:
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
+from .warm import run_warm_probe  # noqa: E402
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -86,11 +86,10 @@ def _require_env() -> None:
 
 _require_env()
 
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-_CORS_ORIGINS_RAW = (
-    os.environ.get("CP_ALLOWED_ORIGINS")
-    or _ENV.get("CP_ALLOWED_ORIGINS", "")
+_CORS_ORIGINS_RAW = os.environ.get("CP_ALLOWED_ORIGINS") or _ENV.get(
+    "CP_ALLOWED_ORIGINS", ""
 )
 _CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 
@@ -107,14 +106,12 @@ if _SENTRY_DSN and sentry_sdk is not None:
 
 
 app = FastAPI(
-
     title="UVA Control Plane",
     description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
-
 
 
 app.add_middleware(
@@ -135,7 +132,12 @@ def health_check():
 @app.get("/healthz/deep")
 def deep_health_check():
     """Deep readiness probe — verifies live PostgreSQL DB connectivity and LiveKit credentials configuration."""
-    health = {"status": "healthy", "service": "uva-control-plane", "database": "unknown", "livekit": "configured"}
+    health = {
+        "status": "healthy",
+        "service": "uva-control-plane",
+        "database": "unknown",
+        "livekit": "configured",
+    }
 
     # 1. Verify DB
     try:
@@ -155,6 +157,18 @@ def deep_health_check():
     return JSONResponse(status_code=status_code, content=health)
 
 
+@app.get("/healthz/warm")
+async def warm_health_check():
+    """Warm probe — pings DB + LiveKit API to keep staging instances hot (UVA-9)."""
+    health = await run_warm_probe(
+        lk_url=_LK_URL,
+        lk_key=_LK_KEY,
+        lk_secret=_LK_SECRET,
+        agent_name=_LK_AGENT_NAME,
+    )
+    status_code = 200 if health["status"] == "warm" else 503
+    return JSONResponse(status_code=status_code, content=health)
+
 
 @app.get("/v1/voices")
 def list_voices():
@@ -163,7 +177,8 @@ def list_voices():
         with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
             rows = conn.execute(
                 """
-                SELECT id, display_name, gender, preview_url, artwork_url, enabled
+                SELECT id, display_name, gender, preview_url, artwork_url, enabled,
+                       provider, language
                 FROM voices
                 WHERE enabled = true
                 ORDER BY display_name ASC
@@ -178,6 +193,11 @@ def list_voices():
                         "previewUrl": r[3],
                         "artworkUrl": r[4],
                         "enabled": bool(r[5]),
+                        # Additive (ADR-036 voice-catalogue expansion): lets multi-provider
+                        # consumers group/filter voices by provider+language client-side. Existing
+                        # consumers (e.g. awaaz-labs-voice-catalogue) ignore unknown fields.
+                        "provider": r[6],
+                        "language": r[7],
                     }
                     for r in rows
                 ]
@@ -186,27 +206,74 @@ def list_voices():
 
     # Fallback default catalog if DB query fails or unpopulated
     return [
-        {"id": "v_meklc281", "displayName": "Demo Voice (Default)", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "helpdesk-agent", "displayName": "Helpdesk Agent", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "street-vendor", "displayName": "Street Vendor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "prime-time-anchor", "displayName": "Prime Time Anchor", "gender": "male", "previewUrl": None, "artworkUrl": None, "enabled": True},
-        {"id": "nosey-aunty", "displayName": "Nosey Aunty", "gender": "female", "previewUrl": None, "artworkUrl": None, "enabled": True},
+        {
+            "id": "v_meklc281",
+            "displayName": "Demo Voice (Default)",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "helpdesk-agent",
+            "displayName": "Helpdesk Agent",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "street-vendor",
+            "displayName": "Street Vendor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "prime-time-anchor",
+            "displayName": "Prime Time Anchor",
+            "gender": "male",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
+        {
+            "id": "nosey-aunty",
+            "displayName": "Nosey Aunty",
+            "gender": "female",
+            "previewUrl": None,
+            "artworkUrl": None,
+            "enabled": True,
+        },
     ]
-
 
 
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _hits: dict[str, list[float]] = defaultdict(list)
 
 
-
 class SessionBody(BaseModel):
     agent_id: str
+    greeting: str | None = None
+    custom_greeting: str | None = None
+    greeting_mode: str | None = None
 
 
 class DevSessionBody(BaseModel):
     agentId: str
     publishableKey: str | None = None
+    greeting: str | None = None
+    customGreeting: str | None = None
+    greetingMode: str | None = None
+
+
+def _opening_greeting(*candidates: str | None) -> str | None:
+    for value in candidates:
+        text = (value or "").strip()
+        if text:
+            return text
+    return None
 
 
 class RefreshBody(BaseModel):
@@ -247,7 +314,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
     tenant_id = metadata.get("tenant_id")
     agent_id = metadata.get("agent_id")
     if not tenant_id or not agent_id:
-        raise HTTPException(status_code=401, detail="token metadata missing tenant or agent")
+        raise HTTPException(
+            status_code=401, detail="token metadata missing tenant or agent"
+        )
 
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
@@ -260,7 +329,9 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
                 room=room,
                 can_publish=claims.video.can_publish if claims.video else True,
                 can_subscribe=claims.video.can_subscribe if claims.video else True,
-                can_publish_data=claims.video.can_publish_data if claims.video else True,
+                can_publish_data=claims.video.can_publish_data
+                if claims.video
+                else True,
             )
         )
         .to_jwt()
@@ -292,7 +363,16 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
     )
 
 
-async def _dispatch_agent(room_name: str) -> None:
+async def _dispatch_agent(
+    room_name: str,
+    *,
+    tenant_id: str,
+    agent_id: str,
+    greeting: str | None = None,
+) -> None:
+    metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
+    if greeting:
+        metadata["greeting"] = greeting
     async with api.LiveKitAPI(
         url=_LK_URL,
         api_key=_LK_KEY,
@@ -302,6 +382,7 @@ async def _dispatch_agent(room_name: str) -> None:
             api.CreateAgentDispatchRequest(
                 agent_name=_LK_AGENT_NAME,
                 room=room_name,
+                metadata=json.dumps(metadata),
             )
         )
 
@@ -324,20 +405,72 @@ def _rollback_dispatched_session(
         )
 
 
-def _with_dispatch(res: dict, tenant_id: str) -> dict:
+def _session_response(payload: dict) -> JSONResponse:
+    """Session mint/refresh payloads must never be cached — token and room are single-use."""
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+def _run_dispatch_background(
+    room_name: str, tenant_id: str, agent_id: str, greeting: str | None = None
+) -> None:
+    log = logging.getLogger("control_plane.dispatch")
     try:
-        asyncio.run(_dispatch_agent(res["roomName"]))
-    except Exception as e:
-        _rollback_dispatched_session(tenant_id=tenant_id, room_name=res["roomName"])
-        raise HTTPException(
-            status_code=502,
-            detail=f"agent dispatch failed: {e}",
-        ) from e
+        asyncio.run(
+            _dispatch_agent(
+                room_name,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                greeting=greeting,
+            )
+        )
+        log.info(
+            "agent dispatch ok room=%s tenant=%s agent=%s",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+    except Exception:
+        log.exception(
+            "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+
+
+def _with_dispatch(
+    res: dict,
+    tenant_id: str,
+    agent_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    greeting: str | None = None,
+) -> dict:
+    background_tasks.add_task(
+        _run_dispatch_background,
+        res["roomName"],
+        tenant_id,
+        agent_id,
+        greeting,
+    )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
 
 def _dev_mint_session(
-    *, tenant_id: str, agent_id: str, request: Request, auto_reset_quota: bool
+    *,
+    tenant_id: str,
+    agent_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    auto_reset_quota: bool,
+    greeting: str | None = None,
 ) -> dict:
     secret = _secrets.get(tenant_id)
     if not secret:
@@ -371,7 +504,11 @@ def _dev_mint_session(
                 origin=request.headers.get("origin"),
             )
         except MintError as e:
-            if auto_reset_quota and e.status == 429 and e.reason == "concurrent cap reached":
+            if (
+                auto_reset_quota
+                and e.status == 429
+                and e.reason == "concurrent cap reached"
+            ):
                 _dev_reset_concurrency(conn, tenant_id)
                 res = mint_session(
                     conn=conn,
@@ -389,13 +526,16 @@ def _dev_mint_session(
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
-    return _with_dispatch(res, tenant_id)
+    return _with_dispatch(
+        res, tenant_id, agent_id, background_tasks, greeting=greeting
+    )
 
 
 @app.post("/v1/session")
 def create_session(
     body: SessionBody,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(...),
     x_timestamp: str = Header(...),
     x_nonce: str = Header(...),
@@ -404,6 +544,7 @@ def create_session(
     if _rate_limited(x_tenant_id):
         record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
+    greeting = _opening_greeting(body.greeting, body.custom_greeting)
     try:
         with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
             res = mint_session(
@@ -419,20 +560,33 @@ def create_session(
                 signature=x_signature,
                 origin=request.headers.get("origin"),
             )
-            return _with_dispatch(res, x_tenant_id)
+            return _session_response(
+                _with_dispatch(
+                    res,
+                    x_tenant_id,
+                    body.agent_id,
+                    background_tasks,
+                    greeting=greeting,
+                )
+            )
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
 
 
 @app.post("/v1/session/dev-mint")
-def create_dev_session(body: DevSessionBody, request: Request):
+def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
-    return _dev_mint_session(
-        tenant_id=tenant_id,
-        agent_id=body.agentId,
-        request=request,
-        auto_reset_quota=True,
+    greeting = _opening_greeting(body.greeting, body.customGreeting)
+    return _session_response(
+        _dev_mint_session(
+            tenant_id=tenant_id,
+            agent_id=body.agentId,
+            request=request,
+            background_tasks=background_tasks,
+            auto_reset_quota=True,
+            greeting=greeting,
+        )
     )
 
 
@@ -448,7 +602,7 @@ def refresh_session_token(
         token = body.token.strip()
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
-    return _mint_refresh_token(token)
+    return _session_response(_mint_refresh_token(token).model_dump())
 
 
 if _STATIC_DIR.exists():

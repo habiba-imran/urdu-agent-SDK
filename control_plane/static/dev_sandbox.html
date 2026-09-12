@@ -587,7 +587,7 @@
                   <span>Agent ID</span>
                   <small>Agent scope</small>
                 </label>
-                <input id="inp-agent-id" type="text" placeholder="aa3898ac-312d-43ea-8930-0b4776475a16" />
+                <input id="inp-agent-id" type="text" placeholder="[YOUR_AGENT_ID]" />
               </div>
               <div class="field">
                 <label for="inp-publishable-key">
@@ -1235,6 +1235,7 @@
         const looksLikeMetrics =
           parsed.type === "metrics_updated" ||
           parsed.type === "turn_latency" ||
+          parsed.turn_latency_breakdown != null ||
           parsed.sttP50Ms != null ||
           parsed.llmTtftMs != null ||
           parsed.roundTripMs != null;
@@ -1312,7 +1313,14 @@
         const parsed = parseMaybeMetrics(decoded);
         if (parsed) {
           updateMetrics(parsed);
-          log("Received data-channel metrics update", "info");
+          if (parsed.type === "turn_latency" || parsed.turn_latency_breakdown) {
+            log(
+              `turn_latency_breakdown stt=${parsed.sttMs ?? "-"} turn=${parsed.turnMs ?? "-"} llm=${parsed.llmMs ?? "-"} tts=${parsed.ttsTtfbMs ?? "-"} tool=${parsed.toolMs ?? 0}`,
+              "info",
+            );
+          } else {
+            log("Received data-channel metrics update", "info");
+          }
         }
       });
 

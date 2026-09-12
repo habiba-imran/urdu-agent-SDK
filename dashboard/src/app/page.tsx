@@ -2,7 +2,9 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
+import { Mic, Phone, Radio, Play } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { PageHeader } from '@/components/ui/page-header';
@@ -12,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton, StatCardSkeleton, DataTableSkeleton } from '@/components/ui/skeleton';
+import { TelephonyStatusBadge } from '@/components/TelephonyStatusBadge';
 import { cn } from '@/lib/utils';
 import {
   Table,
@@ -20,9 +23,11 @@ import {
   TableRow,
   TableHead,
   TableCell,
+  RowOpenButton,
 } from '@/components/ui/table';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { data: agents, isLoading: agentsLoading, error: agentsError } = useSWR(
     swrKeys.agents,
     swrFetchers.agents,
@@ -39,6 +44,10 @@ export default function DashboardPage() {
     swrKeys.sessions,
     swrFetchers.sessions,
   );
+  const { data: managedNumbers } = useSWR(
+    swrKeys.telephonyNumbers,
+    swrFetchers.telephonyNumbers
+  );
 
   const error = agentsError ?? credentialsError ?? usageError ?? sessionsError;
 
@@ -47,12 +56,24 @@ export default function DashboardPage() {
   const usedMinutes = usage?.quota.minutes_this_month ?? 0;
   const monthlyCap = usage?.quota.max_minutes_month ?? 0;
   const liveCount = (sessions ?? []).filter((s) => s.live).length;
+  const totalNumbers = managedNumbers?.length ?? 0;
 
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <PageHeader
         title="Overview"
-        description="Manage your Urdu voice agents, credentials, and real-time usage quotas."
+        description="Manage your Urdu voice agents, telephony numbers, credentials, and real-time usage quotas."
+        actions={
+          <div className="flex items-center gap-3">
+            <TelephonyStatusBadge />
+            <Link
+              href="/test-studio"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <Mic className="h-4 w-4" /> Web Test Studio
+            </Link>
+          </div>
+        }
       />
 
       {error ? (
@@ -62,12 +83,18 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      <div className="mb-4 grid gap-4 grid-cols-2">
+      <div className="mb-4 grid gap-4 grid-cols-2 md:grid-cols-4">
         {agentsLoading ? (
           <StatCardSkeleton />
         ) : (
-          <StatCard label="Active Agents" value={agents?.length ?? 0} />
+          <StatCard
+            label="Active Agents"
+            value={agents?.length ?? 0}
+            href="/agents"
+            linkLabel="View all agents"
+          />
         )}
+        <StatCard label="Phone Numbers" value={totalNumbers} href="/telephony" linkLabel="Manage numbers" />
         {usageLoading ? (
           <StatCardSkeleton />
         ) : (
@@ -75,21 +102,6 @@ export default function DashboardPage() {
             label="Concurrent Calls"
             value={`${concurrentNow} / ${maxConcurrent}`}
             chart={<Progress value={concurrentNow} max={maxConcurrent} />}
-          />
-        )}
-      </div>
-
-      <div className="mb-6 grid gap-4 grid-cols-2">
-        {usageLoading ? (
-          <StatCardSkeleton />
-        ) : (
-          <StatCard
-            label="Monthly Usage"
-            value={`${usedMinutes.toFixed(1)} min`}
-            subStats={[{ label: 'Cap', value: `${monthlyCap} min` }]}
-            chart={<Progress value={usedMinutes} max={monthlyCap} />}
-            href="/usage"
-            linkLabel="View full usage breakdown"
           />
         )}
         {sessionsLoading ? (
@@ -115,27 +127,86 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
-            <h2 className="text-lg font-semibold text-foreground">Configured Voice Agents</h2>
+      <div className="mb-6 grid gap-4 grid-cols-1 md:grid-cols-2">
+        {usageLoading ? (
+          <StatCardSkeleton />
+        ) : (
+          <StatCard
+            label="Monthly Usage"
+            value={`${usedMinutes.toFixed(1)} min`}
+            subStats={[{ label: 'Cap', value: `${monthlyCap} min` }]}
+            chart={<Progress value={usedMinutes} max={monthlyCap} />}
+            href="/usage"
+            linkLabel="View full usage breakdown"
+          />
+        )}
+
+        {/* Quick Launch Card */}
+        <Card className="flex flex-col justify-between p-6">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Radio className="h-4 w-4 text-primary" /> Telephony & Studio Hub
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Provision Telnyx numbers, configure SIP trunking, and test voice conversations in browser.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 pt-4">
             <Link
-              href="/agents"
-              className={cn(
-                'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                'bg-primary text-primary-foreground hover:bg-primary/90',
-              )}
+              href="/telephony"
+              className="flex-1 text-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
             >
-              + New Agent
+              Telephony Control
+            </Link>
+            <Link
+              href="/test-studio"
+              className="flex-1 text-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Test Studio
             </Link>
           </div>
-          <CardContent className="pt-6">
+        </Card>
+      </div>
+
+      <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-[2fr_1fr]">
+        <Card className="relative flex h-full flex-col overflow-hidden">
+          <Link
+            href="/agents"
+            aria-label="View all agents"
+            className="absolute inset-0 z-0 rounded-lg hover:bg-muted/20"
+          />
+
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
+            <h2 className="text-lg font-semibold text-foreground">Configured Voice Agents</h2>
+            {!agentsLoading && (agents ?? []).length > 0 ? (
+              <Link
+                href="/agents"
+                className={cn(
+                  'inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  'bg-primary text-primary-foreground hover:bg-primary/90',
+                )}
+              >
+                View All Agents
+              </Link>
+            ) : null}
+          </div>
+          <CardContent className="relative z-10 min-h-[340px] flex-1 overflow-y-auto pt-6">
             {agentsLoading ? (
               <DataTableSkeleton rows={4} />
             ) : (agents ?? []).length === 0 ? (
               <EmptyState
-                title="No agents found for this tenant"
-                description="Create your first agent to get started."
+                title="Create your first agent now"
+                action={
+                  <Link
+                    href="/agents?new=1"
+                    className={cn(
+                      'inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                      'bg-primary text-primary-foreground hover:bg-primary/90',
+                    )}
+                  >
+                    Create Agent
+                  </Link>
+                }
               />
             ) : (
               <Table>
@@ -143,18 +214,21 @@ export default function DashboardPage() {
                   <TableRow>
                     <TableHead>Agent Name</TableHead>
                     <TableHead>Selected Voice</TableHead>
-                    <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(agents ?? []).map((agent) => (
-                    <TableRow key={agent.id}>
-                      <TableCell className="font-medium">{agent.name}</TableCell>
-                      <TableCell>
-                        <Badge>{agent.voice_id}</Badge>
+                    <TableRow key={agent.id} onClick={() => router.push(`/agents/${agent.id}`)}>
+                      <TableCell className="font-medium">
+                        <RowOpenButton
+                          onClick={() => router.push(`/agents/${agent.id}`)}
+                          ariaLabel={`Open agent ${agent.name}`}
+                        >
+                          {agent.name}
+                        </RowOpenButton>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">Active</Badge>
+                        <Badge>{agent.voice_id}</Badge>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -164,8 +238,8 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="flex flex-col gap-4 pt-6">
+        <Card className="flex h-full flex-col overflow-hidden">
+          <CardContent className="flex flex-col gap-4 overflow-y-auto pt-6">
             <h2 className="text-lg font-semibold text-foreground">Integration Specs</h2>
             <p className="text-sm text-muted-foreground">
               Your host backend signs HMAC tokens using your assigned secret key before

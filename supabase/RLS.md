@@ -13,6 +13,21 @@ Read-only mirror of live RLS state. Regenerate: `make db-inspect`.
 ## escalations  (RLS: ENABLED)
 - policy tenant_isolation_escalations [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
 
+## livekit_inbound_trunks  (RLS: ENABLED)
+- policy tele_livekit_inbound_trunks_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_livekit_inbound_trunks_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_livekit_inbound_trunks_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## livekit_outbound_trunks  (RLS: ENABLED)
+- policy tele_livekit_outbound_trunks_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_livekit_outbound_trunks_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_livekit_outbound_trunks_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## livekit_sip_dispatch_rules  (RLS: ENABLED)
+- policy tele_sip_dispatch_rules_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_sip_dispatch_rules_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_sip_dispatch_rules_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
 ## mint_rejections  (RLS: ENABLED)
 - (no policies)
 
@@ -21,6 +36,51 @@ Read-only mirror of live RLS state. Regenerate: `make db-inspect`.
 
 ## sessions  (RLS: ENABLED)
 - policy tenant_isolation_sessions [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_audit_log  (RLS: ENABLED)
+- policy tele_audit_log_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_audit_log_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_audit_log_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_call_events  (RLS: ENABLED)
+- policy tele_call_events_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_call_events_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_call_events_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_calls  (RLS: ENABLED)
+- policy tele_calls_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_calls_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_calls_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_idempotency_keys  (RLS: ENABLED)
+- policy tele_idempotency_keys_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_idempotency_keys_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_idempotency_keys_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_number_orders  (RLS: ENABLED)
+- policy tele_number_orders_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_number_orders_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_number_orders_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telephony_phone_numbers  (RLS: ENABLED)
+- policy tele_phone_numbers_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_phone_numbers_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_phone_numbers_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telnyx_outbound_voice_profiles  (RLS: ENABLED)
+- policy tele_outbound_voice_profiles_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_outbound_voice_profiles_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_outbound_voice_profiles_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## telnyx_sip_connections  (RLS: ENABLED)
+- policy tele_telnyx_sip_connections_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_telnyx_sip_connections_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_telnyx_sip_connections_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+
+## tenant_telnyx_connections  (RLS: ENABLED)
+- policy tele_tenant_telnyx_connections_insert [INSERT] WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_tenant_telnyx_connections_select [SELECT] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
+- policy tele_tenant_telnyx_connections_update [UPDATE] USING ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid)) WITH CHECK ((tenant_id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
 
 ## tenants  (RLS: ENABLED)
 - policy tenant_isolation_tenants [SELECT] USING ((id = ((auth.jwt() ->> 'tenant_id'::text))::uuid))
