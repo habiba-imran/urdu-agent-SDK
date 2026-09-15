@@ -1,5 +1,16 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { Participant, TranscriptionSegment } from 'livekit-client';
+import {
+  AwaazLabsUvaVoiceError,
+  mapSessionHttpError,
+  type AwaazLabsUvaVoiceErrorCode,
+} from './internal/errors.js';
+import { DEFAULT_FETCH_TIMEOUT_MS, delay, fetchWithTimeout } from './internal/http.js';
+
+export type { AwaazLabsUvaVoiceErrorCode };
+export { AwaazLabsUvaVoiceError };
+export { AwaazLabsUvaVoiceError as UvaError };
+export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface AwaazLabsUvaVoiceOptions {
   /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
@@ -8,6 +19,11 @@ export interface AwaazLabsUvaVoiceOptions {
   sessionEndpoint: string;
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
+  /**
+   * Max wait for session / refresh / voice-catalog `fetch` (F-M14).
+   * Default: 15000 ms.
+   */
+  fetchTimeoutMs?: number;
 }
 
 export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
@@ -43,10 +59,6 @@ export type AwaazLabsUvaVoiceEvent =
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
 
-export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
-
-export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
-
 export interface TranscriptEvent {
   /** Stable per-segment id from LiveKit — the same id recurs with updated `text`/`final` as a
    *  segment goes from interim to final. Use it to replace, not append, matching updates. */
@@ -61,18 +73,6 @@ export interface MetricsEvent {
   type: 'metrics_updated' | 'turn_latency';
   [key: string]: unknown;
 }
-
-export class AwaazLabsUvaVoiceError extends Error {
-  constructor(
-    public readonly code: AwaazLabsUvaVoiceErrorCode,
-    message?: string,
-  ) {
-    super(message ?? code);
-    this.name = 'AwaazLabsUvaVoiceError';
-  }
-}
-
-export { AwaazLabsUvaVoiceError as UvaError };
 
 interface SessionResponse {
   token: string;
@@ -111,14 +111,16 @@ export class AwaazLabsUvaVoice {
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private session: SessionResponse | null = null;
+  /** Wall clock when `session` was last received (connect or successful refresh). */
+  private sessionReceivedAt: number | null = null;
   private state: ConnectionState = 'idle';
 
-  static async listVoices(endpointUrl: string): Promise<Voice[]> {
+  static async listVoices(endpointUrl: string, timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS): Promise<Voice[]> {
     if (!endpointUrl.trim()) {
       throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
     }
     try {
-      const res = await fetch(endpointUrl);
+      const res = await fetchWithTimeout(endpointUrl, undefined, timeoutMs);
       if (!res.ok) {
         throw new AwaazLabsUvaVoiceError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
       }
@@ -137,6 +139,10 @@ export class AwaazLabsUvaVoice {
     if (!options.sessionEndpoint.trim()) {
       throw new AwaazLabsUvaVoiceError('session_failed', 'sessionEndpoint is required');
     }
+  }
+
+  private get fetchTimeoutMs(): number {
+    return this.options.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   }
 
   get connectionState(): ConnectionState {
@@ -178,22 +184,21 @@ export class AwaazLabsUvaVoice {
 
     let body: SessionResponse;
     try {
-      const res = await fetch(this.options.sessionEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          publishableKey: this.options.publishableKey,
-          agentId: opts.agentId,
-        }),
-      });
-      if (res.status === 429) {
-        throw new AwaazLabsUvaVoiceError('quota_exceeded');
-      }
-      if (res.status === 404) {
-        throw new AwaazLabsUvaVoiceError('agent_not_found');
-      }
+      const res = await fetchWithTimeout(
+        this.options.sessionEndpoint,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            publishableKey: this.options.publishableKey,
+            agentId: opts.agentId,
+          }),
+        },
+        this.fetchTimeoutMs,
+      );
       if (!res.ok) {
-        throw new AwaazLabsUvaVoiceError('session_failed');
+        const errorBody = await res.text().catch(() => '');
+        throw mapSessionHttpError(res.status, errorBody);
       }
       const parsed = (await res.json()) as Partial<SessionResponse>;
       if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
@@ -232,6 +237,7 @@ export class AwaazLabsUvaVoice {
 
     this.room = room;
     this.session = body;
+    this.sessionReceivedAt = Date.now();
     this.scheduleTokenRefresh(body);
   }
 
@@ -256,6 +262,7 @@ export class AwaazLabsUvaVoice {
     this.detachAllRemoteAudio();
     this.room = null;
     this.session = null;
+    this.sessionReceivedAt = null;
     this.state = 'idle';
   }
 
@@ -273,7 +280,12 @@ export class AwaazLabsUvaVoice {
 
   private emit<K extends AwaazLabsUvaVoiceEvent>(event: K, ...args: AwaazLabsUvaVoiceEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
+      try {
+        (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
+      } catch (err) {
+        // F-L8: one throwing host listener must not block later listeners for the same event.
+        console.error(`[AwaazLabsUvaVoice] listener for "${event}" threw:`, err);
+      }
     }
   }
 
@@ -288,6 +300,7 @@ export class AwaazLabsUvaVoice {
       this.detachAllRemoteAudio();
       this.room = null;
       this.session = null;
+      this.sessionReceivedAt = null;
       this.state = 'idle';
       this.emit('disconnected', reason);
       this.emit('ended', reason);
@@ -363,6 +376,10 @@ export class AwaazLabsUvaVoice {
     element.autoplay = true;
     element.setAttribute('playsinline', 'true');
     element.style.display = 'none';
+    // F-L7: no `document` / `document.body` under Next.js SSR (or non-DOM runtimes).
+    if (typeof document === 'undefined' || !document.body) {
+      return;
+    }
     document.body.appendChild(element);
     this.remoteAudioElements.set(trackSid, element);
     // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
@@ -411,33 +428,76 @@ export class AwaazLabsUvaVoice {
   private async refreshToken(): Promise<void> {
     if (!this.room || !this.session) return;
     const refreshEndpoint = this.resolveRefreshEndpoint();
-    try {
-      const res = await fetch(refreshEndpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.session.token}`,
-        },
-      });
-      if (!res.ok) throw new Error('refresh failed');
-      const parsed = (await res.json()) as Partial<SessionResponse>;
-      if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-        throw new Error('refresh response incomplete');
+    const expiresInSec = this.session.expiresIn ?? 120;
+    const receivedAt = this.sessionReceivedAt ?? Date.now();
+    const deadline = receivedAt + expiresInSec * 1000;
+    let backoffMs = 1_000;
+
+    while (this.room && this.session) {
+      let permanentAuthFailure = false;
+      try {
+        const res = await fetchWithTimeout(
+          refreshEndpoint,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${this.session.token}`,
+            },
+          },
+          this.fetchTimeoutMs,
+        );
+        if (res.status === 401 || res.status === 403) {
+          permanentAuthFailure = true;
+        } else if (!res.ok) {
+          throw new Error('refresh failed');
+        } else {
+          const parsed = (await res.json()) as Partial<SessionResponse>;
+          if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
+            throw new Error('refresh response incomplete');
+          }
+          this.session = {
+            token: parsed.token,
+            wsUrl: parsed.wsUrl,
+            roomName: parsed.roomName,
+            refreshUrl: parsed.refreshUrl ?? this.session.refreshUrl,
+            expiresIn: parsed.expiresIn ?? this.session.expiresIn,
+          };
+          this.sessionReceivedAt = Date.now();
+          const tokenUpdater = this.room as Room & { updateToken?: (token: string) => Promise<void> };
+          if (typeof tokenUpdater.updateToken === 'function') {
+            await tokenUpdater.updateToken(this.session.token);
+          }
+          this.scheduleTokenRefresh(this.session);
+          return;
+        }
+      } catch {
+        // Transient failure (network, timeout, 5xx, incomplete body) — retry until deadline.
       }
-      this.session = {
-        token: parsed.token,
-        wsUrl: parsed.wsUrl,
-        roomName: parsed.roomName,
-        refreshUrl: parsed.refreshUrl ?? this.session.refreshUrl,
-        expiresIn: parsed.expiresIn ?? this.session.expiresIn,
-      };
-      const tokenUpdater = this.room as Room & { updateToken?: (token: string) => Promise<void> };
-      if (typeof tokenUpdater.updateToken === 'function') {
-        await tokenUpdater.updateToken(this.session.token);
+
+      if (!this.room || !this.session) return;
+
+      if (permanentAuthFailure) {
+        this.emit(
+          'error',
+          new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh rejected'),
+        );
+        return;
       }
-      this.scheduleTokenRefresh(this.session);
-    } catch {
-      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', 'token refresh failed'));
+
+      const waitMs = Math.min(backoffMs, 8_000);
+      if (Date.now() + waitMs >= deadline) {
+        break;
+      }
+      await delay(waitMs);
+      backoffMs = Math.min(backoffMs * 2, 8_000);
     }
+
+    if (!this.room || !this.session) return;
+    // F-H12: only emit terminal error after retries are exhausted (or past token expiry).
+    this.emit(
+      'error',
+      new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh failed'),
+    );
   }
 
   private resolveRefreshEndpoint(): string {
