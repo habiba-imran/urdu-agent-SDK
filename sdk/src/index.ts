@@ -6,6 +6,7 @@ import {
   type AwaazLabsUvaVoiceErrorCode,
 } from './internal/errors.js';
 import { DEFAULT_FETCH_TIMEOUT_MS, delay, fetchWithTimeout } from './internal/http.js';
+import { applyRefreshedLiveKitToken } from './internal/livekitToken.js';
 
 export type { AwaazLabsUvaVoiceErrorCode };
 export { AwaazLabsUvaVoiceError };
@@ -105,11 +106,22 @@ export type UvaEventMap = AwaazLabsUvaVoiceEventMap;
 
 type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
+/** Coerce session expiresIn to a positive second count (default 120). */
+function normalizeExpiresInSec(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 120;
+  // Guard against hosts that accidentally send milliseconds (e.g. 120000).
+  if (n > 10_000) return Math.round(n / 1000);
+  return Math.round(n);
+}
+
 export class AwaazLabsUvaVoice {
   private room: Room | null = null;
   private readonly listeners = new Map<AwaazLabsUvaVoiceEvent, Set<Listener>>();
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Prevents overlapping refresh loops (timer + retry must not stack). */
+  private refreshInFlight = false;
   private session: SessionResponse | null = null;
   /** Wall clock when `session` was last received (connect or successful refresh). */
   private sessionReceivedAt: number | null = null;
@@ -377,11 +389,11 @@ export class AwaazLabsUvaVoice {
     element.setAttribute('playsinline', 'true');
     element.style.display = 'none';
     // F-L7: no `document` / `document.body` under Next.js SSR (or non-DOM runtimes).
-    if (typeof document === 'undefined' || !document.body) {
-      return;
-    }
-    document.body.appendChild(element);
+    // Still track the element so TrackUnsubscribed cleanup works if attach raced hydration.
     this.remoteAudioElements.set(trackSid, element);
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.appendChild(element);
+    }
     // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
     // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
     void element.play().catch(() => {
@@ -411,7 +423,9 @@ export class AwaazLabsUvaVoice {
 
   private scheduleTokenRefresh(session: SessionResponse): void {
     this.clearRefreshTimer();
-    const ttlSeconds = session.expiresIn ?? 120;
+    const ttlSeconds = normalizeExpiresInSec(session.expiresIn);
+    // Refresh 60s before expiry, but never sooner than 5s after mint/refresh.
+    // Leave a wide retry window before the JWT deadline (F-H12).
     const refreshDelayMs = Math.max(5_000, (ttlSeconds - 60) * 1000);
     this.refreshTimer = setTimeout(() => {
       void this.refreshToken();
@@ -426,14 +440,29 @@ export class AwaazLabsUvaVoice {
   }
 
   private async refreshToken(): Promise<void> {
+    // Single-flight: a second timer tick must not start a parallel retry storm.
+    if (this.refreshInFlight) return;
+    if (!this.room || !this.session) return;
+    this.refreshInFlight = true;
+    try {
+      await this.refreshTokenLoop();
+    } finally {
+      this.refreshInFlight = false;
+    }
+  }
+
+  private async refreshTokenLoop(): Promise<void> {
     if (!this.room || !this.session) return;
     const refreshEndpoint = this.resolveRefreshEndpoint();
-    const expiresInSec = this.session.expiresIn ?? 120;
+    const expiresInSec = normalizeExpiresInSec(this.session.expiresIn);
     const receivedAt = this.sessionReceivedAt ?? Date.now();
     const deadline = receivedAt + expiresInSec * 1000;
+    // 1s → 2s → 4s → 8s (cap). A ~15s DevTools block must only burn a few attempts.
     let backoffMs = 1_000;
+    let attempt = 0;
 
     while (this.room && this.session) {
+      attempt += 1;
       let permanentAuthFailure = false;
       try {
         const res = await fetchWithTimeout(
@@ -463,15 +492,14 @@ export class AwaazLabsUvaVoice {
             expiresIn: parsed.expiresIn ?? this.session.expiresIn,
           };
           this.sessionReceivedAt = Date.now();
-          const tokenUpdater = this.room as Room & { updateToken?: (token: string) => Promise<void> };
-          if (typeof tokenUpdater.updateToken === 'function') {
-            await tokenUpdater.updateToken(this.session.token);
-          }
+          // F-H12: Room has no public updateToken — push JWT into engine + region provider
+          // so reconnect uses the refreshed credential (see applyRefreshedLiveKitToken).
+          await applyRefreshedLiveKitToken(this.room, this.session.token);
           this.scheduleTokenRefresh(this.session);
           return;
         }
       } catch {
-        // Transient failure (network, timeout, 5xx, incomplete body) — retry until deadline.
+        // Transient failure (network, DevTools block, timeout, 5xx, incomplete body).
       }
 
       if (!this.room || !this.session) return;
@@ -484,12 +512,24 @@ export class AwaazLabsUvaVoice {
         return;
       }
 
-      const waitMs = Math.min(backoffMs, 8_000);
-      if (Date.now() + waitMs >= deadline) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
         break;
       }
+
+      // Always sleep between attempts while time remains — never spin.
+      const waitMs = Math.min(backoffMs, 8_000, remainingMs);
       await delay(waitMs);
       backoffMs = Math.min(backoffMs * 2, 8_000);
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+
+      // Safety cap so a clock skew / bad expiresIn cannot hammer the host forever.
+      if (attempt >= 20) {
+        break;
+      }
     }
 
     if (!this.room || !this.session) return;

@@ -17,7 +17,11 @@ type EmitAccess = {
     expiresIn?: number;
   } | null;
   sessionReceivedAt: number | null;
-  room: { updateToken?: (token: string) => Promise<void> } | null;
+  room: {
+    engine?: { token?: string };
+    regionUrlProvider?: { updateToken?: (token: string) => void };
+    updateToken?: (token: string) => Promise<void>;
+  } | null;
   refreshTimer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -98,8 +102,10 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
     const errors: AwaazLabsUvaVoiceError[] = [];
     agent.on('error', (e) => errors.push(e));
 
+    const regionUpdate = vi.fn();
     access.room = {
-      updateToken: vi.fn(async () => undefined),
+      engine: { token: 'tok_old' },
+      regionUrlProvider: { updateToken: regionUpdate },
     };
     access.session = {
       token: 'tok_old',
@@ -136,6 +142,8 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
     expect(calls).toBe(2);
     expect(errors).toHaveLength(0);
     expect(access.session?.token).toBe('tok_new');
+    expect(access.room?.engine?.token).toBe('tok_new');
+    expect(regionUpdate).toHaveBeenCalledWith('tok_new');
     expect(access.refreshTimer).not.toBeNull();
     access.refreshTimer && clearTimeout(access.refreshTimer);
   });
@@ -194,5 +202,49 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.code).toBe('token_refresh_failed');
+  });
+
+  it('does not burn the retry budget in a single tick (backoff sleeps)', async () => {
+    vi.useFakeTimers();
+    const agent = makeAgent();
+    const access = internals(agent);
+    const errors: AwaazLabsUvaVoiceError[] = [];
+    agent.on('error', (e) => errors.push(e));
+
+    access.room = { engine: { token: 'tok_old' } };
+    access.session = {
+      token: 'tok_old',
+      wsUrl: 'wss://lk.example',
+      roomName: 'room_1',
+      expiresIn: 120,
+    };
+    access.sessionReceivedAt = Date.now();
+
+    const fetchMock = vi.fn(async () => new Response('fail', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = access.refreshToken();
+
+    // First attempt runs immediately; backoff before attempt 2 is 1s.
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Still inside the 2s backoff before attempt 3 — must not have spammed.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Cancel the long retry loop so the test can finish cleanly.
+    access.room = null;
+    access.session = null;
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(errors).toHaveLength(0);
   });
 });

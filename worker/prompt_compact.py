@@ -68,8 +68,28 @@ def _knowledge_cap(part: str, budget: int) -> str:
     )
 
 
+_HARD_TRUNC_MARKER = (
+    "\n\n[Prompt truncated for voice latency / free-tier token limits. "
+    "Core business facts above still apply.]"
+)
+
+
+def _hard_cap(text: str, soft: int) -> str:
+    """Enforce a hard character ceiling (marker included when it fits)."""
+    if len(text) <= soft:
+        return text
+    marker = _HARD_TRUNC_MARKER
+    if soft <= len(marker):
+        return text[:soft]
+    return text[: soft - len(marker)].rstrip() + marker
+
+
 def compact_prompt_for_groq(prompt: str) -> tuple[str, bool]:
-    """Return (possibly compacted prompt, whether compaction ran)."""
+    """Return (possibly compacted prompt, whether compaction ran).
+
+    Soft cap is a hard ceiling: result length is always <= GROQ_PROMPT_SOFT_CHARS
+    when the input exceeded it (F-M2 worker mitigation).
+    """
     text = (prompt or "").strip()
     soft = _soft_chars()
     if not text or len(text) <= soft:
@@ -78,13 +98,7 @@ def compact_prompt_for_groq(prompt: str) -> tuple[str, bool]:
     parts = [p for p in _SECTION_RE.split(text) if p and p.strip()]
     if len(parts) < 3:
         # Unstructured prompt — hard truncate with a marker.
-        kept = text[:soft].rstrip()
-        return (
-            kept
-            + "\n\n[Prompt truncated for voice latency / free-tier token limits. "
-            "Core business facts above still apply.]",
-            True,
-        )
+        return _hard_cap(text, soft), True
 
     kept: list[str] = []
     for part in parts:
@@ -125,5 +139,11 @@ def compact_prompt_for_groq(prompt: str) -> tuple[str, bool]:
             compacted = "\n\n".join(trimmed).strip()
 
     if not compacted or len(compacted) >= len(text):
-        return text, False
+        # Section pass did not shrink — still enforce the ceiling on the original.
+        return _hard_cap(text, soft), True
+
+    if len(compacted) > soft:
+        # Kept sections alone (e.g. huge SECTION 1) can still exceed soft.
+        compacted = _hard_cap(compacted, soft)
+
     return compacted, True
