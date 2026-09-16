@@ -19,15 +19,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import psycopg
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from dbconn import conn_kwargs  # noqa: E402
 
 # Short process cache so repeat connects / warm demos skip a remote TLS+RLS round-trip.
 # Keep short: prepare may sync ``agents.greeting`` seconds before Connect; a long TTL
 # would serve a stale empty greeting and force LLM ``generate_reply`` on turn zero.
-_CONFIG_CACHE_TTL_SEC = 8.0
+# Longer TTL cuts DB hits on warm demos; provider flips still win after ~1–2s or a reconnect.
+_CONFIG_CACHE_TTL_SEC = 30.0
 _config_cache: dict[tuple[str, str], tuple[float, "AgentConfig", str | None]] = {}
 
 
@@ -115,8 +113,10 @@ def _load_agent_and_provider_voice(
     agent_id: str, tenant_id: str
 ) -> tuple[AgentConfig, str | None]:
     """One TCP/TLS connection: RLS agent row + optional ``voices.provider_voice_id``."""
+    from worker.db_pool import worker_db_connection
+
     claims = json.dumps({"tenant_id": tenant_id})
-    with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
+    with worker_db_connection(connect_timeout=5) as conn:
         with conn.transaction():
             cur = conn.cursor()
             cur.execute("set local role authenticated")

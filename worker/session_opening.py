@@ -7,13 +7,26 @@ instructions. ``first_speaker='user'`` skips the opening turn entirely.
 
 from __future__ import annotations
 
+import os
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from livekit import rtc
+
 from .cartesia_spoken_output import greeting_instructions
 from .config import AgentConfig
+from .greeting_cache import (
+    GreetingCacheKey,
+    get_greeting_cache,
+    make_greeting_cache_key,
+)
 
 OpeningMode = Literal["wait", "say", "generate_reply"]
+
+# Opening-path prewarm budgets (seconds). Cache hits skip the wait entirely.
+_SAY_CACHE_MISS_PREWARM_SEC = 1.0
+_GENERATE_REPLY_PREWARM_SEC = 2.0
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,18 @@ class SessionOpening:
     mode: OpeningMode
     text: str | None = None
     instructions: str | None = None
+
+
+@dataclass(frozen=True)
+class GreetingPrewarmPlan:
+    """How long (if at all) the entrypoint should block on TTS/STT prewarm before opening."""
+
+    mode: OpeningMode
+    cache_hit: bool
+    await_prewarm: bool
+    prewarm_timeout: float
+    cache_key: GreetingCacheKey | None = None
+    greeting_frames: list[rtc.AudioFrame] | None = None
 
 
 def _spoken_greeting(cfg: AgentConfig, text: str) -> str:
@@ -49,32 +74,102 @@ def resolve_session_opening(cfg: AgentConfig) -> SessionOpening:
     )
 
 
+def greeting_allow_interruptions(explicit: bool | None = None) -> bool:
+    """WebRTC/telephony greetings are interruptible by default (Retell/Vapi feel).
+
+    Set ``UVA_GREETING_INTERRUPTIBLE=0`` if mic-echo barge-in shows up in smoke.
+    An explicit ``allow_interruptions`` argument always wins.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    raw = (os.environ.get("UVA_GREETING_INTERRUPTIBLE") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def plan_greeting_prewarm(
+    cfg: AgentConfig,
+    *,
+    provider_voice_id: str,
+    audio_channel: str,
+) -> GreetingPrewarmPlan:
+    """Decide prewarm wait + whether cached PCM can open immediately."""
+    opening = resolve_session_opening(cfg)
+    if opening.mode == "wait":
+        return GreetingPrewarmPlan(
+            mode="wait",
+            cache_hit=False,
+            await_prewarm=False,
+            prewarm_timeout=0.0,
+        )
+    if opening.mode == "say" and opening.text:
+        key = make_greeting_cache_key(
+            agent_id=cfg.agent_id,
+            tts_provider=cfg.tts_provider,
+            provider_voice_id=provider_voice_id or "",
+            greeting_text=opening.text,
+            audio_channel=audio_channel,
+        )
+        frames = get_greeting_cache().get(key)
+        if frames is not None:
+            return GreetingPrewarmPlan(
+                mode="say",
+                cache_hit=True,
+                await_prewarm=False,
+                prewarm_timeout=0.0,
+                cache_key=key,
+                greeting_frames=frames,
+            )
+        return GreetingPrewarmPlan(
+            mode="say",
+            cache_hit=False,
+            await_prewarm=True,
+            prewarm_timeout=_SAY_CACHE_MISS_PREWARM_SEC,
+            cache_key=key,
+        )
+    return GreetingPrewarmPlan(
+        mode="generate_reply",
+        cache_hit=False,
+        await_prewarm=True,
+        prewarm_timeout=_GENERATE_REPLY_PREWARM_SEC,
+    )
+
+
 async def apply_session_opening(
     session: Any,
     cfg: AgentConfig,
     logger: Any,
     *,
     allow_interruptions: bool | None = None,
+    greeting_audio: AsyncIterable[rtc.AudioFrame] | None = None,
 ) -> SessionOpening:
     """Speak or generate the opening turn.
 
-    WebRTC defaults to non-interruptible greetings (mic echo during connect).
-    Telephony should pass ``allow_interruptions=True`` so barge-in does not leave
-    the caller in a discarded-audio / deaf window.
+    When ``greeting_audio`` is provided for ``mode=say``, PCM is replayed via
+    ``session.say(..., audio=)`` (no live TTS RTT). Interruptibility defaults to
+    True; override with ``UVA_GREETING_INTERRUPTIBLE=0`` if connect-time echo is bad.
     """
     opening = resolve_session_opening(cfg)
-    interruptible = False if allow_interruptions is None else bool(allow_interruptions)
+    interruptible = greeting_allow_interruptions(allow_interruptions)
     if opening.mode == "wait":
         logger.info("session opening first_speaker=user — waiting for caller")
         return opening
     if opening.mode == "say":
         logger.info(
-            "session opening first_speaker=agent custom_greeting_chars=%s allow_interruptions=%s",
+            "session opening first_speaker=agent custom_greeting_chars=%s "
+            "allow_interruptions=%s cached_audio=%s",
             len(opening.text or ""),
             interruptible,
+            greeting_audio is not None,
         )
-        # Static greeting: TTS-only, no LLM (UVA-10).
-        session.say(opening.text, allow_interruptions=interruptible)
+        # Static greeting: TTS-only, no LLM (UVA-10). Prefer cached PCM when present.
+        if greeting_audio is not None:
+            session.say(
+                opening.text,
+                audio=greeting_audio,
+                allow_interruptions=interruptible,
+            )
+        else:
+            session.say(opening.text, allow_interruptions=interruptible)
         return opening
     logger.info(
         "session opening first_speaker=agent generated_greeting allow_interruptions=%s",

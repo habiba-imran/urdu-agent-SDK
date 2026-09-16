@@ -13,8 +13,19 @@ if TYPE_CHECKING:
 TELEPHONY_CARTESIA_VOICE_ID = "cartesia-katie-friendly-fixer"
 TELEPHONY_CARTESIA_PROVIDER_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
 
-# Voice-proven Groq model for free-tier TPM (qwen, no reasoning channel).
-TELEPHONY_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
+# Voice-proven Groq model for free-tier TPM (gpt-oss-20b production).
+# Dead GROQ_LLM_MODEL values (llama / qwen3.6) fall back inside groq.build().
+TELEPHONY_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-20b")
+if TELEPHONY_GROQ_MODEL in (
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "qwen/qwen3.6-27b",
+    "qwen/qwen3-32b",
+    "qwen/qwen3.8-27b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "moonshotai/kimi-k2-instruct-0905",
+):
+    TELEPHONY_GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 def force_cartesia_for_telephony(
