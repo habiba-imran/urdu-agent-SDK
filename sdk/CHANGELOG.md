@@ -9,6 +9,9 @@ Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `
 ## [Unreleased]
 
 ### Fixed
+- Mic capture now requests browser echo cancellation / noise suppression / AGC so agent
+  TTS on speakers is less likely to re-enter the mic and look like barge-in flicker.
+- `speaking` / `agent_speaking` only emit on edge changes (LiveKit often re-fires the same set).
 - A single failed token refresh no longer ends the call: refresh retries with backoff
   (single-flight) and applies the refreshed LiveKit token to the live connection (audit F-H12).
 - Session and refresh `fetch` calls now time out instead of leaving `connect()` pending forever
@@ -22,6 +25,8 @@ Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `
   reported as `quota_exceeded` (audit F-M16). See the README's error taxonomy.
 
 ### Added
+- `connect_timing` event + `connectTiming` getter expose session-mint vs LiveKit-join ms
+  so hosts can diagnose room_connected latency.
 - Unit tests (`npm test`, vitest).
 - `CHANGELOG.md` is shipped in the npm package.
 - Package metadata now points at `Finova-Solutions/urdu-voice-agent-SDK`.

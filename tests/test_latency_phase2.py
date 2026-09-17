@@ -28,6 +28,9 @@ def test_phase2_endpointing_tighter_than_phase1_defaults():
 def test_vad_silence_gate_tuned_for_eou():
     assert VAD_OPTIONS["min_silence_duration"] <= 0.4
     assert VAD_OPTIONS["min_silence_duration"] >= 0.3
+    # Echo-resistant speech onset (was 0.05 / 0.35 — too eager for laptop speakers).
+    assert VAD_OPTIONS["min_speech_duration"] >= 0.1
+    assert VAD_OPTIONS["activation_threshold"] >= 0.4
 
 
 def test_gemini_voice_path_disables_thinking(monkeypatch):

@@ -202,7 +202,7 @@ def build_turn_profile(
         discard_audio_if_uninterruptible=bool(
             interruption.get("discard_audio_if_uninterruptible", True)
         ),
-        interruption_min_duration=float(interruption.get("min_duration", 0.3)),
+        interruption_min_duration=float(interruption.get("min_duration", 0.55)),
         preemptive_max_speech_duration=float(
             preemptive.get("max_speech_duration", 12.0)
         ),

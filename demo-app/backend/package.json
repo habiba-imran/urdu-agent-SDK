@@ -8,7 +8,7 @@
     "start": "node src/server.js"
   },
   "dependencies": {
-    "@awaazlabs-uva/agents": "file:../../sdk-server",
+    "@awaazlabs-uva/agents": "file:../.packs/awaazlabs-uva-agents.tgz",
     "dotenv": "^16.6.1",
     "express": "^4.21.2"
   }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import sys
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -48,12 +49,17 @@ def test_session_endpoint_contract_success(monkeypatch):
             "roomName": "room-123",
         }
 
-    def fake_with_dispatch(res, tenant_id, agent_id, background_tasks):
+    def fake_with_dispatch(res, tenant_id, agent_id, background_tasks, greeting=None):
         return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": 120}
+
+    @contextmanager
+    def fake_mint_db_connection(*, connect_timeout: float = 10.0):
+        yield object()
 
     monkeypatch.setattr(app_module, "mint_session", fake_mint_session)
     monkeypatch.setattr(app_module, "_with_dispatch", fake_with_dispatch)
     monkeypatch.setattr(app_module, "_rate_limited", lambda tenant_id: False)
+    monkeypatch.setattr(app_module, "mint_db_connection", fake_mint_db_connection)
 
     ts = str(int(datetime.datetime.now(datetime.UTC).timestamp()))
     nonce = str(uuid.uuid4())
@@ -88,8 +94,13 @@ def test_session_endpoint_contract_error_mapping(monkeypatch):
     def fake_mint_session(**kwargs):
         raise MintError(429, "concurrent cap reached")
 
+    @contextmanager
+    def fake_mint_db_connection(*, connect_timeout: float = 10.0):
+        yield object()
+
     monkeypatch.setattr(app_module, "mint_session", fake_mint_session)
     monkeypatch.setattr(app_module, "_rate_limited", lambda tenant_id: False)
+    monkeypatch.setattr(app_module, "mint_db_connection", fake_mint_db_connection)
 
     ts = str(int(datetime.datetime.now(datetime.UTC).timestamp()))
     headers = {

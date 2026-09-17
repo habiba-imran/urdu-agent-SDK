@@ -90,6 +90,13 @@ function pickDefaultVoice(entry) {
 let _capsCache = { at: 0, value: null };
 const CAPS_TTL_MS = 60_000;
 
+/**
+ * Last pipeline successfully confirmed/applied per agentId in this demo process.
+ * Avoids a full listAgents() round-trip (often multi-second against remote DB) on
+ * the Connect hot path when the browser already applied the same combo.
+ */
+const _pipelineAppliedByAgent = new Map();
+
 async function getCapabilitiesCached(client) {
   const now = Date.now();
   if (_capsCache.value && now - _capsCache.at < CAPS_TTL_MS) {
@@ -211,12 +218,17 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   };
 
   if (!force) {
+    const cached = _pipelineAppliedByAgent.get(agentId);
+    if (cached && agentPipelineMatches(cached, applied)) {
+      return { agent: cached, applied, skipped: true };
+    }
     try {
       const agents = await client.listAgents();
       const current = Array.isArray(agents)
         ? agents.find((a) => a.id === agentId || a.agent_id === agentId)
         : null;
       if (agentPipelineMatches(current, applied)) {
+        _pipelineAppliedByAgent.set(agentId, { ...current, ...applied });
         return { agent: current, applied, skipped: true };
       }
     } catch {
@@ -234,6 +246,8 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
     ttsVoiceId,
     voiceId: ttsVoiceId,
   });
+
+  _pipelineAppliedByAgent.set(agentId, { ...(agent || {}), ...applied });
 
   return {
     agent,
@@ -385,6 +399,7 @@ export function createApp(config, fetchImpl = fetch) {
 
     let upstream;
     let payload;
+    const upstreamStarted = Date.now();
     try {
       upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session`, {
         method: 'POST',
@@ -393,6 +408,10 @@ export function createApp(config, fetchImpl = fetch) {
       });
       payload = await readJsonSafely(upstream);
     } catch (err) {
+      console.warn(
+        `[demo-backend] CP mint unreachable after ${Date.now() - upstreamStarted}ms`,
+        err instanceof Error ? err.message : String(err),
+      );
       res.status(502).json({
         error: 'session_failed',
         detail: `control plane unreachable at ${config.controlPlaneUrl}`,
@@ -400,6 +419,11 @@ export function createApp(config, fetchImpl = fetch) {
       });
       return;
     }
+
+    const upstreamMs = Date.now() - upstreamStarted;
+    console.info(
+      `[demo-backend] CP mint upstream_ms=${upstreamMs} status=${upstream.status} agent=${agentId}`,
+    );
 
     if (!upstream.ok) {
       const failure = normalizeSessionFailure(upstream.status, payload);
@@ -418,6 +442,8 @@ export function createApp(config, fetchImpl = fetch) {
       roomName: payload.roomName,
       refreshUrl: resolveRefreshUrl(req, config),
       expiresIn: payload.expiresIn ?? 120,
+      /** Host→CP RTT only (excludes browser LiveKit join). */
+      upstreamMintMs: upstreamMs,
     });
   });
 
