@@ -25,11 +25,12 @@ from .cartesia_spoken_output import (
 )
 from .config import AgentConfig, load_agent_session_bundle, resolve_provider_voice_id_local
 from .spoken_sanitize import sanitizer_for_provider
-from .providers.registry import build_components
 from .providers.types import AgentRuntimeConfig
+from .provider_client_cache import build_components_cached
 from .latency import (
     VAD_OPTIONS,
     await_greeting_prewarm,
+    interruption_mode,
     is_telephony_job,
     load_session_identity,
     parse_dispatch_metadata,
@@ -40,7 +41,13 @@ from .latency import (
     wire_turn_latency,
 )
 from .telephony_tts import force_cartesia_for_telephony, force_groq_for_telephony
-from .session_opening import apply_session_opening
+from .session_opening import apply_session_opening, plan_greeting_prewarm, resolve_session_opening
+from .greeting_cache import (
+    frames_to_async_iterable,
+    get_greeting_cache,
+    make_greeting_cache_key,
+    schedule_greeting_cache_fill,
+)
 from .stale_jobs import (
     abandon_stale_job_if_needed,
     reject_stale_job_request,
@@ -220,26 +227,29 @@ async def build_session(
     room_name: str,
     *,
     audio_channel: str = "webrtc",
-) -> tuple[Any, AgentConfig, asyncio.Task[None]]:
+) -> tuple[Any, AgentConfig, asyncio.Task[None], str]:
     """Load config and construct the session pipeline (stt/llm/tts/vad). Does not start it.
 
-    Returns ``(session, cfg, greeting_prewarm_task)``. Await ``greeting_prewarm_task`` before
-    ``apply_session_opening`` so the first utterance does not hit a cold TTS websocket.
+    Returns ``(session, cfg, greeting_prewarm_task, provider_voice_id)``.
+    Prefer a greeting-cache hit before awaiting ``greeting_prewarm_task``; on cache miss await
+    with a short timeout so the first utterance does not hit a fully cold TTS websocket.
     """
     from dataclasses import replace
 
+    from livekit.agents import AgentSession  # lazy: needs the livekit runtime
+    from livekit.agents.log import logger
+
+    _build_t0 = time.monotonic()
     cfg, provider_voice_id = await asyncio.to_thread(
         load_agent_session_bundle, md["agent_id"], md["tenant_id"]
     )
+    config_ms = int(round((time.monotonic() - _build_t0) * 1000))
 
     # Mint/dispatch may carry a greeting override — prefer it so turn-zero never races
     # a just-synced agents.greeting row (and never falls into LLM generate_reply).
     mint_greeting = (md.get("greeting") or "").strip()
     if mint_greeting and mint_greeting != (cfg.greeting or "").strip():
         cfg = replace(cfg, greeting=mint_greeting, first_speaker="agent")
-
-    from livekit.agents import AgentSession  # lazy: needs the livekit runtime
-    from livekit.agents.log import logger
 
     cfg, provider_voice_id, cartesia_forced = force_cartesia_for_telephony(
         cfg, provider_voice_id, audio_channel=audio_channel
@@ -265,6 +275,7 @@ async def build_session(
     # app-layer sync ships (docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md Phase 1 finding,
     # ADR-036) — resolve the fallback ONCE here, so every adapter downstream can trust it's set.
     internal_voice_id = cfg.tts_voice_id or cfg.voice_id
+    resolved_provider_voice = provider_voice_id or internal_voice_id or ""
     runtime_cfg = AgentRuntimeConfig(
         agent_language=cfg.agent_language,
         stt_provider=cfg.stt_provider,
@@ -274,11 +285,33 @@ async def build_session(
         llm_model=cfg.llm_model,
         llm_options=cfg.llm_options,
         tts_provider=cfg.tts_provider,
-        tts_voice_id=provider_voice_id,
+        tts_voice_id=resolved_provider_voice,
         tts_options=cfg.tts_options,
         audio_channel=audio_channel,
     )
-    components = build_components(runtime_cfg)
+    _comp_t0 = time.monotonic()
+    components, components_cache_hit = build_components_cached(runtime_cfg)
+    components_ms = int(round((time.monotonic() - _comp_t0) * 1000))
+    opening = resolve_session_opening(cfg)
+    # Cache hit → skip TTS websocket prewarm (any TTS vendor). Opening replays PCM.
+    skip_tts_prewarm = False
+    if opening.mode == "say" and opening.text:
+        cache_key = make_greeting_cache_key(
+            agent_id=cfg.agent_id,
+            tts_provider=cfg.tts_provider,
+            provider_voice_id=resolved_provider_voice,
+            greeting_text=opening.text,
+            audio_channel=audio_channel,
+        )
+        if get_greeting_cache().has(cache_key):
+            skip_tts_prewarm = True
+        else:
+            schedule_greeting_cache_fill(
+                tts=components.tts,
+                key=cache_key,
+                text=opening.text,
+                room_name=room_name,
+            )
     greeting_prewarm = schedule_provider_prewarm(
         tts=components.tts,
         llm=components.llm,
@@ -286,7 +319,14 @@ async def build_session(
         logger=logger,
         room_name=room_name,
         await_llm=(audio_channel == "telephony"),
+        skip_tts=skip_tts_prewarm,
     )
+    if skip_tts_prewarm:
+        logger.info(
+            "greeting cache hit — skipping TTS prewarm room=%s provider=%s",
+            room_name,
+            cfg.tts_provider,
+        )
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
         "session pipeline room=%s agent=%s llm=%s/%s tts=%s voice=%s first_speaker=%s",
@@ -326,6 +366,7 @@ async def build_session(
             profile["sample_rate"],
         )
 
+    _session_t0 = time.monotonic()
     session_kwargs: dict[str, Any] = {
         "stt": components.stt,
         "llm": components.llm,
@@ -352,22 +393,78 @@ async def build_session(
     )
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
 
-    # turn_handling interruption mode="adaptive" and false_interruption_timeout=1.2: see
-    # docs/40-ADR.md ADR-008. Forced rather than LiveKit's dev/prod auto-detect so production
-    # `python -m worker.main start` matches `dev`. Compatibility: streaming STT with
-    # aligned_transcript, VAD present, LLM not RealtimeModel.
+    # Default interruption mode is local Silero VAD (UVA_INTERRUPTION_MODE=vad) so
+    # session.start skips LiveKit Cloud adaptive-detector init. Set adaptive to opt in.
+    # See docs/40-ADR.md ADR-008 for barge-in / false-interruption knobs.
     session = AgentSession(**session_kwargs)
-    # Direct evidence of the configured value, not an assumption — the actual RUNTIME
-    # confirmation is LiveKit's own "adaptive interruption detector initialized" INFO log
-    # (livekit/agents/inference/interruption.py L336-347), which only fires if the
-    # compatibility conditions above hold; a WARNING instead means it fell back to VAD.
+    session_ctor_ms = int(round((time.monotonic() - _session_t0) * 1000))
     logger.info(
-        "interruption_detection configured=%s (check startup log for LiveKit's own "
-        "'adaptive interruption detector initialized' INFO line to confirm it's actually "
-        "active, or a WARNING line if it fell back to VAD)",
+        "interruption_detection configured=%s mode=%s "
+        "(adaptive needs LiveKit Cloud init on session.start; vad is local-only)",
         session.interruption_detection,
+        interruption_mode(),
     )
-    return session, cfg, greeting_prewarm
+    logger.info(
+        "entrypoint build_session_detail room=%s config_ms=%s components_ms=%s "
+        "components_cache_hit=%s session_ctor_ms=%s total_ms=%s",
+        room_name,
+        config_ms,
+        components_ms,
+        components_cache_hit,
+        session_ctor_ms,
+        int(round((time.monotonic() - _build_t0) * 1000)),
+    )
+    return session, cfg, greeting_prewarm, resolved_provider_voice
+
+
+async def _await_opening_and_speak(
+    *,
+    session: Any,
+    cfg: AgentConfig,
+    greeting_prewarm: asyncio.Task[None],
+    provider_voice_id: str,
+    audio_channel: str,
+    logger: Any,
+    room_name: str,
+    connect_at: float,
+) -> None:
+    """Apply opening with greeting-cache short-circuit and measured prewarm wait."""
+    plan = plan_greeting_prewarm(
+        cfg,
+        provider_voice_id=provider_voice_id,
+        audio_channel=audio_channel,
+    )
+    prewarm_wait_ms = 0
+    if plan.await_prewarm:
+        prewarm_started = time.monotonic()
+        await await_greeting_prewarm(
+            greeting_prewarm,
+            logger=logger,
+            room_name=room_name,
+            timeout=plan.prewarm_timeout,
+        )
+        prewarm_wait_ms = int(round((time.monotonic() - prewarm_started) * 1000))
+
+    greeting_audio = None
+    if plan.cache_hit and plan.greeting_frames:
+        greeting_audio = frames_to_async_iterable(plan.greeting_frames)
+
+    ms_since_connect = int(round((time.monotonic() - connect_at) * 1000))
+    logger.info(
+        "session opening gate room=%s opening_mode=%s greeting_cache_hit=%s "
+        "prewarm_wait_ms=%s ms_since_connect=%s",
+        room_name,
+        plan.mode,
+        plan.cache_hit,
+        prewarm_wait_ms,
+        ms_since_connect,
+    )
+    await apply_session_opening(
+        session,
+        cfg,
+        logger,
+        greeting_audio=greeting_audio,
+    )
 
 
 def _tts_agent_session_extra(
@@ -672,6 +769,23 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
     session.on("metrics_collected", _on_metrics)
 
 
+def room_has_remote_participant(room: Any) -> bool:
+    """True if any non-agent remote participant is already in the room."""
+    remotes = getattr(room, "remote_participants", None) or {}
+    try:
+        values = remotes.values() if hasattr(remotes, "values") else remotes
+    except Exception:
+        return False
+    for p in values:
+        identity = str(getattr(p, "identity", "") or "")
+        # LiveKit agent identities often contain "agent"; browser/SIP do not need a wait.
+        if identity and "agent" not in identity.lower():
+            return True
+        if p is not None and not identity:
+            return True
+    return False
+
+
 async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     """LiveKit job entrypoint.
 
@@ -684,15 +798,27 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # connect() delayed the room join by 10–20s on Windows and produced half-initialized
     # sessions where STT worked but generate_reply never committed (see worker/stale_jobs.py
     # and the 2026-08-19 Groq client demo). Connect first; abandon stale rooms after.
+    _job_at = time.monotonic()
     await ctx.connect()
-    if await abandon_stale_job_if_needed(ctx):
-        return
-
+    _connect_at = time.monotonic()
     from livekit.agents.log import logger as _entry_logger
 
-    _connect_at = time.monotonic()
+    _entry_logger.info(
+        "entrypoint connected room=%s connect_ms=%s",
+        ctx.room.name,
+        int(round((_connect_at - _job_at) * 1000)),
+    )
+
+    # Overlap stale DB check with identity + pipeline build — do not serialize it
+    # in front of session.start / first audio. Fresh dispatch metadata (mint just
+    # created this job) skips the Supabase stale round-trip entirely.
     room_name = ctx.room.name
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
+    from_dispatch = parse_dispatch_metadata(job_metadata)
+    stale_task = asyncio.create_task(
+        abandon_stale_job_if_needed(ctx, skip_db=from_dispatch is not None)
+    )
+
     audio_channel = (
         "telephony"
         if is_telephony_job(room_name=room_name, job_metadata=job_metadata)
@@ -702,9 +828,22 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     # UVA-2: build the pipeline in parallel with waiting for the browser/SIP participant.
     # Mint stamps a sessions row and dispatch metadata before the user joins, so STT/LLM/TTS
     # + Cartesia prewarm can run while wait_for_participant blocks.
-    early_md = await _early_session_identity(ctx, room_name)
+    early_md = from_dispatch or await _early_session_identity(ctx, room_name)
+    # When dispatch metadata already provided identity, _early_session_identity would
+    # re-parse the same blob — skip the duplicate path above via ``from_dispatch or``.
+    if early_md is from_dispatch and early_md is not None:
+        # Copy so pop("direction") does not mutate the parse used for skip_db logging.
+        early_md = dict(early_md)
     if early_md and early_md.pop("direction", None) in {"inbound", "outbound"}:
         audio_channel = "telephony"
+
+    _entry_logger.info(
+        "entrypoint identity room=%s early_md=%s channel=%s since_connect_ms=%s",
+        room_name,
+        bool(early_md),
+        audio_channel,
+        int(round((time.monotonic() - _connect_at) * 1000)),
+    )
 
     async def _setup_and_start(
         session_obj: Any,
@@ -872,55 +1011,85 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         if getattr(session_obj, "userdata", None) is not None:
             session_obj.userdata.latency_tracker = latency_tracker
 
-        # Force local RecorderIO audio capture even when LiveKit Cloud sends
-        # enable_recording=false on the job. Audio-only — skip Cloud OTLP upload.
+        # Local demo: skip RecorderIO unless UVA_SESSION_RECORD_AUDIO=1 (saves seconds on session.start).
+        _record_audio = (os.environ.get("UVA_SESSION_RECORD_AUDIO") or "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        _start_at = time.monotonic()
         await session_obj.start(
             agent_obj,
             room=ctx.room,
             room_options=session_room_options(audio_channel=channel),
-            record={"audio": True, "traces": False, "logs": False, "transcript": False},
+            record=(
+                {"audio": True, "traces": False, "logs": False, "transcript": False}
+                if _record_audio
+                else False
+            ),
         )
         _entry_logger.info(
-            "entrypoint session.start room=%s ms=%s",
+            "entrypoint session.start room=%s start_ms=%s since_connect_ms=%s "
+            "interruption_mode=%s record_audio=%s",
             room_name,
+            int(round((time.monotonic() - _start_at) * 1000)),
             int(round((time.monotonic() - _connect_at) * 1000)),
+            interruption_mode(),
+            _record_audio,
         )
 
     # Fast Path: If we have early identity (e.g. from dispatch metadata), build and start
     # the session BEFORE waiting for the participant. This publishes the audio track early (UVA-2).
+    # Overlap participant wait with build+start when the browser already joined.
+    # CRITICAL: do NOT await wait_for_participant before the opening greeting — LiveKit may
+    # wait until the participant is fully ACTIVE (seconds after room_connected), which was
+    # the Habiba-side ~10s gap after the browser already heard "connected".
     if early_md:
-        session, cfg, greeting_prewarm = await build_session(
+        wait_task = asyncio.create_task(
+            wait_for_session_participant(ctx, already_connected=True)
+        )
+        _build_at = time.monotonic()
+        session, cfg, greeting_prewarm, provider_voice_id = await build_session(
             early_md, room_name, audio_channel=audio_channel
         )
         agent = build_agent(cfg)
+        _entry_logger.info(
+            "entrypoint build_session room=%s build_ms=%s since_connect_ms=%s "
+            "remote_participant=%s",
+            room_name,
+            int(round((time.monotonic() - _build_at) * 1000)),
+            int(round((time.monotonic() - _connect_at) * 1000)),
+            room_has_remote_participant(ctx.room),
+        )
+
+        if await stale_task:
+            wait_task.cancel()
+            return
 
         await _setup_and_start(session, cfg, agent, early_md, channel=audio_channel)
 
         from livekit.agents.log import logger as _opening_logger
 
-        # Warm TTS while waiting for the browser/SIP participant (overlaps when user is late).
-        wait_task = asyncio.create_task(
-            wait_for_session_participant(ctx, already_connected=True)
-        )
-        await await_greeting_prewarm(
-            greeting_prewarm,
+        await _await_opening_and_speak(
+            session=session,
+            cfg=cfg,
+            greeting_prewarm=greeting_prewarm,
+            provider_voice_id=provider_voice_id,
+            audio_channel=audio_channel,
             logger=_opening_logger,
             room_name=room_name,
-            timeout=5.0,
+            connect_at=_connect_at,
         )
+
         try:
             await wait_task
-        except (asyncio.TimeoutError, RuntimeError):
+        except (asyncio.TimeoutError, RuntimeError, asyncio.CancelledError):
             return
 
-        await apply_session_opening(
-            session,
-            cfg,
-            _opening_logger,
-            allow_interruptions=(audio_channel == "telephony"),
-        )
-
     else:
+        if await stale_task:
+            return
         # Fallback Path: Wait for participant to extract identity (e.g., SIP inbound)
         try:
             participant = await wait_for_session_participant(ctx, already_connected=True)
@@ -933,7 +1102,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             audio_channel=audio_channel,
         )
 
-        session, cfg, greeting_prewarm = await build_session(
+        session, cfg, greeting_prewarm, provider_voice_id = await build_session(
             participant_md, room_name, audio_channel=resolved_channel
         )
         agent = build_agent(cfg)
@@ -943,17 +1112,15 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         )
         from livekit.agents.log import logger as _opening_logger
 
-        await await_greeting_prewarm(
-            greeting_prewarm,
+        await _await_opening_and_speak(
+            session=session,
+            cfg=cfg,
+            greeting_prewarm=greeting_prewarm,
+            provider_voice_id=provider_voice_id,
+            audio_channel=resolved_channel,
             logger=_opening_logger,
             room_name=room_name,
-            timeout=5.0,
-        )
-        await apply_session_opening(
-            session,
-            cfg,
-            _opening_logger,
-            allow_interruptions=(resolved_channel == "telephony"),
+            connect_at=_connect_at,
         )
 
 
@@ -1069,6 +1236,15 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
     except Exception:
         pass
 
+    # Open one Supabase TLS session so the first job's config/stale lookups skip cold connect.
+    try:
+        from worker.db_pool import worker_db_connection
+
+        with worker_db_connection(connect_timeout=5) as conn:
+            conn.execute("select 1")
+    except Exception:
+        pass
+
     return imported
 
 
@@ -1114,9 +1290,10 @@ if __name__ == "__main__":
             prewarm_fnc=prewarm,
             request_fnc=reject_stale_job_request,
             agent_name=_agent_name,
-            # Keep at least two warm job runners ready — first inbound call after idle
-            # otherwise pays ~15–20s ("no warmed process available") on local Windows.
-            num_idle_processes=max(2, int(os.getenv("LIVEKIT_NUM_IDLE_PROCESSES", "2"))),
+            # Keep several warm job runners ready — first inbound after idle otherwise
+            # pays ~15–20s ("no warmed process available") on local Windows. Default 3
+            # (provider-agnostic). Override with LIVEKIT_NUM_IDLE_PROCESSES.
+            num_idle_processes=max(1, int(os.getenv("LIVEKIT_NUM_IDLE_PROCESSES", "3"))),
             initialize_process_timeout=float(
                 os.getenv("LIVEKIT_INITIALIZE_PROCESS_TIMEOUT", "60")
             ),

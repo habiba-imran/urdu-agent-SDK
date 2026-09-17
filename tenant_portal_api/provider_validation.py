@@ -45,7 +45,7 @@ _CREATE_DEFAULTS = {
     "stt_model": "default",
     "stt_options": {},
     "llm_provider": "gemini",
-    "llm_model": "gemini-2.5-flash",
+    "llm_model": "gemini-3.6-flash",
     "llm_options": {},
     "tts_provider": "uplift",
     "tts_options": {},
@@ -53,7 +53,7 @@ _CREATE_DEFAULTS = {
 
 _EN_CREATE_DEFAULTS = {
     "llm_provider": "groq",
-    "llm_model": "qwen/qwen3.6-27b",
+    "llm_model": "openai/gpt-oss-20b",
 }
 
 
@@ -100,15 +100,22 @@ def resolve_agent_provider_fields(
         )
 
     # English CREATE: prefer Groq when caller omits llm_provider. CreateAgentBody still
-    # defaults llm_model to gemini-2.5-flash — treat that legacy Field default as unset
+    # defaults llm_model to a Gemini ID — treat that legacy Field default as unset
     # when the resolved provider is Groq so validation does not reject the pair.
+    _legacy_gemini_field_defaults = frozenset(
+        {
+            "gemini-2.5-flash",
+            "gemini-3.6-flash",
+            _CREATE_DEFAULTS["llm_model"],
+        }
+    )
     effective_llm_model = llm_model
     if current is None and str(language).lower().startswith("en"):
         if llm_provider is None:
             base["llm_provider"] = _EN_CREATE_DEFAULTS["llm_provider"]
         provider_preview = llm_provider if llm_provider is not None else base["llm_provider"]
         if provider_preview == "groq" and (
-            llm_model is None or llm_model == _CREATE_DEFAULTS["llm_model"]
+            llm_model is None or llm_model in _legacy_gemini_field_defaults
         ):
             base["llm_model"] = _EN_CREATE_DEFAULTS["llm_model"]
             effective_llm_model = None

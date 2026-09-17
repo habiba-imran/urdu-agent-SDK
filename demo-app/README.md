@@ -58,7 +58,18 @@ cd demo-app
 npm run dev:frontend
 ```
 
-Open `http://localhost:5173`, click **Connect**.
+Open `http://localhost:5173`.
+
+1. Wait for **Language / STT / LLM / TTS** dropdowns to load (needs portal `UVA_API_BASE_URL` on the backend).
+2. Pick a valid combo (options are filtered to **enabled** capabilities for that language).
+3. Click **Connect** — backend PATCHes the agent pipeline, then the voice SDK mints + joins.
+
+Urdu typically: Gladia + Gemini + Uplift.  
+English typically: Gladia/Deepgram + Gemini/Groq + Cartesia/ElevenLabs/Rime.
+
+**Provider flips / greeting cache:** changing Language / STT / LLM / TTS applies the pipeline in the background; Connect skips the ~10s portal PATCH when the combo is already on the agent. After a provider change, wait for the debug log “Background pipeline applied” (or ~1–2s) before Connect. Greeting PCM cache is per worker process and keyed by provider + voice + text + channel.
+
+**Local speed:** worker defaults to `UVA_SESSION_RECORD_AUDIO=0` (no RecorderIO on `session.start`). Set `=1` in `.env.local` if you need session recordings.
 
 ## Packages
 

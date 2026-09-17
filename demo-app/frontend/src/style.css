@@ -21,7 +21,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
   color: inherit;
 }
@@ -78,11 +79,28 @@ input {
   font-size: 0.9rem;
 }
 
-.form input {
+.form input,
+.form select {
   border: 1px solid var(--line);
   border-radius: 0;
   padding: 0.7rem 0.75rem;
   background: var(--bg);
+}
+
+.form select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%),
+    linear-gradient(135deg, var(--fg) 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(1em + 2px), calc(100% - 12px) calc(1em + 2px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 2rem;
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .actions {
@@ -126,12 +144,6 @@ input {
   margin: 0;
   font-size: 1.35rem;
   font-weight: 600;
-}
-
-.split {
-  display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
-  gap: 0.75rem;
 }
 
 .transcript-list {
@@ -178,6 +190,94 @@ input {
   background: var(--fg);
   color: var(--bg);
   font-size: 0.82rem;
+  font-family: "IBM Plex Mono", "Consolas", "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.debug-panel .debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.debug-panel .debug-header h2 {
+  margin: 0;
+}
+
+.debug-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.debug-actions button {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.debug-hint {
+  margin: 0 0 0.75rem;
+}
+
+.timing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.timing-card {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.timing-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.timing-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-log {
+  min-height: 220px;
+  max-height: 360px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.metrics-details {
+  margin-top: 0.75rem;
+  border: 1px solid var(--line);
+  padding: 0.45rem 0.65rem;
+}
+
+.metrics-details summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metrics-nested {
+  margin-top: 0.55rem;
+  min-height: 100px;
+  max-height: 220px;
 }
 
 .hint {
@@ -207,7 +307,9 @@ input {
 
 @media (max-width: 800px) {
   .grid,
-  .split {
+  .split,
+  .pipeline-grid,
+  .timing-grid {
     grid-template-columns: 1fr;
   }
 }
