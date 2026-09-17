@@ -92,7 +92,7 @@ def test_deepgram_stt_voice_options(monkeypatch):
     dg.build("en")
     assert created["model"] == "nova-3"
     assert created["no_delay"] is True
-    assert created["endpointing_ms"] == 10
+    assert created["endpointing_ms"] == 200
 
 
 @pytest.mark.asyncio

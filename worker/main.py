@@ -36,17 +36,18 @@ from .latency import (
     parse_dispatch_metadata,
     schedule_provider_prewarm,
     session_room_options,
-    turn_handling_for_channel,
     wire_barge_in_flush,
     wire_turn_latency,
 )
-from .telephony_tts import force_cartesia_for_telephony, force_groq_for_telephony
+from .humanization import build_turn_profile, resolve_effective_providers, turn_profile_to_livekit_options
 from .session_opening import apply_session_opening, plan_greeting_prewarm, resolve_session_opening
 from .greeting_cache import (
+    await_greeting_frames,
     frames_to_async_iterable,
     get_greeting_cache,
     make_greeting_cache_key,
-    schedule_greeting_cache_fill,
+    seed_greeting_pcm_from_env,
+    start_greeting_synthesis,
 )
 from .stale_jobs import (
     abandon_stale_job_if_needed,
@@ -78,11 +79,21 @@ def _language_directive(agent_language: str | None) -> str:
 
     Prevents the LLM from responding in English when persona text is in English but
     agent_language is Urdu, and vice versa. Pinned to trusted instructions, not untrusted
-    persona wording."""
-    if not agent_language or agent_language == "ur":
+    persona wording. Detailed Urdu spoken rules live in ``URDU_SPOKEN_OUTPUT_RULES``.
+    """
+    if not agent_language:
         return ""
-    name = _LANGUAGE_NAMES.get(agent_language, agent_language)
-    return f" Respond only in {name}, regardless of what language the agent persona below is written in or claims."
+    lang = agent_language.strip().lower()
+    if lang == "ur" or lang.startswith("ur"):
+        return (
+            " Respond only in Pakistani Urdu using proper Urdu script (not Roman Urdu), "
+            "regardless of what language the agent persona below is written in or claims."
+        )
+    name = _LANGUAGE_NAMES.get(lang, agent_language)
+    return (
+        f" Respond only in {name}, regardless of what language the agent persona below "
+        "is written in or claims."
+    )
 
 
 def build_agent(cfg: AgentConfig) -> Any:
@@ -143,40 +154,6 @@ def build_agent(cfg: AgentConfig) -> Any:
     )
 
 
-_SANITIZING_AGENT_CLS: dict[str, type] = {}
-
-
-def _sanitizing_agent_class(tts_provider: str) -> type:
-    """Subclass livekit Agent so Cartesia/Rime TTS input is sanitized with the matching rules."""
-    from livekit.agents import Agent
-
-    sanitize_fn = sanitizer_for_provider(tts_provider)
-    if sanitize_fn is None:
-        return Agent
-    cached = _SANITIZING_AGENT_CLS.get(tts_provider)
-    if cached is not None:
-        return cached
-
-    class SanitizingVoiceAgent(Agent):
-        def tts_node(self, text, model_settings):
-            from livekit.agents.log import logger
-
-            async def cleaned():
-                full_reply = []
-                async for chunk in text:
-                    full_reply.append(chunk)
-                    yield sanitize_fn(chunk)
-                reply_text = "".join(full_reply).strip()
-                if reply_text:
-                    logger.info("gemini generated reply text=%r", reply_text)
-
-            return Agent.default.tts_node(self, cleaned(), model_settings)
-
-    SanitizingVoiceAgent.__name__ = f"{tts_provider.title()}VoiceAgent"
-    _SANITIZING_AGENT_CLS[tts_provider] = SanitizingVoiceAgent
-    return SanitizingVoiceAgent
-
-
 def _resolve_provider_voice_id(internal_voice_id: str | None) -> str | None:
     """Map internal voice ID (e.g. 'rime-arcana-andromeda') to provider voice ID ('andromeda').
 
@@ -222,6 +199,19 @@ def preload_vad() -> Any:
     return _vad_singleton
 
 
+def build_session_connect_options() -> Any:
+    """LiveKit session connect options — no provider retries on the voice path (429 dead air)."""
+    from livekit.agents.types import APIConnectOptions
+    from livekit.agents.voice.agent_session import SessionConnectOptions
+
+    no_retry = APIConnectOptions(max_retry=0, retry_interval=2.0, timeout=30.0)
+    return SessionConnectOptions(
+        llm_conn_options=no_retry,
+        tts_conn_options=no_retry,
+        stt_conn_options=no_retry,
+    )
+
+
 async def build_session(
     md: dict[str, str],
     room_name: str,
@@ -251,18 +241,21 @@ async def build_session(
     if mint_greeting and mint_greeting != (cfg.greeting or "").strip():
         cfg = replace(cfg, greeting=mint_greeting, first_speaker="agent")
 
-    cfg, provider_voice_id, cartesia_forced = force_cartesia_for_telephony(
+    # Remaps first, then humanization / pipeline use *effective* providers only.
+    effective = resolve_effective_providers(
         cfg, provider_voice_id, audio_channel=audio_channel
     )
-    if cartesia_forced:
+    cfg = effective.cfg
+    provider_voice_id = effective.provider_voice_id
+    if effective.cartesia_forced:
         logger.warning(
-            "telephony TTS remapped to Cartesia room=%s agent=%s "
-            "(Rime under-runs realtime on PSTN — matching test-agent Cartesia path)",
+            "telephony TTS remapped to Cartesia room=%s agent=%s lang=%s "
+            "(Rime/Fish under-run on PSTN; Urdu/Uplift/ElevenLabs exempt)",
             room_name,
             cfg.agent_id,
+            cfg.agent_language,
         )
-    cfg, groq_forced = force_groq_for_telephony(cfg, audio_channel=audio_channel)
-    if groq_forced:
+    if effective.groq_forced:
         logger.warning(
             "telephony LLM remapped to Groq room=%s agent=%s model=%s "
             "(Gemini 3.6 Flash TTFT ~1.5–3s+ dominates voice-to-voice on PSTN)",
@@ -276,11 +269,35 @@ async def build_session(
     # ADR-036) — resolve the fallback ONCE here, so every adapter downstream can trust it's set.
     internal_voice_id = cfg.tts_voice_id or cfg.voice_id
     resolved_provider_voice = provider_voice_id or internal_voice_id or ""
+    # Fold resolved Deepgram endpointing / Flux mode into stt_options so the thread-local
+    # provider cache key changes when UVA_DEEPGRAM_* A/B envs change.
+    stt_options = dict(cfg.stt_options or {})
+    if (cfg.stt_provider or "").strip().lower() == "deepgram":
+        from worker.humanization.turn import (
+            resolve_deepgram_endpointing_ms,
+            resolve_deepgram_flux_eager_threshold,
+            resolve_deepgram_stt_mode,
+        )
+
+        mode = resolve_deepgram_stt_mode(stt_options)
+        stt_options["stt_mode"] = mode
+        if mode == "flux":
+            eager = resolve_deepgram_flux_eager_threshold(
+                stt_options, llm_provider=cfg.llm_provider
+            )
+            if eager is None:
+                stt_options["flux_eager_eot"] = False
+                stt_options.pop("eager_eot_threshold", None)
+            else:
+                stt_options["flux_eager_eot"] = True
+                stt_options["eager_eot_threshold"] = eager
+        else:
+            stt_options["endpointing_ms"] = resolve_deepgram_endpointing_ms(stt_options)
     runtime_cfg = AgentRuntimeConfig(
         agent_language=cfg.agent_language,
         stt_provider=cfg.stt_provider,
         stt_model=cfg.stt_model,
-        stt_options=cfg.stt_options,
+        stt_options=stt_options,
         llm_provider=cfg.llm_provider,
         llm_model=cfg.llm_model,
         llm_options=cfg.llm_options,
@@ -293,7 +310,10 @@ async def build_session(
     components, components_cache_hit = build_components_cached(runtime_cfg)
     components_ms = int(round((time.monotonic() - _comp_t0) * 1000))
     opening = resolve_session_opening(cfg)
-    # Cache hit → skip TTS websocket prewarm (any TTS vendor). Opening replays PCM.
+    # Static say: skip TTS websocket prewarm — cache hit replays PCM; miss uses
+    # single-flight synthesize (one TTS request shared by cache fill + opening).
+    # STT is deferred until after opening (see _await_opening_and_speak) so it
+    # does not compete with greeting TTS bandwidth on the first-audio path.
     skip_tts_prewarm = False
     if opening.mode == "say" and opening.text:
         cache_key = make_greeting_cache_key(
@@ -302,15 +322,26 @@ async def build_session(
             provider_voice_id=resolved_provider_voice,
             greeting_text=opening.text,
             audio_channel=audio_channel,
+            tts_options=cfg.tts_options,
         )
+        skip_tts_prewarm = True
         if get_greeting_cache().has(cache_key):
-            skip_tts_prewarm = True
+            logger.info(
+                "greeting cache hit — skipping TTS prewarm room=%s provider=%s",
+                room_name,
+                cfg.tts_provider,
+            )
         else:
-            schedule_greeting_cache_fill(
+            start_greeting_synthesis(
                 tts=components.tts,
                 key=cache_key,
                 text=opening.text,
                 room_name=room_name,
+            )
+            logger.info(
+                "greeting synthesis started (single-flight) room=%s provider=%s",
+                room_name,
+                cfg.tts_provider,
             )
     greeting_prewarm = schedule_provider_prewarm(
         tts=components.tts,
@@ -320,13 +351,10 @@ async def build_session(
         room_name=room_name,
         await_llm=(audio_channel == "telephony"),
         skip_tts=skip_tts_prewarm,
+        # Static say: do not warm STT concurrently with greeting synth (bandwidth).
+        # STT is warmed after opening speaks — see _await_opening_and_speak.
+        skip_stt=(opening.mode == "say" and bool(opening.text)),
     )
-    if skip_tts_prewarm:
-        logger.info(
-            "greeting cache hit — skipping TTS prewarm room=%s provider=%s",
-            room_name,
-            cfg.tts_provider,
-        )
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
         "session pipeline room=%s agent=%s llm=%s/%s tts=%s voice=%s first_speaker=%s",
@@ -367,6 +395,37 @@ async def build_session(
         )
 
     _session_t0 = time.monotonic()
+    turn_profile = build_turn_profile(
+        audio_channel=audio_channel,
+        stt_provider=cfg.stt_provider,
+        llm_provider=cfg.llm_provider,
+        agent_language=cfg.agent_language,
+    )
+    logger.info(
+        "turn_profile room=%s channel=%s stt=%s llm=%s lang=%s detector=%s "
+        "preemptive=%s preemptive_tts=%s interruption_mode=%s "
+        "resume_false_interruption=%s endpointing_min=%.2f endpointing_max=%.2f",
+        room_name,
+        turn_profile.channel,
+        turn_profile.stt_provider,
+        turn_profile.llm_provider,
+        cfg.agent_language,
+        turn_profile.detector,
+        turn_profile.preemptive_generation_enabled,
+        turn_profile.preemptive_tts,
+        turn_profile.interruption_mode,
+        turn_profile.resume_false_interruption,
+        turn_profile.endpointing_min_delay,
+        turn_profile.endpointing_max_delay,
+    )
+    turn_handling = turn_profile_to_livekit_options(turn_profile)
+    # Log detector class for Phase 6 cold-start / listening notes (object vs "stt").
+    td = turn_handling.get("turn_detection")
+    logger.info(
+        "turn_detection materialized room=%s value=%s",
+        room_name,
+        type(td).__name__ if not isinstance(td, str) else td,
+    )
     session_kwargs: dict[str, Any] = {
         "stt": components.stt,
         "llm": components.llm,
@@ -379,18 +438,10 @@ async def build_session(
             tools_base_url=cfg.tools_base_url,
             tools_auth_secret=cfg.tools_auth_secret,
         ),
-        "turn_handling": turn_handling_for_channel(
-            audio_channel, llm_provider=cfg.llm_provider
-        ),
+        "turn_handling": turn_handling,
         "use_tts_aligned_transcript": False,
     }
-    from livekit.agents.types import APIConnectOptions
-    from livekit.agents.voice.agent_session import SessionConnectOptions
-
-    session_kwargs["conn_options"] = SessionConnectOptions(
-        llm_conn_options=APIConnectOptions(timeout=30.0),
-        tts_conn_options=APIConnectOptions(timeout=30.0),
-    )
+    session_kwargs["conn_options"] = build_session_connect_options()
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
 
     # Default interruption mode is local Silero VAD (UVA_INTERRUPTION_MODE=vad) so
@@ -428,14 +479,44 @@ async def _await_opening_and_speak(
     room_name: str,
     connect_at: float,
 ) -> None:
-    """Apply opening with greeting-cache short-circuit and measured prewarm wait."""
+    """Apply opening with greeting-cache / single-flight synth and measured waits.
+
+    Static ``say`` never awaits STT prewarm (background only). Cache miss awaits the
+    single-flight PCM synth; generate_reply still awaits TTS+STT provider prewarm.
+    """
     plan = plan_greeting_prewarm(
         cfg,
         provider_voice_id=provider_voice_id,
         audio_channel=audio_channel,
     )
     prewarm_wait_ms = 0
-    if plan.await_prewarm:
+    synth_wait_ms = 0
+    greeting_audio = None
+
+    if plan.cache_hit and plan.greeting_frames:
+        greeting_audio = frames_to_async_iterable(plan.greeting_frames)
+    elif plan.await_synthesis and plan.cache_key is not None:
+        synth_started = time.monotonic()
+        frames = await await_greeting_frames(
+            plan.cache_key,
+            timeout=plan.prewarm_timeout,
+        )
+        synth_wait_ms = int(round((time.monotonic() - synth_started) * 1000))
+        if frames:
+            greeting_audio = frames_to_async_iterable(frames)
+            logger.info(
+                "greeting synth ready room=%s frames=%s synth_wait_ms=%s",
+                room_name,
+                len(frames),
+                synth_wait_ms,
+            )
+        else:
+            logger.info(
+                "greeting synth miss/timeout room=%s synth_wait_ms=%s — live say fallback",
+                room_name,
+                synth_wait_ms,
+            )
+    elif plan.await_prewarm:
         prewarm_started = time.monotonic()
         await await_greeting_prewarm(
             greeting_prewarm,
@@ -445,18 +526,16 @@ async def _await_opening_and_speak(
         )
         prewarm_wait_ms = int(round((time.monotonic() - prewarm_started) * 1000))
 
-    greeting_audio = None
-    if plan.cache_hit and plan.greeting_frames:
-        greeting_audio = frames_to_async_iterable(plan.greeting_frames)
-
     ms_since_connect = int(round((time.monotonic() - connect_at) * 1000))
     logger.info(
         "session opening gate room=%s opening_mode=%s greeting_cache_hit=%s "
-        "prewarm_wait_ms=%s ms_since_connect=%s",
+        "cached_audio=%s prewarm_wait_ms=%s synth_wait_ms=%s ms_since_connect=%s",
         room_name,
         plan.mode,
         plan.cache_hit,
+        greeting_audio is not None,
         prewarm_wait_ms,
+        synth_wait_ms,
         ms_since_connect,
     )
     await apply_session_opening(
@@ -465,6 +544,28 @@ async def _await_opening_and_speak(
         logger,
         greeting_audio=greeting_audio,
     )
+
+    # Static say skipped STT during greeting synth — warm STT now so barge-in is ready
+    # without having competed with first-audio TTS bandwidth.
+    if plan.mode == "say":
+        stt = getattr(session, "stt", None) or getattr(session, "_stt", None)
+        if stt is not None:
+            from worker.latency import prewarm_stt
+
+            async def _warm_stt_after_greeting() -> None:
+                try:
+                    await prewarm_stt(stt)
+                except Exception as exc:
+                    logger.warning(
+                        "deferred STT prewarm failed room=%s: %s",
+                        room_name,
+                        exc,
+                    )
+
+            asyncio.create_task(
+                _warm_stt_after_greeting(),
+                name="stt_prewarm_after_greeting",
+            )
 
 
 def _tts_agent_session_extra(
@@ -477,27 +578,25 @@ def _tts_agent_session_extra(
     ``inference.TTS``; we still pass it when present so an A/B agent can try it, and log if
     the installed package has no such parameter.
     """
-    sanitize_fn = sanitizer_for_provider(cfg.tts_provider)
+    sanitize_fn = sanitizer_for_provider(
+        cfg.tts_provider, tts_options=cfg.tts_options
+    )
     if sanitize_fn is None:
         return {}
 
     import inspect
 
+    from .spoken_sanitize import make_stream_sanitizer
+
     extra: dict[str, Any] = {}
     params = inspect.signature(agent_session_cls.__init__).parameters
     if "tts_text_transforms" in params:
-        def _stream_sanitizer(stream: Any) -> Any:
-            async def _gen() -> Any:
-                async for chunk in stream:
-                    yield sanitize_fn(chunk)
-
-            return _gen()
-
-        extra["tts_text_transforms"] = [_stream_sanitizer]
+        extra["tts_text_transforms"] = [make_stream_sanitizer(sanitize_fn)]
     if cfg.tts_provider == "cartesia":
         from .providers.tts.cartesia_options import (
             cartesia_expressive_available,
             cartesia_expressive_enabled,
+            cartesia_experiment_label,
             validate_cartesia_tts_options,
             CARTESIA_TTS_DEFAULTS,
         )
@@ -517,14 +616,54 @@ def _tts_agent_session_extra(
             extra["expressive"] = True
         logger.info(
             "cartesia session extras sanitizer=%s expressive_effective=%s "
-            "expressive_requested=%s",
+            "expressive_requested=%s experiment=%s",
             "tts_text_transforms" in extra,
             use_expressive,
             want_expressive,
+            cartesia_experiment_label(cfg.tts_options),
+        )
+    elif cfg.tts_provider == "rime":
+        from .providers.tts.rime_options import resolve_rime_tts_kwargs
+
+        # Log resolved model so Coda/Mist A/Bs are visible without grepping kwargs.
+        try:
+            voice = (cfg.tts_voice_id or cfg.voice_id or "").strip() or "astra"
+            rk = resolve_rime_tts_kwargs(voice, "eng", cfg.tts_options)
+            logger.info(
+                "rime session extras sanitizer=%s model=%s speed_alpha=%s",
+                "tts_text_transforms" in extra,
+                rk.get("model"),
+                rk.get("speed_alpha"),
+            )
+        except Exception:
+            logger.info(
+                "rime session extras sanitizer=%s",
+                "tts_text_transforms" in extra,
+            )
+    elif cfg.tts_provider == "fish_audio":
+        from .providers.tts.fish_audio_options import fish_restrained_spoken_enabled
+
+        logger.info(
+            "fish_audio session extras sanitizer=%s restrained=%s",
+            "tts_text_transforms" in extra,
+            fish_restrained_spoken_enabled(cfg.tts_options),
+        )
+    elif cfg.tts_provider == "elevenlabs":
+        from .providers.tts.elevenlabs_options import (
+            elevenlabs_audio_tags_enabled,
+            elevenlabs_v3_streaming_available,
+        )
+
+        logger.info(
+            "elevenlabs session extras sanitizer=%s audio_tags=%s v3_streaming=%s",
+            "tts_text_transforms" in extra,
+            elevenlabs_audio_tags_enabled(cfg.tts_options),
+            elevenlabs_v3_streaming_available(),
         )
     else:
         logger.info(
-            "rime session extras sanitizer=%s",
+            "%s session extras sanitizer=%s",
+            cfg.tts_provider,
             "tts_text_transforms" in extra,
         )
     return extra
@@ -674,6 +813,12 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
     def _on_conversation_item(ev: Any) -> None:
         item = getattr(ev, "item", None)
         role = getattr(item, "role", None)
+        # Phase 7: strip TTS-only markup from assistant history + optional windowing
+        # before we log (so logs match what later LLM turns will see).
+        if item is not None:
+            from worker.humanization.history import apply_history_hygiene
+
+            apply_history_hygiene(session, item=item, room_name=room_name)
         text = (getattr(item, "text_content", None) or "")[:200]
         if role == "user":
             logger.info("conversation turn [USER] room=%s text=%r", room_name, text)
@@ -794,30 +939,17 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     2. SIP participant attributes → telephony DB lookup (inbound PSTN)
     3. Joining participant JWT metadata from Phase-2 mint (browser WebRTC)
     """
-    # LiveKit requires ctx.connect() within ~10s of job_entry. A DB stale-check before
-    # connect() delayed the room join by 10–20s on Windows and produced half-initialized
-    # sessions where STT worked but generate_reply never committed (see worker/stale_jobs.py
-    # and the 2026-08-19 Groq client demo). Connect first; abandon stale rooms after.
+    # LiveKit requires ctx.connect() within ~10s of job_entry. When dispatch metadata
+    # already carries tenant/agent, overlap room connect with build_session (config +
+    # providers + AgentSession ctor) so post-join work is mostly session.start + speak.
+    # Without metadata, connect first (historical safety: DB before connect caused
+    # AssignmentTimeout / half-init sessions on Windows).
     _job_at = time.monotonic()
-    await ctx.connect()
-    _connect_at = time.monotonic()
     from livekit.agents.log import logger as _entry_logger
 
-    _entry_logger.info(
-        "entrypoint connected room=%s connect_ms=%s",
-        ctx.room.name,
-        int(round((_connect_at - _job_at) * 1000)),
-    )
-
-    # Overlap stale DB check with identity + pipeline build — do not serialize it
-    # in front of session.start / first audio. Fresh dispatch metadata (mint just
-    # created this job) skips the Supabase stale round-trip entirely.
-    room_name = ctx.room.name
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
     from_dispatch = parse_dispatch_metadata(job_metadata)
-    stale_task = asyncio.create_task(
-        abandon_stale_job_if_needed(ctx, skip_db=from_dispatch is not None)
-    )
+    room_name = ctx.room.name
 
     audio_channel = (
         "telephony"
@@ -825,17 +957,50 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         else "webrtc"
     )
 
-    # UVA-2: build the pipeline in parallel with waiting for the browser/SIP participant.
-    # Mint stamps a sessions row and dispatch metadata before the user joins, so STT/LLM/TTS
-    # + Cartesia prewarm can run while wait_for_participant blocks.
-    early_md = from_dispatch or await _early_session_identity(ctx, room_name)
-    # When dispatch metadata already provided identity, _early_session_identity would
-    # re-parse the same blob — skip the duplicate path above via ``from_dispatch or``.
-    if early_md is from_dispatch and early_md is not None:
-        # Copy so pop("direction") does not mutate the parse used for skip_db logging.
-        early_md = dict(early_md)
-    if early_md and early_md.pop("direction", None) in {"inbound", "outbound"}:
-        audio_channel = "telephony"
+    connect_task = asyncio.create_task(ctx.connect(), name="ctx_connect")
+    build_task: asyncio.Task[Any] | None = None
+    early_md: dict[str, str] | None = None
+
+    if from_dispatch is not None:
+        early_md = dict(from_dispatch)
+        if early_md.pop("direction", None) in {"inbound", "outbound"}:
+            audio_channel = "telephony"
+        # Safe to build without a connected room: DB/config/providers/AgentSession only.
+        build_task = asyncio.create_task(
+            build_session(early_md, room_name, audio_channel=audio_channel),
+            name="build_session_overlap",
+        )
+
+    try:
+        await connect_task
+    except BaseException:
+        if build_task is not None and not build_task.done():
+            build_task.cancel()
+            try:
+                await build_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        raise
+
+    _connect_at = time.monotonic()
+    _entry_logger.info(
+        "entrypoint connected room=%s connect_ms=%s build_overlapped=%s",
+        room_name,
+        int(round((_connect_at - _job_at) * 1000)),
+        build_task is not None,
+    )
+
+    # Overlap stale DB check with identity + pipeline build — do not serialize it
+    # in front of session.start / first audio. Fresh dispatch metadata (mint just
+    # created this job) skips the Supabase stale round-trip entirely.
+    stale_task = asyncio.create_task(
+        abandon_stale_job_if_needed(ctx, skip_db=from_dispatch is not None)
+    )
+
+    if early_md is None:
+        early_md = await _early_session_identity(ctx, room_name)
+        if early_md and early_md.pop("direction", None) in {"inbound", "outbound"}:
+            audio_channel = "telephony"
 
     _entry_logger.info(
         "entrypoint identity room=%s early_md=%s channel=%s since_connect_ms=%s",
@@ -877,8 +1042,14 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             end_reason = reason or "normal"
 
             try:
+                from worker.humanization.history import plain_text_for_history
+
                 transcript = [
-                    {"role": m.role, "text": m.text_content, "at": m.created_at}
+                    {
+                        "role": m.role,
+                        "text": plain_text_for_history(m.text_content or ""),
+                        "at": m.created_at,
+                    }
                     for m in session_obj.history.messages()
                     if m.role in ("user", "assistant") and (m.text_content or "").strip()
                 ]
@@ -1050,21 +1221,27 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             wait_for_session_participant(ctx, already_connected=True)
         )
         _build_at = time.monotonic()
-        session, cfg, greeting_prewarm, provider_voice_id = await build_session(
-            early_md, room_name, audio_channel=audio_channel
-        )
+        if build_task is not None:
+            session, cfg, greeting_prewarm, provider_voice_id = await build_task
+        else:
+            session, cfg, greeting_prewarm, provider_voice_id = await build_session(
+                early_md, room_name, audio_channel=audio_channel
+            )
         agent = build_agent(cfg)
         _entry_logger.info(
             "entrypoint build_session room=%s build_ms=%s since_connect_ms=%s "
-            "remote_participant=%s",
+            "remote_participant=%s build_overlapped=%s",
             room_name,
             int(round((time.monotonic() - _build_at) * 1000)),
             int(round((time.monotonic() - _connect_at) * 1000)),
             room_has_remote_participant(ctx.room),
+            build_task is not None,
         )
 
         if await stale_task:
             wait_task.cancel()
+            if not greeting_prewarm.done():
+                greeting_prewarm.cancel()
             return
 
         await _setup_and_start(session, cfg, agent, early_md, channel=audio_channel)
@@ -1244,6 +1421,26 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
             conn.execute("select 1")
     except Exception:
         pass
+
+    # Optional demo cold-start seeds (env-gated; no-op when unset).
+    # Greeting PCM is process-global — safe from main or runner. Provider stack is
+    # thread-local — most useful when ``proc`` is set (job runner thread).
+    try:
+        seed_greeting_pcm_from_env()
+    except Exception as e:
+        from livekit.agents.log import logger as _prewarm_logger
+
+        _prewarm_logger.warning("greeting PCM seed skipped: %s", e)
+
+    if proc is not None:
+        try:
+            from worker.provider_client_cache import seed_default_provider_stack
+
+            seed_default_provider_stack()
+        except Exception as e:
+            from livekit.agents.log import logger as _prewarm_logger
+
+            _prewarm_logger.warning("provider stack seed skipped: %s", e)
 
     return imported
 

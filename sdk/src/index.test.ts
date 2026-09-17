@@ -18,9 +18,10 @@ type EmitAccess = {
   } | null;
   sessionReceivedAt: number | null;
   room: {
-    engine?: { token?: string };
+    engine?: { token?: string; emit?: (event: string, token: string) => void };
     regionUrlProvider?: { updateToken?: (token: string) => void };
     updateToken?: (token: string) => Promise<void>;
+    disconnect?: () => Promise<void>;
   } | null;
   refreshTimer: ReturnType<typeof setTimeout> | null;
 };
@@ -35,6 +36,35 @@ function makeAgent(): AwaazLabsUvaVoice {
     sessionEndpoint: 'https://host.example/v1/session',
   });
 }
+
+describe('AwaazLabsUvaVoice.listVoices (F-M16)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('maps distinguishable 429 bodies instead of collapsing to session_failed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), { status: 429 })),
+    );
+
+    await expect(
+      AwaazLabsUvaVoice.listVoices('https://host.example/v1/voices'),
+    ).rejects.toMatchObject({ code: 'rate_limit' });
+  });
+
+  it('maps 404 to agent_not_found', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('missing', { status: 404 })),
+    );
+
+    await expect(
+      AwaazLabsUvaVoice.listVoices('https://host.example/v1/voices'),
+    ).rejects.toMatchObject({ code: 'agent_not_found' });
+  });
+});
 
 describe('AwaazLabsUvaVoice emit (F-L8)', () => {
   afterEach(() => {
@@ -153,7 +183,9 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
     const agent = makeAgent();
     const access = internals(agent);
     const errors: AwaazLabsUvaVoiceError[] = [];
+    const ended: unknown[] = [];
     agent.on('error', (e) => errors.push(e));
+    agent.on('ended', (reason) => ended.push(reason));
 
     access.room = {};
     access.session = {
@@ -176,13 +208,18 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]?.code).toBe('token_refresh_failed');
     expect(access.refreshTimer).toBeNull();
+    expect(access.room).toBeNull();
+    expect(access.session).toBeNull();
+    expect(ended).toEqual(['token_refresh_failed']);
   });
 
   it('emits token_refresh_failed immediately on 401', async () => {
     const agent = makeAgent();
     const access = internals(agent);
     const errors: AwaazLabsUvaVoiceError[] = [];
+    const ended: unknown[] = [];
     agent.on('error', (e) => errors.push(e));
+    agent.on('ended', (reason) => ended.push(reason));
 
     access.room = {};
     access.session = {
@@ -202,6 +239,9 @@ describe('AwaazLabsUvaVoice refreshToken (F-H12)', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.code).toBe('token_refresh_failed');
+    expect(access.room).toBeNull();
+    expect(access.session).toBeNull();
+    expect(ended).toEqual(['token_refresh_failed']);
   });
 
   it('does not burn the retry budget in a single tick (backoff sleeps)', async () => {

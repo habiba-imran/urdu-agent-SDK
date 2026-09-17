@@ -215,8 +215,9 @@ def test_plan_greeting_prewarm_cache_miss_and_generate_reply():
     )
     assert miss.mode == "say"
     assert miss.cache_hit is False
-    assert miss.await_prewarm is True
-    assert miss.prewarm_timeout == 1.0
+    assert miss.await_prewarm is False
+    assert miss.await_synthesis is True
+    assert miss.prewarm_timeout == 5.0
 
     gen = plan_greeting_prewarm(
         _cfg(greeting=""),
@@ -225,4 +226,97 @@ def test_plan_greeting_prewarm_cache_miss_and_generate_reply():
     )
     assert gen.mode == "generate_reply"
     assert gen.await_prewarm is True
+    assert gen.await_synthesis is False
     assert gen.prewarm_timeout == 2.0
+
+
+def test_single_flight_greeting_synthesis_shares_one_tts_call():
+    from worker.greeting_cache import (
+        clear_greeting_inflight,
+        get_greeting_cache,
+        start_greeting_synthesis,
+        await_greeting_frames,
+    )
+
+    get_greeting_cache().clear()
+    clear_greeting_inflight()
+    key = make_greeting_cache_key(
+        agent_id="agent-1",
+        tts_provider="cartesia",
+        provider_voice_id="voice-x",
+        greeting_text="Hello there.",
+        audio_channel="webrtc",
+    )
+
+    class _Event:
+        def __init__(self, frame):
+            self.frame = frame
+
+    class _Stream:
+        def __init__(self, frames, gate: asyncio.Event):
+            self._frames = frames
+            self._gate = gate
+
+        async def __aenter__(self):
+            await self._gate.wait()
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._frames:
+                raise StopAsyncIteration
+            return _Event(self._frames.pop(0))
+
+    class _TTS:
+        def __init__(self):
+            self.calls = 0
+            self.gate = asyncio.Event()
+
+        def synthesize(self, text: str):
+            self.calls += 1
+            return _Stream([_frame(b"\x11\x00")], self.gate)
+
+    async def _run():
+        tts = _TTS()
+        t1 = start_greeting_synthesis(tts=tts, key=key, text="Hello there.")
+        t2 = start_greeting_synthesis(tts=tts, key=key, text="Hello there.")
+        assert t1 is t2
+        # Let the single-flight task start (synthesize is sync before the stream gate).
+        await asyncio.sleep(0)
+        assert tts.calls == 1
+        tts.gate.set()
+        frames = await await_greeting_frames(key, timeout=2.0)
+        assert frames is not None
+        assert len(frames) == 1
+        assert tts.calls == 1
+        # Second start after complete should hit cache (no new TTS).
+        t3 = start_greeting_synthesis(tts=tts, key=key, text="Hello there.")
+        await t3
+        assert tts.calls == 1
+
+    asyncio.run(_run())
+
+
+def test_schedule_provider_prewarm_skip_stt_and_tts():
+    from worker.latency import schedule_provider_prewarm
+
+    class _Never:
+        def prewarm(self):
+            raise AssertionError("should not prewarm")
+
+    async def _run():
+        task = schedule_provider_prewarm(
+            tts=_Never(),
+            llm=_Never(),
+            stt=_Never(),
+            skip_tts=True,
+            skip_stt=True,
+        )
+        await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+
+    asyncio.run(_run())

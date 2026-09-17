@@ -80,6 +80,35 @@ def test_build_components_cached_misses_on_provider_flip():
     assert hit is False
 
 
+def test_seed_default_provider_stack_env_gated(monkeypatch):
+    from worker.provider_client_cache import seed_default_provider_stack
+
+    clear_provider_client_cache()
+    monkeypatch.delenv("UVA_PREWARM_PROVIDER_STACK", raising=False)
+    assert seed_default_provider_stack() is False
+
+    monkeypatch.setenv("UVA_PREWARM_PROVIDER_STACK", "1")
+    monkeypatch.delenv("UVA_PREWARM_TTS_VOICE_ID", raising=False)
+    assert seed_default_provider_stack() is False
+
+    monkeypatch.setenv("UVA_PREWARM_TTS_VOICE_ID", "voice-demo")
+    fake = ProviderComponents(stt=object(), llm=object(), tts=object())
+    with patch("worker.provider_client_cache.build_components", return_value=fake):
+        assert seed_default_provider_stack() is True
+        again, hit = build_components_cached(
+            _runtime(
+                stt_provider="deepgram",
+                stt_model="nova-3",
+                llm_provider="groq",
+                llm_model="openai/gpt-oss-20b",
+                tts_provider="cartesia",
+                tts_voice_id="voice-demo",
+            )
+        )
+    assert hit is True
+    assert again is fake
+
+
 @pytest.mark.asyncio
 async def test_abandon_stale_skips_db_for_fresh_dispatch_metadata():
     ctx = MagicMock()
