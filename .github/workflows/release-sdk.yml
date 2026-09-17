@@ -1,20 +1,108 @@
 name: Release SDK
 
+# Publishes @awaazlabs-uva/voice (sdk/) and @awaazlabs-uva/agents (sdk-server/) to npm.
+#
+# Release a package by pushing a tag whose version matches its package.json:
+#   voice-v<version>    -> @awaazlabs-uva/voice   (sdk-v<version> is kept as an alias)
+#   agents-v<version>   -> @awaazlabs-uva/agents
+# The same PR that bumps `version` must add a `## [<version>]` section to that package's
+# CHANGELOG.md. workflow_dispatch runs the same checks as a dry run and never publishes.
+#
+# Publishing is from the canonical repository only: packages are published with npm provenance,
+# which npm rejects unless package.json `repository.url` matches the repository running this
+# workflow. A missing NPM_TOKEN fails the release instead of skipping it — a green run that
+# published nothing is worse than a red one. (@awaazlabs-uva/telephony has no release path yet.)
+
 on:
-  workflow_dispatch:
   push:
     tags:
+      - "voice-v*"
+      - "agents-v*"
       - "sdk-v*"
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package to verify (dry run — nothing is published)"
+        required: true
+        type: choice
+        options:
+          - voice
+          - agents
+
+concurrency:
+  group: release-sdk-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release-sdk:
-    name: Publish @awaazlabs-uva/voice
+  release:
+    name: Publish SDK package
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # npm provenance attestation
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Resolve package and version
+        id: target
+        env:
+          INPUT_PACKAGE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          publish=false
+          tag_version=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            publish=true
+            case "$GITHUB_REF_NAME" in
+              voice-v*)  package=voice;  tag_version="${GITHUB_REF_NAME#voice-v}" ;;
+              sdk-v*)    package=voice;  tag_version="${GITHUB_REF_NAME#sdk-v}" ;;
+              agents-v*) package=agents; tag_version="${GITHUB_REF_NAME#agents-v}" ;;
+              *) echo "::error::Unrecognised release tag '$GITHUB_REF_NAME'"; exit 1 ;;
+            esac
+          else
+            package="$INPUT_PACKAGE"
+          fi
+          case "$package" in
+            voice)  dir=sdk ;;
+            agents) dir=sdk-server ;;
+            *) echo "::error::Unknown package '$package'"; exit 1 ;;
+          esac
+
+          name=$(node -p "require('./$dir/package.json').name")
+          version=$(node -p "require('./$dir/package.json').version")
+          if [ -n "$tag_version" ] && [ "$tag_version" != "$version" ]; then
+            echo "::error::Tag version $tag_version does not match $dir/package.json version $version"
+            exit 1
+          fi
+
+          {
+            echo "dir=$dir"
+            echo "name=$name"
+            echo "version=$version"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "Target: $name@$version from $dir/ (publish=$publish)"
+
+      - name: Check repository and changelog
+        env:
+          DIR: ${{ steps.target.outputs.dir }}
+          VERSION: ${{ steps.target.outputs.version }}
+          PUBLISH: ${{ steps.target.outputs.publish }}
+        run: |
+          set -euo pipefail
+          repo_url=$(node -p "require('./$DIR/package.json').repository.url")
+          expected="git+https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "$repo_url" != "$expected" ]; then
+            msg="$DIR/package.json repository.url is $repo_url but this workflow runs in $GITHUB_REPOSITORY"
+            if [ "$PUBLISH" = "true" ]; then echo "::error::$msg — publish from the canonical repository"; exit 1; fi
+            echo "::warning::$msg — a real release from here would be rejected"
+          fi
+          if ! grep -qF "## [$VERSION]" "$DIR/CHANGELOG.md"; then
+            msg="$DIR/CHANGELOG.md has no '## [$VERSION]' section"
+            if [ "$PUBLISH" = "true" ]; then echo "::error::$msg"; exit 1; fi
+            echo "::warning::$msg — add it before tagging"
+          fi
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -22,19 +110,44 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install Dependencies
-        working-directory: sdk
-        run: npm ci
-
-      - name: Build SDK
-        working-directory: sdk
+      - name: Install, build, lint and test
+        working-directory: ${{ steps.target.outputs.dir }}
         run: |
+          npm ci
           npm run build
           npm run lint
+          npm test
 
-      - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' }}
-        working-directory: sdk
+      - name: Check version is not already published
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          PUBLISH: ${{ steps.target.outputs.publish }}
+        run: |
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            msg="$NAME@$VERSION is already on npm — bump the version"
+            if [ "$PUBLISH" = "true" ]; then echo "::error::$msg"; exit 1; fi
+            echo "::warning::$msg"
+          fi
+
+      - name: Check npm credentials
+        if: steps.target.outputs.publish == 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN secret is not set — nothing was published"
+            exit 1
+          fi
+
+      - name: Publish to npm (with provenance)
+        if: steps.target.outputs.publish == 'true'
+        working-directory: ${{ steps.target.outputs.dir }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --provenance --access public
+
+      - name: Dry-run publish
+        if: steps.target.outputs.publish != 'true'
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: npm publish --dry-run --access public

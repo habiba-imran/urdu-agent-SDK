@@ -7,9 +7,10 @@ exact onboarding checklist, see `docs/CLIENT_HANDOFF_GUIDE.md`.
 
 It assumes you are using the reference materials already present in this repo:
 
-- browser app: `examples/web-client/`
-- host-owned backend: `examples/host-backend/`
-- SDK package: `sdk/`
+- browser app: `demo-app/frontend/`
+- host-owned backend: `demo-app/backend/`
+- browser SDK package: `sdk/` (`@awaazlabs-uva/voice`)
+- server SDK package: `sdk-server/` (`@awaazlabs-uva/agents`, optional — agent management from your backend)
 
 ## What the client receives
 
@@ -35,9 +36,10 @@ The browser never signs requests or calls AwaazLabs-UVA upstream services itself
 npm install @awaazlabs-uva/voice
 ```
 
-## Step 2: run the host backend starter
+## Step 2: run the host backend
 
-Use `examples/host-backend/`.
+Use `demo-app/backend/`. It depends on the local `sdk-server/` package, so from `demo-app/` run
+`npm run build:sdk` and `npm run install:all` once first.
 
 Copy:
 
@@ -47,7 +49,8 @@ cp .env.example .env
 
 Set:
 
-- backend-only session upstream configuration supplied through the secure onboarding channel
+- `UVA_CONTROL_PLANE_URL` — the session upstream, supplied through the secure onboarding channel
+- `UVA_API_BASE_URL` — tenant API base URL (only needed for the optional agent listing)
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`
@@ -66,7 +69,7 @@ By default it listens on `http://localhost:3000`.
 
 ## Step 3: configure the browser example or your own app
 
-If you are using `examples/web-client/`, copy `.env.example` to `.env` and set:
+If you are using `demo-app/frontend/`, copy `.env.example` to `.env` and set:
 
 - `VITE_UVA_PUBLISHABLE_KEY`
 - `VITE_UVA_SESSION_ENDPOINT=http://localhost:3000/api/voice/session`
@@ -121,8 +124,15 @@ Successful integration means:
 | Error | What it usually means |
 |---|---|
 | `quota_exceeded` | tenant cap reached |
+| `rate_limit` | too many session requests for this tenant in the last minute — back off |
+| `provider_limit` | upstream voice/LLM provider limit, not your plan quota |
+| `worker_not_ready` | voice worker not ready to take the call yet |
 | `agent_not_found` | wrong `agentId` or wrong tenant |
-| `session_failed` | host backend misconfiguration, refresh issue, or upstream failure |
+| `timeout` | host backend did not answer within `fetchTimeoutMs` (default 15s) |
+| `token_refresh_failed` | refresh rejected, or retries ran out before the token expired |
+| `session_failed` | host backend misconfiguration or upstream failure |
+
+The full taxonomy is in `sdk/README.md`.
 
 ## Files to hand to a client team
 
@@ -131,5 +141,4 @@ For a real onboarding handoff, send:
 - `sdk/README.md`
 - `docs/CLIENT_QUICKSTART.md`
 - `docs/HOST_BACKEND_CONTRACT.md`
-- `examples/host-backend/`
-- `examples/web-client/`
+- `demo-app/` (reference host backend + browser client)

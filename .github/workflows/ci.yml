@@ -41,7 +41,7 @@ jobs:
             python -m pytest tests/test_phase0.py -v --tb=short
           fi
 
-  # --- Job 2: SDK Package Build & Lint ---
+  # --- Job 2: SDK Packages Build, Lint & Test ---
   sdk-build:
     name: SDK Package Build
     runs-on: ubuntu-latest
@@ -54,12 +54,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build & Lint SDK
+      - name: Build, Lint & Test Browser SDK (@awaazlabs-uva/voice)
         working-directory: sdk
         run: |
           npm ci
           npm run build
           npm run lint
+          npm test
+
+      - name: Build, Lint & Test Server SDK (@awaazlabs-uva/agents)
+        working-directory: sdk-server
+        run: |
+          npm ci
+          npm run lint
+          npm test
 
       - name: Upload SDK Artifact
         uses: actions/upload-artifact@v4
@@ -67,38 +75,7 @@ jobs:
           name: sdk-dist
           path: sdk/dist/
 
-  # --- Job 3: Example Web App Build Check ---
-  example-app-build:
-    name: Example App Build Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Build SDK Dependencies First
-        working-directory: sdk
-        run: |
-          npm ci
-          npm run build
-
-      - name: Build Basic Web Client Example
-        working-directory: examples/web-client
-        run: |
-          npm ci
-          npm run build
-
-      - name: Test Host Backend Starter Example
-        working-directory: examples/host-backend
-        run: |
-          npm ci
-          npm test
-
-  # --- Job 4: Docker Container Build Smoke Test ---
+  # --- Job 3: Docker Container Build Smoke Test ---
   docker-smoke:
     name: Docker Container Build Smoke Test
     runs-on: ubuntu-latest

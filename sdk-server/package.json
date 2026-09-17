@@ -4,10 +4,13 @@
   "description": "AwaazLabs-UVA-Agents server-side agent-management SDK - SERVER-SIDE ONLY, holds your tenant secret.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
+    "url": "git+https://github.com/Finova-Solutions/urdu-voice-agent-SDK.git",
     "directory": "sdk-server"
   },
-  "homepage": "https://github.com/habiba-imran/urdu-agent-SDK/tree/staging/sdk-server",
+  "homepage": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/sdk-server#readme",
+  "bugs": {
+    "url": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -30,11 +33,13 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "test": "npm run build && node --test test/client.test.mjs",
     "prepublishOnly": "npm run build && npm run lint"
   },
   "dependencies": {},
