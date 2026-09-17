@@ -42,12 +42,19 @@ Notes:
 - `agentId` is the public integration handle the host app uses to target an agent.
 - `refreshUrl` should point back to the host backend, not the session upstream.
 
-Recommended browser-facing status mapping:
+Recommended browser-facing status mapping (SDK codes after the host forwards status **and** body):
 
 - `200` -> session minted successfully
 - `404` -> `agent_not_found`
-- `429` -> `quota_exceeded`
+- `429` with body containing `rate limited` / `rate_limit` -> `rate_limit`
+- `429` with body containing `concurrent cap` / `monthly minutes` / `quota` -> `quota_exceeded`
+- `429` with empty/opaque body -> `quota_exceeded` (backward compatible)
+- body containing `worker_not_ready` / `provider_limit` (any status) -> matching SDK code
+- connect/refresh hung past the client timeout -> `timeout` (client-side; not a host status)
 - anything else -> `session_failed`
+
+Forward distinguishable upstream reason text in `error`, `detail`, or `code` (or plain text).
+Stripping every `429` body to empty collapses rate-limit vs quota in the browser SDK.
 
 ### Refresh session
 
@@ -99,12 +106,17 @@ Backend implementation requirements:
 ## Error mapping guidance
 
 The upstream session service can return infrastructure-oriented details. The browser SDK should not
-depend on those raw internals. The host backend should collapse them to a small browser-safe taxonomy
-through status codes:
+depend on raw stack traces or hostnames, but it **does** read short reason strings from the body to
+distinguish plan quota from platform rate limit from provider limit (F-M16).
 
-- upstream `429` -> browser-facing `429`
+Collapse through status codes **and** preserve a short reason:
+
+- upstream `429` `"rate limited"` -> browser-facing `429` with that reason (SDK -> `rate_limit`)
+- upstream `429` `"concurrent cap reached"` / `"monthly minutes cap reached"` -> browser-facing
+  `429` with that reason (SDK -> `quota_exceeded`)
 - upstream `403` or `404` caused by agent lookup/authorization -> browser-facing `404`
 - upstream `401`, `403`, `502`, or malformed response -> browser-facing `500` or `502`
+- optional: surface `worker_not_ready` / `provider_limit` in the body when those are the true cause
 
 ## Starter backend env contract
 

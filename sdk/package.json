@@ -35,12 +35,14 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run lint"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm run lint && npm test"
   },
   "dependencies": {
     "livekit-client": "^2.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^3.2.4"
   }
 }

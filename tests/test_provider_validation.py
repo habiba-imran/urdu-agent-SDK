@@ -66,7 +66,7 @@ def test_defaults_resolve_to_ur_gladia_gemini_uplift(conn):
     assert resolved["stt_model"] == "default"
     assert resolved["stt_options"] == {}
     assert resolved["llm_provider"] == "gemini"
-    assert resolved["llm_model"] == "gemini-2.5-flash"
+    assert resolved["llm_model"] == "gemini-3.6-flash"
     assert resolved["llm_options"] == {}
     assert resolved["tts_provider"] == "uplift"
     assert resolved["tts_options"] == {}

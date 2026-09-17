@@ -80,31 +80,27 @@ def turn_handling_for_channel(
     audio_channel: str,
     *,
     llm_provider: str | None = None,
+    stt_provider: str | None = None,
+    agent_language: str | None = None,
 ) -> dict[str, Any]:
     """Return turn-handling defaults for WebRTC vs telephony audio legs.
 
-    Groq free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
+    Delegates to ``worker.humanization.turn.build_turn_profile`` (Phase 2). Groq
+    free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
     partial turns do not burn tokens before EOU.
     """
-    if audio_channel == "telephony":
-        base = TELEPHONY_TURN_HANDLING_OPTIONS
-    else:
-        base = TURN_HANDLING_OPTIONS
-    # Deep-copy nested dicts so mode / groq overrides do not leak across sessions.
-    options: dict[str, Any] = {
-        **base,
-        "interruption": {**base["interruption"], "mode": interruption_mode()},
-        "preemptive_generation": dict(base["preemptive_generation"]),
-        "endpointing": dict(base.get("endpointing") or {}),
-    }
-    if (llm_provider or "").lower() == "groq":
-        options["preemptive_generation"] = {
-            "enabled": False,
-            "preemptive_tts": False,
-            "max_speech_duration": 12.0,
-            "max_retries": 0,
-        }
-    return options
+    from worker.humanization.turn import (
+        build_turn_profile,
+        turn_profile_to_livekit_options,
+    )
+
+    profile = build_turn_profile(
+        audio_channel=audio_channel,
+        stt_provider=stt_provider,
+        llm_provider=llm_provider,
+        agent_language=agent_language,
+    )
+    return turn_profile_to_livekit_options(profile)
 
 
 def is_telephony_job(
@@ -393,14 +389,16 @@ def schedule_provider_prewarm(
     room_name: str | None = None,
     await_llm: bool = False,
     skip_tts: bool = False,
+    skip_stt: bool = False,
 ) -> asyncio.Task[None]:
     """Start provider warm-up without blocking ``session.start()`` (UVA-2).
 
-    Returns a task that completes when **TTS + STT** are warm — await it before
-    ``apply_session_opening`` so the greeting does not pay a cold websocket.
+    Returns a task that completes when the selected TTS/STT warm steps finish.
+    For static ``mode=say`` openings, callers typically pass ``skip_tts=True``
+    (greeting PCM synth / cache covers TTS) and **do not await** this task —
+    STT warms in the background so barge-in is ready without gating first audio.
 
-    When ``skip_tts=True`` (greeting PCM cache hit), only STT is warmed — opening
-    replays cached frames and does not need a live TTS websocket.
+    For ``generate_reply``, await this task (TTS+STT) before opening.
 
     LLM warm-up always runs in the background after TTS/STT. Never block the
     opening greeting on LLM prewarm — that added 10–15s of dead air on PSTN when
@@ -409,6 +407,7 @@ def schedule_provider_prewarm(
     """
     del await_llm  # kept for call-site compatibility; greeting must not wait on LLM
     warm_tts = None if skip_tts else tts
+    warm_stt = None if skip_stt else stt
 
     async def _llm() -> None:
         try:
@@ -425,7 +424,7 @@ def schedule_provider_prewarm(
         try:
             await prewarm_greeting_providers(
                 tts=warm_tts,
-                stt=stt,
+                stt=warm_stt,
                 logger=logger,
                 room_name=room_name,
             )

@@ -7,14 +7,14 @@ def _structured_clinic_prompt() -> str:
     return (
         """
 ### SECTION 1: BUSINESS IDENTITY
-We are L
+We are Lena Clinic. Hours Mon-Fri 9-5. Phone 555-0100.
+
+### SECTION 2: SAFETY
 Never give medical advice.
 4. 911 EMERGENCY PROTOCOL:
    Say: hang up and call 911.
 EMERGENCY TRIAGE RULES (follow immediately when triggers match):
-   1. Life-Threatening Emergeena Clinic. Hours Mon-Fri 9-5. Phone 555-0100.
-
-### SECTION 2: SAFETYncy
+   1. Life-Threatening Emergency
       Trigger keywords: chest pain, shortness of breath
       Immediate action: call 911 again (duplicate of protocol above).
 
@@ -72,7 +72,9 @@ def test_compact_keeps_business_sections_and_drops_platform_rule_dupes(monkeypat
     assert "parking is free" in out
     assert "walk-ins after 3pm" in out
     assert "SECTION 3" not in out
-    assert "FINAL AUTHORITY" not in out
+    assert "FINAL AUTHORITY" in out
+    assert "SECTION 4" in out
+    assert "SECTION 5" in out or "SECURITY" in out
     assert "APPOINTMENT INTAKE" in out
     assert "intake padding" not in out
     assert len(out) < len(prompt)

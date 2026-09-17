@@ -3,6 +3,9 @@
 Cache hits let ``session.say(..., audio=...)`` skip live TTS RTT on the critical path.
 Keys include provider + voice + text + channel so demo provider flips never replay the
 wrong voice.
+
+Cache-miss path uses **single-flight** synthesis: one TTS request is shared by the
+background fill and the opening turn (no double synthesis).
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -20,8 +24,8 @@ from livekit import rtc
 
 logger = logging.getLogger("worker.greeting_cache")
 
-# (agent_id, tts_provider, provider_voice_id, greeting_hash, audio_channel)
-GreetingCacheKey = tuple[str, str, str, str, str]
+# (agent_id, tts_provider, provider_voice_id, greeting_hash, audio_channel, options_fp)
+GreetingCacheKey = tuple[str, str, str, str, str, str]
 
 _DEFAULT_MAX_ENTRIES = 32
 
@@ -36,6 +40,14 @@ def hash_greeting_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _tts_options_fingerprint(tts_options: dict | None) -> str:
+    """Include delivery knobs so model/emotion/speed flips never replay stale PCM."""
+    import json
+
+    raw = json.dumps(tts_options or {}, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
 def make_greeting_cache_key(
     *,
     agent_id: str,
@@ -43,6 +55,7 @@ def make_greeting_cache_key(
     provider_voice_id: str,
     greeting_text: str,
     audio_channel: str,
+    tts_options: dict | None = None,
 ) -> GreetingCacheKey:
     return (
         agent_id,
@@ -50,6 +63,7 @@ def make_greeting_cache_key(
         (provider_voice_id or "").strip(),
         hash_greeting_text(greeting_text),
         (audio_channel or "webrtc").strip().lower(),
+        _tts_options_fingerprint(tts_options),
     )
 
 
@@ -135,10 +149,74 @@ class GreetingAudioCache:
 
 
 _cache = GreetingAudioCache()
+# Single-flight in-progress synthesis tasks (one TTS request per key).
+_inflight: dict[GreetingCacheKey, asyncio.Task[list[rtc.AudioFrame]]] = {}
 
 
 def get_greeting_cache() -> GreetingAudioCache:
     return _cache
+
+
+def clear_greeting_inflight() -> None:
+    """Drop in-flight task map (tests). Does not cancel running tasks."""
+    _inflight.clear()
+
+
+def start_greeting_synthesis(
+    *,
+    tts: Any,
+    key: GreetingCacheKey,
+    text: str,
+    room_name: str | None = None,
+    cache: GreetingAudioCache | None = None,
+) -> asyncio.Task[list[rtc.AudioFrame]]:
+    """Start or join single-flight greeting TTS. Never starts a second synth for ``key``."""
+    store = cache if cache is not None else _cache
+    hit = store.get(key)
+    if hit is not None:
+
+        async def _cached() -> list[rtc.AudioFrame]:
+            return hit
+
+        return asyncio.create_task(_cached(), name="greeting_synth_cached")
+
+    existing = _inflight.get(key)
+    if existing is not None and not existing.done():
+        return existing
+
+    async def _synth() -> list[rtc.AudioFrame]:
+        try:
+            frames = await synthesize_greeting_frames(tts, text)
+            store.put(key, frames)
+            logger.info(
+                "greeting cache filled agent=%s provider=%s voice=%s channel=%s "
+                "frames=%s room=%s",
+                key[0],
+                key[1],
+                key[2],
+                key[4],
+                len(frames),
+                room_name or "?",
+            )
+            return store.get(key) or frames
+        except Exception as exc:
+            logger.warning(
+                "greeting synthesis failed agent=%s room=%s: %s",
+                key[0],
+                room_name or "?",
+                exc,
+            )
+            raise
+        finally:
+            current = _inflight.get(key)
+            if current is not None and current.done():
+                _inflight.pop(key, None)
+
+    task: asyncio.Task[list[rtc.AudioFrame]] = asyncio.create_task(
+        _synth(), name="greeting_synth"
+    )
+    _inflight[key] = task
+    return task
 
 
 def schedule_greeting_cache_fill(
@@ -148,31 +226,122 @@ def schedule_greeting_cache_fill(
     text: str,
     room_name: str | None = None,
     cache: GreetingAudioCache | None = None,
-) -> asyncio.Task[None]:
-    """Non-blocking cache fill; failures are logged and never raise into the entrypoint."""
+) -> asyncio.Task[list[rtc.AudioFrame]]:
+    """Backward-compatible alias: single-flight synthesis (same as ``start_greeting_synthesis``)."""
+    return start_greeting_synthesis(
+        tts=tts,
+        key=key,
+        text=text,
+        room_name=room_name,
+        cache=cache,
+    )
+
+
+async def await_greeting_frames(
+    key: GreetingCacheKey,
+    *,
+    timeout: float,
+    cache: GreetingAudioCache | None = None,
+) -> list[rtc.AudioFrame] | None:
+    """Return cached/in-flight greeting PCM within ``timeout``, or ``None`` on miss/fail."""
     store = cache if cache is not None else _cache
+    hit = store.get(key)
+    if hit is not None:
+        return hit
 
-    async def _fill() -> None:
-        try:
-            if store.get(key) is not None:
-                return
-            frames = await synthesize_greeting_frames(tts, text)
-            store.put(key, frames)
+    task = _inflight.get(key)
+    if task is None:
+        return None
+    try:
+        frames = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        return frames
+    except Exception:
+        # Timeout or synth failure — opening may fall back to live session.say().
+        hit = store.get(key)
+        return hit
+
+
+def seed_greeting_pcm_from_env() -> bool:
+    """Optionally pre-synthesize demo greeting PCM at process start (sync wrapper).
+
+    Env (all required when seeding):
+      UVA_PREWARM_GREETING_TEXT
+      UVA_PREWARM_AGENT_ID
+      UVA_PREWARM_TTS_PROVIDER   (default cartesia)
+      UVA_PREWARM_TTS_VOICE_ID   (provider voice id)
+      UVA_PREWARM_AUDIO_CHANNEL  (default webrtc)
+
+    Returns True if frames were stored. Failures are logged and never raised.
+    """
+    text = (os.getenv("UVA_PREWARM_GREETING_TEXT") or "").strip()
+    agent_id = (os.getenv("UVA_PREWARM_AGENT_ID") or "").strip()
+    voice_id = (os.getenv("UVA_PREWARM_TTS_VOICE_ID") or "").strip()
+    if not text or not agent_id or not voice_id:
+        return False
+    provider = (os.getenv("UVA_PREWARM_TTS_PROVIDER") or "cartesia").strip().lower()
+    channel = (os.getenv("UVA_PREWARM_AUDIO_CHANNEL") or "webrtc").strip().lower()
+    language = (os.getenv("UVA_PREWARM_TTS_LANGUAGE") or "en").strip().lower()
+
+    # Match runtime opening: sanitize so cache key equals plan_greeting_prewarm's key.
+    try:
+        from worker.spoken_sanitize import sanitizer_for_provider
+
+        sanitize = sanitizer_for_provider(provider)
+        if sanitize is not None:
+            text = sanitize(text).strip()
+            if not text:
+                return False
+    except Exception:
+        pass
+
+    key = make_greeting_cache_key(
+        agent_id=agent_id,
+        tts_provider=provider,
+        provider_voice_id=voice_id,
+        greeting_text=text,
+        audio_channel=channel,
+        tts_options={},
+    )
+    if _cache.has(key):
+        return True
+
+    try:
+        if provider == "cartesia":
+            from worker.providers.tts.cartesia import build as build_tts
+        else:
             logger.info(
-                "greeting cache filled agent=%s provider=%s voice=%s channel=%s frames=%s room=%s",
-                key[0],
-                key[1],
-                key[2],
-                key[4],
-                len(frames),
-                room_name or "?",
+                "greeting PCM seed skipped — unsupported UVA_PREWARM_TTS_PROVIDER=%s",
+                provider,
             )
-        except Exception as exc:
-            logger.warning(
-                "greeting cache fill failed agent=%s room=%s: %s",
-                key[0],
-                room_name or "?",
-                exc,
-            )
+            return False
 
-    return asyncio.create_task(_fill(), name="greeting_cache_fill")
+        tts = build_tts(voice_id, language, None, audio_channel=channel)
+
+        async def _run() -> list[rtc.AudioFrame]:
+            return await synthesize_greeting_frames(tts, text)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            frames = asyncio.run(_run())
+        else:
+            # prewarm_fnc may run inside an existing loop (job process). asyncio.run
+            # would fail — synthesize on a dedicated thread with its own loop.
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                frames = pool.submit(lambda: asyncio.run(_run())).result(timeout=45)
+
+        _cache.put(key, frames)
+        logger.info(
+            "greeting PCM seeded agent=%s provider=%s voice=%s channel=%s frames=%s",
+            agent_id,
+            provider,
+            voice_id,
+            channel,
+            len(frames),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("greeting PCM seed failed: %s", exc)
+        return False

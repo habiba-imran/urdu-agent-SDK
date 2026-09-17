@@ -24,8 +24,9 @@ from .greeting_cache import (
 
 OpeningMode = Literal["wait", "say", "generate_reply"]
 
-# Opening-path prewarm budgets (seconds). Cache hits skip the wait entirely.
-_SAY_CACHE_MISS_PREWARM_SEC = 1.0
+# Opening-path prewarm / synthesis budgets (seconds).
+# Cache hits skip the wait entirely. Say-miss awaits single-flight TTS (not STT).
+_SAY_SYNTHESIS_AWAIT_SEC = 5.0
 _GENERATE_REPLY_PREWARM_SEC = 2.0
 
 
@@ -38,7 +39,13 @@ class SessionOpening:
 
 @dataclass(frozen=True)
 class GreetingPrewarmPlan:
-    """How long (if at all) the entrypoint should block on TTS/STT prewarm before opening."""
+    """How long (if at all) the entrypoint should block before opening.
+
+    For ``mode=say`` cache miss, ``await_prewarm`` is False — opening awaits single-flight
+    greeting synthesis instead of the TTS+STT provider prewarm task. STT is deferred until
+    after the greeting speaks (see ``_await_opening_and_speak``).
+    ``await_prewarm`` True is for ``generate_reply`` (needs live TTS websocket).
+    """
 
     mode: OpeningMode
     cache_hit: bool
@@ -46,12 +53,14 @@ class GreetingPrewarmPlan:
     prewarm_timeout: float
     cache_key: GreetingCacheKey | None = None
     greeting_frames: list[rtc.AudioFrame] | None = None
+    # When True, opening awaits single-flight PCM synth (say miss) rather than live TTS.
+    await_synthesis: bool = False
 
 
 def _spoken_greeting(cfg: AgentConfig, text: str) -> str:
     from .spoken_sanitize import sanitizer_for_provider
 
-    sanitize = sanitizer_for_provider(cfg.tts_provider)
+    sanitize = sanitizer_for_provider(cfg.tts_provider, tts_options=cfg.tts_options)
     if sanitize is None:
         return text.strip()
     return sanitize(text).strip()
@@ -108,6 +117,7 @@ def plan_greeting_prewarm(
             provider_voice_id=provider_voice_id or "",
             greeting_text=opening.text,
             audio_channel=audio_channel,
+            tts_options=cfg.tts_options,
         )
         frames = get_greeting_cache().get(key)
         if frames is not None:
@@ -118,19 +128,23 @@ def plan_greeting_prewarm(
                 prewarm_timeout=0.0,
                 cache_key=key,
                 greeting_frames=frames,
+                await_synthesis=False,
             )
+        # Miss: do not block on STT/TTS provider prewarm — await single-flight synth.
         return GreetingPrewarmPlan(
             mode="say",
             cache_hit=False,
-            await_prewarm=True,
-            prewarm_timeout=_SAY_CACHE_MISS_PREWARM_SEC,
+            await_prewarm=False,
+            prewarm_timeout=_SAY_SYNTHESIS_AWAIT_SEC,
             cache_key=key,
+            await_synthesis=True,
         )
     return GreetingPrewarmPlan(
         mode="generate_reply",
         cache_hit=False,
         await_prewarm=True,
         prewarm_timeout=_GENERATE_REPLY_PREWARM_SEC,
+        await_synthesis=False,
     )
 
 

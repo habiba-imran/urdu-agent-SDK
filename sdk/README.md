@@ -70,6 +70,7 @@ await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 - `publishableKey: string`
 - `sessionEndpoint: string`
 - `refreshEndpoint?: string`
+- `fetchTimeoutMs?: number` — max wait for session / refresh / voice-catalog `fetch` (default `15000`)
 
 ### Methods
 
@@ -77,11 +78,13 @@ await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 - `disconnect()`
 - `on(event, listener)`
 - `off(event, listener)`
+- `startAudio()` — call inside a user-gesture handler when `audio_blocked` fires with `true`
 
 ### Read-only properties
 
 - `connectionState`
 - `isConnected`
+- `isMicMuted`
 
 ### Supported events
 
@@ -90,21 +93,31 @@ await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 | `connected` | none |
 | `disconnected` | LiveKit reason when available |
 | `ended` | same reason forwarded for convenience |
-| `transcript` | `{ text, final }` |
+| `transcript` | `{ id, text, final, speaker }` |
 | `speaking` | `boolean` caller/room speaking state |
 | `agent_speaking` | `boolean` non-local active speaker state |
 | `metrics_updated` | metrics object when worker metadata/data channel emits it |
+| `turn_latency` | per-turn stage breakdown from the worker |
+| `audio_blocked` | `boolean` — browser blocked/unblocked autoplay |
 | `error` | `AwaazLabsUvaVoiceError` |
 
 ### Public error taxonomy
 
-- `quota_exceeded`
-- `agent_not_found`
-- `session_failed`
+| Code | When |
+|---|---|
+| `quota_exceeded` | Plan concurrent / monthly cap, or an opaque `429` with no distinguishable body |
+| `agent_not_found` | HTTP `404` from the session endpoint |
+| `session_failed` | Generic connect / session failure |
+| `rate_limit` | Platform rate limit signal in the response body (e.g. `"rate limited"`) |
+| `worker_not_ready` | Host/control-plane signals worker not ready in the body |
+| `provider_limit` | Upstream provider limit signal in the body |
+| `timeout` | Client `AbortController` timeout (`fetchTimeoutMs`) |
+| `token_refresh_failed` | LiveKit token refresh rejected (`401`/`403`) or retries exhausted until expiry |
 
-`429` maps to `quota_exceeded`, `404` maps to `agent_not_found`, and every other non-success path
-maps to `session_failed`. The SDK does not expose backend internals or raw provider failures as part
-of its public contract.
+`404` maps to `agent_not_found`. Distinguishing `rate_limit` / quota / `provider_limit` requires the
+host to forward distinguishable body text (or `error` / `detail` / `code` fields) — empty `429`
+bodies stay `quota_exceeded` for backward compatibility. The SDK does not expose raw provider
+stack traces as part of its public contract.
 
 ## Session endpoint contract
 
@@ -155,7 +168,10 @@ These are intentionally out of scope for the supported surface right now:
 
 | Symptom | Likely cause |
 |---|---|
-| `quota_exceeded` | tenant concurrency or monthly quota cap reached |
+| `quota_exceeded` | tenant concurrency or monthly quota cap reached (or opaque `429`) |
+| `rate_limit` | host/platform rate limit — back off and retry |
+| `timeout` | host session/refresh endpoint did not respond within `fetchTimeoutMs` |
+| `token_refresh_failed` | refresh rejected or network stayed down until LiveKit JWT expiry |
 | `agent_not_found` | wrong `agentId`, wrong tenant, or agent no longer exists |
 | `session_failed` immediately | host backend misconfigured, bad session upstream config, or refresh/session route mismatch |
 | browser reaches AwaazLabs-UVA upstream directly | integration bug — the browser should call the host backend only |
