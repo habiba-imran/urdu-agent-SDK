@@ -1,23 +1,26 @@
 name: Release SDK
 
-# Publishes @awaazlabs-uva/voice (sdk/) and @awaazlabs-uva/agents (sdk-server/) to npm.
+# Publishes @awaazlabs-uva/voice (sdk/), @awaazlabs-uva/agents (sdk-server/) and
+# @awaazlabs-uva/telephony (telephony/) to npm.
 #
 # Release a package by pushing a tag whose version matches its package.json:
-#   voice-v<version>    -> @awaazlabs-uva/voice   (sdk-v<version> is kept as an alias)
-#   agents-v<version>   -> @awaazlabs-uva/agents
+#   voice-v<version>      -> @awaazlabs-uva/voice   (sdk-v<version> is kept as an alias)
+#   agents-v<version>     -> @awaazlabs-uva/agents
+#   telephony-v<version>  -> @awaazlabs-uva/telephony
 # The same PR that bumps `version` must add a `## [<version>]` section to that package's
 # CHANGELOG.md. workflow_dispatch runs the same checks as a dry run and never publishes.
 #
 # Publishing is from the canonical repository only: packages are published with npm provenance,
 # which npm rejects unless package.json `repository.url` matches the repository running this
 # workflow. A missing NPM_TOKEN fails the release instead of skipping it — a green run that
-# published nothing is worse than a red one. (@awaazlabs-uva/telephony has no release path yet.)
+# published nothing is worse than a red one.
 
 on:
   push:
     tags:
       - "voice-v*"
       - "agents-v*"
+      - "telephony-v*"
       - "sdk-v*"
   workflow_dispatch:
     inputs:
@@ -28,6 +31,7 @@ on:
         options:
           - voice
           - agents
+          - telephony
 
 concurrency:
   group: release-sdk-${{ github.ref }}
@@ -58,6 +62,7 @@ jobs:
               voice-v*)  package=voice;  tag_version="${GITHUB_REF_NAME#voice-v}" ;;
               sdk-v*)    package=voice;  tag_version="${GITHUB_REF_NAME#sdk-v}" ;;
               agents-v*) package=agents; tag_version="${GITHUB_REF_NAME#agents-v}" ;;
+              telephony-v*) package=telephony; tag_version="${GITHUB_REF_NAME#telephony-v}" ;;
               *) echo "::error::Unrecognised release tag '$GITHUB_REF_NAME'"; exit 1 ;;
             esac
           else
@@ -66,6 +71,7 @@ jobs:
           case "$package" in
             voice)  dir=sdk ;;
             agents) dir=sdk-server ;;
+            telephony) dir=telephony ;;
             *) echo "::error::Unknown package '$package'"; exit 1 ;;
           esac
 

@@ -69,6 +69,13 @@ jobs:
           npm run lint
           npm test
 
+      - name: Build, Lint & Test Telephony SDK (@awaazlabs-uva/telephony)
+        working-directory: telephony
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
       - name: Upload SDK Artifact
         uses: actions/upload-artifact@v4
         with:

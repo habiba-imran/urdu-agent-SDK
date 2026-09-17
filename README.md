@@ -29,6 +29,7 @@ The platform follows an **SDK-First, Explicit Dispatch** multi-tenant architectu
 | **Voice Worker** | `worker/` | LiveKit agent process running Silero VAD → Gladia STT → Gemini LLM → Uplift TTS. |
 | **Client SDK** | `sdk/` | `@awaazlabs-uva/voice` npm package — zero-secret WebRTC browser client wrapper. |
 | **Server SDK** | `sdk-server/` | `@awaazlabs-uva/agents` npm package — server-side agent management, holds the tenant HMAC secret. |
+| **Telephony SDK** | `telephony/` | `@awaazlabs-uva/telephony` npm package — backend-only Telnyx connection, numbers, routing, and PSTN calls. |
 | **Demo App** | `demo-app/` | Reference Express host backend (signs HMAC session requests) + Vite browser client. |
 | **Tenant Dashboard** | `dashboard/` | Next.js self-service portal for managing agents, voices, and credentials. |
 | **Super-Admin Portal** | `admin/` | Separate administrative backend for TOTP auth, audit logging, and usage metrics. |
@@ -109,6 +110,9 @@ cd sdk && npm ci && npm run build && npm run lint && npm test
 
 # Server SDK (@awaazlabs-uva/agents): build, type-check, unit tests
 cd sdk-server && npm ci && npm run lint && npm test
+
+# Telephony SDK (@awaazlabs-uva/telephony): build, type-check, contract tests
+cd telephony && npm ci && npm run lint && npm test
 ```
 
 ---
