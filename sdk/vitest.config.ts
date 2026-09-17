@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-/** Local / Ehsan-wired runner. Habiba does not add vitest to package.json (Wave 1 freeze). */
+/** Runs via `npm test` (`vitest` is a package.json devDependency). */
 export default defineConfig({
   test: {
     environment: 'node',

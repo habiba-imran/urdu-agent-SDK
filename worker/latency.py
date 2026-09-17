@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import statistics
 import sys
 import time
@@ -22,6 +23,7 @@ from typing import Any
 # confirms — without this, TTS waits for full turn commit (+ seconds of dead air).
 TURN_HANDLING_OPTIONS: dict[str, Any] = {
     # UVA-13: faster barge-in — discard buffered TTS and cancel in-flight generation.
+    # mode is filled by turn_handling_for_channel() (default "vad" — see below).
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": True,
@@ -61,28 +63,44 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
 }
 
 
+def interruption_mode() -> str:
+    """WebRTC/telephony interruption strategy.
+
+    Default ``vad``: local Silero only — skips LiveKit Cloud adaptive-detector init on
+    ``session.start`` (often multi-second). Set ``UVA_INTERRUPTION_MODE=adaptive`` for
+    ML barge-in. Provider-agnostic (STT/LLM/TTS unchanged).
+    """
+    raw = (os.environ.get("UVA_INTERRUPTION_MODE") or "vad").strip().lower()
+    if raw in ("adaptive", "vad"):
+        return raw
+    return "vad"
+
+
 def turn_handling_for_channel(
     audio_channel: str,
     *,
     llm_provider: str | None = None,
+    stt_provider: str | None = None,
+    agent_language: str | None = None,
 ) -> dict[str, Any]:
     """Return turn-handling defaults for WebRTC vs telephony audio legs.
 
-    Groq free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
+    Delegates to ``worker.humanization.turn.build_turn_profile`` (Phase 2). Groq
+    free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
     partial turns do not burn tokens before EOU.
     """
-    if audio_channel == "telephony":
-        options = dict(TELEPHONY_TURN_HANDLING_OPTIONS)
-    else:
-        options = dict(TURN_HANDLING_OPTIONS)
-    if (llm_provider or "").lower() == "groq":
-        options["preemptive_generation"] = {
-            "enabled": False,
-            "preemptive_tts": False,
-            "max_speech_duration": 12.0,
-            "max_retries": 0,
-        }
-    return options
+    from worker.humanization.turn import (
+        build_turn_profile,
+        turn_profile_to_livekit_options,
+    )
+
+    profile = build_turn_profile(
+        audio_channel=audio_channel,
+        stt_provider=stt_provider,
+        llm_provider=llm_provider,
+        agent_language=agent_language,
+    )
+    return turn_profile_to_livekit_options(profile)
 
 
 def is_telephony_job(
@@ -123,16 +141,10 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
     Available as soon as the mint commits — before the browser participant joins —
     so the worker can build STT/LLM/TTS in parallel with ``wait_for_participant``.
     """
-    import psycopg
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    try:
-        from scripts.dbconn import conn_kwargs
-    except ImportError:
-        from dbconn import conn_kwargs  # type: ignore # noqa: E402
+    from worker.db_pool import worker_db_connection
 
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
+        with worker_db_connection(connect_timeout=5) as conn:
             row = conn.execute(
                 """
                 select tenant_id, agent_id
@@ -285,22 +297,26 @@ async def prewarm_llm(llm: Any) -> None:
 
 async def prewarm_greeting_providers(
     *,
-    tts: Any,
-    stt: Any,
+    tts: Any | None,
+    stt: Any | None,
     logger: Any | None = None,
     room_name: str | None = None,
 ) -> None:
     """Warm TTS (+ STT) before the opening utterance — required for first-audio TTFB.
 
+    Pass ``tts=None`` when a greeting-cache hit will play PCM (no live TTS RTT).
     Uses ``asyncio.wait`` on tasks rather than ``gather``: importing LiveKit's
     ``ChatContext`` (LLM prewarm) concurrent with ``gather`` can stall forever on
     some Windows / livekit-agents 1.6.x event-loop setups.
     """
     started = time.monotonic()
-    tasks = (
-        ("tts", asyncio.create_task(prewarm_tts(tts))),
-        ("stt", asyncio.create_task(prewarm_stt(stt))),
-    )
+    tasks: list[tuple[str, asyncio.Task[None]]] = []
+    if tts is not None:
+        tasks.append(("tts", asyncio.create_task(prewarm_tts(tts))))
+    if stt is not None:
+        tasks.append(("stt", asyncio.create_task(prewarm_stt(stt))))
+    if not tasks:
+        return
     await asyncio.wait([task for _, task in tasks])
     if logger is not None:
         for label, task in tasks:
@@ -366,17 +382,23 @@ async def prewarm_session_providers(
 
 def schedule_provider_prewarm(
     *,
-    tts: Any,
+    tts: Any | None,
     llm: Any,
-    stt: Any,
+    stt: Any | None,
     logger: Any | None = None,
     room_name: str | None = None,
     await_llm: bool = False,
+    skip_tts: bool = False,
+    skip_stt: bool = False,
 ) -> asyncio.Task[None]:
     """Start provider warm-up without blocking ``session.start()`` (UVA-2).
 
-    Returns a task that completes when **TTS + STT** are warm — await it before
-    ``apply_session_opening`` so the greeting does not pay a cold websocket.
+    Returns a task that completes when the selected TTS/STT warm steps finish.
+    For static ``mode=say`` openings, callers typically pass ``skip_tts=True``
+    (greeting PCM synth / cache covers TTS) and **do not await** this task —
+    STT warms in the background so barge-in is ready without gating first audio.
+
+    For ``generate_reply``, await this task (TTS+STT) before opening.
 
     LLM warm-up always runs in the background after TTS/STT. Never block the
     opening greeting on LLM prewarm — that added 10–15s of dead air on PSTN when
@@ -384,6 +406,8 @@ def schedule_provider_prewarm(
     ``await_llm`` is accepted for API compatibility but ignored.
     """
     del await_llm  # kept for call-site compatibility; greeting must not wait on LLM
+    warm_tts = None if skip_tts else tts
+    warm_stt = None if skip_stt else stt
 
     async def _llm() -> None:
         try:
@@ -399,8 +423,8 @@ def schedule_provider_prewarm(
     async def _greeting() -> None:
         try:
             await prewarm_greeting_providers(
-                tts=tts,
-                stt=stt,
+                tts=warm_tts,
+                stt=warm_stt,
                 logger=logger,
                 room_name=room_name,
             )

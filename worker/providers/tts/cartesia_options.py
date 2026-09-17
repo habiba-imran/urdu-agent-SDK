@@ -1,23 +1,42 @@
-"""Cartesia ``tts_options`` schema, validation, and build-time defaults (Phase B humanization).
+"""Cartesia ``tts_options`` schema, validation, and build-time defaults (Phase B + Phase 5).
 
 Stored ``agents.tts_options`` holds tenant overrides only (may be ``{}``). The adapter merges
 with ``CARTESIA_TTS_DEFAULTS`` at construction time so existing agents pick up sonic-3.5 +
 baseline emotion/speed without a DB migration.
+
+Phase 5 A/B (defaults unchanged until listening promotes a winner):
+  - ``tts_options.model=sonic-3.6`` (or snapshot id) — opt-in; plugin accepts ``str``
+  - env ``CARTESIA_TTS_MODEL`` — demo-only default override when stored options omit ``model``
+  - ``spoken_style=manual_ssml|light`` — already Phase 3
+  - ``expressive=true`` — only effective when ``cartesia_expressive_available()``
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any, Literal
 
 ALLOWED_CARTESIA_TTS_OPTION_KEYS = frozenset(
-    {"model", "speed", "volume", "emotion", "expressive"}
+    {"model", "speed", "volume", "emotion", "expressive", "spoken_style"}
 )
 
 AudioChannel = Literal["webrtc", "telephony"]
 
+# Documented experiment labels (research §30). Not a hard allowlist — Cartesia IDs move fast;
+# the plugin types ``model`` as ``TTSModels | str`` and treats ``sonic-3*`` as Sonic 3 family.
+CARTESIA_PHASE5_MODEL_IDS = frozenset(
+    {
+        "sonic-3.5",
+        "sonic-3.6",
+        "sonic-3.6-2026-08-27",
+    }
+)
+
 CARTESIA_TTS_DEFAULTS: dict = {
     "model": "sonic-3.5",
     "speed": 0.95,
+    # Used only for spoken_style=light (no per-turn tags). Manual SSML omits constructor
+    # emotion so contextual <emotion> tags actually shift tone (audit medium fix).
     "emotion": ["calm", "content"],
     # Manual SSML is the working humanization path with ``livekit.plugins.cartesia.TTS``.
     # LiveKit's expressive pipeline is framework-internal, hardcoded off on AgentSession, and
@@ -27,6 +46,9 @@ CARTESIA_TTS_DEFAULTS: dict = {
     # only when a future livekit-agents build exposes a public AgentSession expressive kwarg
     # (and you are on inference TTS).
     "expressive": False,
+    # Phase 3: ``light`` = plain-text rules + constructor emotion (lower LLM token tax than
+    # mandatory per-turn <emotion> tags). Opt into manual_ssml via tts_options when A/B needs it.
+    "spoken_style": "light",
 }
 
 # Phase C — match Cartesia output to the LiveKit agent audio path.
@@ -106,6 +128,14 @@ def validate_cartesia_tts_options(options: dict) -> dict:
             raise CartesiaTtsOptionsError("expressive must be a boolean")
         normalized["expressive"] = expressive
 
+    if "spoken_style" in options:
+        style = options["spoken_style"]
+        if style not in ("manual_ssml", "light"):
+            raise CartesiaTtsOptionsError(
+                "spoken_style must be manual_ssml or light"
+            )
+        normalized["spoken_style"] = style
+
     return normalized
 
 
@@ -140,6 +170,40 @@ def cartesia_expressive_enabled(stored_options: dict | None) -> bool:
     return cartesia_expressive_available()
 
 
+def cartesia_light_spoken_enabled(stored_options: dict | None) -> bool:
+    """True when ``spoken_style=light`` — plain-text Cartesia rules without LiveKit expressive.
+
+    Constructor emotion defaults still apply; listening A/B should check whether they
+    fight contextual prosody (Phase 5).
+    """
+    overrides = validate_cartesia_tts_options(stored_options or {})
+    merged = {**CARTESIA_TTS_DEFAULTS, **overrides}
+    return str(merged.get("spoken_style") or "manual_ssml") == "light"
+
+
+def _demo_cartesia_model_override() -> str | None:
+    """Optional worker env default when agent ``tts_options`` omit ``model`` (Phase 5A).
+
+    Does not change the code default (``sonic-3.5``) unless the env is set. Prefer
+    per-agent ``tts_options.model`` for durable experiments.
+    """
+    raw = (os.getenv("CARTESIA_TTS_MODEL") or "").strip()
+    return raw or None
+
+
+def cartesia_experiment_label(stored_options: dict | None) -> str:
+    """Stable label for logs / listening notes (e.g. ``sonic-3.6+light``)."""
+    overrides = validate_cartesia_tts_options(stored_options or {})
+    demo = _demo_cartesia_model_override()
+    model = overrides.get("model") or demo or CARTESIA_TTS_DEFAULTS["model"]
+    style = overrides.get("spoken_style", CARTESIA_TTS_DEFAULTS["spoken_style"])
+    expressive = bool(overrides.get("expressive", False))
+    parts = [str(model), str(style)]
+    if expressive:
+        parts.append("expressive_requested")
+    return "+".join(parts)
+
+
 def resolve_cartesia_tts_kwargs(
     voice_id: str,
     language: str,
@@ -149,10 +213,22 @@ def resolve_cartesia_tts_kwargs(
 ) -> dict:
     """Merge stored overrides with platform defaults; return kwargs for cartesia.TTS()."""
     overrides = validate_cartesia_tts_options(stored_options or {})
-    tts_overrides = {k: v for k, v in overrides.items() if k != "expressive"}
+    tts_overrides = {
+        k: v for k, v in overrides.items() if k not in ("expressive", "spoken_style")
+    }
     merged = {**CARTESIA_TTS_DEFAULTS, **tts_overrides}
+    # Demo env only fills model when the agent did not set one.
+    if "model" not in overrides:
+        demo_model = _demo_cartesia_model_override()
+        if demo_model:
+            merged["model"] = demo_model
     profile = CARTESIA_AUDIO_PROFILES.get(
         audio_channel, CARTESIA_AUDIO_PROFILES["webrtc"]
+    )
+    style = str(
+        overrides.get("spoken_style")
+        or CARTESIA_TTS_DEFAULTS.get("spoken_style")
+        or "manual_ssml"
     )
 
     kwargs: dict = {
@@ -160,10 +236,15 @@ def resolve_cartesia_tts_kwargs(
         "language": language,
         "model": merged["model"],
         "speed": merged["speed"],
-        "emotion": merged["emotion"],
         "encoding": profile["encoding"],
         "sample_rate": profile["sample_rate"],
     }
+    # Manual SSML: omit constructor emotion so per-turn <emotion> tags drive tone.
+    # Light / explicit emotion override: keep baseline or tenant emotion list.
+    if "emotion" in overrides:
+        kwargs["emotion"] = overrides["emotion"]
+    elif style == "light":
+        kwargs["emotion"] = list(CARTESIA_TTS_DEFAULTS["emotion"])
     if "volume" in merged:
         kwargs["volume"] = merged["volume"]
     return kwargs

@@ -134,7 +134,9 @@ export class AwaazLabsUvaVoice {
     try {
       const res = await fetchWithTimeout(endpointUrl, undefined, timeoutMs);
       if (!res.ok) {
-        throw new AwaazLabsUvaVoiceError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+        // F-M16: same status/body taxonomy as connect() — do not collapse every failure to session_failed.
+        const errorBody = await res.text().catch(() => '');
+        throw mapSessionHttpError(res.status, errorBody || res.statusText);
       }
       return (await res.json()) as Voice[];
     } catch (e) {
@@ -225,10 +227,17 @@ export class AwaazLabsUvaVoice {
     }
 
     try {
-      await room.connect(body.wsUrl, body.token);
-    } catch {
+      // Align LiveKit join timeouts with fetchTimeoutMs so a hung signalling path
+      // cannot sit open forever after a successful mint (F-M14 adjacent hang).
+      await room.connect(body.wsUrl, body.token, {
+        peerConnectionTimeout: this.fetchTimeoutMs,
+        websocketTimeout: this.fetchTimeoutMs,
+      });
+    } catch (err) {
       this.state = 'idle';
       await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      await room.disconnect().catch(() => {});
+      if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
 
@@ -266,16 +275,33 @@ export class AwaazLabsUvaVoice {
     return this;
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(reason?: unknown): Promise<void> {
     this.clearRefreshTimer();
-    if (!this.room) return;
+    const room = this.room;
+    if (!room) {
+      this.session = null;
+      this.sessionReceivedAt = null;
+      this.state = 'idle';
+      return;
+    }
     this.state = 'disconnecting';
-    await this.room.disconnect();
-    this.detachAllRemoteAudio();
-    this.room = null;
-    this.session = null;
-    this.sessionReceivedAt = null;
-    this.state = 'idle';
+    const canDisconnect = typeof (room as { disconnect?: unknown }).disconnect === 'function';
+    if (canDisconnect) {
+      await (room as { disconnect: () => Promise<void> }).disconnect().catch(() => {});
+    }
+    // Real LiveKit Room fires RoomEvent.Disconnected, which already clears state + emits.
+    // Stubs / failed-refresh paths still need local cleanup when that event never runs.
+    if (this.room === room) {
+      this.detachAllRemoteAudio();
+      this.room = null;
+      this.session = null;
+      this.sessionReceivedAt = null;
+      this.state = 'idle';
+      if (!canDisconnect) {
+        this.emit('disconnected', reason);
+        this.emit('ended', reason);
+      }
+    }
   }
 
   /**
@@ -509,6 +535,8 @@ export class AwaazLabsUvaVoice {
           'error',
           new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh rejected'),
         );
+        // Do not limp until JWT death — tear down so hosts get a clean ended signal.
+        await this.disconnect('token_refresh_failed');
         return;
       }
 
@@ -538,6 +566,7 @@ export class AwaazLabsUvaVoice {
       'error',
       new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh failed'),
     );
+    await this.disconnect('token_refresh_failed');
   }
 
   private resolveRefreshEndpoint(): string {

@@ -66,7 +66,7 @@ def test_defaults_resolve_to_ur_gladia_gemini_uplift(conn):
     assert resolved["stt_model"] == "default"
     assert resolved["stt_options"] == {}
     assert resolved["llm_provider"] == "gemini"
-    assert resolved["llm_model"] == "gemini-2.5-flash"
+    assert resolved["llm_model"] == "gemini-3.6-flash"
     assert resolved["llm_options"] == {}
     assert resolved["tts_provider"] == "uplift"
     assert resolved["tts_options"] == {}
@@ -85,7 +85,7 @@ def test_english_create_defaults_to_groq_llm(conn):
         voice_id=None,
     )
     assert resolved["llm_provider"] == "groq"
-    assert resolved["llm_model"] == "qwen/qwen3.6-27b"
+    assert resolved["llm_model"] == "openai/gpt-oss-20b"
 
 
 def test_voice_id_and_tts_voice_id_both_get_the_resolved_value(conn):
