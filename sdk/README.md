@@ -17,11 +17,12 @@ Every client integration needs four things:
 - an `agentId`
 - a browser app that calls the host backend, not AwaazLabs-UVA upstream services directly
 
-If you are starting from the reference materials in this repo:
+Reference material (links point at the source repository, so they also work from npm):
 
-- browser example: [examples/web-client](../examples/web-client/README.md)
-- host backend starter: [examples/host-backend](../examples/host-backend/README.md)
-- end-to-end guide: [docs/CLIENT_QUICKSTART.md](../docs/CLIENT_QUICKSTART.md)
+- working host backend + browser client: [demo-app](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/demo-app)
+- end-to-end guide: [docs/CLIENT_QUICKSTART.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/CLIENT_QUICKSTART.md)
+- host backend contract: [docs/HOST_BACKEND_CONTRACT.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/HOST_BACKEND_CONTRACT.md)
+- server-side agent management: [`@awaazlabs-uva/agents`](https://www.npmjs.com/package/@awaazlabs-uva/agents)
 
 ## V1 public contract
 
@@ -34,7 +35,7 @@ const agent = new AwaazLabsUvaVoice({
 });
 
 agent.on('transcript', (entry) => {
-  console.log(entry.text, entry.final);
+  console.log(entry.speaker, entry.text, entry.final);
 });
 
 await agent.connect({ agentId: 'agent_123' });
@@ -56,12 +57,19 @@ voice.on('transcript', (entry) => {
   console.log(entry.text, entry.final ? 'final' : 'partial');
 });
 
+voice.on('audio_blocked', (blocked) => {
+  // Browsers can block autoplay. Show a button and call voice.startAudio() from its click handler.
+});
+
 voice.on('error', (error) => {
   console.error(error.code, error.message);
 });
 
 await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 ```
+
+The SDK is safe to import at module scope in server-rendered frameworks such as Next.js; it only
+touches the DOM once a call is connected.
 
 ### Constructor
 
@@ -70,15 +78,18 @@ await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 - `publishableKey: string`
 - `sessionEndpoint: string`
 - `refreshEndpoint?: string`
-- `fetchTimeoutMs?: number` — max wait for session / refresh / voice-catalog `fetch` (default `15000`)
+- `fetchTimeoutMs?: number` — max wait for the session, refresh and voice-catalogue requests
+  (default `15000`). A request that exceeds it fails with the `timeout` error code.
 
 ### Methods
 
 - `connect({ agentId })`
 - `disconnect()`
+- `startAudio()` — call from a user gesture after `audio_blocked` fires with `true`
+- `setMicMuted(muted)`
 - `on(event, listener)`
 - `off(event, listener)`
-- `startAudio()` — call inside a user-gesture handler when `audio_blocked` fires with `true`
+- `AwaazLabsUvaVoice.listVoices(endpointUrl, timeoutMs?)` — static voice-catalogue helper
 
 ### Read-only properties
 
@@ -93,31 +104,30 @@ await voice.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
 | `connected` | none |
 | `disconnected` | LiveKit reason when available |
 | `ended` | same reason forwarded for convenience |
-| `transcript` | `{ id, text, final, speaker }` |
+| `transcript` | `{ id, text, final, speaker }` — replace earlier entries with the same `id` |
 | `speaking` | `boolean` caller/room speaking state |
 | `agent_speaking` | `boolean` non-local active speaker state |
+| `audio_blocked` | `boolean` — `true` when the browser blocked playback |
 | `metrics_updated` | metrics object when worker metadata/data channel emits it |
-| `turn_latency` | per-turn stage breakdown from the worker |
-| `audio_blocked` | `boolean` — browser blocked/unblocked autoplay |
+| `turn_latency` | per-turn stage timing object emitted by the worker |
 | `error` | `AwaazLabsUvaVoiceError` |
+
+A listener that throws does not stop other listeners from receiving the event.
 
 ### Public error taxonomy
 
-| Code | When |
+| Code | Meaning |
 |---|---|
-| `quota_exceeded` | Plan concurrent / monthly cap, or an opaque `429` with no distinguishable body |
-| `agent_not_found` | HTTP `404` from the session endpoint |
-| `session_failed` | Generic connect / session failure |
-| `rate_limit` | Platform rate limit signal in the response body (e.g. `"rate limited"`) |
-| `worker_not_ready` | Host/control-plane signals worker not ready in the body |
-| `provider_limit` | Upstream provider limit signal in the body |
-| `timeout` | Client `AbortController` timeout (`fetchTimeoutMs`) |
-| `token_refresh_failed` | LiveKit token refresh rejected (`401`/`403`) or retries exhausted until expiry |
+| `quota_exceeded` | tenant plan cap (concurrency or monthly minutes), or a `429` with no more specific body |
+| `rate_limit` | platform rate limit (`429` with a "rate limited" body) — back off and retry |
+| `provider_limit` | an upstream voice/LLM provider limit, distinct from your plan quota |
+| `worker_not_ready` | the voice worker is not ready to take the call yet |
+| `agent_not_found` | `404` — wrong `agentId`, wrong tenant, or the agent no longer exists |
+| `timeout` | the host backend did not answer within `fetchTimeoutMs` |
+| `token_refresh_failed` | the call's token could not be refreshed (rejected, or retries ran out before expiry) |
+| `session_failed` | any other session failure |
 
-`404` maps to `agent_not_found`. Distinguishing `rate_limit` / quota / `provider_limit` requires the
-host to forward distinguishable body text (or `error` / `detail` / `code` fields) — empty `429`
-bodies stay `quota_exceeded` for backward compatibility. The SDK does not expose raw provider
-stack traces as part of its public contract.
+The SDK does not expose backend internals or raw provider failures as part of its public contract.
 
 ## Session endpoint contract
 
@@ -132,20 +142,27 @@ The refresh path uses `refreshUrl` when present, otherwise:
 - `refreshEndpoint` from the constructor, or
 - `<sessionEndpoint>/refresh`
 
-See [docs/HOST_BACKEND_CONTRACT.md](../docs/HOST_BACKEND_CONTRACT.md) for the exact host-backend
-specification.
+A failed refresh is retried with backoff until the token is about to expire, so a single network
+blip does not end the call. `token_refresh_failed` is only emitted once retries are exhausted or
+the backend rejects the token (`401`/`403`).
+
+See [docs/HOST_BACKEND_CONTRACT.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/HOST_BACKEND_CONTRACT.md)
+for the exact host-backend specification.
 
 ## Local integration path
 
-The shortest repo-supported path is:
+The shortest repo-supported path uses
+[demo-app](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/demo-app):
 
-1. start the host backend starter in `examples/host-backend/`
-2. start the browser example in `examples/web-client/`
-3. set the browser example env to point at the host backend starter
-4. use a real `agentId`, `publishableKey`, `tenantId`, and tenant HMAC secret
-5. connect from the browser example
+1. build this package (`cd sdk && npm run build`)
+2. start the host backend in `demo-app/backend/`
+3. start the browser client in `demo-app/frontend/`
+4. set both `.env` files with a real `agentId`, `publishableKey`, `tenantId`, and tenant HMAC
+   secret (the secret goes in the backend `.env` only)
+5. open the browser client and connect
 
-Detailed setup steps are in [docs/CLIENT_QUICKSTART.md](../docs/CLIENT_QUICKSTART.md).
+Detailed setup steps are in
+[docs/CLIENT_QUICKSTART.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/CLIENT_QUICKSTART.md).
 
 ## Explicit omissions in v1
 
@@ -168,16 +185,14 @@ These are intentionally out of scope for the supported surface right now:
 
 | Symptom | Likely cause |
 |---|---|
-| `quota_exceeded` | tenant concurrency or monthly quota cap reached (or opaque `429`) |
-| `rate_limit` | host/platform rate limit — back off and retry |
-| `timeout` | host session/refresh endpoint did not respond within `fetchTimeoutMs` |
-| `token_refresh_failed` | refresh rejected or network stayed down until LiveKit JWT expiry |
+| `quota_exceeded` | tenant concurrency or monthly quota cap reached |
+| `rate_limit` | too many session requests for this tenant in the last minute |
 | `agent_not_found` | wrong `agentId`, wrong tenant, or agent no longer exists |
+| `timeout` | host backend is down, hung, or slower than `fetchTimeoutMs` |
 | `session_failed` immediately | host backend misconfigured, bad session upstream config, or refresh/session route mismatch |
+| no agent audio | browser blocked autoplay — handle `audio_blocked` and call `startAudio()` from a click |
 | browser reaches AwaazLabs-UVA upstream directly | integration bug — the browser should call the host backend only |
 
-## Example app
+## Changelog
 
-See [examples/web-client](../examples/web-client/README.md) for the Phase 0 consumer
-scaffold, and [examples/host-backend](../examples/host-backend/README.md) for the Phase 3
-reference backend starter that creates sessions through a backend-only upstream safely.
+See [CHANGELOG.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/sdk/CHANGELOG.md).

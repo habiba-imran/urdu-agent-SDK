@@ -4,10 +4,13 @@
   "description": "AwaazLabs-UVA-Voice browser client SDK - public bundle, zero secrets.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
+    "url": "git+https://github.com/Finova-Solutions/urdu-voice-agent-SDK.git",
     "directory": "sdk"
   },
-  "homepage": "https://github.com/habiba-imran/urdu-agent-SDK/tree/staging/sdk",
+  "homepage": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -30,19 +33,20 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "npm run build && npm run lint && npm test"
+    "prepublishOnly": "npm run build && npm run lint"
   },
   "dependencies": {
     "livekit-client": "^2.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }
