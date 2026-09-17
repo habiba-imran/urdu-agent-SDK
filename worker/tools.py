@@ -44,6 +44,9 @@ class AgentUserdata:
     latency_tracker: Any = None
     tools_base_url: str | None = None
     tools_auth_secret: str | None = None
+    # True while the opening greeting/generate_reply is still playing — barge-in
+    # force-flush is deferred so echo VAD cannot chop the greeting without a reply.
+    opening_active: bool = False
 
 
 @function_tool

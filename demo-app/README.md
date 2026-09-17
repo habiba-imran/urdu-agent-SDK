@@ -1,45 +1,56 @@
-# UVA Demo App
+# UVA Demo App (Wave 1)
 
-Local host-backend + browser client for Wave 1 SDK smoke (`@awaazlabs-uva/voice`).
+Reference **host backend + browser client** for the Wave 1 deliverable:
 
-Mirrors the client-submission architecture:
+> A host can `npm install @awaazlabs-uva/voice` (and `@awaazlabs-uva/agents` for the host backend), complete a **browser** call, and get snappy first audio.
 
-- **frontend** — browser-only voice SDK (`publishableKey` + session endpoints)
-- **backend** — signs control-plane session mint/refresh; optionally lists agents via `@awaazlabs-uva/agents`
+| Package | Used by | Role |
+| --- | --- | --- |
+| `@awaazlabs-uva/voice` | `frontend/` | Browser SDK — publishable key + session endpoints only |
+| `@awaazlabs-uva/agents` | `backend/` | Server SDK — HMAC agent list / capabilities / pipeline PATCH |
+
+Telephony (`@awaazlabs-uva/telephony`) is **Wave 2** — not part of this demo.
 
 ## Layout
 
 ```text
 demo-app/
-  backend/     Express host (session + refresh)
-  frontend/    Vite black/white UI
+  backend/     Express host (session mint/refresh + agents helpers)
+  frontend/    Vite Wave 1 smoke UI
+  scripts/     bootstrap-packages.mjs — npm install voice + agents
 ```
 
 ## Prerequisites
 
-1. Dev DB reachable (used by `scripts/create_new_client.py`)
-2. Control plane on `UVA_CONTROL_PLANE_URL` (default `http://localhost:8000`)
-3. LiveKit worker running if you want a real spoken call
-4. Built local voice package: `cd sdk && npm run build`
+1. Control plane on `UVA_CONTROL_PLANE_URL` (default `http://localhost:8000`)
+2. Tenant portal API on `UVA_API_BASE_URL` (provider picker / pipeline PATCH)
+3. LiveKit worker running for a real spoken call
+4. Credentials in `backend/.env` and `frontend/.env` (from `.env.example`)
 
-## Credentials already provisioned for this folder
+## Install packages (npm)
 
-Created with `python scripts/create_new_client.py "demo-app Habiba Wave1"` plus a DB agent insert:
-
-| Value | Where |
-| --- | --- |
-| Tenant / publishable key | `backend/.env`, `frontend/.env` |
-| HMAC secret | `backend/.env` only |
-| Agent ID | `frontend/.env` → `VITE_UVA_AGENT_ID` |
-
-Do **not** commit real `.env` files (gitignored). `.env.example` stays empty of secrets.
-
-## Install
+From `demo-app/`:
 
 ```bash
-cd demo-app
-npm run build:sdk
-npm run install:all
+npm run bootstrap      # prefer registry; else pack monorepo → npm install tarballs
+npm run install:all   # express/vite + lockfile sync
+```
+
+`bootstrap` installs through **npm** (never a raw `file:../../sdk` source link):
+
+1. If `@awaazlabs-uva/voice` / `@awaazlabs-uva/agents` are on the public registry → installs `^` versions from npmjs
+2. If not published yet → `npm pack` from `sdk/` + `sdk-server/`, then `npm install` the tarballs into `.packs/` (checked in so a fresh clone can `npm install` immediately)
+
+After a real `voice-v*` / `agents-v*` release, re-run `npm run bootstrap` to switch onto registry versions.
+
+### What a real host does
+
+```bash
+# browser app
+npm install @awaazlabs-uva/voice
+
+# host backend
+npm install @awaazlabs-uva/agents
 ```
 
 ## Run
@@ -60,22 +71,24 @@ npm run dev:frontend
 
 Open `http://localhost:5173`.
 
-1. Wait for **Language / STT / LLM / TTS** dropdowns to load (needs portal `UVA_API_BASE_URL` on the backend).
-2. Pick a valid combo (options are filtered to **enabled** capabilities for that language).
-3. Click **Connect** — backend PATCHes the agent pipeline, then the voice SDK mints + joins.
+1. Wait for **Language / STT / LLM / TTS** dropdowns (needs portal `UVA_API_BASE_URL`).
+2. Pick a valid combo (enabled capabilities for that language).
+3. **Connect** — backend PATCHes the agent pipeline, then the voice SDK mints + joins.
+4. Watch **First agent audio** timing (Wave 1 cold-start smoke).
+5. Optional: **Mute mic**, **Unlock audio** (autoplay block), **Timeout smoke** (`/api/demo/hang` + `fetchTimeoutMs` → `timeout` error).
 
 Urdu typically: Gladia + Gemini + Uplift.  
 English typically: Gladia/Deepgram + Gemini/Groq + Cartesia/ElevenLabs/Rime.
 
-**Provider flips / greeting cache:** changing Language / STT / LLM / TTS applies the pipeline in the background; Connect skips the ~10s portal PATCH when the combo is already on the agent. After a provider change, wait for the debug log “Background pipeline applied” (or ~1–2s) before Connect. Greeting PCM cache is per worker process and keyed by provider + voice + text + channel.
+**Provider flips:** changing Language / STT / LLM / TTS applies the pipeline in the background; Connect skips the portal PATCH when the combo is already on the agent.
 
-**Local speed:** worker defaults to `UVA_SESSION_RECORD_AUDIO=0` (no RecorderIO on `session.start`). Set `=1` in `.env.local` if you need session recordings.
+## Wave 1 SDK surface exercised here
 
-## Packages
+- `new AwaazLabsUvaVoice({ publishableKey, sessionEndpoint, refreshEndpoint, fetchTimeoutMs })`
+- `connect` / `disconnect` / `startAudio` / `setMicMuted`
+- Events: `connected`, `transcript` (replace-by-`id`), `agent_speaking`, `audio_blocked`, `turn_latency`, `error` (taxonomy codes)
+- Host backend: session mint/refresh + `@awaazlabs-uva/agents` for capabilities / `updateAgent`
 
-| Package | Source |
-| --- | --- |
-| `@awaazlabs-uva/voice` | `file:../../sdk` (current Wave 1 code) |
-| `@awaazlabs-uva/agents` | `file:../../sdk-server` (backend listAgents helper) |
+## Credentials
 
-Same integration model as `client-submission_v2` (voice in browser, agents/HMAC on backend).
+Do **not** commit real `.env` files. Copy `.env.example` in `backend/` and `frontend/`.

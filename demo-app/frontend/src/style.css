@@ -1,13 +1,19 @@
 :root {
   color-scheme: light;
-  --bg: #ffffff;
-  --fg: #000000;
-  --muted: #555555;
-  --line: #000000;
-  --soft: #f5f5f5;
-  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --bg: #f7f4ef;
+  --fg: #1a1814;
+  --muted: #5c574e;
+  --line: #2a261f;
+  --soft: #efeae2;
+  --accent: #0f5c4c;
+  --accent-fg: #f7f4ef;
+  --ink: #1a1814;
+  font-family: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Palatino, serif;
   line-height: 1.45;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(15, 92, 76, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(42, 38, 31, 0.08), transparent 50%),
+    var(--bg);
   color: var(--fg);
 }
 
@@ -22,48 +28,83 @@ body {
 
 button,
 input,
+select,
+code {
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+button,
+input,
 select {
   font: inherit;
   color: inherit;
 }
 
+code {
+  font-size: 0.9em;
+}
+
 .shell {
-  width: min(920px, calc(100% - 2rem));
+  width: min(960px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: 2.5rem 0 3rem;
+  padding: 2.5rem 0 4rem;
 }
 
 .header {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 1.25rem;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 1.35rem;
   margin-bottom: 1.5rem;
+}
+
+.brand {
+  margin: 0 0 0.35rem;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 .header h1 {
   margin: 0;
-  font-size: 1.75rem;
+  font-size: clamp(1.85rem, 4vw, 2.45rem);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
 }
 
 .header p {
-  margin: 0.5rem 0 0;
+  margin: 0.65rem 0 0;
   color: var(--muted);
-  max-width: 60ch;
+  max-width: 62ch;
+  font-size: 1.02rem;
+}
+
+.package-badge {
+  display: inline-block;
+  margin-top: 0.9rem !important;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  font-family: "IBM Plex Mono", "Consolas", "Courier New", monospace;
+  font-size: 0.78rem !important;
+  color: var(--ink) !important;
 }
 
 .panel {
   border: 1px solid var(--line);
   padding: 1.1rem 1.15rem;
   margin-bottom: 1rem;
-  background: var(--bg);
+  background: rgba(247, 244, 239, 0.92);
 }
 
 .panel h2 {
   margin: 0 0 0.85rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
@@ -76,7 +117,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.9rem;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.88rem;
 }
 
 .form input,
@@ -84,7 +126,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 0;
   padding: 0.7rem 0.75rem;
-  background: var(--bg);
+  background: #fff;
 }
 
 .form select {
@@ -95,6 +137,12 @@ select {
   background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
   padding-right: 2rem;
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .pipeline-grid {
@@ -115,40 +163,52 @@ select {
   border-radius: 0;
   padding: 0.65rem 1rem;
   cursor: pointer;
-  background: var(--bg);
+  background: #fff;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.92rem;
+}
+
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 #connect-btn {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 #disconnect-btn,
-#unlock-audio-btn {
-  background: var(--bg);
+#unlock-audio-btn,
+#mute-btn,
+#timeout-smoke-btn {
+  background: #fff;
   color: var(--fg);
 }
 
-.actions button:hover {
-  opacity: 0.85;
+.actions button:hover:not(:disabled) {
+  opacity: 0.88;
 }
 
-.grid {
+.grid,
+.stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
 .stat {
   margin: 0;
-  font-size: 1.35rem;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 1.3rem;
   font-weight: 600;
 }
 
 .transcript-list {
   list-style: none;
-  margin: 0;
+  margin: 0.65rem 0 0;
   padding: 0;
   display: grid;
   gap: 0.45rem;
@@ -163,6 +223,7 @@ select {
   padding: 0.55rem 0.6rem;
   background: var(--soft);
   border: 1px solid var(--line);
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
 .badge {
@@ -187,8 +248,8 @@ select {
   overflow: auto;
   padding: 0.75rem;
   border: 1px solid var(--line);
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--ink);
+  color: #f2eee6;
   font-size: 0.82rem;
   font-family: "IBM Plex Mono", "Consolas", "Courier New", monospace;
   white-space: pre-wrap;
@@ -214,7 +275,7 @@ select {
 
 .debug-actions button {
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: #fff;
   padding: 0.35rem 0.65rem;
   cursor: pointer;
   font-size: 0.8rem;
@@ -241,6 +302,7 @@ select {
 }
 
 .timing-label {
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -248,6 +310,7 @@ select {
 }
 
 .timing-value {
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 1.05rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -264,12 +327,14 @@ select {
   margin-top: 0.75rem;
   border: 1px solid var(--line);
   padding: 0.45rem 0.65rem;
+  background: #fff;
 }
 
 .metrics-details summary {
   cursor: pointer;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -280,9 +345,22 @@ select {
   max-height: 220px;
 }
 
+.taxonomy-list {
+  margin: 0.75rem 0 0.25rem;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.82rem;
+}
+
+.taxonomy-list li {
+  margin-bottom: 0.25rem;
+}
+
 .hint {
   margin: 0.75rem 0 0;
   color: var(--muted);
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.85rem;
 }
 
@@ -295,19 +373,22 @@ select {
   display: none;
   align-items: center;
   gap: 0.85rem;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   background: var(--bg);
-  padding: 0.7rem 0.9rem;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 10px 30px rgba(26, 24, 20, 0.12);
 }
 
 .audio-unlock-banner p {
   margin: 0;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.9rem;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 900px) {
   .grid,
-  .split,
+  .stats-grid,
+  .session-grid,
   .pipeline-grid,
   .timing-grid {
     grid-template-columns: 1fr;

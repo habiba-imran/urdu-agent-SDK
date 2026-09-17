@@ -1,5 +1,5 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
-import type { Participant, TranscriptionSegment } from 'livekit-client';
+import type { AudioCaptureOptions, Participant, TranscriptionSegment } from 'livekit-client';
 import {
   AwaazLabsUvaVoiceError,
   mapSessionHttpError,
@@ -7,6 +7,16 @@ import {
 } from './internal/errors.js';
 import { DEFAULT_FETCH_TIMEOUT_MS, delay, fetchWithTimeout } from './internal/http.js';
 import { applyRefreshedLiveKitToken } from './internal/livekitToken.js';
+
+/**
+ * Prefer browser AEC/NS so agent TTS on speakers is less likely to re-enter the mic
+ * and trip worker-side Silero barge-in (mid-reply flicker / stuck speech).
+ */
+const MIC_CAPTURE_OPTIONS: AudioCaptureOptions = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
 
 export type { AwaazLabsUvaVoiceErrorCode };
 export { AwaazLabsUvaVoiceError };
@@ -34,6 +44,16 @@ export interface ConnectOptions {
   voiceId?: string;
 }
 
+/** Browser-side split of room_connected: session mint HTTP vs LiveKit room.connect. */
+export interface ConnectTiming {
+  mintMs: number;
+  livekitConnectMs: number;
+  /** Hostname from session wsUrl — use to spot far LiveKit regions. */
+  livekitUrlHost?: string;
+  /** Local participant connection quality right after join, when available. */
+  connectionQuality?: string;
+}
+
 export interface Voice {
   id: string;
   displayName: string;
@@ -52,6 +72,7 @@ export type AwaazLabsUvaVoiceEvent =
   | 'error'
   | 'ended'
   | 'connected'
+  | 'connect_timing'
   | 'disconnected'
   | 'agent_speaking'
   | 'metrics_updated'
@@ -89,6 +110,8 @@ export interface AwaazLabsUvaVoiceEventMap {
   error: [AwaazLabsUvaVoiceError];
   ended: [unknown];
   connected: [];
+  /** Fired just before `connected` with mint vs LiveKit join split (room_connected diagnosis). */
+  connect_timing: [ConnectTiming];
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
@@ -126,6 +149,10 @@ export class AwaazLabsUvaVoice {
   /** Wall clock when `session` was last received (connect or successful refresh). */
   private sessionReceivedAt: number | null = null;
   private state: ConnectionState = 'idle';
+  /** Last emitted speaking flags — skip no-op ActiveSpeakersChanged churn. */
+  private lastCallerSpeaking: boolean | null = null;
+  private lastAgentSpeaking: boolean | null = null;
+  private lastConnectTiming: ConnectTiming | null = null;
 
   static async listVoices(endpointUrl: string, timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS): Promise<Voice[]> {
     if (!endpointUrl.trim()) {
@@ -167,6 +194,11 @@ export class AwaazLabsUvaVoice {
     return this.state === 'connected';
   }
 
+  /** Last successful connect() mint vs LiveKit join timings, or null before first connect. */
+  get connectTiming(): ConnectTiming | null {
+    return this.lastConnectTiming;
+  }
+
   /** Whether the local microphone track is currently enabled. `false` when not connected. */
   get isMicMuted(): boolean {
     return this.room ? !this.room.localParticipant.isMicrophoneEnabled : false;
@@ -175,7 +207,7 @@ export class AwaazLabsUvaVoice {
   /** Enable/disable the local microphone track. No-op if not connected. */
   async setMicMuted(muted: boolean): Promise<void> {
     if (!this.room) return;
-    await this.room.localParticipant.setMicrophoneEnabled(!muted);
+    await this.room.localParticipant.setMicrophoneEnabled(!muted, MIC_CAPTURE_OPTIONS);
   }
 
   async connect(opts: ConnectOptions): Promise<void> {
@@ -188,15 +220,20 @@ export class AwaazLabsUvaVoice {
 
     this.state = 'connecting';
 
-    const room = new Room();
+    const room = new Room({
+      audioCaptureDefaults: MIC_CAPTURE_OPTIONS,
+    });
     this.wireRoomEvents(room);
 
     // Acquire microphone access concurrently with fetching the session token
-    const micPromise = room.localParticipant.setMicrophoneEnabled(true).catch(() => {
-      // Ignore here, we will check isMicrophoneEnabled after connecting
-    });
+    const micPromise = room.localParticipant
+      .setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS)
+      .catch(() => {
+        // Ignore here, we will check isMicrophoneEnabled after connecting
+      });
 
     let body: SessionResponse;
+    const mintStarted = performance.now();
     try {
       const res = await fetchWithTimeout(
         this.options.sessionEndpoint,
@@ -225,7 +262,9 @@ export class AwaazLabsUvaVoice {
       if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
+    const mintMs = Math.round(performance.now() - mintStarted);
 
+    const connectStarted = performance.now();
     try {
       // Align LiveKit join timeouts with fetchTimeoutMs so a hung signalling path
       // cannot sit open forever after a successful mint (F-M14 adjacent hang).
@@ -240,12 +279,30 @@ export class AwaazLabsUvaVoice {
       if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
+    const livekitConnectMs = Math.round(performance.now() - connectStarted);
+    let livekitUrlHost: string | undefined;
+    try {
+      livekitUrlHost = new URL(body.wsUrl).host;
+    } catch {
+      livekitUrlHost = undefined;
+    }
+    const quality = room.localParticipant?.connectionQuality;
+    this.lastConnectTiming = {
+      mintMs,
+      livekitConnectMs,
+      livekitUrlHost,
+      connectionQuality: quality != null ? String(quality) : undefined,
+    };
+    this.emit('connect_timing', this.lastConnectTiming);
+    // Emit after timings so hosts can read connectTiming inside connected handlers.
+    this.state = 'connected';
+    this.emit('connected');
 
     await micPromise;
     if (!room.localParticipant.isMicrophoneEnabled) {
       // Pre-connect enable often no-ops; retry after the room is connected.
       try {
-        await room.localParticipant.setMicrophoneEnabled(true);
+        await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS);
       } catch {
         // Fall through to the enabled check below.
       }
@@ -281,6 +338,8 @@ export class AwaazLabsUvaVoice {
     if (!room) {
       this.session = null;
       this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
       this.state = 'idle';
       return;
     }
@@ -296,6 +355,8 @@ export class AwaazLabsUvaVoice {
       this.room = null;
       this.session = null;
       this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
       this.state = 'idle';
       if (!canDisconnect) {
         this.emit('disconnected', reason);
@@ -329,8 +390,8 @@ export class AwaazLabsUvaVoice {
 
   private wireRoomEvents(room: Room): void {
     room.on(RoomEvent.Connected, () => {
+      // Public `connected` is emitted from connect() after mint/join timings are recorded.
       this.state = 'connected';
-      this.emit('connected');
     });
 
     room.on(RoomEvent.Disconnected, (reason) => {
@@ -339,9 +400,20 @@ export class AwaazLabsUvaVoice {
       this.room = null;
       this.session = null;
       this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
       this.state = 'idle';
       this.emit('disconnected', reason);
       this.emit('ended', reason);
+    });
+
+    room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      if (!participant?.isLocal || !this.lastConnectTiming) return;
+      // Refresh quality on the last timing snapshot for hosts that re-read connectTiming.
+      this.lastConnectTiming = {
+        ...this.lastConnectTiming,
+        connectionQuality: String(quality),
+      };
     });
 
     room.on(
@@ -355,9 +427,19 @@ export class AwaazLabsUvaVoice {
     );
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      // Local mic only — do not treat remote/agent speakers as "caller speaking"
+      // (that false positive made demos look like VAD barge-in when the agent talked).
+      const callerSpeaking = speakers.some((speaker) => speaker.isLocal);
       const agentSpeaking = speakers.some((speaker) => !speaker.isLocal);
-      this.emit('speaking', speakers.length > 0);
-      this.emit('agent_speaking', agentSpeaking);
+      // Emit only on edge changes — LiveKit often re-fires the same speaker set.
+      if (callerSpeaking !== this.lastCallerSpeaking) {
+        this.lastCallerSpeaking = callerSpeaking;
+        this.emit('speaking', callerSpeaking);
+      }
+      if (agentSpeaking !== this.lastAgentSpeaking) {
+        this.lastAgentSpeaking = agentSpeaking;
+        this.emit('agent_speaking', agentSpeaking);
+      }
     });
 
     // --- AUDIO PLAYBACK FIX ---

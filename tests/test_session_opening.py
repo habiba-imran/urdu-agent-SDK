@@ -87,12 +87,16 @@ def test_apply_session_opening_dispatches(monkeypatch):
             self.interrupted = False
             self._exception = None
             self.waited = False
+            self._cbs = []
 
         async def wait_for_playout(self):
             self.waited = True
 
         def exception(self):
             return self._exception
+
+        def add_done_callback(self, cb):
+            self._cbs.append(cb)
 
     class FakeSession:
         def __init__(self):
@@ -101,6 +105,7 @@ def test_apply_session_opening_dispatches(monkeypatch):
             self.generated = None
             self.generate_kwargs = None
             self.last_handle = None
+            self.userdata = SimpleNamespace(opening_active=False)
 
         def say(self, text, **kwargs):
             self.said = text
@@ -125,6 +130,10 @@ def test_apply_session_opening_dispatches(monkeypatch):
     asyncio.run(apply_session_opening(say_session, _cfg(greeting="Hello there."), logger))
     assert say_session.said == "Hello there."
     assert say_session.say_kwargs == {"allow_interruptions": True}
+    assert say_session.userdata.opening_active is True
+    assert say_session.last_handle._cbs
+    say_session.last_handle._cbs[0](say_session.last_handle)
+    assert say_session.userdata.opening_active is False
     assert say_session.generated is None
 
     tel_session = FakeSession()

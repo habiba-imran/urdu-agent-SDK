@@ -86,7 +86,10 @@ def resolve_session_opening(cfg: AgentConfig) -> SessionOpening:
 def greeting_allow_interruptions(explicit: bool | None = None) -> bool:
     """WebRTC/telephony greetings are interruptible by default (Retell/Vapi feel).
 
-    Set ``UVA_GREETING_INTERRUPTIBLE=0`` if mic-echo barge-in shows up in smoke.
+    Real barge-in must be answered (STT warm during opening + native turn commit).
+    Echo-only chops without a user transcript are handled by
+    ``resume_false_interruption`` and by not force-flushing VAD during opening.
+    Set ``UVA_GREETING_INTERRUPTIBLE=0`` only if you need a locked opening line.
     An explicit ``allow_interruptions`` argument always wins.
     """
     if explicit is not None:
@@ -160,10 +163,20 @@ async def apply_session_opening(
 
     When ``greeting_audio`` is provided for ``mode=say``, PCM is replayed via
     ``session.say(..., audio=)`` (no live TTS RTT). Interruptibility defaults to
-    True; override with ``UVA_GREETING_INTERRUPTIBLE=0`` if connect-time echo is bad.
+    True; set ``UVA_GREETING_INTERRUPTIBLE=0`` to lock the opening line.
     """
     opening = resolve_session_opening(cfg)
     interruptible = greeting_allow_interruptions(allow_interruptions)
+    userdata = getattr(session, "userdata", None)
+
+    def _clear_opening_flag(_handle: Any = None) -> None:
+        if userdata is not None:
+            userdata.opening_active = False
+
+    def _arm_opening_flag() -> None:
+        if userdata is not None:
+            userdata.opening_active = True
+
     if opening.mode == "wait":
         logger.info("session opening first_speaker=user — waiting for caller")
         return opening
@@ -176,21 +189,31 @@ async def apply_session_opening(
             greeting_audio is not None,
         )
         # Static greeting: TTS-only, no LLM (UVA-10). Prefer cached PCM when present.
+        _arm_opening_flag()
         if greeting_audio is not None:
-            session.say(
+            handle = session.say(
                 opening.text,
                 audio=greeting_audio,
                 allow_interruptions=interruptible,
             )
         else:
-            session.say(opening.text, allow_interruptions=interruptible)
+            handle = session.say(opening.text, allow_interruptions=interruptible)
+        if handle is not None and hasattr(handle, "add_done_callback"):
+            handle.add_done_callback(_clear_opening_flag)
+        else:
+            _clear_opening_flag()
         return opening
     logger.info(
         "session opening first_speaker=agent generated_greeting allow_interruptions=%s",
         interruptible,
     )
-    session.generate_reply(
+    _arm_opening_flag()
+    handle = session.generate_reply(
         instructions=opening.instructions,
         allow_interruptions=interruptible,
     )
+    if handle is not None and hasattr(handle, "add_done_callback"):
+        handle.add_done_callback(_clear_opening_flag)
+    else:
+        _clear_opening_flag()
     return opening

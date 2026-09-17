@@ -40,7 +40,12 @@ from .latency import (
     wire_turn_latency,
 )
 from .humanization import build_turn_profile, resolve_effective_providers, turn_profile_to_livekit_options
-from .session_opening import apply_session_opening, plan_greeting_prewarm, resolve_session_opening
+from .session_opening import (
+    apply_session_opening,
+    greeting_allow_interruptions,
+    plan_greeting_prewarm,
+    resolve_session_opening,
+)
 from .greeting_cache import (
     await_greeting_frames,
     frames_to_async_iterable,
@@ -312,9 +317,12 @@ async def build_session(
     opening = resolve_session_opening(cfg)
     # Static say: skip TTS websocket prewarm — cache hit replays PCM; miss uses
     # single-flight synthesize (one TTS request shared by cache fill + opening).
-    # STT is deferred until after opening (see _await_opening_and_speak) so it
-    # does not compete with greeting TTS bandwidth on the first-audio path.
+    # When the greeting is interruptible, keep STT warm so barge-in speech is
+    # transcribed and answered instead of chopping the greeting into dead air.
     skip_tts_prewarm = False
+    interruptible_opening = (
+        opening.mode in ("say", "generate_reply") and greeting_allow_interruptions()
+    )
     if opening.mode == "say" and opening.text:
         cache_key = make_greeting_cache_key(
             agent_id=cfg.agent_id,
@@ -351,9 +359,9 @@ async def build_session(
         room_name=room_name,
         await_llm=(audio_channel == "telephony"),
         skip_tts=skip_tts_prewarm,
-        # Static say: do not warm STT concurrently with greeting synth (bandwidth).
-        # STT is warmed after opening speaks — see _await_opening_and_speak.
-        skip_stt=(opening.mode == "say" and bool(opening.text)),
+        # Locked (non-interruptible) say: defer STT until after greeting for bandwidth.
+        # Interruptible say/generate_reply: warm STT now so barge-in can be answered.
+        skip_stt=(opening.mode == "say" and bool(opening.text) and not interruptible_opening),
     )
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
@@ -545,9 +553,9 @@ async def _await_opening_and_speak(
         greeting_audio=greeting_audio,
     )
 
-    # Static say skipped STT during greeting synth — warm STT now so barge-in is ready
-    # without having competed with first-audio TTS bandwidth.
-    if plan.mode == "say":
+    # Locked (non-interruptible) say skipped STT during greeting synth — warm it now.
+    # Interruptible openings already warmed STT in schedule_provider_prewarm.
+    if plan.mode == "say" and not greeting_allow_interruptions():
         stt = getattr(session, "stt", None) or getattr(session, "_stt", None)
         if stt is not None:
             from worker.latency import prewarm_stt
@@ -1178,7 +1186,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         from livekit.agents.log import logger as _opening_logger
 
         latency_tracker = wire_turn_latency(session_obj, ctx.room, _opening_logger)
-        wire_barge_in_flush(session_obj, _opening_logger)
+        wire_barge_in_flush(session_obj, _opening_logger, audio_channel=channel)
         if getattr(session_obj, "userdata", None) is not None:
             session_obj.userdata.latency_tracker = latency_tracker
 

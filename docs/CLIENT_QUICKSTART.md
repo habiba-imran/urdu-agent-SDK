@@ -30,27 +30,33 @@ Browser SDK -> host backend -> AwaazLabs-UVA session service -> LiveKit worker.
 
 The browser never signs requests or calls AwaazLabs-UVA upstream services itself.
 
-## Step 1: install the SDK
+## Step 1: install the SDKs
+
+Browser app:
 
 ```bash
 npm install @awaazlabs-uva/voice
 ```
 
-## Step 2: run the host backend
-
-Use `demo-app/backend/`. It depends on the local `sdk-server/` package, so from `demo-app/` run
-`npm run build:sdk` and `npm run install:all` once first.
-
-Copy:
+Host backend (agent list / capabilities / pipeline helpers):
 
 ```bash
-cp .env.example .env
+npm install @awaazlabs-uva/agents
 ```
 
-Set:
+## Step 2: run the host backend
+
+Use `demo-app/backend/` as the reference. From `demo-app/` run once:
+
+```bash
+npm run bootstrap   # npm-installs @awaazlabs-uva/voice + @awaazlabs-uva/agents
+npm run install:all
+```
+
+Copy `backend/.env.example` → `backend/.env` and set:
 
 - `UVA_CONTROL_PLANE_URL` — the session upstream, supplied through the secure onboarding channel
-- `UVA_API_BASE_URL` — tenant API base URL (only needed for the optional agent listing)
+- `UVA_API_BASE_URL` — tenant API base URL (needed for the demo provider picker)
 - `UVA_TENANT_ID`
 - `UVA_HMAC_SECRET`
 - `UVA_PUBLISHABLE_KEY`
@@ -61,26 +67,25 @@ Set:
 Start it:
 
 ```bash
-npm install
-npm run dev
+npm run dev:backend
 ```
 
 By default it listens on `http://localhost:3000`.
 
 ## Step 3: configure the browser example or your own app
 
-If you are using `demo-app/frontend/`, copy `.env.example` to `.env` and set:
+If you are using `demo-app/frontend/`, copy `frontend/.env.example` to `frontend/.env` and set:
 
 - `VITE_UVA_PUBLISHABLE_KEY`
 - `VITE_UVA_SESSION_ENDPOINT=http://localhost:3000/api/voice/session`
 - `VITE_UVA_REFRESH_ENDPOINT=http://localhost:3000/api/voice/session/refresh`
 - `VITE_UVA_AGENT_ID`
+- optional `VITE_UVA_FETCH_TIMEOUT_MS` (default `15000`)
 
 Run it:
 
 ```bash
-npm install
-npm run dev
+npm run dev:frontend
 ```
 
 ## Step 4: minimal integration code

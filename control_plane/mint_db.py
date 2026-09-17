@@ -1,11 +1,11 @@
-"""Process-local DB connection reuse for the worker hot path.
+"""Process-local DB connection reuse for control-plane session mint.
 
-Cross-region Supabase pooler TLS often costs 1–3s per ``psycopg.connect``. Opening a
-fresh TCP/TLS session on every config/stale lookup dominated ``build_ms`` / stale-check
-timings. One locked connection per OS process avoids that without adding ``psycopg_pool``.
+Remote Supabase pooler TLS often costs 1–3s per fresh ``psycopg.connect``. Mint used
+to open a new TCP/TLS session on every ``POST /v1/session``, which dominated
+``room_connected`` when LiveKit join was otherwise healthy.
 
-Safe for Windows THREAD job runners: the lock serializes checkouts so two jobs never
-share a connection concurrently. Callers must use short transactions (``set local`` is OK).
+One locked connection per OS process (same pattern as ``worker.db_pool``). Safe under
+FastAPI's sync-threadpool mint handlers: the lock serializes checkouts.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 
 import psycopg
 from psycopg import Connection
@@ -27,7 +26,7 @@ try:
 except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
-logger = logging.getLogger("worker.db_pool")
+logger = logging.getLogger("control_plane.mint_db")
 
 _lock = threading.Lock()
 _cached: Connection | None = None
@@ -45,7 +44,7 @@ def _drop_cached_unlocked() -> None:
         pass
 
 
-def reset_worker_db_pool() -> None:
+def reset_mint_db_pool() -> None:
     """Close and forget the cached connection (tests / fork hygiene)."""
     with _lock:
         _drop_cached_unlocked()
@@ -68,12 +67,10 @@ def _ensure_connection(connect_timeout: float) -> Connection:
 
 
 def _normalize_idle(conn: Connection) -> None:
-    """Leave the connection IDLE for the next checkout (clear aborted tx / leftovers)."""
     try:
         status = conn.info.transaction_status
     except Exception:
         return
-    # psycopg.pq.TransactionStatus.IDLE == 0
     if int(status) != 0:
         try:
             conn.rollback()
@@ -82,8 +79,8 @@ def _normalize_idle(conn: Connection) -> None:
 
 
 @contextmanager
-def worker_db_connection(*, connect_timeout: float = 5.0) -> Iterator[Connection]:
-    """Checkout the process-local connection for the duration of the ``with`` block."""
+def mint_db_connection(*, connect_timeout: float = 10.0) -> Iterator[Connection]:
+    """Checkout the process-local mint connection for the duration of the ``with`` block."""
     with _lock:
         try:
             conn = _ensure_connection(connect_timeout)
@@ -96,14 +93,3 @@ def worker_db_connection(*, connect_timeout: float = 5.0) -> Iterator[Connection
         except Exception:
             _drop_cached_unlocked()
             raise
-
-
-def worker_db_execute(
-    sql: str,
-    params: tuple[Any, ...] | None = None,
-    *,
-    connect_timeout: float = 5.0,
-) -> Any:
-    """Run a single statement on the pooled connection; return ``cursor.fetchone()``."""
-    with worker_db_connection(connect_timeout=connect_timeout) as conn:
-        return conn.execute(sql, params).fetchone()

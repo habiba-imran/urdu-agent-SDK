@@ -44,6 +44,7 @@ except ImportError:
 
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
+from .mint_db import mint_db_connection  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
 from .warm import run_warm_probe  # noqa: E402
@@ -65,6 +66,7 @@ _LK_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME") or _ENV.get(
 )
 RATE_LIMIT_PER_MIN = 120
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_mint_log = logging.getLogger("control_plane.mint")
 
 
 def _require_env() -> None:
@@ -548,8 +550,9 @@ def _dev_mint_session(
         record_mint_rejection(tenant_id, 429, "rate limited")
         raise HTTPException(status_code=429, detail="rate limited")
 
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+    with mint_db_connection(connect_timeout=10) as conn:
         try:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -563,6 +566,13 @@ def _dev_mint_session(
                 signature=signature,
                 origin=request.headers.get("origin"),
             )
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint",
+                int((time.monotonic() - mint_t0) * 1000),
+                tenant_id,
+                agent_id,
+                res.get("roomName"),
+            )
         except MintError as e:
             if (
                 auto_reset_quota
@@ -570,6 +580,7 @@ def _dev_mint_session(
                 and e.reason == "concurrent cap reached"
             ):
                 _dev_reset_concurrency(conn, tenant_id)
+                mint_t0 = time.monotonic()
                 res = mint_session(
                     conn=conn,
                     secrets=_secrets,
@@ -582,6 +593,13 @@ def _dev_mint_session(
                     agent_id=agent_id,
                     signature=signature,
                     origin=request.headers.get("origin"),
+                )
+                _mint_log.info(
+                    "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint_retry",
+                    int((time.monotonic() - mint_t0) * 1000),
+                    tenant_id,
+                    agent_id,
+                    res.get("roomName"),
                 )
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
@@ -606,7 +624,8 @@ def create_session(
         return JSONResponse({"error": "rate limited"}, status_code=429)
     greeting = _opening_greeting(body.greeting, body.custom_greeting)
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with mint_db_connection(connect_timeout=10) as conn:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -619,6 +638,13 @@ def create_session(
                 agent_id=body.agent_id,
                 signature=x_signature,
                 origin=request.headers.get("origin"),
+            )
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=session",
+                int((time.monotonic() - mint_t0) * 1000),
+                x_tenant_id,
+                body.agent_id,
+                res.get("roomName"),
             )
             return _session_response(
                 _with_dispatch(
