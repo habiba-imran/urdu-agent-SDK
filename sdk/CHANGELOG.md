@@ -8,6 +8,10 @@ Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `
 
 ## [Unreleased]
 
+## [1.1.0]
+
+First public npm release of `@awaazlabs-uva/voice`.
+
 ### Fixed
 - Mic capture now requests browser echo cancellation / noise suppression / AGC so agent
   TTS on speakers is less likely to re-enter the mic and look like barge-in flicker.
@@ -34,5 +38,5 @@ Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `
 ## Pre-registry builds
 
 - `1.0.1` — hand-delivered tarball in `client-submission_v2/` (commit `68e1643`). Never published
-  to npm. `package.json` in this directory still reads `0.1.0`; pick the first registry version
-  so it does not go backwards for anyone holding the `1.0.1` tarball.
+  to npm. First registry version is `1.1.0` so it does not go backwards for anyone holding the
+  `1.0.1` tarball.
