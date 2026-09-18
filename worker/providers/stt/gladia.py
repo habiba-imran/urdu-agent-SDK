@@ -25,4 +25,7 @@ def build(language: str) -> Any:
     # upgrade, March 2026, are the only recent model-accuracy changelog entries, both unrelated
     # to Urdu; docs.gladia.io/chapters/language/code-switching still warns broad language sets
     # cause "frequent misdetections"). See docs/40-ADR.md ADR-009.
+    #
+    # Phase 2 humanization: do NOT flip code_switching on for "naturalness" — keep False.
+    # No stt_options passthrough until portal allowlists safe Gladia keys.
     return gladia.STT(languages=[language], code_switching=False)

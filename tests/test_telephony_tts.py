@@ -57,6 +57,36 @@ def test_force_cartesia_remaps_rime_on_telephony():
     assert voice == TELEPHONY_CARTESIA_PROVIDER_VOICE_ID
 
 
+def test_force_cartesia_skips_urdu_uplift_on_telephony():
+    """Critical: Urdu PSTN must keep Uplift — never English Cartesia Katie."""
+    cfg, voice, forced = force_cartesia_for_telephony(
+        _cfg(
+            agent_language="ur",
+            tts_provider="uplift",
+            tts_voice_id="v_meklc281",
+            voice_id="v_meklc281",
+            llm_provider="gemini",
+        ),
+        "v_meklc281",
+        audio_channel="telephony",
+    )
+    assert forced is False
+    assert cfg.tts_provider == "uplift"
+    assert cfg.tts_voice_id == "v_meklc281"
+    assert voice == "v_meklc281"
+
+
+def test_force_cartesia_skips_elevenlabs_on_telephony():
+    cfg, voice, forced = force_cartesia_for_telephony(
+        _cfg(tts_provider="elevenlabs", tts_voice_id="el-voice"),
+        "el-voice",
+        audio_channel="telephony",
+    )
+    assert forced is False
+    assert cfg.tts_provider == "elevenlabs"
+    assert voice == "el-voice"
+
+
 def test_force_groq_remaps_gemini_on_english_telephony(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     cfg, forced = force_groq_for_telephony(_cfg(), audio_channel="telephony")

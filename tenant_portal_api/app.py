@@ -12,8 +12,9 @@ from __future__ import annotations
 import os
 import secrets as _pysecrets
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
@@ -21,13 +22,8 @@ from fastapi import FastAPI, Header, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-try:
-    from scripts.dbconn import conn_kwargs
-except ImportError:
-    from dbconn import conn_kwargs  # type: ignore # noqa: E402
-
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
+from .db_pool import portal_db_connection
 from .machine_auth import MachineAuthError, verify_machine_request
 from .provider_capabilities import get_public_capabilities
 from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
@@ -148,10 +144,22 @@ class UpdateAgentBody(BaseModel):
     tools_auth_secret: str | None = Field(default=None)
 
 
-def _conn() -> psycopg.Connection:
-    # Fail fast on DB stalls so Render workers do not sit blocked long enough for
-    # health checks to start timing out behind queued requests.
-    return psycopg.connect(**conn_kwargs(), connect_timeout=3)
+@contextmanager
+def _conn(*, connect_timeout: float = 10.0) -> Iterator[psycopg.Connection]:
+    """Process-local pooled checkout.
+
+    Was a fresh ``psycopg.connect(..., connect_timeout=3)`` closed on every
+    ``with`` exit — cold TLS to Supabase often exceeds 3s, causing intermittent
+    ``ConnectionTimeout`` on machine/provider-capabilities.
+    """
+    try:
+        with portal_db_connection(connect_timeout=connect_timeout) as conn:
+            yield conn
+    except psycopg.errors.ConnectionTimeout as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="database unreachable (connection timeout)",
+        ) from exc
 
 
 def _resolve_provider_fields(

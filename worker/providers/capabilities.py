@@ -109,8 +109,9 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         "llm": {
             "gemini": {
                 "state": "enabled",
-                "models": ["gemini-2.5-flash"],
-                "default_model": "gemini-2.5-flash",
+                # Advertised ID; worker remaps to gemini-3.6-flash at session start.
+                "models": ["gemini-3.6-flash", "gemini-2.5-flash"],
+                "default_model": "gemini-3.6-flash",
             },
         },
         "tts": {
@@ -133,25 +134,26 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         "llm": {
             "gemini": {
                 "state": "enabled",
-                "models": ["gemini-2.5-flash"],
-                "default_model": "gemini-2.5-flash",
+                "models": ["gemini-3.6-flash", "gemini-2.5-flash"],
+                "default_model": "gemini-3.6-flash",
             },
             "groq": {
                 "state": "enabled",
-                # Retired Groq IDs stay listed so existing agent rows and client pickers still
-                # validate; worker/providers/llm/groq.py remaps them at session start.
+                # Live production IDs first. Retired Llama/Qwen IDs stay listed so existing
+                # agent rows and client pickers still validate; groq.py remaps at session start.
                 "models": [
-                    "qwen/qwen3.6-27b",
-                    "openai/gpt-oss-120b",
                     "openai/gpt-oss-20b",
+                    "openai/gpt-oss-120b",
+                    "qwen/qwen3.6-27b",
+                    "qwen/qwen3.8-27b",
                     "qwen/qwen3-32b",
                     "llama-3.1-8b-instant",
                     "llama-3.3-70b-versatile",
                     "meta-llama/llama-4-scout-17b-16e-instruct",
                     "moonshotai/kimi-k2-instruct-0905",
                 ],
-                # Live free-tier default (llama-3.1-8b-instant retired 2026-08-16).
-                "default_model": "qwen/qwen3.6-27b",
+                # Free/developer production default (Llama free IDs + qwen3.6 404 on many keys).
+                "default_model": "openai/gpt-oss-20b",
             },
         },
         "tts": {

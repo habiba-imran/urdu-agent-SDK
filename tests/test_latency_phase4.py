@@ -22,7 +22,9 @@ def test_turn_handling_barge_in_and_preemptive_partial_feed():
     interruption = TURN_HANDLING_OPTIONS["interruption"]
     assert interruption["enabled"] is True
     assert interruption["discard_audio_if_uninterruptible"] is True
-    assert interruption["min_duration"] <= 0.35
+    # Longer than brief echo blips; still under ~0.7s so intentional barge-in feels snappy.
+    assert 0.4 <= interruption["min_duration"] <= 0.7
+    assert interruption["resume_false_interruption"] is False
     preemptive = TURN_HANDLING_OPTIONS["preemptive_generation"]
     assert preemptive["enabled"] is True
     assert preemptive["preemptive_tts"] is True
@@ -43,6 +45,8 @@ def test_telephony_turn_handling_disables_false_interruption_resume():
     assert TELEPHONY_TURN_HANDLING_OPTIONS["preemptive_generation"]["enabled"] is False
     web = turn_handling_for_channel("webrtc")
     assert web["preemptive_generation"]["enabled"] is True
+    assert web["interruption"]["resume_false_interruption"] is False
+    assert web["interruption"]["min_duration"] >= 0.4
     groq_web = turn_handling_for_channel("webrtc", llm_provider="groq")
     assert groq_web["preemptive_generation"]["enabled"] is False
 
@@ -71,8 +75,12 @@ def test_session_room_options_telephony_keeps_room():
     assert opts.delete_room_on_close is False
 
 
-def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent():
+def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("UVA_FORCE_BARGE_IN_FLUSH", "1")
     session = MagicMock()
+    session.userdata = SimpleNamespace(opening_active=False)
     logger = MagicMock()
     handlers: dict[str, object] = {}
 
@@ -80,7 +88,7 @@ def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent():
         handlers[event] = handler
 
     session.on.side_effect = _on
-    wire_barge_in_flush(session, logger)
+    wire_barge_in_flush(session, logger, audio_channel="webrtc")
 
     handlers["agent_state_changed"](
         SimpleNamespace(new_state="speaking", old_state="listening")
@@ -90,11 +98,15 @@ def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent():
     )
 
     session.interrupt.assert_called_once_with(force=True)
-    logger.info.assert_called_once()
+    assert any(
+        "interrupted in-flight agent speech" in str(c.args[0])
+        for c in logger.info.call_args_list
+    )
 
 
-def test_wire_barge_in_flush_skips_when_agent_not_speaking():
+def test_wire_barge_in_flush_webrtc_default_skips_force_interrupt():
     session = MagicMock()
+    session.userdata = SimpleNamespace(opening_active=False)
     logger = MagicMock()
     handlers: dict[str, object] = {}
 
@@ -102,7 +114,83 @@ def test_wire_barge_in_flush_skips_when_agent_not_speaking():
         handlers[event] = handler
 
     session.on.side_effect = _on
-    wire_barge_in_flush(session, logger)
+    wire_barge_in_flush(session, logger, audio_channel="webrtc")
+
+    handlers["agent_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+    handlers["user_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+
+    session.interrupt.assert_not_called()
+    assert any(
+        "force flush off" in str(c.args[0]) for c in logger.info.call_args_list
+    )
+
+
+def test_wire_barge_in_flush_telephony_default_force_interrupts():
+    session = MagicMock()
+    session.userdata = SimpleNamespace(opening_active=False)
+    logger = MagicMock()
+    handlers: dict[str, object] = {}
+
+    def _on(event: str, handler):
+        handlers[event] = handler
+
+    session.on.side_effect = _on
+    wire_barge_in_flush(session, logger, audio_channel="telephony")
+
+    handlers["agent_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+    handlers["user_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+
+    session.interrupt.assert_called_once_with(force=True)
+
+
+def test_wire_barge_in_flush_skips_force_during_opening(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("UVA_FORCE_BARGE_IN_FLUSH", "1")
+    session = MagicMock()
+    session.userdata = SimpleNamespace(opening_active=True)
+    logger = MagicMock()
+    handlers: dict[str, object] = {}
+
+    def _on(event: str, handler):
+        handlers[event] = handler
+
+    session.on.side_effect = _on
+    wire_barge_in_flush(session, logger, audio_channel="webrtc")
+
+    handlers["agent_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+    handlers["user_state_changed"](
+        SimpleNamespace(new_state="speaking", old_state="listening")
+    )
+
+    session.interrupt.assert_not_called()
+    assert any("opening active" in str(c.args[0]) for c in logger.info.call_args_list)
+
+
+def test_wire_barge_in_flush_skips_when_agent_not_speaking(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("UVA_FORCE_BARGE_IN_FLUSH", "1")
+    session = MagicMock()
+    session.userdata = SimpleNamespace(opening_active=False)
+    logger = MagicMock()
+    handlers: dict[str, object] = {}
+
+    def _on(event: str, handler):
+        handlers[event] = handler
+
+    session.on.side_effect = _on
+    wire_barge_in_flush(session, logger, audio_channel="webrtc")
 
     handlers["user_state_changed"](
         SimpleNamespace(new_state="speaking", old_state="listening")

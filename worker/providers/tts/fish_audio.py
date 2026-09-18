@@ -1,27 +1,25 @@
-"""Fish Audio TTS adapter (Phase 6e, docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md, ADR-036).
+"""Fish Audio TTS adapter (Phase 6e + Phase 3 humanization options).
 
-Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py (provider level) AND
-the specific voice row's own `rollout_state`/`enabled` in the `voices` table are both the real
-gates, not this file. `voice_id` constructor arg verified directly against the installed
-livekit-plugins-fishaudio==1.6.5 package (inspect.signature), not assumed from docs: a real
-keyword-only param. Unlike Cartesia/ElevenLabs, this plugin's constructor has NO `language`
-parameter at all — Fish Audio's voice models are not language-parameterized the same way, so
-`build()` intentionally takes only `voice_id`. The seeded voice (migration
-0020_seed_fish_audio_voice.sql) uses the plugin's own baked-in default voice ID
-(`933563129e564b19a115bedd57b7406a`, `DEFAULT_VOICE_ID` in the package's own tts.py), not an
-invented one.
+Enabled for `en` only. Constructor has no ``language`` param — ``build`` takes voice_id +
+optional ``tts_options``. Verified against livekit-plugins-fishaudio==1.6.5.
 
-Requires FISH_API_KEY (env var, or api_key= kwarg) — the plugin itself raises a clear ValueError
-if neither is set, checked eagerly at construction (same pattern as every other provider adapter
-in this repo).
+Requires FISH_API_KEY (env var, or api_key= kwarg).
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
+from .fish_audio_options import resolve_fish_tts_kwargs
 
-def build(voice_id: str) -> Any:
+
+def build(voice_id: str, tts_options: dict | None = None) -> Any:
     from livekit.plugins import fishaudio
 
-    return fishaudio.TTS(voice_id=voice_id)
+    kwargs = resolve_fish_tts_kwargs(voice_id, tts_options)
+    sig = inspect.signature(fishaudio.TTS)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return fishaudio.TTS(**kwargs)
+    allowed = set(sig.parameters)
+    return fishaudio.TTS(**{k: v for k, v in kwargs.items() if k in allowed})

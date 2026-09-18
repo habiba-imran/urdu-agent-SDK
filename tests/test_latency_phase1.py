@@ -99,6 +99,77 @@ async def test_schedule_provider_prewarm_returns_awaitable_tts_task():
 
 
 @pytest.mark.asyncio
+async def test_schedule_provider_prewarm_skip_tts_on_cache_hit():
+    """Greeting PCM cache hit must not open a TTS websocket (any vendor)."""
+    tts_calls: list[str] = []
+    stt_calls: list[str] = []
+
+    class _EmptyStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def aclose(self) -> None:
+            return None
+
+    class _Tts:
+        def prewarm(self) -> None:
+            tts_calls.append("tts")
+
+    class _Stt:
+        def prewarm(self) -> None:
+            stt_calls.append("stt")
+
+    llm = MagicMock()
+    llm.chat = MagicMock(return_value=_EmptyStream())
+
+    task = schedule_provider_prewarm(
+        tts=_Tts(),
+        llm=llm,
+        stt=_Stt(),
+        room_name="room-cache-hit",
+        skip_tts=True,
+    )
+    await asyncio.wait_for(task, timeout=1.0)
+    assert tts_calls == []
+    assert stt_calls == ["stt"]
+
+
+def test_interruption_mode_defaults_to_vad(monkeypatch):
+    from worker.latency import interruption_mode, turn_handling_for_channel
+
+    monkeypatch.delenv("UVA_INTERRUPTION_MODE", raising=False)
+    assert interruption_mode() == "vad"
+    web = turn_handling_for_channel("webrtc")
+    assert web["interruption"]["mode"] == "vad"
+    tel = turn_handling_for_channel("telephony")
+    assert tel["interruption"]["mode"] == "vad"
+
+
+def test_interruption_mode_adaptive_opt_in(monkeypatch):
+    from worker.latency import interruption_mode, turn_handling_for_channel
+
+    monkeypatch.setenv("UVA_INTERRUPTION_MODE", "adaptive")
+    assert interruption_mode() == "adaptive"
+    assert turn_handling_for_channel("webrtc")["interruption"]["mode"] == "adaptive"
+
+
+def test_turn_handling_deep_copies_do_not_leak_mode(monkeypatch):
+    from worker.latency import turn_handling_for_channel
+
+    monkeypatch.setenv("UVA_INTERRUPTION_MODE", "vad")
+    a = turn_handling_for_channel("webrtc")
+    monkeypatch.setenv("UVA_INTERRUPTION_MODE", "adaptive")
+    b = turn_handling_for_channel("webrtc")
+    assert a["interruption"]["mode"] == "vad"
+    assert b["interruption"]["mode"] == "adaptive"
+    a["interruption"]["min_duration"] = 99.0
+    assert turn_handling_for_channel("webrtc")["interruption"]["min_duration"] != 99.0
+
+
+@pytest.mark.asyncio
 async def test_await_greeting_prewarm_swallows_timeout():
     async def _hang() -> None:
         await asyncio.sleep(10)

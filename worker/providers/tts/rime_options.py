@@ -1,15 +1,15 @@
-"""Rime ``tts_options`` schema and build-time defaults (Phase B humanization).
+"""Rime ``tts_options`` schema and build-time defaults (Phase B + Phase 5).
 
 Stored ``agents.tts_options`` holds tenant overrides only (may be ``{}``). The adapter merges
 with ``RIME_TTS_DEFAULTS`` so existing Rime agents pick up Arcana + WebSocket without a DB
 migration.
 
 The seeded voice catalog uses Arcana speakers (``rime-arcana-*`` -> ``astra``, ``celeste``,
-...). Default ``model`` is ``arcana`` to match the plugin and catalog. Coda remains opt-in
-via ``tts_options.model = \"coda\"`` with a Coda voice such as ``lyra``.
+...). Default ``model`` is ``arcana`` to match the plugin and catalog. Coda / Mist remain
+opt-in via ``tts_options.model`` (pinned plugin Literal: arcana | coda | mistv2 | mistv3).
 
-``speed_alpha`` is the speed control that works over WebSocket (docs/rime-labs-humanization.md).
-Values slightly above 1.0 are the documented "a bit slower / more deliberate" starting point.
+Phase 5B: do **not** carry Arcana ``speed_alpha=1.1`` into Coda/Mist unless the tenant
+explicitly sets ``speed_alpha`` (research: speed semantics differ across Rime models).
 """
 
 from __future__ import annotations
@@ -20,6 +20,10 @@ ALLOWED_RIME_TTS_OPTION_KEYS = frozenset({"model", "speed_alpha", "time_scale_fa
 _ARCANA_SPEAKERS = frozenset(
     {"luna", "celeste", "orion", "ursa", "astra", "esther", "estelle", "andromeda"}
 )
+
+# Pinned livekit-plugins-rime==1.6.5 TTSModels Literal.
+RIME_KNOWN_MODELS = frozenset({"arcana", "coda", "mistv2", "mistv3"})
+_NON_ARCANA_MODELS = frozenset({"coda", "mistv2", "mistv3"})
 
 RIME_TTS_DEFAULTS: dict = {
     "model": "arcana",
@@ -62,7 +66,13 @@ def validate_rime_tts_options(options: dict) -> dict:
         model = options["model"]
         if not isinstance(model, str) or not model.strip():
             raise RimeTtsOptionsError("model must be a non-empty string")
-        normalized["model"] = model.strip()
+        model = model.strip()
+        # Soft gate: known plugin IDs only (fail closed so typos don't hit live Rime).
+        if model not in RIME_KNOWN_MODELS:
+            raise RimeTtsOptionsError(
+                f"rime model must be one of {', '.join(sorted(RIME_KNOWN_MODELS))}"
+            )
+        normalized["model"] = model
 
     if "speed_alpha" in options:
         speed = options["speed_alpha"]
@@ -111,11 +121,16 @@ def resolve_rime_tts_kwargs(
         "speaker": speaker,
         "lang": lang,
         "model": model,
-        "speed_alpha": merged["speed_alpha"],
         "use_websocket": merged["use_websocket"],
         "segment": merged["segment"],
         "sample_rate": profile["sample_rate"],
     }
+    # Phase 5B: Arcana keeps platform speed_alpha; Coda/Mist omit unless explicitly set.
+    if model in _NON_ARCANA_MODELS:
+        if "speed_alpha" in overrides:
+            kwargs["speed_alpha"] = overrides["speed_alpha"]
+    else:
+        kwargs["speed_alpha"] = merged["speed_alpha"]
     if "time_scale_factor" in merged and not merged["use_websocket"]:
         kwargs["time_scale_factor"] = merged["time_scale_factor"]
     return kwargs

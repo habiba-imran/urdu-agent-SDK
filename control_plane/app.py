@@ -16,10 +16,12 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
 
+import aiohttp
 import psycopg
 from dotenv import dotenv_values
 from fastapi import Body, FastAPI, Header, HTTPException, Request, BackgroundTasks
@@ -42,6 +44,7 @@ except ImportError:
 
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
+from .mint_db import mint_db_connection  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
 from .warm import run_warm_probe  # noqa: E402
@@ -63,6 +66,7 @@ _LK_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME") or _ENV.get(
 )
 RATE_LIMIT_PER_MIN = 120
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_mint_log = logging.getLogger("control_plane.mint")
 
 
 def _require_env() -> None:
@@ -363,6 +367,60 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
     )
 
 
+# Agent dispatch runs on the critical path to first audio (audit §3.1). It used to pay for a new
+# event loop (asyncio.run), a new aiohttp session and a new TCP+TLS handshake to LiveKit on every
+# session. Instead, one long-lived event loop on a daemon thread owns one LiveKitAPI client whose
+# keep-alive connections are reused across dispatches. Both are created lazily, per process.
+# livekit-api's own per-attempt timeout is 10 s; allow one region failover.
+_DISPATCH_TIMEOUT_SEC = 20
+# Kept short so an idle pooled connection is rarely stale when reused.
+_DISPATCH_KEEPALIVE_SEC = 30
+_dispatch_lock = threading.Lock()
+_dispatch_loop: asyncio.AbstractEventLoop | None = None
+_dispatch_client: api.LiveKitAPI | None = None
+_dispatch_session: aiohttp.ClientSession | None = None
+
+
+def _get_dispatch_loop() -> asyncio.AbstractEventLoop:
+    global _dispatch_loop
+    with _dispatch_lock:
+        if _dispatch_loop is None or _dispatch_loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever, name="livekit-dispatch", daemon=True
+            ).start()
+            _dispatch_loop = loop
+        return _dispatch_loop
+
+
+def _get_dispatch_client() -> api.LiveKitAPI:
+    """Only called on the dispatch loop's thread, so no lock is needed."""
+    global _dispatch_client, _dispatch_session
+    if _dispatch_client is None:
+        _dispatch_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10),
+            connector=aiohttp.TCPConnector(keepalive_timeout=_DISPATCH_KEEPALIVE_SEC),
+        )
+        _dispatch_client = api.LiveKitAPI(
+            url=_LK_URL,
+            api_key=_LK_KEY,
+            api_secret=_LK_SECRET,
+            session=_dispatch_session,
+        )
+    return _dispatch_client
+
+
+async def _reset_dispatch_client() -> None:
+    """Drop the shared client after a failure so the next dispatch starts from a fresh
+    connection pool instead of reusing a possibly broken one."""
+    global _dispatch_client, _dispatch_session
+    session = _dispatch_session
+    _dispatch_client = None
+    _dispatch_session = None
+    if session is not None and not session.closed:
+        await session.close()
+
+
 async def _dispatch_agent(
     room_name: str,
     *,
@@ -373,18 +431,17 @@ async def _dispatch_agent(
     metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
     if greeting:
         metadata["greeting"] = greeting
-    async with api.LiveKitAPI(
-        url=_LK_URL,
-        api_key=_LK_KEY,
-        api_secret=_LK_SECRET,
-    ) as lkapi:
-        await lkapi.agent_dispatch.create_dispatch(
+    try:
+        await _get_dispatch_client().agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
                 agent_name=_LK_AGENT_NAME,
                 room=room_name,
                 metadata=json.dumps(metadata),
             )
         )
+    except BaseException:
+        await _reset_dispatch_client()
+        raise
 
 
 def _rollback_dispatched_session(
@@ -420,22 +477,27 @@ def _run_dispatch_background(
     room_name: str, tenant_id: str, agent_id: str, greeting: str | None = None
 ) -> None:
     log = logging.getLogger("control_plane.dispatch")
+    started = time.monotonic()
+    future = asyncio.run_coroutine_threadsafe(
+        _dispatch_agent(
+            room_name,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            greeting=greeting,
+        ),
+        _get_dispatch_loop(),
+    )
     try:
-        asyncio.run(
-            _dispatch_agent(
-                room_name,
-                tenant_id=tenant_id,
-                agent_id=agent_id,
-                greeting=greeting,
-            )
-        )
+        future.result(timeout=_DISPATCH_TIMEOUT_SEC)
         log.info(
-            "agent dispatch ok room=%s tenant=%s agent=%s",
+            "agent dispatch ok room=%s tenant=%s agent=%s elapsed_ms=%d",
             room_name,
             tenant_id,
             agent_id,
+            int((time.monotonic() - started) * 1000),
         )
     except Exception:
+        future.cancel()
         log.exception(
             "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
             room_name,
@@ -488,8 +550,9 @@ def _dev_mint_session(
         record_mint_rejection(tenant_id, 429, "rate limited")
         raise HTTPException(status_code=429, detail="rate limited")
 
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+    with mint_db_connection(connect_timeout=10) as conn:
         try:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -503,6 +566,13 @@ def _dev_mint_session(
                 signature=signature,
                 origin=request.headers.get("origin"),
             )
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint",
+                int((time.monotonic() - mint_t0) * 1000),
+                tenant_id,
+                agent_id,
+                res.get("roomName"),
+            )
         except MintError as e:
             if (
                 auto_reset_quota
@@ -510,6 +580,7 @@ def _dev_mint_session(
                 and e.reason == "concurrent cap reached"
             ):
                 _dev_reset_concurrency(conn, tenant_id)
+                mint_t0 = time.monotonic()
                 res = mint_session(
                     conn=conn,
                     secrets=_secrets,
@@ -522,6 +593,13 @@ def _dev_mint_session(
                     agent_id=agent_id,
                     signature=signature,
                     origin=request.headers.get("origin"),
+                )
+                _mint_log.info(
+                    "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint_retry",
+                    int((time.monotonic() - mint_t0) * 1000),
+                    tenant_id,
+                    agent_id,
+                    res.get("roomName"),
                 )
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
@@ -546,7 +624,8 @@ def create_session(
         return JSONResponse({"error": "rate limited"}, status_code=429)
     greeting = _opening_greeting(body.greeting, body.custom_greeting)
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with mint_db_connection(connect_timeout=10) as conn:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -559,6 +638,13 @@ def create_session(
                 agent_id=body.agent_id,
                 signature=x_signature,
                 origin=request.headers.get("origin"),
+            )
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=session",
+                int((time.monotonic() - mint_t0) * 1000),
+                x_tenant_id,
+                body.agent_id,
+                res.get("roomName"),
             )
             return _session_response(
                 _with_dispatch(

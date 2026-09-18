@@ -1,24 +1,30 @@
-"""ElevenLabs TTS adapter (Phase 6d, docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md, ADR-036).
+"""ElevenLabs TTS adapter (Phase 6d + Phase 3 humanization options).
 
 Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py (provider level) AND
 the specific voice row's own `rollout_state`/`enabled` in the `voices` table are both the real
-gates, not this file. `voice_id`/`language` constructor args verified directly against the
-installed livekit-plugins-elevenlabs==1.6.5 package (inspect.signature), not assumed from docs:
-real keyword-only params (note the kwarg is `voice_id`, not `voice` like Cartesia's). The seeded
-voice (migration 0019) uses the plugin's own baked-in default voice ID
-(`hpp4J3VqNfWAUOO0d1Us`, `DEFAULT_VOICE_ID` in the package's own tts.py), not an invented one.
+gates, not this file. Constructor kwargs verified against livekit-plugins-elevenlabs==1.6.5.
 
-Requires ELEVEN_API_KEY (env var, or api_key= kwarg) — the plugin itself raises a clear ValueError
-if neither is set, checked eagerly at construction (same pattern as every other provider adapter
-in this repo).
+Requires ELEVEN_API_KEY (env var, or api_key= kwarg).
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
+from .elevenlabs_options import resolve_elevenlabs_tts_kwargs
 
-def build(voice_id: str, language: str) -> Any:
+
+def build(
+    voice_id: str,
+    language: str,
+    tts_options: dict | None = None,
+) -> Any:
     from livekit.plugins import elevenlabs
 
-    return elevenlabs.TTS(voice_id=voice_id, language=language)
+    kwargs = resolve_elevenlabs_tts_kwargs(voice_id, language, tts_options)
+    sig = inspect.signature(elevenlabs.TTS)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return elevenlabs.TTS(**kwargs)
+    allowed = set(sig.parameters)
+    return elevenlabs.TTS(**{k: v for k, v in kwargs.items() if k in allowed})

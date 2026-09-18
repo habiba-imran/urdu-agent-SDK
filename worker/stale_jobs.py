@@ -56,19 +56,25 @@ def _conn_kwargs() -> dict[str, Any]:
 
 
 def load_session_job_state(room_name: str) -> SessionJobState | None:
-    import psycopg
+    from worker.db_pool import worker_db_connection
 
-    with psycopg.connect(**_conn_kwargs(), connect_timeout=10) as conn:
-        row = conn.execute(
-            """
-            select tenant_id, started_at, ended_at
-            from sessions
-            where room_name = %s
-            order by started_at desc
-            limit 1
-            """,
-            (room_name,),
-        ).fetchone()
+    # Keep this off the greeting critical path: a slow Supabase path must not
+    # burn multi-second connect timeouts before session.start / say().
+    try:
+        with worker_db_connection(connect_timeout=2) as conn:
+            row = conn.execute(
+                """
+                select tenant_id, started_at, ended_at
+                from sessions
+                where room_name = %s
+                order by started_at desc
+                limit 1
+                """,
+                (room_name,),
+            ).fetchone()
+    except Exception:
+        # DB blip → treat as unknown/not-stale and proceed (participant wait still guards orphans).
+        return None
     if row is None:
         return None
     return SessionJobState(
@@ -203,12 +209,38 @@ async def reject_stale_job_request(req: JobRequest) -> None:
     await req.accept()
 
 
-async def abandon_stale_job_if_needed(ctx: Any) -> bool:
-    """Drop stale jobs after accept, before room connect. Returns True if abandoned."""
+async def abandon_stale_job_if_needed(
+    ctx: Any,
+    *,
+    skip_db: bool = False,
+) -> bool:
+    """Drop stale jobs after ``ctx.connect()``. Returns True if abandoned.
+
+    When ``skip_db=True`` (fresh LiveKit dispatch metadata with tenant/agent), skip the
+    Supabase round-trip — the job was just minted/dispatched. Orphans are still cleaned
+    up by ``wait_for_session_participant`` timeout.
+
+    On DB failure we proceed — a hung Supabase path must not sit in front of first audio.
+    """
     from livekit.agents.log import logger
 
     room_name = ctx.room.name
+    if skip_db:
+        logger.info(
+            "stale job check room=%s reject=False reason=skipped_fresh_dispatch ms=0",
+            room_name,
+        )
+        return False
+
+    started = asyncio.get_running_loop().time()
     reject, reason = await asyncio.to_thread(evaluate_session_for_job, room_name)
+    logger.info(
+        "stale job check room=%s reject=%s reason=%s ms=%s",
+        room_name,
+        reject,
+        reason or "-",
+        int(round((asyncio.get_running_loop().time() - started) * 1000)),
+    )
     if not reject:
         return False
 

@@ -14,12 +14,20 @@ def test_empty_options_validate_and_apply_defaults():
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {})
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]
     assert kwargs["speed"] == CARTESIA_TTS_DEFAULTS["speed"]
+    # Default spoken_style=light keeps baseline constructor emotion.
     assert kwargs["emotion"] == CARTESIA_TTS_DEFAULTS["emotion"]
     assert kwargs["voice"] == "voice-uuid"
     assert kwargs["language"] == "en"
     assert kwargs["encoding"] == "pcm_s16le"
     assert kwargs["sample_rate"] == 16000
     assert "volume" not in kwargs
+
+
+def test_light_style_keeps_baseline_emotion():
+    kwargs = resolve_cartesia_tts_kwargs(
+        "voice-uuid", "en", {"spoken_style": "light"}
+    )
+    assert kwargs["emotion"] == CARTESIA_TTS_DEFAULTS["emotion"]
 
 
 def test_telephony_channel_uses_linear_pcm_for_livekit():

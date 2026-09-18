@@ -3,8 +3,14 @@
 import asyncio
 from types import SimpleNamespace
 
+from livekit import rtc
+
 from worker.config import AgentConfig
-from worker.session_opening import apply_session_opening, resolve_session_opening
+from worker.session_opening import (
+    apply_session_opening,
+    greeting_allow_interruptions,
+    resolve_session_opening,
+)
 
 
 def _cfg(**overrides) -> AgentConfig:
@@ -67,18 +73,30 @@ def test_rime_custom_greeting_strips_cartesia_ssml():
     assert "thanks for calling" in (opening.text or "")
 
 
-def test_apply_session_opening_dispatches():
+def test_greeting_interruptible_defaults_true_with_env_escape():
+    assert greeting_allow_interruptions(None) is True
+    assert greeting_allow_interruptions(False) is False
+    assert greeting_allow_interruptions(True) is True
+
+
+def test_apply_session_opening_dispatches(monkeypatch):
+    monkeypatch.delenv("UVA_GREETING_INTERRUPTIBLE", raising=False)
+
     class FakeHandle:
         def __init__(self):
             self.interrupted = False
             self._exception = None
             self.waited = False
+            self._cbs = []
 
         async def wait_for_playout(self):
             self.waited = True
 
         def exception(self):
             return self._exception
+
+        def add_done_callback(self, cb):
+            self._cbs.append(cb)
 
     class FakeSession:
         def __init__(self):
@@ -87,6 +105,7 @@ def test_apply_session_opening_dispatches():
             self.generated = None
             self.generate_kwargs = None
             self.last_handle = None
+            self.userdata = SimpleNamespace(opening_active=False)
 
         def say(self, text, **kwargs):
             self.said = text
@@ -110,7 +129,11 @@ def test_apply_session_opening_dispatches():
     say_session = FakeSession()
     asyncio.run(apply_session_opening(say_session, _cfg(greeting="Hello there."), logger))
     assert say_session.said == "Hello there."
-    assert say_session.say_kwargs == {"allow_interruptions": False}
+    assert say_session.say_kwargs == {"allow_interruptions": True}
+    assert say_session.userdata.opening_active is True
+    assert say_session.last_handle._cbs
+    say_session.last_handle._cbs[0](say_session.last_handle)
+    assert say_session.userdata.opening_active is False
     assert say_session.generated is None
 
     tel_session = FakeSession()
@@ -125,8 +148,36 @@ def test_apply_session_opening_dispatches():
     assert tel_session.said == "Hello there."
     assert tel_session.say_kwargs == {"allow_interruptions": True}
 
+    echo_session = FakeSession()
+    monkeypatch.setenv("UVA_GREETING_INTERRUPTIBLE", "0")
+    asyncio.run(apply_session_opening(echo_session, _cfg(greeting="Hello there."), logger))
+    assert echo_session.say_kwargs == {"allow_interruptions": False}
+    monkeypatch.delenv("UVA_GREETING_INTERRUPTIBLE", raising=False)
+
+    async def _audio():
+        yield rtc.AudioFrame(
+            data=b"\x00\x00",
+            sample_rate=24000,
+            num_channels=1,
+            samples_per_channel=1,
+        )
+
+    cached_session = FakeSession()
+    audio = _audio()
+    asyncio.run(
+        apply_session_opening(
+            cached_session,
+            _cfg(greeting="Hello there."),
+            logger,
+            greeting_audio=audio,
+        )
+    )
+    assert cached_session.said == "Hello there."
+    assert cached_session.say_kwargs["allow_interruptions"] is True
+    assert cached_session.say_kwargs["audio"] is audio
+
     gen_session = FakeSession()
     asyncio.run(apply_session_opening(gen_session, _cfg(), logger))
     assert gen_session.said is None
     assert gen_session.generated
-    assert gen_session.generate_kwargs == {"allow_interruptions": False}
+    assert gen_session.generate_kwargs == {"allow_interruptions": True}

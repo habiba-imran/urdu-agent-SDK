@@ -14,7 +14,7 @@ def test_empty_options_apply_arcana_websocket_defaults():
     assert kwargs["model"] == RIME_TTS_DEFAULTS["model"] == "arcana"
     assert kwargs["speed_alpha"] == 1.1
     assert kwargs["use_websocket"] is True
-    assert kwargs["segment"] == "bySentence"
+    assert kwargs["segment"] == "immediate"
     assert kwargs["speaker"] == "astra"
     assert kwargs["lang"] == "eng"
     assert kwargs["sample_rate"] == 16000

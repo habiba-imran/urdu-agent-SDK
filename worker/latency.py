@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import statistics
 import sys
 import time
@@ -21,13 +22,19 @@ from typing import Any
 # preemptive_tts=True starts Cartesia synthesis on streamed tokens *before* EOU
 # confirms — without this, TTS waits for full turn commit (+ seconds of dead air).
 TURN_HANDLING_OPTIONS: dict[str, Any] = {
-    # UVA-13: faster barge-in — discard buffered TTS and cancel in-flight generation.
+    # UVA-13: barge-in — discard buffered TTS and cancel in-flight generation.
+    # mode is filled by turn_handling_for_channel() (default "vad" — see below).
+    #
+    # resume_false_interruption is OFF for WebRTC too: laptop speakers → mic echo still
+    # trips Silero; pause/resume then flickers audio and can wedge playout
+    # (``SegmentSynchronizerImpl.on_playback_started called after start_fut is set``).
+    # Raise min_duration so brief echo blips do not cancel a real reply.
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": True,
-        "min_duration": 0.3,
-        "resume_false_interruption": True,
-        "false_interruption_timeout": 1.5,
+        "min_duration": 0.55,
+        "resume_false_interruption": False,
+        "false_interruption_timeout": 0.7,
     },
     "turn_detection": "stt",
     "endpointing": {"min_delay": 0.15, "max_delay": 1.5},
@@ -39,7 +46,7 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
     },
 }
 
-# PSTN/SIP: no browser AEC — false-interruption resume causes mid-utterance flicker.
+# PSTN/SIP: no browser AEC — same false-interruption resume hazard as WebRTC speakers.
 # Keep barge-in enabled; do not discard caller audio after an intentional interrupt.
 # Disable preemptive LLM on telephony: cancelled preemptives still burn Groq free-tier TPM
 # (8k/min) and were the main source of 429s mid-call with ~3–5k-token front-desk prompts.
@@ -48,7 +55,7 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": False,
-        "min_duration": 0.3,
+        "min_duration": 0.55,
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.7,
     },
@@ -61,28 +68,44 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
 }
 
 
+def interruption_mode() -> str:
+    """WebRTC/telephony interruption strategy.
+
+    Default ``vad``: local Silero only — skips LiveKit Cloud adaptive-detector init on
+    ``session.start`` (often multi-second). Set ``UVA_INTERRUPTION_MODE=adaptive`` for
+    ML barge-in. Provider-agnostic (STT/LLM/TTS unchanged).
+    """
+    raw = (os.environ.get("UVA_INTERRUPTION_MODE") or "vad").strip().lower()
+    if raw in ("adaptive", "vad"):
+        return raw
+    return "vad"
+
+
 def turn_handling_for_channel(
     audio_channel: str,
     *,
     llm_provider: str | None = None,
+    stt_provider: str | None = None,
+    agent_language: str | None = None,
 ) -> dict[str, Any]:
     """Return turn-handling defaults for WebRTC vs telephony audio legs.
 
-    Groq free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
+    Delegates to ``worker.humanization.turn.build_turn_profile`` (Phase 2). Groq
+    free-tier TPM is tight (8k/min): disable preemptive generation so cancelled
     partial turns do not burn tokens before EOU.
     """
-    if audio_channel == "telephony":
-        options = dict(TELEPHONY_TURN_HANDLING_OPTIONS)
-    else:
-        options = dict(TURN_HANDLING_OPTIONS)
-    if (llm_provider or "").lower() == "groq":
-        options["preemptive_generation"] = {
-            "enabled": False,
-            "preemptive_tts": False,
-            "max_speech_duration": 12.0,
-            "max_retries": 0,
-        }
-    return options
+    from worker.humanization.turn import (
+        build_turn_profile,
+        turn_profile_to_livekit_options,
+    )
+
+    profile = build_turn_profile(
+        audio_channel=audio_channel,
+        stt_provider=stt_provider,
+        llm_provider=llm_provider,
+        agent_language=agent_language,
+    )
+    return turn_profile_to_livekit_options(profile)
 
 
 def is_telephony_job(
@@ -108,12 +131,13 @@ def is_telephony_job(
         return True
     return False
 
-# Tighter VAD silence gate for in-call turns — less dead air after the caller stops.
+# In-call VAD: keep a tight silence gate for EOU, but require a bit more speech energy
+# so agent TTS leaking into the mic does not register as barge-in.
 VAD_OPTIONS: dict[str, float] = {
-    "min_speech_duration": 0.05,
+    "min_speech_duration": 0.12,
     "min_silence_duration": 0.35,
     "prefix_padding_duration": 0.35,
-    "activation_threshold": 0.35,
+    "activation_threshold": 0.45,
 }
 
 
@@ -123,16 +147,10 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
     Available as soon as the mint commits — before the browser participant joins —
     so the worker can build STT/LLM/TTS in parallel with ``wait_for_participant``.
     """
-    import psycopg
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    try:
-        from scripts.dbconn import conn_kwargs
-    except ImportError:
-        from dbconn import conn_kwargs  # type: ignore # noqa: E402
+    from worker.db_pool import worker_db_connection
 
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
+        with worker_db_connection(connect_timeout=5) as conn:
             row = conn.execute(
                 """
                 select tenant_id, agent_id
@@ -231,15 +249,37 @@ def session_room_options(*, audio_channel: str = "webrtc") -> Any:
     )
 
 
-def wire_barge_in_flush(session: Any, logger: Any) -> None:
-    """Force-cancel in-flight LLM/TTS when the user speaks over the agent (UVA-13).
+def _force_barge_in_flush_enabled(audio_channel: str) -> bool:
+    """Whether to ``interrupt(force=True)`` on bare VAD while the agent speaks.
 
-    LiveKit's adaptive interruption handles most cases; ``interrupt(force=True)`` ensures
-    buffered outbound audio is flushed and generation is cancelled promptly.
+    WebRTC default **off**: laptop/headset mics routinely trip Silero without an STT
+    transcript, which chops replies mid-sentence and leaves dead air (nothing to answer).
+    LiveKit native interruption (``min_duration`` + STT turn commit) still barge-in when
+    the caller actually speaks, then ``generate_reply`` runs on that transcript.
 
-    Safe with telephony because greetings are interruptible and
-    ``discard_audio_if_uninterruptible`` is disabled on the PSTN turn-handling profile.
+    Telephony default **on** (faster PSTN flush). Override either way with
+    ``UVA_FORCE_BARGE_IN_FLUSH=0|1``.
     """
+    raw = (os.environ.get("UVA_FORCE_BARGE_IN_FLUSH") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return (audio_channel or "webrtc").strip().lower() == "telephony"
+
+
+def wire_barge_in_flush(
+    session: Any,
+    logger: Any,
+    *,
+    audio_channel: str = "webrtc",
+) -> None:
+    """Optionally force-cancel in-flight LLM/TTS when the user speaks over the agent (UVA-13).
+
+    On WebRTC, prefer LiveKit native interruption + STT turn commit so false VAD
+    spikes cannot kill a reply with no user transcript to respond to.
+    """
+    force_enabled = _force_barge_in_flush_enabled(audio_channel)
     agent_state: dict[str, str | None] = {"current": None}
 
     def _on_agent_state(ev: Any) -> None:
@@ -250,12 +290,30 @@ def wire_barge_in_flush(session: Any, logger: Any) -> None:
             return
         if agent_state["current"] != "speaking":
             return
+        userdata = getattr(session, "userdata", None)
+        if userdata is not None and getattr(userdata, "opening_active", False):
+            logger.info(
+                "barge-in: opening active — native interrupt/STT will handle (no force flush)"
+            )
+            return
+        if not force_enabled:
+            logger.info(
+                "barge-in: VAD speaking during agent speech — force flush off "
+                "(channel=%s); native interrupt waits for real STT turn",
+                audio_channel,
+            )
+            return
         try:
             session.interrupt(force=True)
             logger.info("barge-in: interrupted in-flight agent speech")
         except RuntimeError:
             pass
 
+    logger.info(
+        "barge-in force flush configured channel=%s enabled=%s",
+        audio_channel,
+        force_enabled,
+    )
     session.on("agent_state_changed", _on_agent_state)
     session.on("user_state_changed", _on_user_state)
 
@@ -285,22 +343,26 @@ async def prewarm_llm(llm: Any) -> None:
 
 async def prewarm_greeting_providers(
     *,
-    tts: Any,
-    stt: Any,
+    tts: Any | None,
+    stt: Any | None,
     logger: Any | None = None,
     room_name: str | None = None,
 ) -> None:
     """Warm TTS (+ STT) before the opening utterance — required for first-audio TTFB.
 
+    Pass ``tts=None`` when a greeting-cache hit will play PCM (no live TTS RTT).
     Uses ``asyncio.wait`` on tasks rather than ``gather``: importing LiveKit's
     ``ChatContext`` (LLM prewarm) concurrent with ``gather`` can stall forever on
     some Windows / livekit-agents 1.6.x event-loop setups.
     """
     started = time.monotonic()
-    tasks = (
-        ("tts", asyncio.create_task(prewarm_tts(tts))),
-        ("stt", asyncio.create_task(prewarm_stt(stt))),
-    )
+    tasks: list[tuple[str, asyncio.Task[None]]] = []
+    if tts is not None:
+        tasks.append(("tts", asyncio.create_task(prewarm_tts(tts))))
+    if stt is not None:
+        tasks.append(("stt", asyncio.create_task(prewarm_stt(stt))))
+    if not tasks:
+        return
     await asyncio.wait([task for _, task in tasks])
     if logger is not None:
         for label, task in tasks:
@@ -366,17 +428,23 @@ async def prewarm_session_providers(
 
 def schedule_provider_prewarm(
     *,
-    tts: Any,
+    tts: Any | None,
     llm: Any,
-    stt: Any,
+    stt: Any | None,
     logger: Any | None = None,
     room_name: str | None = None,
     await_llm: bool = False,
+    skip_tts: bool = False,
+    skip_stt: bool = False,
 ) -> asyncio.Task[None]:
     """Start provider warm-up without blocking ``session.start()`` (UVA-2).
 
-    Returns a task that completes when **TTS + STT** are warm — await it before
-    ``apply_session_opening`` so the greeting does not pay a cold websocket.
+    Returns a task that completes when the selected TTS/STT warm steps finish.
+    For static ``mode=say`` openings, callers typically pass ``skip_tts=True``
+    (greeting PCM synth / cache covers TTS) and **do not await** this task —
+    STT warms in the background so barge-in is ready without gating first audio.
+
+    For ``generate_reply``, await this task (TTS+STT) before opening.
 
     LLM warm-up always runs in the background after TTS/STT. Never block the
     opening greeting on LLM prewarm — that added 10–15s of dead air on PSTN when
@@ -384,6 +452,8 @@ def schedule_provider_prewarm(
     ``await_llm`` is accepted for API compatibility but ignored.
     """
     del await_llm  # kept for call-site compatibility; greeting must not wait on LLM
+    warm_tts = None if skip_tts else tts
+    warm_stt = None if skip_stt else stt
 
     async def _llm() -> None:
         try:
@@ -399,8 +469,8 @@ def schedule_provider_prewarm(
     async def _greeting() -> None:
         try:
             await prewarm_greeting_providers(
-                tts=tts,
-                stt=stt,
+                tts=warm_tts,
+                stt=warm_stt,
                 logger=logger,
                 room_name=room_name,
             )
@@ -624,11 +694,17 @@ class TurnLatencyTracker:
 
     def _publish(self, payload: dict[str, Any], *, topic: str) -> None:
         try:
-            self._room.local_participant.publish_data(
+            result = self._room.local_participant.publish_data(
                 json.dumps(payload),
                 topic=topic,
                 reliable=True,
             )
+            # LiveKit publish_data is async — schedule it so turn_latency reaches the browser.
+            if asyncio.iscoroutine(result):
+                asyncio.get_running_loop().create_task(
+                    result,
+                    name=f"publish_{topic}",
+                )
         except Exception as exc:
             self._logger.warning("%s publish failed: %s", topic, exc)
 
@@ -636,11 +712,17 @@ class TurnLatencyTracker:
         if parts.llm_ms is None and parts.turn_ms is None and parts.stt_ms is None:
             return
 
+        # transcription_delay (stt) and end_of_utterance_delay (turn) both start at
+        # speech-end and overlap — summing them double-counts EOU and inflates e2e.
+        if parts.stt_ms is not None and parts.turn_ms is not None:
+            eou_ms = max(parts.stt_ms, parts.turn_ms)
+        else:
+            eou_ms = parts.stt_ms if parts.stt_ms is not None else parts.turn_ms
+
         components = [
             x
             for x in (
-                parts.stt_ms,
-                parts.turn_ms,
+                eou_ms,
                 parts.llm_ms,
                 parts.tts_ttfb_ms,
                 parts.tool_ms or None,
@@ -656,11 +738,12 @@ class TurnLatencyTracker:
 
         turn_payload = build_turn_latency_payload(speech_id, parts, e2e_ms=e2e_ms)
         self._logger.info(
-            "turn_latency room=%s e2e=%sms stt=%s turn=%s llm=%s tts_ttfb=%s tool=%s(%s)",
+            "turn_latency room=%s e2e=%sms stt=%s turn=%s eou=%s llm=%s tts_ttfb=%s tool=%s(%s)",
             getattr(self._room, "name", "?"),
             e2e_ms,
             parts.stt_ms,
             parts.turn_ms,
+            eou_ms,
             parts.llm_ms,
             parts.tts_ttfb_ms,
             parts.tool_ms,

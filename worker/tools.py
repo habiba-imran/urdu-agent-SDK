@@ -44,6 +44,9 @@ class AgentUserdata:
     latency_tracker: Any = None
     tools_base_url: str | None = None
     tools_auth_secret: str | None = None
+    # True while the opening greeting/generate_reply is still playing — barge-in
+    # force-flush is deferred so echo VAD cannot chop the greeting without a reply.
+    opening_active: bool = False
 
 
 @function_tool
@@ -58,11 +61,13 @@ async def end_conversation_summary(
         summary: One sentence describing what the conversation was about.
     """
     ud = ctx.userdata
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
-        conn.execute(
-            "update sessions set summary = %s where room_name = %s and tenant_id = %s",
-            (summary, ud.room_name, ud.tenant_id),
-        )
+    # F-H9: sync psycopg must not run on the event loop (stalls live audio).
+    await asyncio.to_thread(
+        _save_conversation_summary,
+        summary=summary,
+        room_name=ud.room_name,
+        tenant_id=ud.tenant_id,
+    )
 
     ud.ended_by_agent = True
     session = getattr(ctx, "session", None)
@@ -84,18 +89,43 @@ async def escalate_to_human(
         contact_info: How to reach them, if they gave it (phone number, etc). Omit if not given.
     """
     ud = ctx.userdata
+    # F-H9: sync psycopg must not run on the event loop (stalls live audio).
+    await asyncio.to_thread(
+        _insert_escalation,
+        reason=reason,
+        contact_info=contact_info,
+        room_name=ud.room_name,
+        tenant_id=ud.tenant_id,
+    )
+    return {"status": "escalated"}
+
+
+def _save_conversation_summary(*, summary: str, room_name: str, tenant_id: str) -> None:
+    with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
+        conn.execute(
+            "update sessions set summary = %s where room_name = %s and tenant_id = %s",
+            (summary, room_name, tenant_id),
+        )
+
+
+def _insert_escalation(
+    *,
+    reason: str,
+    contact_info: str | None,
+    room_name: str,
+    tenant_id: str,
+) -> None:
     with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
         row = conn.execute(
             "select id from sessions where room_name = %s and tenant_id = %s",
-            (ud.room_name, ud.tenant_id),
+            (room_name, tenant_id),
         ).fetchone()
         session_id = row[0] if row else None
         conn.execute(
             "insert into escalations (tenant_id, session_id, reason, contact_info) "
             "values (%s, %s, %s, %s)",
-            (ud.tenant_id, session_id, reason, contact_info),
+            (tenant_id, session_id, reason, contact_info),
         )
-    return {"status": "escalated"}
 
 
 def _env_tools_base_url() -> str | None:

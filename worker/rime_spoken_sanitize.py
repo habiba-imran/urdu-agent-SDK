@@ -20,6 +20,7 @@ _SSML_TAG_RE = re.compile(
 )
 _MIST_PAUSE_RE = re.compile(r"<\d{2,4}>")
 _LAUGHTER_RE = re.compile(r"\[laughter\]", re.IGNORECASE)
+_FISH_BRACKET_RE = re.compile(r"\[[^\[\]]{1,64}\]")
 _MARKDOWN_RE = re.compile(r"[*_`#]+")
 _BULLET_RE = re.compile(r"(?m)^\s*[-•]\s+")
 _EMOJI_RE = re.compile(
@@ -62,6 +63,7 @@ def sanitize_spoken_text(text: str) -> str:
     out = _SSML_TAG_RE.sub("", out)
     out = _MIST_PAUSE_RE.sub("", out)
     out = _LAUGHTER_RE.sub("", out)
+    out = _FISH_BRACKET_RE.sub("", out)
     out = _MARKDOWN_RE.sub("", out)
     out = _BULLET_RE.sub("", out)
     out = _EMOJI_RE.sub("", out)

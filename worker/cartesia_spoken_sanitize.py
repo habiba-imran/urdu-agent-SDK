@@ -1,14 +1,17 @@
 """Pre-TTS spoken-text sanitizer for Cartesia (Phase D).
 
-Safety net if the LLM still emits markdown or emoji. Cartesia SSML-like tags
-(``<break>``, ``<emotion>``, ``<spell>``, ``<speed>``, ``<volume>``) and ``[laughter]``
-are preserved — LiveKit's default ``filter_markdown`` can strip angle-bracket tags,
-so Cartesia sessions must use this transform instead of the built-in pair.
+Safety net if the LLM still emits markdown, emoji, or foreign bracket cues. Cartesia
+SSML-like tags (``<break>``, ``<emotion>``, ``<spell>``, ``<speed>``, ``<volume>``) and
+``[laughter]`` are preserved — LiveKit's default ``filter_markdown`` can strip
+angle-bracket tags, so Cartesia sessions must use this transform instead of the
+built-in pair.
 """
 
 from __future__ import annotations
 
 import re
+
+from worker.plain_spoken_sanitize import BRACKET_CUE_RE
 
 _SSML_TAG_RE = re.compile(
     r"</?(?:break|emotion|spell|speed|volume)\b[^>]*>",
@@ -16,6 +19,7 @@ _SSML_TAG_RE = re.compile(
 )
 _MARKDOWN_RE = re.compile(r"[*_`#]+")
 _BULLET_RE = re.compile(r"(?m)^\s*[-•]\s+")
+_ORDERED_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _EMOJI_RE = re.compile(
     "["
     "\U0001F300-\U0001F5FF"
@@ -37,7 +41,7 @@ _LAUGHTER_PLACEHOLDER = "\x00LAUGH\x00"
 
 
 def sanitize_spoken_text(text: str) -> str:
-    """Strip markdown and emoji; keep Cartesia SSML tags and [laughter]."""
+    """Strip markdown/emoji/foreign brackets; keep Cartesia SSML tags and [laughter]."""
     if not text:
         return text
 
@@ -49,8 +53,11 @@ def sanitize_spoken_text(text: str) -> str:
 
     out = _SSML_TAG_RE.sub(_stash, text)
     out = out.replace(_LAUGHTER_TOKEN, _LAUGHTER_PLACEHOLDER)
+    # Drop Fish/ElevenLabs-style cues that Cartesia would speak aloud.
+    out = BRACKET_CUE_RE.sub("", out)
     out = _MARKDOWN_RE.sub("", out)
     out = _BULLET_RE.sub("", out)
+    out = _ORDERED_RE.sub("", out)
     out = _EMOJI_RE.sub("", out)
     out = out.replace(_LAUGHTER_PLACEHOLDER, _LAUGHTER_TOKEN)
 
