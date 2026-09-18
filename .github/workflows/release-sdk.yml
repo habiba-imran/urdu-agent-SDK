@@ -10,10 +10,11 @@ name: Release SDK
 # The same PR that bumps `version` must add a `## [<version>]` section to that package's
 # CHANGELOG.md. workflow_dispatch runs the same checks as a dry run and never publishes.
 #
-# Publishing is from the canonical repository only: packages are published with npm provenance,
-# which npm rejects unless package.json `repository.url` matches the repository running this
-# workflow. A missing NPM_TOKEN fails the release instead of skipping it — a green run that
-# published nothing is worse than a red one.
+# Publishing is from the canonical repository only: package.json `repository.url` must match
+# the repository running this workflow. Provenance (`--provenance`) is omitted because this
+# repo is private — npm only accepts provenance from public GitHub repos. A missing NPM_TOKEN
+# fails the release instead of skipping it — a green run that published nothing is worse than
+# a red one.
 
 on:
   push:
@@ -146,12 +147,13 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm (with provenance)
+      - name: Publish to npm
         if: steps.target.outputs.publish == 'true'
         working-directory: ${{ steps.target.outputs.dir }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        # No --provenance: npm rejects provenance when the source GitHub repo is private.
+        run: npm publish --access public
 
       - name: Dry-run publish
         if: steps.target.outputs.publish != 'true'
