@@ -43,13 +43,14 @@ At first Render/worker deploy, confirm you did **not** set either to `1` in prod
 
 **Ehsan: do not wire Render** — you own this.
 
-1. Set on the worker service:
-   - `UVA_WORKER_HEALTH_PORT=8081` (or another free port)
-   - `UVA_WORKER_HEALTH_BIND=0.0.0.0` (so the platform can reach it)
-2. Point Render (or your host) health check at `GET /healthz` (liveness). Optionally use `/healthz/ready` for stricter readiness.
-3. Local smoke: start worker, then `curl http://127.0.0.1:8081/healthz` → `{"status":"ok","service":"uva-worker"}`.
+Full fresh-start Render guide (all services): **`docs/WAVE2-HABIBA-RENDER-DEPLOY.md`**.
 
-Code: `worker/health_http.py` (Phase E).
+On the **voice worker** Web Service:
+
+1. `UVA_WORKER_HEALTH_PORT=10000` (must match Render `PORT`)
+2. `UVA_WORKER_HEALTH_BIND=0.0.0.0`
+3. Health Check Path = `/healthz`
+4. Smoke: `curl https://<worker>.onrender.com/healthz`
 
 ---
 
