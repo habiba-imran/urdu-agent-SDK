@@ -1,6 +1,11 @@
 # NPM Publish Steps
 
+> **First-time publish?** Use the full beginner guide instead:  
+> **[`docs/NPM_FIRST_PUBLISH_GUIDE.md`](./NPM_FIRST_PUBLISH_GUIDE.md)**  
+> (all three packages: voice, agents, telephony — with verification checkpoints).
+
 > Internal Finova reference — how to publish `@awaazlabs-uva/voice` and `@awaazlabs-uva/agents` to the npm registry.
+> Prefer GitHub Actions tags (`voice-v*`, `agents-v*`, `telephony-v*`) via `release-sdk.yml` over manual `npm publish`.
 
 ---
 

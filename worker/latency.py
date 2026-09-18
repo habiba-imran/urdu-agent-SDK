@@ -29,10 +29,12 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
     # trips Silero; pause/resume then flickers audio and can wedge playout
     # (``SegmentSynchronizerImpl.on_playback_started called after start_fut is set``).
     # Raise min_duration so brief echo blips do not cancel a real reply.
+    # 0.75s: laptop speakers→mic still trips Silero under ElevenLabs/slow TTS; 0.55
+    # was chopping mid-sentence and felt like flicker/stuck when callers said "hello?".
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": True,
-        "min_duration": 0.55,
+        "min_duration": 0.75,
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.7,
     },
@@ -55,7 +57,7 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": False,
-        "min_duration": 0.55,
+        "min_duration": 0.75,
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.7,
     },

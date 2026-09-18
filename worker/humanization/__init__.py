@@ -23,6 +23,7 @@ from .resolve import EffectiveProviders, resolve_effective_providers
 from .spoken import (
     GEMINI_LLM_OVERLAY,
     GROQ_LLM_OVERLAY,
+    GROQ_LLM_OVERLAY_TTS_MARKUP,
     UNIVERSAL_SPOKEN_RULES,
     URDU_SPOKEN_OUTPUT_RULES,
     build_spoken_output_profile,
@@ -47,6 +48,7 @@ __all__ = [
     "EffectiveProviders",
     "GEMINI_LLM_OVERLAY",
     "GROQ_LLM_OVERLAY",
+    "GROQ_LLM_OVERLAY_TTS_MARKUP",
     "SpokenOutputProfile",
     "TTSHumanizationProfile",
     "TURN_AB_LISTEN_LOG_FIELDS",
