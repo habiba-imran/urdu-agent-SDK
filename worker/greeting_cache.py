@@ -291,8 +291,12 @@ def seed_greeting_pcm_from_env() -> bool:
             text = sanitize(text).strip()
             if not text:
                 return False
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "stage=greeting_sanitize failed provider=%s err=%s (seeding unsanitized)",
+            provider,
+            exc,
+        )
 
     key = make_greeting_cache_key(
         agent_id=agent_id,

@@ -36,8 +36,8 @@ from worker.cartesia_spoken_output import (
 from worker.config import AgentConfig
 from worker.main import (
     SYSTEM_INSTRUCTIONS,
-    _cartesia_agent_session_extra,
     _resolve_provider_voice_id,
+    _tts_agent_session_extra,
     build_agent,
 )
 from worker.providers.tts.cartesia import build as build_cartesia_tts  # noqa: E402
@@ -232,7 +232,7 @@ def test_cartesia_session_extra_passes_sanitizer_without_dead_expressive():
         agent_language="en",
         tts_provider="cartesia",
     )
-    extra = _cartesia_agent_session_extra(cfg, _FakeSession, _Logger())
+    extra = _tts_agent_session_extra(cfg, _FakeSession, _Logger())
     assert "expressive" not in extra
     assert extra["tts_text_transforms"]
 

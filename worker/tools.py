@@ -9,6 +9,7 @@ gate *when* the LLM may call them so greeting turns stay tool-free and fast.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -23,6 +24,8 @@ from livekit.agents.llm.tool_context import function_tool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from dbconn import conn_kwargs  # noqa: E402
+
+logger = logging.getLogger("worker.tools")
 
 # Tight budgets: tool RTT sits on the critical path before the second LLM+TTS turn.
 _TOOL_TIMEOUT = httpx.Timeout(connect=1.0, read=4.0, write=2.0, pool=1.0)
@@ -47,6 +50,15 @@ class AgentUserdata:
     # True while the opening greeting/generate_reply is still playing — barge-in
     # force-flush is deferred so echo VAD cannot chop the greeting without a reply.
     opening_active: bool = False
+    # F-C4 Phase B/C: recording policy + consent for shutdown upload gate.
+    # Consent stays pending until Phase C disclosure marks granted (stay-on-line).
+    recording_may_start: bool = False
+    recording_consent_status: str = "not_applicable"
+    recording_consent_at: str | None = None
+    # F-C7 Phase E: ownership + write gate (see worker.write_tool_gate).
+    verified_caller_phone: str | None = None
+    user_turn_count: int = 0
+    write_gate: Any = None
 
 
 @function_tool
@@ -166,8 +178,8 @@ async def _shared_http_client() -> httpx.AsyncClient:
         if _http_client is not None and not _http_client.is_closed:
             try:
                 await _http_client.aclose()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("stage=http_client_aclose failed err=%s", exc)
         _http_client = httpx.AsyncClient(timeout=_TOOL_TIMEOUT, limits=_TOOL_LIMITS)
         _http_client_loop_id = loop_id
     return _http_client
@@ -226,6 +238,7 @@ async def _post_client_tool(
     path: str,
     payload: dict[str, Any],
     tool_name: str,
+    idempotency_key: str | None = None,
 ) -> dict:
     ud = ctx.userdata
     base = resolve_tools_base_url(ud.tools_base_url)
@@ -241,11 +254,15 @@ async def _post_client_tool(
         "agent_id": ud.agent_id,
         **payload,
     }
+    headers = _tool_gateway_headers(secret)
+    if idempotency_key:
+        body["idempotency_key"] = idempotency_key
+        headers["Idempotency-Key"] = idempotency_key
     try:
         client = await _shared_http_client()
         response = await client.post(
             url,
-            headers=_tool_gateway_headers(secret),
+            headers=headers,
             json=body,
         )
         response.raise_for_status()
@@ -258,6 +275,54 @@ async def _post_client_tool(
             tracker.record_tool_duration(tool_name, duration_ms)
 
     return _slim_tool_result(raw)
+
+
+async def _gated_write_client_tool(
+    ctx: RunContext[AgentUserdata],
+    *,
+    tool_name: str,
+    path: str,
+    raw_args: dict[str, Any],
+    confirmation_id: str | None,
+) -> dict:
+    """F-C7: propose → user turn → confirm POST; reads stay on _post_client_tool."""
+    from worker.write_tool_gate import mark_write_success, propose_or_confirm_write
+
+    ud = ctx.userdata
+    action, payload = propose_or_confirm_write(
+        ud,
+        tool_name=tool_name,
+        path=path,
+        raw_args=raw_args,
+        confirmation_id=confirmation_id,
+    )
+    if action in ("propose", "reject", "replay"):
+        return payload
+
+    # confirm → single POST
+    normalized = payload["normalized_args"]
+    idem = payload["idempotency_key"]
+    conf = payload["confirmation_id"]
+    result = await _post_client_tool(
+        ctx,
+        path=path,
+        payload=normalized,
+        tool_name=tool_name,
+        idempotency_key=idem,
+    )
+    if result.get("success") is False or result.get("error"):
+        return result
+    from worker.write_tool_gate import args_hash as _args_hash
+
+    mark_write_success(
+        ud,
+        confirmation_id=conf,
+        idempotency_key=idem,
+        result=result,
+        tool_name=tool_name,
+        args_hash=_args_hash(tool_name, normalized),
+    )
+    return result
 
 
 @function_tool
@@ -318,31 +383,35 @@ async def book_appointment(
     customer_phone: str,
     slot_start_time: str,
     service_name: str | None = None,
+    confirmation_id: str | None = None,
 ) -> dict:
-    """Book a confirmed appointment slot on the live calendar.
+    """Book a confirmed appointment slot on the live calendar (two-step).
 
-    Call ONLY after the caller confirmed the exact slot and you have name + phone.
-    Do NOT call to "check" availability — use check_availability first.
-    Do NOT claim a booking succeeded unless this tool returns success.
+    First call (no confirmation_id): proposes only — does NOT book. Speak the summary
+    and wait for the caller to say yes. Second call: pass the same details plus
+    confirmation_id from the first response. Do NOT claim success unless the second
+    call returns success. Use check_availability before offering slots.
 
     Args:
         customer_name: Caller's name as confirmed.
         customer_phone: Caller's phone as confirmed (digits).
         slot_start_time: ISO start time of the chosen slot from check_availability.
         service_name: Service if known.
+        confirmation_id: From the prior propose response; omit on the first call.
     """
-    payload: dict[str, Any] = {
+    raw: dict[str, Any] = {
         "customer_name": customer_name,
         "customer_phone": customer_phone,
         "slot_start_time": slot_start_time,
     }
     if service_name:
-        payload["service_name"] = service_name
-    return await _post_client_tool(
+        raw["service_name"] = service_name
+    return await _gated_write_client_tool(
         ctx,
-        path="/api/tools/book_slot",
-        payload=payload,
         tool_name="book_appointment",
+        path="/api/tools/book_slot",
+        raw_args=raw,
+        confirmation_id=confirmation_id,
     )
 
 
@@ -353,31 +422,34 @@ async def reschedule_appointment(
     new_slot_start_time: str,
     existing_date: str | None = None,
     service_name: str | None = None,
+    confirmation_id: str | None = None,
 ) -> dict:
-    """Move an existing appointment to a new slot.
+    """Move an existing appointment (two-step). Requires verified caller phone.
 
-    Call ONLY when the caller wants to change an existing booking and you have their phone
-    plus the new slot time. Prefer check_availability first for the new day.
+    First call proposes only. After the caller says yes, call again with confirmation_id.
+    Prefer check_availability first for the new day.
 
     Args:
-        customer_phone: Phone on the existing booking.
+        customer_phone: Phone on the existing booking (must match verified caller).
         new_slot_start_time: ISO start time of the new slot.
         existing_date: Original appointment date if known (YYYY-MM-DD).
         service_name: Service if known.
+        confirmation_id: From the prior propose response; omit on the first call.
     """
-    payload: dict[str, Any] = {
+    raw: dict[str, Any] = {
         "customer_phone": customer_phone,
         "new_slot_start_time": new_slot_start_time,
     }
     if existing_date:
-        payload["existing_date"] = existing_date
+        raw["existing_date"] = existing_date
     if service_name:
-        payload["service_name"] = service_name
-    return await _post_client_tool(
+        raw["service_name"] = service_name
+    return await _gated_write_client_tool(
         ctx,
-        path="/api/tools/reschedule_appointment",
-        payload=payload,
         tool_name="reschedule_appointment",
+        path="/api/tools/reschedule_appointment",
+        raw_args=raw,
+        confirmation_id=confirmation_id,
     )
 
 
@@ -387,27 +459,30 @@ async def cancel_appointment(
     customer_phone: str,
     existing_date: str | None = None,
     reason: str | None = None,
+    confirmation_id: str | None = None,
 ) -> dict:
-    """Cancel an existing appointment.
+    """Cancel an existing appointment (two-step). Requires verified caller phone.
 
-    Call ONLY when the caller clearly wants to cancel and you have their phone.
-    Do NOT call for rescheduling — use reschedule_appointment.
+    First call proposes only. After the caller says yes, call again with confirmation_id.
+    Do NOT use for rescheduling — use reschedule_appointment.
 
     Args:
-        customer_phone: Phone on the booking.
+        customer_phone: Phone on the booking (must match verified caller).
         existing_date: Appointment date if known (YYYY-MM-DD).
         reason: Optional short cancellation reason.
+        confirmation_id: From the prior propose response; omit on the first call.
     """
-    payload: dict[str, Any] = {"customer_phone": customer_phone}
+    raw: dict[str, Any] = {"customer_phone": customer_phone}
     if existing_date:
-        payload["existing_date"] = existing_date
+        raw["existing_date"] = existing_date
     if reason:
-        payload["reason"] = reason
-    return await _post_client_tool(
+        raw["reason"] = reason
+    return await _gated_write_client_tool(
         ctx,
-        path="/api/tools/cancel_appointment",
-        payload=payload,
         tool_name="cancel_appointment",
+        path="/api/tools/cancel_appointment",
+        raw_args=raw,
+        confirmation_id=confirmation_id,
     )
 
 

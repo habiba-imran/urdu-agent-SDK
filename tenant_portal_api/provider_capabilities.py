@@ -52,15 +52,20 @@ def get_public_capabilities(conn: psycopg.Connection) -> dict:
         entry: dict = {"label": _LANGUAGE_LABELS.get(language, language)}
 
         for layer in ("stt", "llm"):
-            enabled = {
-                provider: {
+            enabled = {}
+            for provider, cap in layers.get(layer, {}).items():
+                if cap["state"] != "enabled":
+                    continue
+                entry_cap: dict = {
                     "state": cap["state"],
-                    "models": cap["models"],
+                    # F-M15: models = runtime/picker IDs only (not legacy_aliases).
+                    "models": list(cap["models"]),
                     "defaultModel": cap["default_model"],
                 }
-                for provider, cap in layers.get(layer, {}).items()
-                if cap["state"] == "enabled"
-            }
+                aliases = list(cap.get("legacy_aliases") or [])
+                if aliases:
+                    entry_cap["legacyAliases"] = aliases
+                enabled[provider] = entry_cap
             if enabled:
                 entry[layer] = enabled
 

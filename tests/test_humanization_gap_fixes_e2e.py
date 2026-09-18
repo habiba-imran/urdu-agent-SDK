@@ -131,11 +131,15 @@ def test_english_elevenlabs_pstn_not_forced_to_cartesia(monkeypatch):
     assert eff.groq_forced is True
 
 
-def test_build_session_connect_options_disable_provider_retries():
+def test_build_session_connect_options_bounded_provider_retries(monkeypatch):
+    """F-H10 Phase D: default max_retry=2 (env-tunable); Wave 1 fail-fast via env=0."""
+    monkeypatch.delenv("UVA_PROVIDER_MAX_RETRY", raising=False)
+    monkeypatch.delenv("UVA_PROVIDER_RETRY_INTERVAL", raising=False)
+    monkeypatch.delenv("UVA_PROVIDER_CONNECT_TIMEOUT", raising=False)
     from worker.main import build_session_connect_options
 
     opts = build_session_connect_options()
-    assert opts.llm_conn_options.max_retry == 0
-    assert opts.tts_conn_options.max_retry == 0
-    assert opts.stt_conn_options.max_retry == 0
+    assert opts.llm_conn_options.max_retry == 2
+    assert opts.tts_conn_options.max_retry == 2
+    assert opts.stt_conn_options.max_retry == 2
     assert opts.llm_conn_options.timeout == 30.0

@@ -51,6 +51,9 @@ def extract_sip_participant_attributes(
         "sip_call_id": _get("sip.callID", "callID"),
         "sip_call_id_full": _get("sip.callIDFull", "callIDFull"),
         "trunk_phone_number": _get("sip.trunkPhoneNumber", "trunkPhoneNumber"),
+        # LiveKit AttrSIPPhoneNumber — caller ANI (inbound) / dialed party (outbound).
+        # Never confuse with trunk_phone_number (platform number).
+        "caller_phone_number": _get("sip.phoneNumber", "phoneNumber"),
         "trunk_id": _get("sip.trunkID", "trunkID"),
         "rule_id": _get("sip.ruleID", "ruleID"),
     }

@@ -43,9 +43,10 @@ CLIENT_TOOLS_DISCIPLINE = (
     "- lookup_business_info: FAQs, policies, pricing, document facts NOT already in your persona. "
     "Never for greetings or booking.\n"
     "- check_availability: live open slots for a concrete date. Not for 'what are your hours'.\n"
-    "- book_appointment: only after name + phone + confirmed slot from check_availability.\n"
-    "- reschedule_appointment / cancel_appointment: only when the caller clearly asks to move "
-    "or cancel an existing booking and you have their phone.\n"
+    "- book_appointment: propose first (no confirmation_id); speak the summary; after the caller "
+    "says yes, call again with the same details and confirmation_id. Never claim booked on propose.\n"
+    "- reschedule_appointment / cancel_appointment: same two-step confirm; only when the caller "
+    "clearly asks to move or cancel and you have their phone (must match verified caller).\n"
     "- Call at most one scheduling tool per turn. Prefer persona facts over tools when they suffice."
 )
 

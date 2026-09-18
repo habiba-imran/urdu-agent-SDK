@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 # Longer TTL cuts DB hits on warm demos; provider flips still win after ~1–2s or a reconnect.
 _CONFIG_CACHE_TTL_SEC = 30.0
 _config_cache: dict[tuple[str, str], tuple[float, "AgentConfig", str | None]] = {}
+# None = not probed yet. False until Ehsan migration adds agents.recording_enabled.
+_agents_has_recording_enabled: bool | None = None
 
 
 class AgentNotFound(Exception):
@@ -67,11 +69,35 @@ class AgentConfig:
     # Client tool gateway (per-agent). Worker POSTs RAG/scheduling here.
     tools_base_url: str | None = None
     tools_auth_secret: str | None = None
+    # F-C4 Phase B: per-agent recording opt-in (default off). Column may be absent
+    # until Ehsan migration lands — loader defaults False when missing.
+    recording_enabled: bool = False
 
 
 def clear_agent_config_cache() -> None:
     """Drop the in-process agent config cache (tests / after admin edits)."""
+    global _agents_has_recording_enabled
     _config_cache.clear()
+    _agents_has_recording_enabled = None
+
+
+def _recording_enabled_column_exists(conn: object) -> bool:
+    """Probe once whether ``agents.recording_enabled`` exists (rollout-safe)."""
+    global _agents_has_recording_enabled
+    if _agents_has_recording_enabled is not None:
+        return _agents_has_recording_enabled
+    row = conn.execute(  # type: ignore[attr-defined]
+        """
+        select 1
+          from information_schema.columns
+         where table_schema = 'public'
+           and table_name = 'agents'
+           and column_name = 'recording_enabled'
+         limit 1
+        """
+    ).fetchone()
+    _agents_has_recording_enabled = row is not None
+    return _agents_has_recording_enabled
 
 
 def resolve_provider_voice_id_local(internal_voice_id: str | None) -> str | None:
@@ -85,7 +111,7 @@ def resolve_provider_voice_id_local(internal_voice_id: str | None) -> str | None
     return None
 
 
-def _row_to_config(row: tuple) -> AgentConfig:
+def _row_to_config(row: tuple, *, recording_enabled: bool = False) -> AgentConfig:
     return AgentConfig(
         agent_id=str(row[0]),
         tenant_id=str(row[1]),
@@ -106,6 +132,7 @@ def _row_to_config(row: tuple) -> AgentConfig:
         first_speaker=row[16] or "agent",
         tools_base_url=row[17],
         tools_auth_secret=row[18],
+        recording_enabled=bool(recording_enabled),
     )
 
 
@@ -117,22 +144,33 @@ def _load_agent_and_provider_voice(
 
     claims = json.dumps({"tenant_id": tenant_id})
     with worker_db_connection(connect_timeout=5) as conn:
+        has_recording_col = _recording_enabled_column_exists(conn)
+        recording_select = (
+            "select id, tenant_id, name, prompt, voice_id, llm_model, "
+            "agent_language, stt_provider, stt_model, stt_options, "
+            "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
+            "greeting, first_speaker, tools_base_url, tools_auth_secret, "
+            "recording_enabled "
+            "from agents where id = %s"
+            if has_recording_col
+            else "select id, tenant_id, name, prompt, voice_id, llm_model, "
+            "agent_language, stt_provider, stt_model, stt_options, "
+            "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
+            "greeting, first_speaker, tools_base_url, tools_auth_secret "
+            "from agents where id = %s"
+        )
         with conn.transaction():
             cur = conn.cursor()
             cur.execute("set local role authenticated")
             cur.execute("select set_config('request.jwt.claims', %s, true)", (claims,))
-            cur.execute(
-                "select id, tenant_id, name, prompt, voice_id, llm_model, "
-                "agent_language, stt_provider, stt_model, stt_options, "
-                "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-                "greeting, first_speaker, tools_base_url, tools_auth_secret "
-                "from agents where id = %s",
-                (agent_id,),
-            )
+            cur.execute(recording_select, (agent_id,))
             row = cur.fetchone()
         if row is None:
             raise AgentNotFound(f"agent {agent_id} not visible to tenant {tenant_id}")
-        cfg = _row_to_config(row)
+        if has_recording_col:
+            cfg = _row_to_config(row[:-1], recording_enabled=bool(row[-1]))
+        else:
+            cfg = _row_to_config(row, recording_enabled=False)
 
         internal_voice_id = cfg.tts_voice_id or cfg.voice_id
         local = resolve_provider_voice_id_local(internal_voice_id)
