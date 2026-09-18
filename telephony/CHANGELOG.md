@@ -10,6 +10,10 @@ bumps the version.
 
 ## [Unreleased]
 
+## [0.1.0]
+
+First public npm release of `@awaazlabs-uva/telephony`.
+
 ### Fixed
 - `getSessionByRoom()` now works. Every call threw `telephony_invalid_response` without sending a
   request, because the internal path guard still required a `/machine/telephony/` prefix while
@@ -17,6 +21,9 @@ bumps the version.
   which is what it was protecting.
 
 ### Added
+- Initial package: Telnyx connection management, number search/reservation/purchase/import,
+  routing and SIP/outbound-trunk configuration, outbound calls, and call records — all over the
+  HMAC-signed `/machine/` API.
 - Contract coverage for `getSessionByRoom`, a check that every exported operation has a frozen
   contract case, and a regression test that a path parameter cannot escape the `/machine/`
   surface.
@@ -27,9 +34,3 @@ bumps the version.
 ### Changed
 - Package metadata now points at `Finova-Solutions/urdu-voice-agent-SDK` instead of a personal
   repository (audit F-M23).
-
-## [0.1.0]
-
-- Initial package: Telnyx connection management, number search/reservation/purchase/import,
-  routing and SIP/outbound-trunk configuration, outbound calls, and call records — all over the
-  HMAC-signed `/machine/` API. Delivered as a tarball; not yet published to npm.
