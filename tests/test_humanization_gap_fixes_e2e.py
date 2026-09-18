@@ -61,7 +61,10 @@ def test_cartesia_manual_omits_baseline_emotion_light_keeps_it():
         "v", "en", {"spoken_style": "manual_ssml"}
     )
     assert "emotion" not in manual
-    light = resolve_cartesia_tts_kwargs("v", "en", {})
+    # Empty options inherit platform default manual_ssml.
+    default = resolve_cartesia_tts_kwargs("v", "en", {})
+    assert "emotion" not in default
+    light = resolve_cartesia_tts_kwargs("v", "en", {"spoken_style": "light"})
     assert light["emotion"] == ["calm", "content"]
 
 

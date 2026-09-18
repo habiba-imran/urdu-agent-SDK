@@ -29,19 +29,22 @@ ALLOWED_ELEVENLABS_TTS_OPTION_KEYS = frozenset(
 _V3_MODEL_PREFIXES = ("eleven_v3",)
 
 # Conservative business-agent voice settings (research: avoid high style / speaker boost cost).
+# Modest style (>0) gives slight expressivity without tipping into theatrical delivery.
 _DEFAULT_VOICE_SETTINGS: dict[str, Any] = {
     "stability": 0.5,
     "similarity_boost": 0.75,
-    "style": 0.0,
+    "style": 0.25,
     "speed": 1.0,
     "use_speaker_boost": False,
 }
 
 ELEVENLABS_TTS_DEFAULTS: dict[str, Any] = {
-    "model": "eleven_turbo_v2_5",
+    # Flash is the low-latency realtime path; turbo was ~2s+ TTFB cold on WebRTC.
+    "model": "eleven_flash_v2_5",
     "voice_settings": dict(_DEFAULT_VOICE_SETTINGS),
     "auto_mode": True,
-    "apply_text_normalization": "auto",
+    # Normalization adds pre-TTS delay on short turns — off for voice agents.
+    "apply_text_normalization": "off",
     "enable_ssml_parsing": False,
     "spoken_style": "plain",
 }

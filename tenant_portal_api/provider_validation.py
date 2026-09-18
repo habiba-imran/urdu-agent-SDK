@@ -7,9 +7,10 @@ but not another — a broad provider-level check is not enough). Returns fully-r
 ready to write; callers must not write anything this function didn't return, so there is exactly
 one place these rules can be bypassed from (nowhere).
 
-Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia and Rime TTS consume
-``tts_options`` (humanization — model/speed and related keys). STT/LLM options remain
-unconsumed; the only valid value for those layers is ``{}``.
+Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, ElevenLabs,
+and Fish Audio TTS consume ``tts_options`` (humanization — model/speed/spoken_style and
+related keys). STT/LLM options remain unconsumed; the only valid value for those layers
+is ``{}``.
 """
 
 from __future__ import annotations
@@ -29,6 +30,14 @@ from worker.providers.capabilities import (  # noqa: E402
 from worker.providers.tts.cartesia_options import (  # noqa: E402
     CartesiaTtsOptionsError,
     validate_cartesia_tts_options,
+)
+from worker.providers.tts.elevenlabs_options import (  # noqa: E402
+    ElevenLabsTtsOptionsError,
+    validate_elevenlabs_tts_options,
+)
+from worker.providers.tts.fish_audio_options import (  # noqa: E402
+    FishTtsOptionsError,
+    validate_fish_tts_options,
 )
 from worker.providers.tts.rime_options import (  # noqa: E402
     RimeTtsOptionsError,
@@ -214,9 +223,20 @@ def resolve_agent_provider_fields(
             resolved_tts_options = validate_rime_tts_options(resolved_tts_options)
         except RimeTtsOptionsError as exc:
             raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "elevenlabs":
+        try:
+            resolved_tts_options = validate_elevenlabs_tts_options(resolved_tts_options)
+        except ElevenLabsTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "fish_audio":
+        try:
+            resolved_tts_options = validate_fish_tts_options(resolved_tts_options)
+        except FishTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
     elif resolved_tts_options != {}:
         raise ProviderValidationError(
-            "invalid_tts_options", "no tts provider accepts options yet"
+            "invalid_tts_options",
+            f"tts provider {resolved_tts_provider!r} does not accept tts_options yet",
         )
 
     # tts_voice_id/voice_id priority rule (guide's explicit rule): tts_voice_id wins when given.

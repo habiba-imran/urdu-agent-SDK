@@ -48,6 +48,39 @@ def test_custom_greeting_uses_say():
     assert opening.text == "Hi, thanks for calling Acme. How can I help?"
 
 
+def test_cartesia_static_greeting_gets_emotion_and_break():
+    opening = resolve_session_opening(
+        _cfg(
+            tts_provider="cartesia",
+            greeting="Hi, thanks for calling. How can I help you today?",
+        )
+    )
+    assert opening.mode == "say"
+    assert '<emotion value="content"/>' in (opening.text or "")
+    assert '<break time="300ms"/>' in (opening.text or "")
+    assert "How can I help you today?" in (opening.text or "")
+
+
+def test_cartesia_static_greeting_skips_enrich_when_already_tagged():
+    raw = '<emotion value="calm"/> Hi there. <break time="200ms"/> How can I help?'
+    opening = resolve_session_opening(
+        _cfg(tts_provider="cartesia", greeting=raw)
+    )
+    assert opening.text == raw
+
+
+def test_cartesia_light_static_greeting_stays_plain():
+    opening = resolve_session_opening(
+        _cfg(
+            tts_provider="cartesia",
+            tts_options={"spoken_style": "light"},
+            greeting="Hi, thanks for calling. How can I help?",
+        )
+    )
+    assert "<emotion" not in (opening.text or "")
+    assert opening.text == "Hi, thanks for calling. How can I help?"
+
+
 def test_cartesia_custom_greeting_strips_markdown():
     opening = resolve_session_opening(
         _cfg(
@@ -58,6 +91,7 @@ def test_cartesia_custom_greeting_strips_markdown():
     assert opening.mode == "say"
     assert "**" not in (opening.text or "")
     assert "Hi there, thanks for calling." in (opening.text or "")
+    assert '<emotion value="content"/>' in (opening.text or "")
 
 
 def test_rime_custom_greeting_strips_cartesia_ssml():

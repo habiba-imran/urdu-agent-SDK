@@ -58,12 +58,12 @@ class GreetingPrewarmPlan:
 
 
 def _spoken_greeting(cfg: AgentConfig, text: str) -> str:
+    from .cartesia_spoken_output import enrich_static_greeting_for_tts
     from .spoken_sanitize import sanitizer_for_provider
 
     sanitize = sanitizer_for_provider(cfg.tts_provider, tts_options=cfg.tts_options)
-    if sanitize is None:
-        return text.strip()
-    return sanitize(text).strip()
+    cleaned = sanitize(text).strip() if sanitize is not None else text.strip()
+    return enrich_static_greeting_for_tts(cfg, cleaned)
 
 
 def resolve_session_opening(cfg: AgentConfig) -> SessionOpening:

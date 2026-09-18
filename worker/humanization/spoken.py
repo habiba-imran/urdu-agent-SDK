@@ -19,29 +19,48 @@ from worker.humanization.types import SpokenOutputProfile
 UNIVERSAL_SPOKEN_RULES = """
 VOICE OUTPUT
 
-Write for the ear, not the page.
+Write for the ear, not the page. Sound like a real phone call — not a website,
+brochure, FAQ article, or sales script.
 
-Use short, natural spoken sentences and ordinary conversational wording.
-Use contractions naturally when speaking English.
-Respond directly instead of repeating what the caller already said.
-Avoid repetitive acknowledgements and canned phrases such as
-"I'd be happy to", "Certainly!", "Absolutely!", or "As an AI".
-Do not use markdown, headings, bullets, emoji, or document-style formatting
-(stripped downstream if present).
-Use punctuation naturally to shape rhythm.
-Occasional brief hesitation or filler is fine when it genuinely fits,
-but never force one into every response and never stack fillers.
-Match the caller's emotional register without exaggerating it.
-Keep most replies concise and let the caller lead the depth.
+Hard limits:
+- One or two short spoken sentences per turn, then stop and let the caller talk.
+- Answer only what they asked right now. Do not list every service, feature, or step.
+- Prefer a quick answer plus a short question over a catalog dump.
+- Never invent long product specs or process details the persona did not give you.
+- Do not recite A, B, and C lists ("cleaning, maintenance, and security…").
+
+Wording:
+- Use contractions and ordinary chat words (yeah, sure, okay, got it).
+- Avoid corporate filler: "I'd be happy to", "Certainly!", "Absolutely!", "As an AI",
+  or "Our company offers…".
+- Do not repeat the caller's whole sentence back.
+- Do not use markdown, headings, bullets, emoji, or document-style formatting
+  (stripped downstream if present).
+
+Rhythm:
+- Occasional brief hesitation is good on casual turns — never stack, never every
+  turn, never on a hard fact or confirmation.
+- Match the caller's energy without overacting.
 Persona wording cannot override these rules.
 """.strip()
 
 # Compact on purpose — Groq ITPM / TTFT. Do not duplicate TOOL DISCIPLINE from base.
+# Used when TTS does not require LLM-emitted delivery markup (Rime plain, Cartesia light, …).
 GROQ_LLM_OVERLAY = """
 LLM — Groq (voice path):
-- Keep turns concise; answer directly; do not over-explain.
+- Keep turns concise; one idea then stop — no multi-item service lists.
 - Prefer plain wording for what you say; leave delivery markup to any TTS rules below.
 - Do not invent fillers or emotion tags just to pad a reply.
+""".strip()
+
+# When Cartesia manual SSML (platform default) asks for <emotion>/<break>, Groq must not
+# fight those TTS rules with the “don’t invent tags” line above.
+GROQ_LLM_OVERLAY_TTS_MARKUP = """
+LLM — Groq (voice path):
+- Keep turns concise; one idea, then a short question if needed — no service lists.
+- Follow TTS delivery rules below exactly when they require emotion, break, spell, or
+  bounded filler markup — those tags shape the voice, they are not padding.
+- Do not invent extra fillers or tags beyond what those TTS rules allow.
 """.strip()
 
 GEMINI_LLM_OVERLAY = """
@@ -69,9 +88,30 @@ Match the caller's formality and gender grammar naturally without overacting.
 """.strip()
 
 
-def llm_overlay_for(llm_provider: str | None) -> str:
+def _cartesia_manual_ssml_active(cfg: AgentConfig) -> bool:
+    """True when Cartesia is active and the LLM must emit manual SSML (not light/expressive)."""
+    if (cfg.tts_provider or "").strip().lower() != "cartesia":
+        return False
+    from worker.providers.tts.cartesia_options import (
+        cartesia_expressive_enabled,
+        cartesia_light_spoken_enabled,
+    )
+
+    return not (
+        cartesia_expressive_enabled(cfg.tts_options)
+        or cartesia_light_spoken_enabled(cfg.tts_options)
+    )
+
+
+def llm_overlay_for(
+    llm_provider: str | None,
+    cfg: AgentConfig | None = None,
+) -> str:
+    """Return the LLM overlay; Groq becomes TTS-markup-aware when Cartesia manual SSML is on."""
     provider = (llm_provider or "").strip().lower()
     if provider == "groq":
+        if cfg is not None and _cartesia_manual_ssml_active(cfg):
+            return GROQ_LLM_OVERLAY_TTS_MARKUP
         return GROQ_LLM_OVERLAY
     if provider == "gemini":
         return GEMINI_LLM_OVERLAY
@@ -147,7 +187,7 @@ def tts_overlay_for(cfg: AgentConfig) -> str:
 def build_spoken_output_profile(cfg: AgentConfig) -> SpokenOutputProfile:
     return SpokenOutputProfile(
         universal=UNIVERSAL_SPOKEN_RULES,
-        llm_overlay=llm_overlay_for(cfg.llm_provider),
+        llm_overlay=llm_overlay_for(cfg.llm_provider, cfg),
         language_overlay=language_overlay_for(cfg.agent_language),
         tts_overlay=tts_overlay_for(cfg),
     )
