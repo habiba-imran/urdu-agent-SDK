@@ -50,13 +50,17 @@ export async function readJsonBody(response: TelephonyFetchResponse): Promise<un
   }
 }
 
-export function fillPath(path: string, params: Record<string, string>): `/machine/telephony/${string}` {
+export function fillPath(path: string, params: Record<string, string>): `/machine/${string}` {
   let output = path;
   for (const key of Object.keys(params)) {
     output = output.replace(`{${key}}`, encodeURIComponent(params[key]));
   }
-  if (!output.startsWith('/machine/telephony/')) throw createInvalidResponseError();
-  return output as `/machine/telephony/${string}`;
+  // Every request must stay on the HMAC-signed /machine/ surface after substitution.
+  // This was `/machine/telephony/`, which made getSessionByRoom (/machine/sessions/get,
+  // added with MachineOperation['path'] widening to `/machine/${string}`) throw on every
+  // call instead of sending the request.
+  if (!output.startsWith('/machine/')) throw createInvalidResponseError();
+  return output as `/machine/${string}`;
 }
 
 export function buildUrl(baseUrl: string, path: string): string {
