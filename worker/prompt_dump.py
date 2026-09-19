@@ -1,4 +1,8 @@
-"""Write the live session prompt bundle to disk for inspection (size + text)."""
+"""Write the live session prompt bundle to disk for inspection (size + text).
+
+F-M24: dump is **opt-in**. Unset / empty / off → no file. Set ``UVA_DUMP_PROMPTS=1``
+only for local debug — never on shared prod disks (PII / persona in plaintext).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,17 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DUMP = _ROOT / "docs" / "last_session_prompt.txt"
+
+_TRUTH_ON = frozenset({"1", "true", "yes", "on"})
+_TRUTH_OFF = frozenset({"0", "false", "no", "off", ""})
+
+
+def dump_prompts_enabled() -> bool:
+    """True only when ``UVA_DUMP_PROMPTS`` is explicitly on (default off)."""
+    raw = (os.getenv("UVA_DUMP_PROMPTS") or "").strip().lower()
+    if raw in _TRUTH_OFF:
+        return False
+    return raw in _TRUTH_ON
 
 
 def estimate_tokens(chars: int) -> int:
@@ -25,13 +40,12 @@ def dump_session_prompt(
     tools_registered: list[str],
     compacted: bool,
 ) -> Path | None:
-    """Always write ``docs/last_session_prompt.txt`` unless UVA_DUMP_PROMPTS=0.
+    """Write ``docs/last_session_prompt.txt`` only when ``UVA_DUMP_PROMPTS`` is on.
 
     Only SYSTEM + PERSONA (effective) are sent to the model. Raw DB persona is
     appended for diffing compaction — it is never part of the LLM request.
     """
-    flag = (os.getenv("UVA_DUMP_PROMPTS") or "1").strip().lower()
-    if flag in ("0", "false", "no", "off"):
+    if not dump_prompts_enabled():
         return None
 
     out = Path(os.getenv("UVA_DUMP_PROMPTS_PATH") or _DEFAULT_DUMP)

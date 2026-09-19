@@ -9,6 +9,7 @@ before ``entrypoint`` connects, and time out waiting for a browser participant o
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from livekit.agents import JobRequest
+
+logger = logging.getLogger("worker.stale_jobs")
 
 # Mint TTL is 120s; allow a short join buffer before treating the dispatch as orphaned.
 DEFAULT_STALE_JOB_MAX_AGE_SEC = 180
@@ -152,6 +155,21 @@ def close_open_session(
         ).fetchone()
         if updated is None:
             return False
+
+        try:
+            from worker.session_retention import apply_retention_on_session_close
+
+            apply_retention_on_session_close(
+                conn,
+                room_name=room_name,
+                session_id=str(updated[0]),
+            )
+        except Exception as exc:
+            logger.warning(
+                "stale_jobs: failed to set retention_until room=%s: %s",
+                room_name,
+                exc,
+            )
 
         if tenant_id:
             conn.execute(

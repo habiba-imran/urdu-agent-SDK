@@ -205,16 +205,10 @@ def preload_vad() -> Any:
 
 
 def build_session_connect_options() -> Any:
-    """LiveKit session connect options — no provider retries on the voice path (429 dead air)."""
-    from livekit.agents.types import APIConnectOptions
-    from livekit.agents.voice.agent_session import SessionConnectOptions
+    """LiveKit session connect options — bounded provider retries (F-H10 Phase D)."""
+    from worker.provider_retries import build_session_connect_options as _build
 
-    no_retry = APIConnectOptions(max_retry=0, retry_interval=2.0, timeout=30.0)
-    return SessionConnectOptions(
-        llm_conn_options=no_retry,
-        tts_conn_options=no_retry,
-        stt_conn_options=no_retry,
-    )
+    return _build()
 
 
 async def build_session(
@@ -247,25 +241,53 @@ async def build_session(
         cfg = replace(cfg, greeting=mint_greeting, first_speaker="agent")
 
     # Remaps first, then humanization / pipeline use *effective* providers only.
+    requested_llm_provider = cfg.llm_provider
+    requested_llm_model = cfg.llm_model
+    requested_tts_provider = cfg.tts_provider
     effective = resolve_effective_providers(
         cfg, provider_voice_id, audio_channel=audio_channel
     )
     cfg = effective.cfg
     provider_voice_id = effective.provider_voice_id
+    logger.info(
+        "effective_providers room=%s agent=%s channel=%s "
+        "requested_llm=%s/%s effective_llm=%s/%s "
+        "requested_tts=%s effective_tts=%s stt=%s "
+        "cartesia_forced=%s groq_forced=%s",
+        room_name,
+        cfg.agent_id,
+        audio_channel,
+        requested_llm_provider,
+        requested_llm_model,
+        cfg.llm_provider,
+        cfg.llm_model,
+        requested_tts_provider,
+        cfg.tts_provider,
+        cfg.stt_provider,
+        effective.cartesia_forced,
+        effective.groq_forced,
+    )
     if effective.cartesia_forced:
         logger.warning(
             "telephony TTS remapped to Cartesia room=%s agent=%s lang=%s "
+            "requested_tts=%s effective_tts=%s "
             "(Rime/Fish under-run on PSTN; Urdu/Uplift/ElevenLabs exempt)",
             room_name,
             cfg.agent_id,
             cfg.agent_language,
+            requested_tts_provider,
+            cfg.tts_provider,
         )
     if effective.groq_forced:
         logger.warning(
-            "telephony LLM remapped to Groq room=%s agent=%s model=%s "
+            "telephony LLM remapped to Groq room=%s agent=%s "
+            "requested_llm=%s/%s effective_llm=%s/%s "
             "(Gemini 3.6 Flash TTFT ~1.5–3s+ dominates voice-to-voice on PSTN)",
             room_name,
             cfg.agent_id,
+            requested_llm_provider,
+            requested_llm_model,
+            cfg.llm_provider,
             cfg.llm_model,
         )
 
@@ -445,6 +467,11 @@ async def build_session(
             room_name=room_name,
             tools_base_url=cfg.tools_base_url,
             tools_auth_secret=cfg.tools_auth_secret,
+            verified_caller_phone=(
+                str(md["verified_caller_phone"]).strip()
+                if isinstance(md, dict) and md.get("verified_caller_phone")
+                else None
+            ),
         ),
         "turn_handling": turn_handling,
         "use_tts_aligned_transcript": False,
@@ -546,6 +573,18 @@ async def _await_opening_and_speak(
         synth_wait_ms,
         ms_since_connect,
     )
+
+    # F-C4 Phase C: non-interruptible disclosure before greeting / wait-for-user.
+    # Runs even when first_speaker=user (opening mode wait).
+    from worker.recording_disclosure import speak_recording_disclosure_if_needed
+
+    await speak_recording_disclosure_if_needed(
+        session,
+        agent_language=cfg.agent_language,
+        room_name=room_name,
+        logger=logger,
+    )
+
     await apply_session_opening(
         session,
         cfg,
@@ -677,13 +716,6 @@ def _tts_agent_session_extra(
     return extra
 
 
-def _cartesia_agent_session_extra(
-    cfg: AgentConfig, agent_session_cls: Any, logger: Any
-) -> dict[str, Any]:
-    """Alias kept for tests that import the Cartesia-era name."""
-    return _tts_agent_session_extra(cfg, agent_session_cls, logger)
-
-
 def _load_vad() -> Any:
     """Reuse process-prewarmed Silero VAD when available."""
     global _vad_singleton
@@ -721,6 +753,9 @@ async def _resolve_session_from_participant(
                 "tenant_id": raw_md["tenant_id"],
                 "agent_id": raw_md["agent_id"],
             }
+            verified = raw_md.get("verified_caller_phone")
+            if isinstance(verified, str) and verified.strip():
+                md["verified_caller_phone"] = verified.strip()
     except Exception:
         raw_md = {}
 
@@ -742,7 +777,13 @@ async def _resolve_session_from_participant(
             db_conn = None
             try:
                 db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=3)
-            except Exception:
+            except Exception as exc:
+                from livekit.agents.log import logger as _resolve_logger
+
+                _resolve_logger.warning(
+                    "stage=telephony_resolve_db_connect failed err=%s",
+                    exc,
+                )
                 db_conn = None
             try:
                 resolved = resolve_session_metadata(
@@ -755,9 +796,31 @@ async def _resolve_session_from_participant(
                     "agent_id": resolved.get("agent_id", ""),
                 }
                 audio_channel = session_audio_channel(resolved)
+                # Prefer SIP ANI over trunk e164 for F-C7 ownership (never job e164).
+                from worker.caller_identity import resolve_verified_caller_phone
+
+                ani = resolve_verified_caller_phone(
+                    dispatch_or_md={**md, **(raw_md if isinstance(raw_md, dict) else {})},
+                    participant=participant,
+                    room_name=None,
+                    db_conn=None,
+                )
+                if ani:
+                    md["verified_caller_phone"] = ani
+                tele = resolved.get("telephony") if isinstance(resolved, dict) else None
+                if isinstance(tele, dict) and tele.get("telephony_call_id"):
+                    md["telephony_call_id"] = str(tele["telephony_call_id"])
             finally:
                 if db_conn is not None:
-                    db_conn.close()
+                    try:
+                        db_conn.close()
+                    except Exception as close_exc:
+                        from livekit.agents.log import logger as _resolve_logger
+
+                        _resolve_logger.warning(
+                            "stage=telephony_resolve_db_close failed err=%s",
+                            close_exc,
+                        )
         except Exception as resolve_exc:
             from livekit.agents.log import logger as _logger
             from worker.telephony_runtime import is_sip_participant
@@ -781,6 +844,88 @@ async def _resolve_session_from_participant(
         }
 
     return md, audio_channel
+
+
+def _bind_verified_caller_phone(
+    session_obj: Any,
+    *,
+    md: dict[str, Any] | None,
+    participant: Any = None,
+    room_name: str,
+    job_metadata: Any = None,
+) -> None:
+    """Set userdata.verified_caller_phone from mint / SIP ANI / telephony_calls (never trunk)."""
+    from worker.caller_identity import resolve_verified_caller_phone
+    from worker.write_tool_gate import set_verified_caller_phone
+
+    ud = getattr(session_obj, "userdata", None)
+    if ud is None:
+        return
+    # Keep mint-provided identity if already bound at build_session.
+    if getattr(ud, "verified_caller_phone", None):
+        return
+
+    dispatch: dict[str, Any] = dict(md or {})
+    job_md: dict[str, Any] = {}
+    if isinstance(job_metadata, dict):
+        job_md = job_metadata
+    elif isinstance(job_metadata, str) and job_metadata.strip():
+        try:
+            parsed = json.loads(job_metadata)
+            if isinstance(parsed, dict):
+                job_md = parsed
+        except Exception:
+            job_md = {}
+    for key in ("verified_caller_phone", "telephony_call_id"):
+        if job_md.get(key) and not dispatch.get(key):
+            dispatch[key] = job_md[key]
+
+    db_conn = None
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        import psycopg
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
+        try:
+            from scripts.dbconn import conn_kwargs as _conn_kwargs
+        except ImportError:
+            from dbconn import conn_kwargs as _conn_kwargs  # type: ignore # noqa: E402
+
+        try:
+            db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=3)
+        except Exception as exc:
+            from livekit.agents.log import logger as _id_logger
+
+            _id_logger.warning(
+                "stage=caller_identity_db_connect failed room=%s err=%s",
+                room_name,
+                exc,
+            )
+            db_conn = None
+
+        phone = resolve_verified_caller_phone(
+            dispatch_or_md=dispatch,
+            participant=participant,
+            room_name=room_name,
+            db_conn=db_conn,
+            telephony_call_id=str(dispatch.get("telephony_call_id") or "") or None,
+        )
+        if phone:
+            set_verified_caller_phone(ud, phone)
+    finally:
+        if db_conn is not None:
+            try:
+                db_conn.close()
+            except Exception as exc:
+                from livekit.agents.log import logger as _id_logger
+
+                _id_logger.warning(
+                    "stage=caller_identity_db_close failed room=%s err=%s",
+                    room_name,
+                    exc,
+                )
 
 
 def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) -> None:
@@ -827,17 +972,69 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
             from worker.humanization.history import apply_history_hygiene
 
             apply_history_hygiene(session, item=item, room_name=room_name)
-        text = (getattr(item, "text_content", None) or "")[:200]
+        # F-C7: advance user-turn barrier for write-tool confirmation.
         if role == "user":
-            logger.info("conversation turn [USER] room=%s text=%r", room_name, text)
+            ud = getattr(session, "userdata", None)
+            if ud is not None:
+                from worker.write_tool_gate import note_user_turn
+
+                note_user_turn(ud)
+        text_full = getattr(item, "text_content", None) or ""
+        from worker.transcript_logging import format_transcript_for_log, log_transcripts_enabled
+
+        snippet, chars = format_transcript_for_log(text_full)
+        if role == "user":
+            if log_transcripts_enabled():
+                logger.info(
+                    "conversation turn [USER] room=%s chars=%s text=%r",
+                    room_name,
+                    chars,
+                    snippet,
+                )
+            else:
+                logger.info(
+                    "conversation turn [USER] room=%s chars=%s",
+                    room_name,
+                    chars,
+                )
         elif role == "assistant":
-            logger.info("conversation turn [AGENT] room=%s text=%r", room_name, text)
+            if log_transcripts_enabled():
+                logger.info(
+                    "conversation turn [AGENT] room=%s chars=%s text=%r",
+                    room_name,
+                    chars,
+                    snippet,
+                )
+            else:
+                logger.info(
+                    "conversation turn [AGENT] room=%s chars=%s",
+                    room_name,
+                    chars,
+                )
 
     def _on_user_input_transcribed(ev: Any) -> None:
         transcript = getattr(ev, "transcript", "")
         is_final = getattr(ev, "is_final", False)
-        if transcript.strip():
-            logger.info("live user speech room=%s is_final=%s text=%r", room_name, is_final, transcript)
+        if not transcript.strip():
+            return
+        from worker.transcript_logging import format_transcript_for_log, log_transcripts_enabled
+
+        snippet, chars = format_transcript_for_log(transcript)
+        if log_transcripts_enabled():
+            logger.info(
+                "live user speech room=%s is_final=%s chars=%s text=%r",
+                room_name,
+                is_final,
+                chars,
+                snippet,
+            )
+        else:
+            logger.info(
+                "live user speech room=%s is_final=%s chars=%s",
+                room_name,
+                is_final,
+                chars,
+            )
 
     def _on_speech_created(ev: Any) -> None:
         source = getattr(ev, "source", None)
@@ -987,6 +1184,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             try:
                 await build_task
             except (asyncio.CancelledError, Exception):
+                # noqa-f-m1: expected when cancelling overlapped build_session on connect failure
                 pass
         raise
 
@@ -1031,105 +1229,20 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         _session_started_at = _time.monotonic()
 
         async def _release_quota_slot(reason: str = "") -> None:
-            import sys as _sys
-            from pathlib import Path as _Path
-
-            _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-            try:
-                from scripts.dbconn import conn_kwargs
-            except ImportError:
-                from dbconn import conn_kwargs  # type: ignore # noqa: E402
-
-            import psycopg
-            from psycopg.types.json import Jsonb
-
-            tenant_id = md_obj.get("tenant_id", "")
-            local_room_name = ctx.room.name
-
-            elapsed_sec = int(_time.monotonic() - _session_started_at)
-            end_reason = reason or "normal"
+            # F-H18 Phase B: logic lives in worker/session_close.py (testable + isolated).
+            from worker.session_close import release_session_quota_slot
 
             try:
-                from worker.humanization.history import plain_text_for_history
-
-                transcript = [
-                    {
-                        "role": m.role,
-                        "text": plain_text_for_history(m.text_content or ""),
-                        "at": m.created_at,
-                    }
-                    for m in session_obj.history.messages()
-                    if m.role in ("user", "assistant") and (m.text_content or "").strip()
-                ]
-            except Exception as e:
-                from livekit.agents.log import logger
-
-                logger.warning("failed to build transcript for room %s: %s", local_room_name, e)
-                transcript = []
-
-            try:
-                with psycopg.connect(
-                    **conn_kwargs(), connect_timeout=5, autocommit=True
-                ) as conn:
-                    updated = conn.execute(
-                        "update sessions set ended_at = now(), duration_sec = %s, end_reason = %s, "
-                        "transcript = %s "
-                        "where room_name = %s and ended_at is null returning id",
-                        (elapsed_sec, end_reason, Jsonb(transcript), local_room_name),
-                    ).fetchone()
-
-                    if updated and tenant_id:
-                        conn.execute(
-                            "update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
-                            "where tenant_id = %s",
-                            (tenant_id,),
-                        )
-                        try:
-                            from worker.usage import collect_model_usage, record_usage_many
-
-                            items = collect_model_usage(session_obj)
-                            items["agent_sec"] = float(elapsed_sec)
-                            n = record_usage_many(conn, tenant_id, str(updated[0]), items)
-
-                            conn.execute(
-                                """
-                                insert into quota_state (tenant_id, minutes_this_month, period_start)
-                                values (%s, %s, date_trunc('month', now())::date)
-                                on conflict (tenant_id) do update set
-                                  minutes_this_month = case
-                                    when quota_state.period_start < date_trunc('month', now())::date
-                                      then excluded.minutes_this_month
-                                    else quota_state.minutes_this_month + excluded.minutes_this_month
-                                  end,
-                                  period_start = date_trunc('month', now())::date
-                                """,
-                                (tenant_id, elapsed_sec / 60.0),
-                            )
-                            from livekit.agents.log import logger
-
-                            logger.info(
-                                "recorded usage for room %s: %d event(s), +%.2f min",
-                                local_room_name,
-                                n,
-                                elapsed_sec / 60.0,
-                            )
-                        except Exception as e:
-                            from livekit.agents.log import logger
-                            logger.warning(
-                                "failed to record usage for room %s: %s", local_room_name, e
-                            )
-                    elif updated and not tenant_id:
-                        from livekit.agents.log import logger
-                        logger.warning(
-                            "closed session for room %s but participant metadata had no tenant_id — "
-                            "concurrency counter NOT decremented; reconcile_sessions.py will correct it",
-                            local_room_name,
-                        )
-            except Exception as e:
-                from livekit.agents.log import logger
-                logger.warning("failed to release quota slot for room %s: %s", local_room_name, e)
+                release_session_quota_slot(
+                    room_name=ctx.room.name,
+                    tenant_id=md_obj.get("tenant_id", ""),
+                    elapsed_sec=int(_time.monotonic() - _session_started_at),
+                    end_reason=reason or "normal",
+                    session_obj=session_obj,
+                )
             finally:
                 import gc
+
                 gc.collect()
 
         async def _record_agent_minutes(reason: str = "") -> None:
@@ -1190,32 +1303,46 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         if getattr(session_obj, "userdata", None) is not None:
             session_obj.userdata.latency_tracker = latency_tracker
 
-        # Local demo: skip RecorderIO unless UVA_SESSION_RECORD_AUDIO=1 (saves seconds on session.start).
-        _record_audio = (os.environ.get("UVA_SESSION_RECORD_AUDIO") or "0").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
+        from worker.recording_policy import (
+            CONSENT_NOT_APPLICABLE,
+            CONSENT_PENDING,
+            may_start_recorder,
+            read_livekit_enable_recording,
+            session_start_record_option,
         )
+
+        _lk_enable = read_livekit_enable_recording(ctx)
+        _may_start = may_start_recorder(
+            agent_recording_enabled=bool(
+                getattr(cfg_obj, "recording_enabled", False)
+            ),
+            enable_recording=_lk_enable,
+        )
+        _ud = getattr(session_obj, "userdata", None)
+        if _ud is not None:
+            _ud.recording_may_start = _may_start
+            _ud.recording_consent_status = (
+                CONSENT_PENDING if _may_start else CONSENT_NOT_APPLICABLE
+            )
+
         _start_at = time.monotonic()
         await session_obj.start(
             agent_obj,
             room=ctx.room,
             room_options=session_room_options(audio_channel=channel),
-            record=(
-                {"audio": True, "traces": False, "logs": False, "transcript": False}
-                if _record_audio
-                else False
-            ),
+            record=session_start_record_option(may_start=_may_start),
         )
         _entry_logger.info(
             "entrypoint session.start room=%s start_ms=%s since_connect_ms=%s "
-            "interruption_mode=%s record_audio=%s",
+            "interruption_mode=%s record_audio=%s agent_recording_enabled=%s "
+            "livekit_enable_recording=%s",
             room_name,
             int(round((time.monotonic() - _start_at) * 1000)),
             int(round((time.monotonic() - _connect_at) * 1000)),
             interruption_mode(),
-            _record_audio,
+            _may_start,
+            bool(getattr(cfg_obj, "recording_enabled", False)),
+            _lk_enable,
         )
 
     # Fast Path: If we have early identity (e.g. from dispatch metadata), build and start
@@ -1252,6 +1379,23 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
                 greeting_prewarm.cancel()
             return
 
+        # Bind verified caller before tools can run (mint / telephony_calls / SIP if present).
+        early_participant = None
+        try:
+            remotes = getattr(ctx.room, "remote_participants", None) or {}
+            for p in remotes.values():
+                early_participant = p
+                break
+        except Exception:
+            early_participant = None
+        _bind_verified_caller_phone(
+            session,
+            md=early_md,
+            participant=early_participant,
+            room_name=room_name,
+            job_metadata=job_metadata,
+        )
+
         await _setup_and_start(session, cfg, agent, early_md, channel=audio_channel)
 
         from livekit.agents.log import logger as _opening_logger
@@ -1268,9 +1412,17 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         )
 
         try:
-            await wait_task
+            participant = await wait_task
         except (asyncio.TimeoutError, RuntimeError, asyncio.CancelledError):
             return
+        # Late SIP join: fill verified phone if still missing.
+        _bind_verified_caller_phone(
+            session,
+            md=early_md,
+            participant=participant,
+            room_name=room_name,
+            job_metadata=job_metadata,
+        )
 
     else:
         if await stale_task:
@@ -1291,6 +1443,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             participant_md, room_name, audio_channel=resolved_channel
         )
         agent = build_agent(cfg)
+        _bind_verified_caller_phone(
+            session,
+            md=participant_md,
+            participant=participant,
+            room_name=room_name,
+            job_metadata=job_metadata,
+        )
 
         await _setup_and_start(
             session, cfg, agent, participant_md, channel=resolved_channel
@@ -1418,8 +1577,19 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
         preload_vad()
         if proc is not None and getattr(proc, "userdata", None) is not None:
             proc.userdata["vad"] = _vad_singleton
-    except Exception:
-        pass
+        from worker.health_http import set_vad_ready
+
+        set_vad_ready(True)
+    except Exception as e:
+        from livekit.agents.log import logger as _prewarm_logger
+
+        _prewarm_logger.warning("stage=prewarm_vad failed err=%s", e)
+        try:
+            from worker.health_http import set_vad_ready
+
+            set_vad_ready(False)
+        except Exception:
+            pass
 
     # Open one Supabase TLS session so the first job's config/stale lookups skip cold connect.
     try:
@@ -1427,8 +1597,10 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
 
         with worker_db_connection(connect_timeout=5) as conn:
             conn.execute("select 1")
-    except Exception:
-        pass
+    except Exception as e:
+        from livekit.agents.log import logger as _prewarm_logger
+
+        _prewarm_logger.warning("stage=prewarm_db failed err=%s", e)
 
     # Optional demo cold-start seeds (env-gated; no-op when unset).
     # Greeting PCM is process-global — safe from main or runner. Provider stack is
@@ -1484,6 +1656,11 @@ if __name__ == "__main__":
                 "main-thread plugin registration did not happen as expected. See ADR-007."
             )
     print(f"[prewarm] confirmed in sys.modules before any job thread: {_prewarmed}")
+
+    # F-M25: optional health/readiness HTTP (off unless UVA_WORKER_HEALTH_PORT > 0).
+    from worker.health_http import start_health_server_if_configured
+
+    start_health_server_if_configured()
 
     from livekit.agents import WorkerOptions, cli
 

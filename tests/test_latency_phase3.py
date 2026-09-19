@@ -50,6 +50,7 @@ def test_rolling_latency_stats_publish_metrics_updated_shape():
 
 
 def test_tool_execution_timing_attached_to_turn(monkeypatch):
+    monkeypatch.setenv("UVA_PUBLISH_TURN_LATENCY", "1")
     room = MagicMock()
     logger = MagicMock()
     tracker = TurnLatencyTracker(room, logger)

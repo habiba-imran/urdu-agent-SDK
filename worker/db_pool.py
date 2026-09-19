@@ -41,8 +41,8 @@ def _drop_cached_unlocked() -> None:
         return
     try:
         conn.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("stage=db_pool_close failed err=%s", exc)
 
 
 def reset_worker_db_pool() -> None:
@@ -71,14 +71,15 @@ def _normalize_idle(conn: Connection) -> None:
     """Leave the connection IDLE for the next checkout (clear aborted tx / leftovers)."""
     try:
         status = conn.info.transaction_status
-    except Exception:
+    except Exception as exc:
+        logger.warning("stage=db_pool_tx_status failed err=%s", exc)
         return
     # psycopg.pq.TransactionStatus.IDLE == 0
     if int(status) != 0:
         try:
             conn.rollback()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("stage=db_pool_rollback failed err=%s", exc)
 
 
 @contextmanager

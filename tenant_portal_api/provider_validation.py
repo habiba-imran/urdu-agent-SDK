@@ -22,6 +22,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from worker.providers.capabilities import (  # noqa: E402
+    allowed_llm_models,
     is_language_known,
     llm_capability,
     stt_capability,
@@ -178,10 +179,10 @@ def resolve_agent_provider_fields(
         effective_llm_model if effective_llm_model is not None else base["llm_model"]
     )
     # llm_model keeps its existing free-text convention (agents.llm_model has always been a plain
-    # string, never previously validated against a fixed list) — only checked against the
-    # capability's models list when that list is non-empty, so real deprecated-model aliasing
-    # (worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS) keeps working unchanged.
-    if llm_cap["models"] and resolved_llm_model not in llm_cap["models"]:
+    # string, never previously validated against a fixed list) — checked against runtime models
+    # plus legacy_aliases (F-M15) so deprecated IDs on existing rows still validate while pickers
+    # only show live models.
+    if llm_cap["models"] and resolved_llm_model not in allowed_llm_models(llm_cap):
         raise ProviderValidationError(
             "unsupported_model_for_provider",
             f"llm model {resolved_llm_model!r} is not supported by provider "

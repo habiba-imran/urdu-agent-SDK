@@ -3,12 +3,16 @@
 Centralizes turn-handling defaults, provider warm-up, session-identity lookup, per-turn
 ``turn_latency`` / ``metrics_updated`` telemetry, tool-stage timing, barge-in flush, and
 fast room teardown options.
+
+F-L6: room publish of stage timings is opt-in via ``UVA_PUBLISH_TURN_LATENCY``
+(default off). Server-side INFO logs always run.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import statistics
 import sys
@@ -16,6 +20,23 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("worker.latency")
+
+_TRUTH_ON = frozenset({"1", "true", "yes", "on"})
+_TRUTH_OFF = frozenset({"0", "false", "no", "off", ""})
+
+
+def publish_turn_latency_enabled() -> bool:
+    """True only when ``UVA_PUBLISH_TURN_LATENCY`` is explicitly on (default off).
+
+    Gate A / D6 (F-L6): keep server INFO latency logs; do not broadcast stage
+    breakdown into the LiveKit room unless a host opts in for debug.
+    """
+    raw = (os.getenv("UVA_PUBLISH_TURN_LATENCY") or "").strip().lower()
+    if raw in _TRUTH_OFF:
+        return False
+    return raw in _TRUTH_ON
 
 # Phase 2 (UVA-6): 0.15s min endpointing — commit turns faster during conversation.
 # Preemptive generation starts LLM while the user is still speaking (UVA-14).
@@ -122,7 +143,12 @@ def is_telephony_job(
         return False
     try:
         parsed = job_metadata if isinstance(job_metadata, dict) else json.loads(job_metadata)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "stage=telephony_meta_parse failed room=%s err=%s",
+            room_name or "?",
+            exc,
+        )
         return False
     if not isinstance(parsed, dict):
         return False
@@ -163,7 +189,12 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
                 """,
                 (room_name,),
             ).fetchone()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "stage=load_session_identity failed room=%s err=%s",
+            room_name,
+            exc,
+        )
         return None
     if row is None or not row[0] or not row[1]:
         return None
@@ -181,7 +212,8 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
         return None
     try:
         parsed = json.loads(raw) if not isinstance(raw, dict) else raw
-    except Exception:
+    except Exception as exc:
+        logger.warning("stage=parse_dispatch_metadata failed err=%s", exc)
         return None
     if not isinstance(parsed, dict):
         return None
@@ -198,6 +230,11 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
         greeting = parsed.get("greeting")
         if isinstance(greeting, str) and greeting.strip():
             out["greeting"] = greeting.strip()
+        # F-C7 / A.4: host-verified caller phone for cancel/reschedule ownership.
+        # Do not copy e164_number / from_number — those are often the trunk.
+        verified = parsed.get("verified_caller_phone")
+        if isinstance(verified, str) and verified.strip():
+            out["verified_caller_phone"] = verified.strip()
         return out
     return None
 
@@ -308,8 +345,9 @@ def wire_barge_in_flush(
         try:
             session.interrupt(force=True)
             logger.info("barge-in: interrupted in-flight agent speech")
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            # Expected when nothing is playing; still visible for F-M1 (not silent).
+            logger.debug("stage=barge_in_interrupt skipped err=%s", exc)
 
     logger.info(
         "barge-in force flush configured channel=%s enabled=%s",
@@ -339,8 +377,8 @@ async def prewarm_llm(llm: Any) -> None:
         async for _chunk in stream:
             break
         await stream.aclose()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("stage=prewarm_llm failed module=%s err=%s", module, exc)
 
 
 async def prewarm_greeting_providers(
@@ -695,6 +733,8 @@ class TurnLatencyTracker:
             self._turns.pop(speech_id, None)
 
     def _publish(self, payload: dict[str, Any], *, topic: str) -> None:
+        if not publish_turn_latency_enabled():
+            return
         try:
             result = self._room.local_participant.publish_data(
                 json.dumps(payload),
@@ -763,7 +803,11 @@ class TurnLatencyTracker:
 
 
 def wire_turn_latency(session: Any, room: Any, logger: Any) -> TurnLatencyTracker:
-    """Hook session events to emit per-turn latency payloads to the browser (UVA-5)."""
+    """Hook session events for per-turn latency (UVA-5).
+
+    Always logs INFO server-side. Room ``publish_data`` runs only when
+    ``UVA_PUBLISH_TURN_LATENCY`` is on (F-L6).
+    """
     tracker = TurnLatencyTracker(room, logger)
 
     def _on_metrics(ev: Any) -> None:
