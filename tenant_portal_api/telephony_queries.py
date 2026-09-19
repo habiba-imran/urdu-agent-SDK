@@ -10,7 +10,10 @@ Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Protocol
+
+_log = logging.getLogger("tenant_portal_api.telephony_queries")
 
 
 class DbConnection(Protocol):
@@ -469,6 +472,14 @@ def try_insert_idempotency_lock(
             return rowcount > 0
         return True
     except Exception:
+        # F-M1: returning False here reads to the caller as "already used", so a DB error
+        # silently turns into a rejected or replayed request. Record why.
+        _log.warning(
+            "idempotency key reservation failed tenant=%s action=%s",
+            tenant_id,
+            action,
+            exc_info=True,
+        )
         return False
 
 

@@ -973,7 +973,14 @@ class TelnyxClient:
                         "daily_spending_limit": data.get("daily_spend_limit"),
                     }
                 except Exception:
-                    pass
+                    # F-M1: log which provider stage failed before falling back to create.
+                    logger.warning(
+                        "telnyx stage=update_outbound_voice_profile failed id=%s name=%s "
+                        "— falling back to create_or_get",
+                        provider_outbound_voice_profile_id,
+                        name,
+                        exc_info=True,
+                    )
 
             if getattr(response, "status_code", None) in (404, 400, 422):
                 return self.create_or_get_outbound_voice_profile(

@@ -67,6 +67,7 @@ _LK_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME") or _ENV.get(
 RATE_LIMIT_PER_MIN = 120
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _mint_log = logging.getLogger("control_plane.mint")
+_voices_log = logging.getLogger("control_plane.voices")
 
 
 def _require_env() -> None:
@@ -106,7 +107,12 @@ if _SENTRY_DSN and sentry_sdk is not None:
             environment=os.environ.get("ENVIRONMENT", "production"),
         )
     except Exception:
-        pass
+        # F-M1: a swallowed failure here means error reporting is off for the whole
+        # service with nothing to show for it. Startup still proceeds — Sentry is not
+        # required to mint sessions — but it must be visible in the logs.
+        logging.getLogger("control_plane").warning(
+            "sentry_sdk.init failed — error reporting is disabled", exc_info=True
+        )
 
 
 app = FastAPI(
@@ -206,9 +212,17 @@ def list_voices():
                     for r in rows
                 ]
     except Exception:
-        pass
+        # F-M1: this used to fall through to the static catalogue below, so a DB outage
+        # was indistinguishable from a small voice list — clients rendered five voices
+        # that do not exist for this tenant. Fail loudly instead.
+        _voices_log.exception("/v1/voices database query failed")
+        raise HTTPException(
+            status_code=503, detail="voice catalogue temporarily unavailable"
+        )
 
-    # Fallback default catalog if DB query fails or unpopulated
+    # DB reachable but the catalogue is empty (fresh/dev database) — keep the built-in
+    # demo list so local setups are not blocked. This is NOT the DB-failure path.
+    _voices_log.warning("/v1/voices returned no enabled rows — serving demo catalogue")
     return [
         {
             "id": "v_meklc281",
@@ -262,6 +276,9 @@ class SessionBody(BaseModel):
     greeting: str | None = None
     custom_greeting: str | None = None
     greeting_mode: str | None = None
+    # F-C7 / A.4: phone number the HOST has already verified belongs to this caller.
+    # Optional; the worker fail-closes on browser cancel/reschedule without it.
+    verified_caller_phone: str | None = None
 
 
 class DevSessionBody(BaseModel):
@@ -270,6 +287,30 @@ class DevSessionBody(BaseModel):
     greeting: str | None = None
     customGreeting: str | None = None
     greetingMode: str | None = None
+    verifiedCallerPhone: str | None = None
+    verified_caller_phone: str | None = None
+
+
+# F-C7 / A.4. Mirrors worker/write_tool_gate.py::normalize_phone so the value the worker
+# compares against is the value it was sent: keep a leading "+", keep digits, drop the rest.
+# Normalizing here also keeps newlines and other junk out of the dispatch metadata JSON.
+_MAX_PHONE_DIGITS = 15  # E.164 maximum
+
+
+def _normalize_caller_phone(raw: str | None) -> str | None:
+    """Return the normalized phone, or None when absent. Raises 400 on a non-empty but
+    unusable value — silently dropping it would surface much later as the worker refusing
+    a cancel/reschedule, with nothing pointing back at the host's malformed field."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits or len(digits) > _MAX_PHONE_DIGITS:
+        raise HTTPException(
+            status_code=400,
+            detail="verified_caller_phone must be a phone number (E.164 preferred)",
+        )
+    return ("+" + digits) if text.startswith("+") else digits
 
 
 def _opening_greeting(*candidates: str | None) -> str | None:
@@ -322,11 +363,19 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
             status_code=401, detail="token metadata missing tenant or agent"
         )
 
+    # A.4: refresh must not strip metadata the mint put there (e.g. verified_caller_phone),
+    # otherwise a mid-call refresh would silently revoke the caller's write-tool ownership.
+    refreshed_metadata = {
+        k: v for k, v in metadata.items() if isinstance(k, str) and v is not None
+    }
+    refreshed_metadata["tenant_id"] = tenant_id
+    refreshed_metadata["agent_id"] = agent_id
+
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
         .with_identity(claims.identity)
         .with_ttl(datetime.timedelta(seconds=TTL_SEC))
-        .with_metadata(json.dumps({"tenant_id": tenant_id, "agent_id": agent_id}))
+        .with_metadata(json.dumps(refreshed_metadata))
         .with_grants(
             api.VideoGrants(
                 room_join=True,
@@ -427,10 +476,14 @@ async def _dispatch_agent(
     tenant_id: str,
     agent_id: str,
     greeting: str | None = None,
+    verified_caller_phone: str | None = None,
 ) -> None:
     metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
     if greeting:
         metadata["greeting"] = greeting
+    if verified_caller_phone:
+        # Read by worker/caller_identity.py::resolve_verified_caller_phone (A.4 source 1).
+        metadata["verified_caller_phone"] = verified_caller_phone
     try:
         await _get_dispatch_client().agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
@@ -474,7 +527,11 @@ def _session_response(payload: dict) -> JSONResponse:
 
 
 def _run_dispatch_background(
-    room_name: str, tenant_id: str, agent_id: str, greeting: str | None = None
+    room_name: str,
+    tenant_id: str,
+    agent_id: str,
+    greeting: str | None = None,
+    verified_caller_phone: str | None = None,
 ) -> None:
     log = logging.getLogger("control_plane.dispatch")
     started = time.monotonic()
@@ -484,6 +541,7 @@ def _run_dispatch_background(
             tenant_id=tenant_id,
             agent_id=agent_id,
             greeting=greeting,
+            verified_caller_phone=verified_caller_phone,
         ),
         _get_dispatch_loop(),
     )
@@ -514,6 +572,7 @@ def _with_dispatch(
     background_tasks: BackgroundTasks,
     *,
     greeting: str | None = None,
+    verified_caller_phone: str | None = None,
 ) -> dict:
     background_tasks.add_task(
         _run_dispatch_background,
@@ -521,6 +580,7 @@ def _with_dispatch(
         tenant_id,
         agent_id,
         greeting,
+        verified_caller_phone,
     )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
@@ -533,6 +593,7 @@ def _dev_mint_session(
     background_tasks: BackgroundTasks,
     auto_reset_quota: bool,
     greeting: str | None = None,
+    verified_caller_phone: str | None = None,
 ) -> dict:
     secret = _secrets.get(tenant_id)
     if not secret:
@@ -565,6 +626,7 @@ def _dev_mint_session(
                 agent_id=agent_id,
                 signature=signature,
                 origin=request.headers.get("origin"),
+                verified_caller_phone=verified_caller_phone,
             )
             _mint_log.info(
                 "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint",
@@ -593,6 +655,7 @@ def _dev_mint_session(
                     agent_id=agent_id,
                     signature=signature,
                     origin=request.headers.get("origin"),
+                    verified_caller_phone=verified_caller_phone,
                 )
                 _mint_log.info(
                     "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint_retry",
@@ -605,7 +668,12 @@ def _dev_mint_session(
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
     return _with_dispatch(
-        res, tenant_id, agent_id, background_tasks, greeting=greeting
+        res,
+        tenant_id,
+        agent_id,
+        background_tasks,
+        greeting=greeting,
+        verified_caller_phone=verified_caller_phone,
     )
 
 
@@ -623,6 +691,7 @@ def create_session(
         record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
     greeting = _opening_greeting(body.greeting, body.custom_greeting)
+    verified_caller_phone = _normalize_caller_phone(body.verified_caller_phone)
     try:
         with mint_db_connection(connect_timeout=10) as conn:
             mint_t0 = time.monotonic()
@@ -638,6 +707,7 @@ def create_session(
                 agent_id=body.agent_id,
                 signature=x_signature,
                 origin=request.headers.get("origin"),
+                verified_caller_phone=verified_caller_phone,
             )
             _mint_log.info(
                 "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=session",
@@ -653,6 +723,7 @@ def create_session(
                     body.agent_id,
                     background_tasks,
                     greeting=greeting,
+                    verified_caller_phone=verified_caller_phone,
                 )
             )
     except MintError as e:
@@ -664,6 +735,9 @@ def create_session(
 def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
     greeting = _opening_greeting(body.greeting, body.customGreeting)
+    verified_caller_phone = _normalize_caller_phone(
+        body.verifiedCallerPhone or body.verified_caller_phone
+    )
     return _session_response(
         _dev_mint_session(
             tenant_id=tenant_id,
@@ -672,6 +746,7 @@ def create_dev_session(body: DevSessionBody, request: Request, background_tasks:
             background_tasks=background_tasks,
             auto_reset_quota=True,
             greeting=greeting,
+            verified_caller_phone=verified_caller_phone,
         )
     )
 

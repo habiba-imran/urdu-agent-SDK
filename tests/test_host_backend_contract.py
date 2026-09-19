@@ -49,7 +49,9 @@ def test_session_endpoint_contract_success(monkeypatch):
             "roomName": "room-123",
         }
 
-    def fake_with_dispatch(res, tenant_id, agent_id, background_tasks, greeting=None):
+    # **kwargs so adding an optional mint/dispatch metadata field (greeting,
+    # verified_caller_phone, …) does not break this contract test again.
+    def fake_with_dispatch(res, tenant_id, agent_id, background_tasks, **kwargs):
         return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": 120}
 
     @contextmanager
