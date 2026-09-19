@@ -294,7 +294,7 @@ Has a Dockerfile; **not** in the old deploy-hook trio. Create it if you need ten
 | **Instance type** | Starter / Standard |
 | **Health Check Path** | `/healthz` |
 
-> The image **must** include `control_plane/` (HMAC helpers). Current Dockerfile copies `tenant_portal_api/` + `control_plane/` + `scripts/`. If deploy crashes with `No module named 'control_plane'`, you are on an old image — redeploy latest `habiba`.
+> The image includes `control_plane/` (HMAC) and `worker/providers/` (capabilities + TTS option validators). If deploy crashes with `No module named 'control_plane'` or `No module named 'worker'`, redeploy latest `staging`/`habiba` with the fixed Dockerfile.
 
 ### 5.2 Environment variables (tenant portal) — core
 
