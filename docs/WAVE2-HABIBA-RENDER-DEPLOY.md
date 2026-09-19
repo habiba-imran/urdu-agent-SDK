@@ -290,8 +290,11 @@ Has a Dockerfile; **not** in the old deploy-hook trio. Create it if you need ten
 | **Branch** | `habiba` |
 | **Runtime** | Docker |
 | **Dockerfile Path** | `docker/tenant-portal-api.Dockerfile` |
+| **Docker Build Context Directory** | `.` |
 | **Instance type** | Starter / Standard |
 | **Health Check Path** | `/healthz` |
+
+> The image **must** include `control_plane/` (HMAC helpers). Current Dockerfile copies `tenant_portal_api/` + `control_plane/` + `scripts/`. If deploy crashes with `No module named 'control_plane'`, you are on an old image — redeploy latest `habiba`.
 
 ### 5.2 Environment variables (tenant portal) — core
 
