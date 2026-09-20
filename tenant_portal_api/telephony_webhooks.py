@@ -305,8 +305,17 @@ def _persist_telnyx_webhook_event(
                     conn.commit()
                     return None
             except Exception:
-                # Handle databases without partial index constraint gracefully
-                pass
+                # Handle databases without the partial index constraint gracefully, but
+                # F-M1: do not pretend the event row was written — a lost webhook event
+                # is exactly the failure F-H6 describes.
+                logger.warning(
+                    "webhook event insert failed tenant=%s event_id=%s type=%s — "
+                    "continuing with side effects",
+                    tenant_id,
+                    event_id,
+                    event_type,
+                    exc_info=True,
+                )
         _apply_webhook_side_effects(conn, event_type, data)
         conn.commit()
     return None

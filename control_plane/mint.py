@@ -58,6 +58,7 @@ def mint_session(
     signature: str,
     origin: str | None = None,
     now: int | None = None,
+    verified_caller_phone: str | None = None,
 ) -> dict:
     """Run every gate and return {token, wsUrl, roomName}, or raise MintError."""
     now = (
@@ -132,11 +133,19 @@ def mint_session(
         # 8. mint the scoped JWT
         room = str(uuid.uuid4())
         identity = str(uuid.uuid4())
+        # F-C7 / A.4: carry the host-verified caller phone on the token too, so the worker
+        # sees it from participant metadata even if it misses the dispatch metadata.
+        token_metadata: dict[str, str] = {
+            "tenant_id": tenant_id,
+            "agent_id": agent_id,
+        }
+        if verified_caller_phone:
+            token_metadata["verified_caller_phone"] = verified_caller_phone
         token = (
             api.AccessToken(livekit_key, livekit_secret)
             .with_identity(identity)
             .with_ttl(datetime.timedelta(seconds=TTL_SEC))
-            .with_metadata(json.dumps({"tenant_id": tenant_id, "agent_id": agent_id}))
+            .with_metadata(json.dumps(token_metadata))
             .with_grants(
                 api.VideoGrants(
                     room_join=True, room=room, can_publish=True, can_subscribe=True

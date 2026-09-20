@@ -18,6 +18,7 @@ const encodedNumberId = encodeURIComponent(numberId);
 const agentId = 'agent-contract-id';
 const orderId = 'order-contract-id';
 const callId = 'call-contract-id';
+const roomName = 'room-contract-id';
 const telnyxApiKey = '<REDACTED_TELNYX_API_KEY>';
 const fakeApiLikeToken = ['sk', 'FAKE_CONTRACT_PLACEHOLDER'].join('_');
 const e164Number = '<E164_NUMBER>';
@@ -72,6 +73,7 @@ const routeCases = [
   ['getConnectionStatus', 'GET', '/machine/telephony/telnyx/connection', 'telephony.telnyx_connection.status', (c) => c.getConnectionStatus(), {}],
   ['listTelnyxOwnedNumbers', 'POST', '/machine/telephony/telnyx/owned-numbers/list', 'telephony.telnyx_owned_numbers.list', (c) => c.listTelnyxOwnedNumbers({ platformStatus: 'active', limit: 5 }), { limit: 5, platform_status: 'active' }],
   ['listManagedPhoneNumbers', 'POST', '/machine/telephony/numbers/list', 'telephony.managed_numbers.list', (c) => c.listManagedPhoneNumbers({ providerStatus: 'verified', cursor: 'cursor-contract' }), { cursor: 'cursor-contract', provider_status: 'verified' }],
+  ['getManagedPhoneNumber', 'POST', '/machine/telephony/numbers/get', 'telephony.managed_numbers.get', (c) => c.getManagedPhoneNumber(numberId), { number_id: numberId }],
   ['importTelnyxNumber', 'POST', '/machine/telephony/numbers/import', 'telephony.managed_numbers.import', (c) => c.importTelnyxNumber({ e164Number, externalCustomerRef: '<OPAQUE_CUSTOMER_REF>' }), { e164_number: e164Number, external_customer_ref: '<OPAQUE_CUSTOMER_REF>' }],
   ['syncTelnyxOwnedNumbers', 'POST', '/machine/telephony/numbers/sync', 'telephony.managed_numbers.sync', (c) => c.syncTelnyxOwnedNumbers(), {}],
   ['getTelnyxNumberDrift', 'POST', '/machine/telephony/numbers/drift', 'telephony.managed_numbers.drift', (c) => c.getTelnyxNumberDrift(), {}],
@@ -92,7 +94,12 @@ const routeCases = [
   ['getCallStatus', 'POST', '/machine/telephony/calls/get', 'telephony.calls.get', (c) => c.getCallStatus(callId), { telephony_call_id: callId }],
   ['listCallRecords', 'POST', '/machine/telephony/calls/list', 'telephony.calls.list', (c) => c.listCallRecords({ limit: 10, platformStatus: 'completed' }), { limit: 10, platform_status: 'completed' }],
   ['disableNumber', 'POST', `/machine/telephony/numbers/${encodedNumberId}/disable`, 'telephony.numbers.disable', (c) => c.disableNumber(numberId), { number_id: numberId }],
+  ['getSessionByRoom', 'POST', '/machine/sessions/get', 'session.get', (c) => c.getSessionByRoom(roomName), { room_name: roomName }],
 ];
+
+// The only operation outside /machine/telephony/: a session lookup on the same HMAC-signed
+// /machine/ surface (tenant_portal_api/app.py::/machine/sessions/get).
+const NON_TELEPHONY_OPERATIONS = new Set(['getSessionByRoom']);
 
 function assertSnakeCase(value) {
   if (Array.isArray(value)) {
@@ -107,8 +114,13 @@ function assertSnakeCase(value) {
 }
 
 async function testAllSdkMethodsMatchFrozenContract() {
-  assert.equal(routeCases.length, 27);
-  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 27);
+  assert.equal(routeCases.length, 29);
+  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 29);
+  // Every exported operation must have a frozen contract case above.
+  assert.deepEqual(
+    routeCases.map(([name]) => name).sort(),
+    Object.keys(TELEPHONY_MACHINE_OPERATIONS).sort(),
+  );
 
   for (const [name, method, path, action, call, expectedBody] of routeCases) {
     const { client, seen } = createCapturedClient({ id: `${name}-response`, platform_status: 'ok' });
@@ -118,7 +130,10 @@ async function testAllSdkMethodsMatchFrozenContract() {
 
     assert.equal(operation.method, method, name);
     assert.equal(operation.action, action, name);
-    assert.equal(operation.path.startsWith('/machine/telephony/'), true, name);
+    assert.equal(operation.path.startsWith('/machine/'), true, name);
+    if (!NON_TELEPHONY_OPERATIONS.has(name)) {
+      assert.equal(operation.path.startsWith('/machine/telephony/'), true, name);
+    }
     assert.equal(request.url, `${baseUrl}${path}`, name);
     assert.equal(request.init.method, method, name);
     assert.equal(request.init.headers['X-Tenant-Id'], tenantId, name);

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import hmac
 import json
 import os
@@ -18,6 +19,8 @@ from typing import Any
 from tenant_portal_api.telephony_config import is_mock_provider_mode
 
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
+
+_log = logging.getLogger("tenant_portal_api.telephony_credentials")
 
 _PREFIX = "enc:v1:"
 
@@ -116,7 +119,13 @@ def reencrypt_legacy_provider_secrets(conn: Any) -> int:
             )
             migrated += 1
         except Exception:
-            pass
+            # F-M1: a connection whose secret could not be re-encrypted stays on the old
+            # key. Silently counting on is how a half-migrated credential set goes unnoticed.
+            _log.warning(
+                "telephony credential re-encryption failed for connection %s",
+                conn_id,
+                exc_info=True,
+            )
     return migrated
 
 

@@ -109,8 +109,16 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         "llm": {
             "gemini": {
                 "state": "enabled",
-                "models": ["gemini-2.5-flash"],
-                "default_model": "gemini-2.5-flash",
+                # Runtime picker IDs only (F-M15). Deprecated IDs live in legacy_aliases.
+                "models": ["gemini-3.6-flash"],
+                "legacy_aliases": [
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite",
+                    "gemini-3.1-flash-lite",
+                    "gemini-2.0-flash",
+                    "gemini-2.0-flash-lite",
+                ],
+                "default_model": "gemini-3.6-flash",
             },
         },
         "tts": {
@@ -133,22 +141,32 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         "llm": {
             "gemini": {
                 "state": "enabled",
-                "models": ["gemini-2.5-flash"],
-                "default_model": "gemini-2.5-flash",
+                "models": ["gemini-3.6-flash"],
+                "legacy_aliases": [
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite",
+                    "gemini-3.1-flash-lite",
+                    "gemini-2.0-flash",
+                    "gemini-2.0-flash-lite",
+                ],
+                "default_model": "gemini-3.6-flash",
             },
             "groq": {
                 "state": "enabled",
-                # Retired Groq IDs stay listed so existing agent rows and client pickers still
-                # validate; worker/providers/llm/groq.py remaps them at session start.
+                # F-M15: picker/runtime IDs only. Dead Llama/Qwen IDs are legacy_aliases —
+                # validation still accepts them; groq.py remaps at session start.
                 "models": [
-                    "openai/gpt-oss-120b",
                     "openai/gpt-oss-20b",
+                    "openai/gpt-oss-120b",
+                ],
+                "legacy_aliases": [
                     "qwen/qwen3.6-27b",
+                    "qwen/qwen3.8-27b",
+                    "qwen/qwen3-32b",
                     "llama-3.1-8b-instant",
                     "llama-3.3-70b-versatile",
                     "meta-llama/llama-4-scout-17b-16e-instruct",
                     "moonshotai/kimi-k2-instruct-0905",
-                    "qwen/qwen3-32b",
                 ],
                 "default_model": "openai/gpt-oss-20b",
             },
@@ -161,6 +179,13 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         },
     },
 }
+
+
+def allowed_llm_models(cap: dict) -> set[str]:
+    """Runtime ``models`` plus ``legacy_aliases`` (F-M15 — old agent rows still validate)."""
+    models = {str(m) for m in (cap.get("models") or [])}
+    aliases = {str(m) for m in (cap.get("legacy_aliases") or [])}
+    return models | aliases
 
 
 def is_language_known(language: str) -> bool:

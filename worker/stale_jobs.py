@@ -9,6 +9,7 @@ before ``entrypoint`` connects, and time out waiting for a browser participant o
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from livekit.agents import JobRequest
+
+logger = logging.getLogger("worker.stale_jobs")
 
 # Mint TTL is 120s; allow a short join buffer before treating the dispatch as orphaned.
 DEFAULT_STALE_JOB_MAX_AGE_SEC = 180
@@ -56,19 +59,25 @@ def _conn_kwargs() -> dict[str, Any]:
 
 
 def load_session_job_state(room_name: str) -> SessionJobState | None:
-    import psycopg
+    from worker.db_pool import worker_db_connection
 
-    with psycopg.connect(**_conn_kwargs(), connect_timeout=10) as conn:
-        row = conn.execute(
-            """
-            select tenant_id, started_at, ended_at
-            from sessions
-            where room_name = %s
-            order by started_at desc
-            limit 1
-            """,
-            (room_name,),
-        ).fetchone()
+    # Keep this off the greeting critical path: a slow Supabase path must not
+    # burn multi-second connect timeouts before session.start / say().
+    try:
+        with worker_db_connection(connect_timeout=2) as conn:
+            row = conn.execute(
+                """
+                select tenant_id, started_at, ended_at
+                from sessions
+                where room_name = %s
+                order by started_at desc
+                limit 1
+                """,
+                (room_name,),
+            ).fetchone()
+    except Exception:
+        # DB blip → treat as unknown/not-stale and proceed (participant wait still guards orphans).
+        return None
     if row is None:
         return None
     return SessionJobState(
@@ -147,6 +156,21 @@ def close_open_session(
         if updated is None:
             return False
 
+        try:
+            from worker.session_retention import apply_retention_on_session_close
+
+            apply_retention_on_session_close(
+                conn,
+                room_name=room_name,
+                session_id=str(updated[0]),
+            )
+        except Exception as exc:
+            logger.warning(
+                "stale_jobs: failed to set retention_until room=%s: %s",
+                room_name,
+                exc,
+            )
+
         if tenant_id:
             conn.execute(
                 """
@@ -203,12 +227,38 @@ async def reject_stale_job_request(req: JobRequest) -> None:
     await req.accept()
 
 
-async def abandon_stale_job_if_needed(ctx: Any) -> bool:
-    """Drop stale jobs after accept, before room connect. Returns True if abandoned."""
+async def abandon_stale_job_if_needed(
+    ctx: Any,
+    *,
+    skip_db: bool = False,
+) -> bool:
+    """Drop stale jobs after ``ctx.connect()``. Returns True if abandoned.
+
+    When ``skip_db=True`` (fresh LiveKit dispatch metadata with tenant/agent), skip the
+    Supabase round-trip — the job was just minted/dispatched. Orphans are still cleaned
+    up by ``wait_for_session_participant`` timeout.
+
+    On DB failure we proceed — a hung Supabase path must not sit in front of first audio.
+    """
     from livekit.agents.log import logger
 
     room_name = ctx.room.name
+    if skip_db:
+        logger.info(
+            "stale job check room=%s reject=False reason=skipped_fresh_dispatch ms=0",
+            room_name,
+        )
+        return False
+
+    started = asyncio.get_running_loop().time()
     reject, reason = await asyncio.to_thread(evaluate_session_for_job, room_name)
+    logger.info(
+        "stale job check room=%s reject=%s reason=%s ms=%s",
+        room_name,
+        reject,
+        reason or "-",
+        int(round((asyncio.get_running_loop().time() - started) * 1000)),
+    )
     if not reject:
         return False
 

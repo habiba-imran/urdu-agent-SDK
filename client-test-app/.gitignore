@@ -1,6 +1,0 @@
-node_modules/
-backend/.env
-*.env.local
-.DS_Store
-frontend/.env
-dist/

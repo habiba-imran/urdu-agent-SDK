@@ -166,3 +166,30 @@ async def test_abandon_stale_job_if_needed_allows_fresh_sessions():
 
     assert abandoned is False
     ctx.shutdown.assert_not_called()
+
+
+def test_load_session_job_state_returns_none_on_db_error():
+    from worker import stale_jobs as sj
+
+    with patch("psycopg.connect", side_effect=TimeoutError("connection timeout")):
+        assert sj.load_session_job_state("any-room") is None
+
+
+def test_room_has_remote_participant_detects_browser():
+    from worker.main import room_has_remote_participant
+
+    empty = MagicMock()
+    empty.remote_participants = {}
+    assert room_has_remote_participant(empty) is False
+
+    room = MagicMock()
+    browser = MagicMock()
+    browser.identity = "user-abc"
+    room.remote_participants = {"u1": browser}
+    assert room_has_remote_participant(room) is True
+
+    agent_only = MagicMock()
+    agent = MagicMock()
+    agent.identity = "agent-uva-dev"
+    agent_only.remote_participants = {"a1": agent}
+    assert room_has_remote_participant(agent_only) is False

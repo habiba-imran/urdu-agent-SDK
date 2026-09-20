@@ -110,6 +110,11 @@ export class TelephonyClient {
     return this.request('listManagedPhoneNumbers', toSnakeCaseBody(filters));
   }
 
+  getManagedPhoneNumber(numberId: string): Promise<JsonObject> {
+    assertNonEmpty(numberId, 'numberId');
+    return this.request('getManagedPhoneNumber', { number_id: numberId });
+  }
+
   importTelnyxNumber(params: ImportTelnyxNumberParams): Promise<JsonObject> {
     assertNonEmpty(params.e164Number, 'e164Number');
     return this.request('importTelnyxNumber', toSnakeCaseBody(params));
@@ -208,6 +213,11 @@ export class TelephonyClient {
 
   listCallRecords(filters: ListTelephonyFilters = {}): Promise<JsonResponse> {
     return this.request('listCallRecords', toSnakeCaseBody(filters));
+  }
+
+  getSessionByRoom(roomName: string): Promise<JsonObject> {
+    assertNonEmpty(roomName, 'roomName');
+    return this.request('getSessionByRoom', { room_name: roomName });
   }
 
   disableNumber(numberId: string): Promise<JsonObject> {

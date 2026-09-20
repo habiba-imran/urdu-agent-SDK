@@ -123,10 +123,12 @@ def test_persona_injected_as_data_not_system_instructions():
 # --- P3-T09 (ADR-013 deferred pass, scope ADR-029): worker/tools.py's two fixed tools --------
 
 
-def test_build_agent_wires_fixed_tools():
+def test_build_agent_wires_fixed_tools(monkeypatch):
     from worker.config import AgentConfig
     from worker.main import build_agent
+    from worker.tools import FIXED_TOOLS, session_tools
 
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
     cfg = AgentConfig(
         agent_id="a",
         tenant_id="t",
@@ -136,7 +138,70 @@ def test_build_agent_wires_fixed_tools():
         llm_model="gemini-2.5-flash",
     )
     agent = build_agent(cfg)
+    assert list(agent.tools) == session_tools()
     assert list(agent.tools) == FIXED_TOOLS
+
+
+def test_build_agent_compacts_prompt_when_llm_provider_is_groq(monkeypatch):
+    """F-M2 assembly: Groq session build must call compact_prompt_for_groq (G2)."""
+    from worker.config import AgentConfig
+    from worker.main import build_agent
+
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
+    calls: list[str] = []
+
+    def fake_compact(prompt: str):
+        calls.append(prompt or "")
+        return "COMPACTED-PERSONA", True
+
+    monkeypatch.setattr("worker.main.compact_prompt_for_groq", fake_compact)
+    cfg = AgentConfig(
+        agent_id="a",
+        tenant_id="t",
+        name="n",
+        prompt="RAW-OVERSIZED-PERSONA",
+        voice_id="v_meklc281",
+        llm_model="llama-3.1-8b-instant",
+        llm_provider="groq",
+    )
+    agent = build_agent(cfg)
+    assert calls == ["RAW-OVERSIZED-PERSONA"]
+    ctx_text = " ".join(
+        str(m.get("content")) for m in agent.chat_ctx.to_dict()["items"]
+    )
+    assert "COMPACTED-PERSONA" in ctx_text
+    assert "RAW-OVERSIZED-PERSONA" not in ctx_text
+
+
+def test_build_agent_skips_compact_when_llm_provider_is_not_groq(monkeypatch):
+    """F-M2 assembly: non-Groq keeps full persona; compact must not run (G2)."""
+    from worker.config import AgentConfig
+    from worker.main import build_agent
+
+    monkeypatch.delenv("UVA_TOOLS_BASE_URL", raising=False)
+    calls: list[str] = []
+
+    def fake_compact(prompt: str):
+        calls.append(prompt or "")
+        return "COMPACTED-PERSONA", True
+
+    monkeypatch.setattr("worker.main.compact_prompt_for_groq", fake_compact)
+    cfg = AgentConfig(
+        agent_id="a",
+        tenant_id="t",
+        name="n",
+        prompt="RAW-PERSONA",
+        voice_id="v_meklc281",
+        llm_model="gemini-2.5-flash",
+        llm_provider="gemini",
+    )
+    agent = build_agent(cfg)
+    assert calls == []
+    ctx_text = " ".join(
+        str(m.get("content")) for m in agent.chat_ctx.to_dict()["items"]
+    )
+    assert "RAW-PERSONA" in ctx_text
+    assert "COMPACTED-PERSONA" not in ctx_text
 
 
 def test_fixed_tool_schemas_exclude_runcontext_and_expose_only_real_args():

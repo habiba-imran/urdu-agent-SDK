@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 import time
 import uuid
@@ -42,14 +43,27 @@ from dbconn import conn_kwargs  # noqa: E402
 
 
 async def _dispatch_agent(
-    *, url: str, key: str, secret: str, agent_name: str, room: str
+    *,
+    url: str,
+    key: str,
+    secret: str,
+    agent_name: str,
+    room: str,
+    tenant_id: str,
+    agent_id: str,
 ) -> None:
     """Mirrors control_plane/app.py::_dispatch_agent exactly — the real, explicit dispatch call
     this repo's architecture requires. Without this, a minted room/token has no worker job
     attached to it at all, regardless of whether a worker process is running."""
     async with api.LiveKitAPI(url=url, api_key=key, api_secret=secret) as lkapi:
         await lkapi.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(agent_name=agent_name, room=room)
+            api.CreateAgentDispatchRequest(
+                agent_name=agent_name,
+                room=room,
+                metadata=json.dumps(
+                    {"tenant_id": tenant_id, "agent_id": agent_id}
+                ),
+            )
         )
 
 
@@ -87,6 +101,8 @@ def main() -> int:
             secret=env.get("LIVEKIT_API_SECRET", ""),
             agent_name=agent_name,
             room=res["roomName"],
+            tenant_id=args.tenant,
+            agent_id=args.agent,
         )
     )
     print(f"dispatched agent '{agent_name}' to room {res['roomName']}")

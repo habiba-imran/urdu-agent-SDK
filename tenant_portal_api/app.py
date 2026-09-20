@@ -12,25 +12,27 @@ from __future__ import annotations
 import os
 import secrets as _pysecrets
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Iterator
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-try:
-    from scripts.dbconn import conn_kwargs
-except ImportError:
-    from dbconn import conn_kwargs  # type: ignore # noqa: E402
-
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
+from .db_pool import portal_db_connection
 from .machine_auth import MachineAuthError, verify_machine_request
 from .provider_capabilities import get_public_capabilities
 from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
 from .greeting_fields import GreetingConfigError, normalize_first_speaker, normalize_greeting
+from .tools_webhook import (
+    ToolsWebhookError,
+    normalize_tools_auth_secret,
+    normalize_tools_base_url,
+)
 from . import queries
 from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
@@ -116,6 +118,10 @@ class CreateAgentBody(BaseModel):
     tts_options: dict | None = Field(default=None)
     greeting: str | None = Field(default=None)
     first_speaker: str | None = Field(default=None)
+    # Client backend tool gateway (RAG/FAQ/scheduling). Per-agent so multi-client SDK
+    # workers call the right host — not a single global worker env URL.
+    tools_base_url: str | None = Field(default=None)
+    tools_auth_secret: str | None = Field(default=None)
 
 
 class UpdateAgentBody(BaseModel):
@@ -134,12 +140,26 @@ class UpdateAgentBody(BaseModel):
     tts_options: dict | None = Field(default=None)
     greeting: str | None = Field(default=None)
     first_speaker: str | None = Field(default=None)
+    tools_base_url: str | None = Field(default=None)
+    tools_auth_secret: str | None = Field(default=None)
 
 
-def _conn() -> psycopg.Connection:
-    # Fail fast on DB stalls so Render workers do not sit blocked long enough for
-    # health checks to start timing out behind queued requests.
-    return psycopg.connect(**conn_kwargs(), connect_timeout=3)
+@contextmanager
+def _conn(*, connect_timeout: float = 10.0) -> Iterator[psycopg.Connection]:
+    """Process-local pooled checkout.
+
+    Was a fresh ``psycopg.connect(..., connect_timeout=3)`` closed on every
+    ``with`` exit — cold TLS to Supabase often exceeds 3s, causing intermittent
+    ``ConnectionTimeout`` on machine/provider-capabilities.
+    """
+    try:
+        with portal_db_connection(connect_timeout=connect_timeout) as conn:
+            yield conn
+    except psycopg.errors.ConnectionTimeout as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="database unreachable (connection timeout)",
+        ) from exc
 
 
 def _resolve_provider_fields(
@@ -197,6 +217,36 @@ def _opening_from_body(
     except GreetingConfigError as e:
         raise HTTPException(
             status_code=422, detail={"code": e.code, "reason": e.reason}
+        ) from e
+
+
+def _tools_webhook_from_body(
+    body: CreateAgentBody | UpdateAgentBody, current: dict | None
+) -> dict:
+    """Resolve tools_base_url / tools_auth_secret. Omit keeps current on PATCH; blank clears."""
+    try:
+        if current is None:
+            return {
+                "tools_base_url": normalize_tools_base_url(body.tools_base_url),
+                "tools_auth_secret": normalize_tools_auth_secret(body.tools_auth_secret),
+            }
+        tools_base_url = (
+            normalize_tools_base_url(body.tools_base_url)
+            if body.tools_base_url is not None
+            else queries._UNSET
+        )
+        tools_auth_secret = (
+            normalize_tools_auth_secret(body.tools_auth_secret)
+            if body.tools_auth_secret is not None
+            else queries._UNSET
+        )
+        return {
+            "tools_base_url": tools_base_url,
+            "tools_auth_secret": tools_auth_secret,
+        }
+    except ToolsWebhookError as e:
+        raise HTTPException(
+            status_code=e.status, detail={"code": e.code, "reason": e.reason}
         ) from e
 
 
@@ -271,6 +321,7 @@ def create_agent_route(
     with _conn() as conn:
         resolved = _resolve_provider_fields(conn, body, current=None)
         opening = _opening_from_body(body, None)
+        tools = _tools_webhook_from_body(body, None)
         created = queries.create_agent(
             conn,
             claims["sub"],
@@ -289,6 +340,8 @@ def create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            tools_base_url=tools["tools_base_url"],
+            tools_auth_secret=tools["tools_auth_secret"],
         )
         conn.commit()
         return created
@@ -307,6 +360,7 @@ def update_agent_route(
             raise HTTPException(status_code=404, detail="agent not found")
         resolved = _resolve_provider_fields(conn, body, current=current)
         opening = _opening_from_body(body, current)
+        tools = _tools_webhook_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -327,6 +381,8 @@ def update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                tools_base_url=tools["tools_base_url"],
+                tools_auth_secret=tools["tools_auth_secret"],
             )
             conn.commit()
             return updated
@@ -369,6 +425,35 @@ def sessions_route(limit: int = 50, authorization: str | None = Header(default=N
     claims = _require_tenant(authorization)
     with _conn() as conn:
         return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
+
+
+@app.post("/machine/sessions/get")
+def machine_get_session_route(
+    body: dict[str, Any] = Body(default_factory=dict),
+    x_tenant_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+):
+    """SDK/host CRM: fetch a session (incl. recording_url) by LiveKit room_name."""
+    payload = body or {}
+    room_name = str(payload.get("room_name") or payload.get("roomName") or "").strip()
+    if not room_name:
+        raise HTTPException(status_code=400, detail="room_name is required")
+    with _conn() as conn:
+        _require_machine(
+            conn,
+            x_tenant_id=x_tenant_id,
+            x_timestamp=x_timestamp,
+            x_nonce=x_nonce,
+            x_signature=x_signature,
+            action="session.get",
+            body={"room_name": room_name},
+        )
+        session = queries.get_session_by_room(conn, x_tenant_id, room_name)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session
 
 
 @app.get("/portal/usage-summary")
@@ -418,6 +503,7 @@ def machine_create_agent_route(
         )
         resolved = _resolve_provider_fields(conn, body, current=None)
         opening = _opening_from_body(body, None)
+        tools = _tools_webhook_from_body(body, None)
         created = queries.create_agent(
             conn,
             x_tenant_id,
@@ -436,6 +522,8 @@ def machine_create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            tools_base_url=tools["tools_base_url"],
+            tools_auth_secret=tools["tools_auth_secret"],
         )
         conn.commit()
         return created
@@ -506,6 +594,7 @@ def machine_update_agent_route(
             raise HTTPException(status_code=404, detail="agent not found")
         resolved = _resolve_provider_fields(conn, body, current=current)
         opening = _opening_from_body(body, current)
+        tools = _tools_webhook_from_body(body, current)
         try:
             updated = queries.update_agent(
                 conn,
@@ -526,6 +615,8 @@ def machine_update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                tools_base_url=tools["tools_base_url"],
+                tools_auth_secret=tools["tools_auth_secret"],
             )
             conn.commit()
             return updated

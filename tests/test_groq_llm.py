@@ -54,6 +54,12 @@ def test_groq_llm_constructs_for_english():
         )
     llm = build_groq_llm("llama-3.3-70b-versatile")
     assert llm.model == "openai/gpt-oss-20b"
+    # Retired free/developer Llama — must remap, never call Groq with this id.
+    retired = build_groq_llm("llama-3.1-8b-instant")
+    assert retired.model == "openai/gpt-oss-20b"
+    # qwen3.6 404s on many free keys — remap to production gpt-oss.
+    qwen = build_groq_llm("qwen/qwen3.6-27b")
+    assert qwen.model == "openai/gpt-oss-20b"
     live = build_groq_llm("openai/gpt-oss-20b")
     assert live.model == "openai/gpt-oss-20b"
 

@@ -14,7 +14,8 @@ def test_empty_options_validate_and_apply_defaults():
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {})
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]
     assert kwargs["speed"] == CARTESIA_TTS_DEFAULTS["speed"]
-    assert kwargs["emotion"] == CARTESIA_TTS_DEFAULTS["emotion"]
+    # Default spoken_style=manual_ssml omits constructor emotion so per-turn tags drive tone.
+    assert "emotion" not in kwargs
     assert kwargs["voice"] == "voice-uuid"
     assert kwargs["language"] == "en"
     assert kwargs["encoding"] == "pcm_s16le"
@@ -22,12 +23,20 @@ def test_empty_options_validate_and_apply_defaults():
     assert "volume" not in kwargs
 
 
-def test_telephony_channel_uses_mulaw_8k():
+def test_light_style_keeps_baseline_emotion():
+    kwargs = resolve_cartesia_tts_kwargs(
+        "voice-uuid", "en", {"spoken_style": "light"}
+    )
+    assert kwargs["emotion"] == CARTESIA_TTS_DEFAULTS["emotion"]
+
+
+def test_telephony_channel_uses_linear_pcm_for_livekit():
     kwargs = resolve_cartesia_tts_kwargs(
         "voice-uuid", "en", {}, audio_channel="telephony"
     )
-    assert kwargs["encoding"] == "pcm_mulaw"
-    assert kwargs["sample_rate"] == 8000
+    # Must stay linear PCM — LiveKit cartesia plugin labels frames as audio/pcm.
+    assert kwargs["encoding"] == "pcm_s16le"
+    assert kwargs["sample_rate"] == 16000
 
 
 def test_overrides_merge_with_defaults():
@@ -61,10 +70,16 @@ def test_validate_rejects_out_of_range_speed():
         assert "speed" in str(exc)
 
 
-def test_expressive_flag_validates_and_stays_off_tts_kwargs():
+def test_expressive_defaults_off_and_unavailable_on_cartesia_plugin():
+    assert CARTESIA_TTS_DEFAULTS["expressive"] is False
     assert validate_cartesia_tts_options({"expressive": True}) == {"expressive": True}
-    assert cartesia_expressive_enabled({"expressive": True}) is True
+    assert validate_cartesia_tts_options({"expressive": False}) == {"expressive": False}
+    # Empty options → manual SSML path (expressive off by default).
     assert cartesia_expressive_enabled({}) is False
+    assert cartesia_expressive_enabled({"expressive": False}) is False
+    # Requesting expressive still requires a LiveKit build that exposes it; on 1.6.5
+    # AgentSession has no public expressive kwarg, so this stays False.
+    assert cartesia_expressive_enabled({"expressive": True}) is False
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {"expressive": True})
     assert "expressive" not in kwargs
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]

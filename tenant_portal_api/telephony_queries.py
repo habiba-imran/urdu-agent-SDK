@@ -10,7 +10,10 @@ Derived from docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Protocol
+
+_log = logging.getLogger("tenant_portal_api.telephony_queries")
 
 
 class DbConnection(Protocol):
@@ -199,6 +202,38 @@ def list_managed_numbers(
             }
         )
     return results
+
+
+def get_managed_number(
+    conn: DbConnection, tenant_id: str, number_id: str
+) -> dict[str, Any] | None:
+    """Fetch a single managed phone number by id for a tenant."""
+    row = conn.execute(
+        """
+        select id, tenant_id, provider_number_id, e164_number, country, number_type,
+               features, provisioning_status, routing_status, assigned_agent_id,
+               external_customer_ref, disabled_at
+        from telephony_phone_numbers
+        where tenant_id = %s and id = %s and disabled_at is null
+        """,
+        (tenant_id, number_id),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "tenant_id": row[1],
+        "provider_number_id": row[2],
+        "e164_number": row[3],
+        "country": row[4],
+        "number_type": row[5],
+        "features": row[6] if row[6] else [],
+        "provisioning_status": row[7],
+        "routing_status": row[8],
+        "assigned_agent_id": str(row[9]) if row[9] else None,
+        "external_customer_ref": row[10],
+        "disabled_at": str(row[11]) if row[11] else None,
+    }
 
 
 def assign_number_to_agent(
@@ -437,6 +472,14 @@ def try_insert_idempotency_lock(
             return rowcount > 0
         return True
     except Exception:
+        # F-M1: returning False here reads to the caller as "already used", so a DB error
+        # silently turns into a rejected or replayed request. Record why.
+        _log.warning(
+            "idempotency key reservation failed tenant=%s action=%s",
+            tenant_id,
+            action,
+            exc_info=True,
+        )
         return False
 
 

@@ -4,8 +4,12 @@
   "description": "Backend-only AwaazLabs UVA telephony SDK for signed machine telephony API calls.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/habiba-imran/urdu-agent-SDK.git",
+    "url": "git+https://github.com/Finova-Solutions/urdu-voice-agent-SDK.git",
     "directory": "telephony"
+  },
+  "homepage": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/telephony#readme",
+  "bugs": {
+    "url": "https://github.com/Finova-Solutions/urdu-voice-agent-SDK/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -29,7 +33,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",

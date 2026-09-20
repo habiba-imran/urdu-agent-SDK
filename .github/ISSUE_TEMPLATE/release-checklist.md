@@ -26,8 +26,9 @@ assignees: ''
 - [ ] Admin portal restricted to `ADMIN_PORTAL_ORIGINS`
 
 ### SDK & Client Artifacts
-- [ ] `@awaazlabs-uva/voice` package built and version bumped
-- [ ] `examples/web-client/` verified against deployed endpoints
+- [ ] `@awaazlabs-uva/voice` / `@awaazlabs-uva/agents` version bumped, with a matching `## [version]` section in that package's `CHANGELOG.md`
+- [ ] Release tag pushed from the canonical repository (`voice-v<version>` / `agents-v<version>`) and the `Release SDK` workflow published with provenance
+- [ ] `demo-app/` verified against deployed endpoints
 - [ ] Documentation (`sdk/README.md`, `docs/`) up to date
 
 ### Post-Deployment Health Check

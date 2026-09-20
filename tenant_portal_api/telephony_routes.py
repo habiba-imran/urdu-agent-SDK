@@ -352,6 +352,17 @@ def portal_get_number_drift(tenant_id: str = Depends(get_current_tenant_id)):
         raise HTTPException(status_code=e.status, detail=e.to_dict())
 
 
+@router.get("/portal/telephony/numbers/{number_id}")
+def portal_get_number(
+    number_id: str, tenant_id: str = Depends(get_current_tenant_id)
+):
+    """Get a single managed phone number by id."""
+    try:
+        return _service.get_managed_number(tenant_id, number_id)
+    except TelephonyError as e:
+        raise HTTPException(status_code=e.status, detail=e.to_dict())
+
+
 @router.post("/portal/telephony/available-numbers/search")
 def portal_search_available_numbers(
     body: SearchAvailableNumbersBody, tenant_id: str = Depends(get_current_tenant_id)
@@ -717,6 +728,28 @@ async def machine_list_numbers(
         action="telephony.managed_numbers.list",
         service_call=lambda body: _service.list_managed_numbers(
             x_tenant_id, body.get("assigned_agent_id")
+        ),
+    )
+
+
+@router.post("/machine/telephony/numbers/get")
+async def machine_get_number(
+    request: Request,
+    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    x_timestamp: str = Header(..., alias="X-Timestamp"),
+    x_nonce: str = Header(..., alias="X-Nonce"),
+    x_signature: str = Header(..., alias="X-Signature"),
+):
+    """SDK: getManagedPhoneNumber (action: telephony.managed_numbers.get)"""
+    return await _run_machine_service_call(
+        request=request,
+        tenant_id=x_tenant_id,
+        timestamp=x_timestamp,
+        nonce=x_nonce,
+        signature=x_signature,
+        action="telephony.managed_numbers.get",
+        service_call=lambda body: _service.get_managed_number(
+            x_tenant_id, body.get("number_id", "")
         ),
     )
 

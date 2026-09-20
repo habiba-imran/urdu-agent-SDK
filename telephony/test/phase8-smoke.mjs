@@ -69,14 +69,28 @@ async function testSigningAndCanonicalJson() {
 }
 
 async function testFixedOperationsStayMachineScoped() {
-  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 27);
+  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 29);
   assert.equal(
     TELEPHONY_MACHINE_OPERATIONS.createOutboundCall.action,
     'telephony.outbound_calls.create',
   );
-  for (const operation of Object.values(TELEPHONY_MACHINE_OPERATIONS)) {
-    assert.equal(operation.path.startsWith('/machine/telephony/'), true);
+  // Every operation must stay on the HMAC-signed /machine/ surface — never a portal
+  // (browser-session-authenticated) route. Telephony operations live under
+  // /machine/telephony/; getSessionByRoom is the one deliberate exception, a session
+  // lookup on /machine/sessions/get (tenant_portal_api/app.py) used to correlate a call
+  // with its voice session.
+  for (const [name, operation] of Object.entries(TELEPHONY_MACHINE_OPERATIONS)) {
+    assert.equal(operation.path.startsWith('/machine/'), true, `${name} is not machine-scoped`);
+    if (name !== 'getSessionByRoom') {
+      assert.equal(
+        operation.path.startsWith('/machine/telephony/'),
+        true,
+        `${name} is not telephony-scoped`,
+      );
+    }
   }
+  assert.equal(TELEPHONY_MACHINE_OPERATIONS.getSessionByRoom.path, '/machine/sessions/get');
+  assert.equal(TELEPHONY_MACHINE_OPERATIONS.getSessionByRoom.action, 'session.get');
 }
 
 async function testSnakeCaseBodiesAndHeaderProtection() {
@@ -214,8 +228,47 @@ async function testErrorMappingRedactsDetails() {
   );
 }
 
+async function testSessionLookupReachesTheServer() {
+  // Regression: fillPath required a /machine/telephony/ prefix, so this operation
+  // (/machine/sessions/get) threw telephony_invalid_response before sending anything.
+  const seen = [];
+  const client = new TelephonyClient({
+    tenantId: 'tenant-id',
+    tenantSecret: 'tenant-secret',
+    baseUrl: 'https://api.example.test',
+    fetch: async (url, init) => {
+      seen.push({ url, init });
+      return jsonResponse({ id: 'session-id', room_name: 'room-1' });
+    },
+  });
+
+  const session = await client.getSessionByRoom('room-1');
+  assert.equal(seen[0].url, 'https://api.example.test/machine/sessions/get');
+  assert.deepEqual(JSON.parse(seen[0].init.body), { room_name: 'room-1' });
+  assert.equal(session.id, 'session-id');
+}
+
+async function testPathParamsCannotEscapeTheMachineSurface() {
+  const seen = [];
+  const client = new TelephonyClient({
+    tenantId: 'tenant-id',
+    tenantSecret: 'tenant-secret',
+    baseUrl: 'https://api.example.test',
+    fetch: async (url, init) => {
+      seen.push({ url, init });
+      return jsonResponse({ id: 'number-id' });
+    },
+  });
+
+  await client.disableNumber('../../portal/credentials/secret');
+  assert.equal(seen[0].url.startsWith('https://api.example.test/machine/telephony/numbers/'), true);
+  assert.equal(seen[0].url.includes('/portal/'), false);
+}
+
 await testSigningAndCanonicalJson();
 await testFixedOperationsStayMachineScoped();
+await testSessionLookupReachesTheServer();
+await testPathParamsCannotEscapeTheMachineSurface();
 await testSnakeCaseBodiesAndHeaderProtection();
 await testTelnyxKeyIsNotRetained();
 await testRestrictedResponseFieldsAreDropped();

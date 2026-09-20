@@ -25,6 +25,8 @@ export type ManagedPhoneNumber = {
   assigned_agent_id?: string | null;
   assigned_agent_name?: string | null;
   status?: string | null;
+  provisioning_status?: string | null;
+  routing_status?: string | null;
   telnyx_phone_number_id?: string | null;
   external_customer_ref?: string | null;
   created_at?: string | null;
@@ -170,6 +172,10 @@ export async function disconnectTelnyx(): Promise<{ success: boolean }> {
 export async function getManagedNumbers(assignedAgentId?: string): Promise<ManagedPhoneNumber[]> {
   const query = assignedAgentId ? `?assigned_agent_id=${encodeURIComponent(assignedAgentId)}` : '';
   return telephonyRequest<ManagedPhoneNumber[]>(`/portal/telephony/numbers${query}`);
+}
+
+export async function getManagedPhoneNumber(numberId: string): Promise<ManagedPhoneNumber> {
+  return telephonyRequest<ManagedPhoneNumber>(`/portal/telephony/numbers/${encodeURIComponent(numberId)}`);
 }
 
 export async function syncManagedNumbers(): Promise<{ synced_count: number; drift_count?: number; items?: ManagedPhoneNumber[] }> {

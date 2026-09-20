@@ -20,19 +20,17 @@ code. Your frontend should call your own backend routes.
 
 ## Install
 
-From a client handoff tarball:
-
-```bash
-npm install ./sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
-```
-
-If Finova later publishes this package to an approved registry:
-
 ```bash
 npm install @awaazlabs-uva/telephony
 ```
 
-For the current client handoff, use the local `.tgz` file above.
+Releases are published from the canonical repository with npm provenance by pushing a
+`telephony-v<version>` tag. Until the first release lands on the registry, install the client
+handoff tarball instead:
+
+```bash
+npm install ./sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
+```
 
 ## Backend Environment
 
@@ -100,7 +98,7 @@ try {
 - Telnyx account: `connectTelnyxAccount`, `rotateTelnyxAccountKey`,
   `reverifyTelnyxAccount`, `disconnectTelnyxAccount`, `getConnectionStatus`
 - Number inventory and purchase: `listTelnyxOwnedNumbers`,
-  `listManagedPhoneNumbers`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
+  `listManagedPhoneNumbers`, `getManagedPhoneNumber`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
   `getTelnyxNumberDrift`, `searchAvailableNumbers`,
   `purchaseNumber`, `getNumberOrderStatus`
 - Routing and trunks: `assignAgentToNumber`, `unassignAgentFromNumber`,
@@ -110,6 +108,8 @@ try {
   `configureOutboundTrunk`, `getOutboundReadiness`
 - Calls: `createOutboundCall`, `getCallStatus`, `listCallRecords`,
   `disableNumber`
+- Sessions: `getSessionByRoom` — look up the voice session for a room name, to correlate a
+  call with its session
 
 ## Stable Error Handling
 
@@ -153,7 +153,12 @@ by this SDK.
 ## Build
 
 ```bash
+npm ci
 npm run build
 npm run lint
 npm test
 ```
+
+## Changelog
+
+See [CHANGELOG.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/telephony/CHANGELOG.md).

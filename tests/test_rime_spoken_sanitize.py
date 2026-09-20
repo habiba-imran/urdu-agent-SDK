@@ -46,4 +46,6 @@ def test_dispatcher_does_not_cross_apply():
     assert '<break time="200ms"/>' in cartesia_out
     assert "<break" not in rime_out
     assert "spell(AB12)" in rime_out
-    assert sanitizer_for_provider("uplift") is None
+    uplift = sanitizer_for_provider("uplift")
+    assert uplift is not None
+    assert "<break" not in uplift(sample)

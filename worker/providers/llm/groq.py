@@ -4,15 +4,13 @@ Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py is
 file. `model` constructor arg verified directly against the installed livekit-plugins-groq==1.6.5
 package (inspect.signature), not assumed from docs: real keyword-only param.
 
-``getProviderCapabilities()`` still advertises the historical Groq Llama IDs so existing agent
-rows and client pickers keep validating. Groq retired those IDs on 2026-08-16 (developer/free
-tier), so this adapter remaps them to Groq's documented replacements — same pattern as
-``worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS``.
+F-M15: capabilities ``models`` lists live runtime IDs only; dead Llama/Qwen IDs are
+``legacy_aliases`` (still validate on agent rows). This adapter remaps dead/empty IDs to a live
+production model and logs ``requested`` → ``effective`` (never silent).
 
-Voice default is ``openai/gpt-oss-20b`` (not 120b): isolated probes on 2026-08-19 showed 20b
-first content in ~0.6s vs ~3.5s for 120b, and 120b spends its first tokens on a `reasoning`
-channel that is not speakable. The Gemini adapter already pins thinking to `minimal` for the
-same reason.
+Free-tier voice default is ``openai/gpt-oss-20b`` (~1000 t/s production) with
+``reasoning_effort=low`` and a tight ``max_completion_tokens`` cap. Override via
+``GROQ_LLM_MODEL`` (dead IDs in that env var are ignored).
 
 Installing this package also pulls in livekit-plugins-openai as a real dependency — Groq's plugin
 is built on the OpenAI-compatible interface (base_url defaults to
@@ -29,34 +27,77 @@ check in this file.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import httpx
 
-# Groq's recommended replacements after the 2026-08-16 Llama shutdown:
-# https://console.groq.com/docs/deprecations
-# Voice uses gpt-oss-20b (llama-3.1-8b replacement) rather than gpt-oss-120b so TTFB stays
-# under LiveKit's 10s llm_conn_options timeout.
-_DEFAULT_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-20b")
-_DEPRECATED_GROQ_MODELS = {
-    "llama-3.3-70b-versatile": _DEFAULT_GROQ_MODEL,
-    "llama-3.1-8b-instant": _DEFAULT_GROQ_MODEL,
-    "meta-llama/llama-4-scout-17b-16e-instruct": _DEFAULT_GROQ_MODEL,
-    "qwen/qwen3-32b": _DEFAULT_GROQ_MODEL,
-    "moonshotai/kimi-k2-instruct-0905": _DEFAULT_GROQ_MODEL,
-}
+logger = logging.getLogger("worker.providers.llm.groq")
+
+# Live free/developer production default (Groq docs, 2026-09).
+_FALLBACK_GROQ_MODEL = "openai/gpt-oss-20b"
+# Spoken replies stay short; reserving a large completion budget inflates free-tier TPM use.
+_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "96"))
+# Retired / 404 on free+developer keys — never send these to Groq.
+_DEAD_GROQ_MODELS = frozenset(
+    {
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen/qwen3.6-27b",
+        "qwen/qwen3-32b",
+        "qwen/qwen3.8-27b",
+        "moonshotai/kimi-k2-instruct-0905",
+    }
+)
+
+
+def _live_default_model() -> str:
+    raw = (os.getenv("GROQ_LLM_MODEL") or "").strip() or _FALLBACK_GROQ_MODEL
+    if raw in _DEAD_GROQ_MODELS:
+        return _FALLBACK_GROQ_MODEL
+    return raw
+
+
+def resolve_groq_model(model: str) -> tuple[str, str | None]:
+    """Return ``(effective_model, remap_reason)``.
+
+    ``remap_reason`` is None when the requested ID is used as-is.
+    """
+    requested = (model or "").strip()
+    default = _live_default_model()
+    if not requested:
+        return default, "empty_model"
+    if requested in _DEAD_GROQ_MODELS:
+        return default, "dead_model"
+    return requested, None
 
 
 def build(model: str) -> Any:
     from livekit.plugins import groq
 
-    resolved_model = _DEPRECATED_GROQ_MODELS.get(model, model or _DEFAULT_GROQ_MODEL)
+    requested = (model or "").strip()
+    resolved_model, reason = resolve_groq_model(model)
+    if reason is not None:
+        logger.info(
+            "llm model remapped provider=groq requested=%r effective=%s reason=%s",
+            requested or "",
+            resolved_model,
+            reason,
+        )
+
     kwargs: dict[str, Any] = {
         "model": resolved_model,
         # Gemini already sets a 30s HTTP timeout after LiveKit's 10s default 504'd in demo.
         "timeout": httpx.Timeout(30.0),
+        "max_completion_tokens": _MAX_COMPLETION_TOKENS,
+        # Free-tier: do not burn retries into the same TPM window (LiveKit already retries).
+        "max_retries": 0,
     }
     if resolved_model.startswith("openai/gpt-oss"):
+        # Keep reasoning cheap on the voice path (ITPM + TTFT).
         kwargs["reasoning_effort"] = "low"
+    elif resolved_model.startswith("qwen/"):
+        kwargs["reasoning_effort"] = "none"
     return groq.LLM(**kwargs)

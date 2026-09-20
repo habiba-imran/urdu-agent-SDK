@@ -1,0 +1,19 @@
+{
+  "name": "awaazlabs-uva-host-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal tools/calendar host for UVA worker F-C7 (idempotent book/reschedule/cancel). Not self-serve.",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  }
+}

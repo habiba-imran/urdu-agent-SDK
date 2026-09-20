@@ -187,6 +187,33 @@ def test_machine_list_managed_numbers():
     assert isinstance(resp.json(), list)
 
 
+def test_machine_get_managed_number():
+    imported = client.post(
+        "/machine/telephony/numbers/import",
+        headers=HEADERS,
+        json={"e164_number": "+15550002222"},
+    )
+    assert imported.status_code == 200
+    number_id = imported.json()["id"]
+
+    resp = client.post(
+        "/machine/telephony/numbers/get",
+        headers=HEADERS,
+        json={"number_id": number_id},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == number_id
+    assert body["e164_number"] == "+15550002222"
+
+    missing = client.post(
+        "/machine/telephony/numbers/get",
+        headers=HEADERS,
+        json={"number_id": "missing-number-id"},
+    )
+    assert missing.status_code == 404
+
+
 def test_machine_import_number():
     resp = client.post(
         "/machine/telephony/numbers/import",

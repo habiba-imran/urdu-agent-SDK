@@ -13,15 +13,18 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import os
 import sys
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
 
+import aiohttp
 import psycopg
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -41,8 +44,10 @@ except ImportError:
 
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
+from .mint_db import mint_db_connection  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
+from .warm import run_warm_probe  # noqa: E402
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -61,6 +66,8 @@ _LK_AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME") or _ENV.get(
 )
 RATE_LIMIT_PER_MIN = 120
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_mint_log = logging.getLogger("control_plane.mint")
+_voices_log = logging.getLogger("control_plane.voices")
 
 
 def _require_env() -> None:
@@ -100,7 +107,12 @@ if _SENTRY_DSN and sentry_sdk is not None:
             environment=os.environ.get("ENVIRONMENT", "production"),
         )
     except Exception:
-        pass
+        # F-M1: a swallowed failure here means error reporting is off for the whole
+        # service with nothing to show for it. Startup still proceeds — Sentry is not
+        # required to mint sessions — but it must be visible in the logs.
+        logging.getLogger("control_plane").warning(
+            "sentry_sdk.init failed — error reporting is disabled", exc_info=True
+        )
 
 
 app = FastAPI(
@@ -155,6 +167,19 @@ def deep_health_check():
     return JSONResponse(status_code=status_code, content=health)
 
 
+@app.get("/healthz/warm")
+async def warm_health_check():
+    """Warm probe — pings DB + LiveKit API to keep staging instances hot (UVA-9)."""
+    health = await run_warm_probe(
+        lk_url=_LK_URL,
+        lk_key=_LK_KEY,
+        lk_secret=_LK_SECRET,
+        agent_name=_LK_AGENT_NAME,
+    )
+    status_code = 200 if health["status"] == "warm" else 503
+    return JSONResponse(status_code=status_code, content=health)
+
+
 @app.get("/v1/voices")
 def list_voices():
     """Returns published Urdu voices from the voices catalogue for client/dashboard picker."""
@@ -187,9 +212,17 @@ def list_voices():
                     for r in rows
                 ]
     except Exception:
-        pass
+        # F-M1: this used to fall through to the static catalogue below, so a DB outage
+        # was indistinguishable from a small voice list — clients rendered five voices
+        # that do not exist for this tenant. Fail loudly instead.
+        _voices_log.exception("/v1/voices database query failed")
+        raise HTTPException(
+            status_code=503, detail="voice catalogue temporarily unavailable"
+        )
 
-    # Fallback default catalog if DB query fails or unpopulated
+    # DB reachable but the catalogue is empty (fresh/dev database) — keep the built-in
+    # demo list so local setups are not blocked. This is NOT the DB-failure path.
+    _voices_log.warning("/v1/voices returned no enabled rows — serving demo catalogue")
     return [
         {
             "id": "v_meklc281",
@@ -240,11 +273,52 @@ _hits: dict[str, list[float]] = defaultdict(list)
 
 class SessionBody(BaseModel):
     agent_id: str
+    greeting: str | None = None
+    custom_greeting: str | None = None
+    greeting_mode: str | None = None
+    # F-C7 / A.4: phone number the HOST has already verified belongs to this caller.
+    # Optional; the worker fail-closes on browser cancel/reschedule without it.
+    verified_caller_phone: str | None = None
 
 
 class DevSessionBody(BaseModel):
     agentId: str
     publishableKey: str | None = None
+    greeting: str | None = None
+    customGreeting: str | None = None
+    greetingMode: str | None = None
+    verifiedCallerPhone: str | None = None
+    verified_caller_phone: str | None = None
+
+
+# F-C7 / A.4. Mirrors worker/write_tool_gate.py::normalize_phone so the value the worker
+# compares against is the value it was sent: keep a leading "+", keep digits, drop the rest.
+# Normalizing here also keeps newlines and other junk out of the dispatch metadata JSON.
+_MAX_PHONE_DIGITS = 15  # E.164 maximum
+
+
+def _normalize_caller_phone(raw: str | None) -> str | None:
+    """Return the normalized phone, or None when absent. Raises 400 on a non-empty but
+    unusable value — silently dropping it would surface much later as the worker refusing
+    a cancel/reschedule, with nothing pointing back at the host's malformed field."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits or len(digits) > _MAX_PHONE_DIGITS:
+        raise HTTPException(
+            status_code=400,
+            detail="verified_caller_phone must be a phone number (E.164 preferred)",
+        )
+    return ("+" + digits) if text.startswith("+") else digits
+
+
+def _opening_greeting(*candidates: str | None) -> str | None:
+    for value in candidates:
+        text = (value or "").strip()
+        if text:
+            return text
+    return None
 
 
 class RefreshBody(BaseModel):
@@ -289,11 +363,19 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
             status_code=401, detail="token metadata missing tenant or agent"
         )
 
+    # A.4: refresh must not strip metadata the mint put there (e.g. verified_caller_phone),
+    # otherwise a mid-call refresh would silently revoke the caller's write-tool ownership.
+    refreshed_metadata = {
+        k: v for k, v in metadata.items() if isinstance(k, str) and v is not None
+    }
+    refreshed_metadata["tenant_id"] = tenant_id
+    refreshed_metadata["agent_id"] = agent_id
+
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
         .with_identity(claims.identity)
         .with_ttl(datetime.timedelta(seconds=TTL_SEC))
-        .with_metadata(json.dumps({"tenant_id": tenant_id, "agent_id": agent_id}))
+        .with_metadata(json.dumps(refreshed_metadata))
         .with_grants(
             api.VideoGrants(
                 room_join=True,
@@ -334,18 +416,85 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
     )
 
 
-async def _dispatch_agent(room_name: str) -> None:
-    async with api.LiveKitAPI(
-        url=_LK_URL,
-        api_key=_LK_KEY,
-        api_secret=_LK_SECRET,
-    ) as lkapi:
-        await lkapi.agent_dispatch.create_dispatch(
+# Agent dispatch runs on the critical path to first audio (audit §3.1). It used to pay for a new
+# event loop (asyncio.run), a new aiohttp session and a new TCP+TLS handshake to LiveKit on every
+# session. Instead, one long-lived event loop on a daemon thread owns one LiveKitAPI client whose
+# keep-alive connections are reused across dispatches. Both are created lazily, per process.
+# livekit-api's own per-attempt timeout is 10 s; allow one region failover.
+_DISPATCH_TIMEOUT_SEC = 20
+# Kept short so an idle pooled connection is rarely stale when reused.
+_DISPATCH_KEEPALIVE_SEC = 30
+_dispatch_lock = threading.Lock()
+_dispatch_loop: asyncio.AbstractEventLoop | None = None
+_dispatch_client: api.LiveKitAPI | None = None
+_dispatch_session: aiohttp.ClientSession | None = None
+
+
+def _get_dispatch_loop() -> asyncio.AbstractEventLoop:
+    global _dispatch_loop
+    with _dispatch_lock:
+        if _dispatch_loop is None or _dispatch_loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever, name="livekit-dispatch", daemon=True
+            ).start()
+            _dispatch_loop = loop
+        return _dispatch_loop
+
+
+def _get_dispatch_client() -> api.LiveKitAPI:
+    """Only called on the dispatch loop's thread, so no lock is needed."""
+    global _dispatch_client, _dispatch_session
+    if _dispatch_client is None:
+        _dispatch_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10),
+            connector=aiohttp.TCPConnector(keepalive_timeout=_DISPATCH_KEEPALIVE_SEC),
+        )
+        _dispatch_client = api.LiveKitAPI(
+            url=_LK_URL,
+            api_key=_LK_KEY,
+            api_secret=_LK_SECRET,
+            session=_dispatch_session,
+        )
+    return _dispatch_client
+
+
+async def _reset_dispatch_client() -> None:
+    """Drop the shared client after a failure so the next dispatch starts from a fresh
+    connection pool instead of reusing a possibly broken one."""
+    global _dispatch_client, _dispatch_session
+    session = _dispatch_session
+    _dispatch_client = None
+    _dispatch_session = None
+    if session is not None and not session.closed:
+        await session.close()
+
+
+async def _dispatch_agent(
+    room_name: str,
+    *,
+    tenant_id: str,
+    agent_id: str,
+    greeting: str | None = None,
+    verified_caller_phone: str | None = None,
+) -> None:
+    metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
+    if greeting:
+        metadata["greeting"] = greeting
+    if verified_caller_phone:
+        # Read by worker/caller_identity.py::resolve_verified_caller_phone (A.4 source 1).
+        metadata["verified_caller_phone"] = verified_caller_phone
+    try:
+        await _get_dispatch_client().agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
                 agent_name=_LK_AGENT_NAME,
                 room=room_name,
+                metadata=json.dumps(metadata),
             )
         )
+    except BaseException:
+        await _reset_dispatch_client()
+        raise
 
 
 def _rollback_dispatched_session(
@@ -377,20 +526,74 @@ def _session_response(payload: dict) -> JSONResponse:
     )
 
 
-def _with_dispatch(res: dict, tenant_id: str) -> dict:
+def _run_dispatch_background(
+    room_name: str,
+    tenant_id: str,
+    agent_id: str,
+    greeting: str | None = None,
+    verified_caller_phone: str | None = None,
+) -> None:
+    log = logging.getLogger("control_plane.dispatch")
+    started = time.monotonic()
+    future = asyncio.run_coroutine_threadsafe(
+        _dispatch_agent(
+            room_name,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            greeting=greeting,
+            verified_caller_phone=verified_caller_phone,
+        ),
+        _get_dispatch_loop(),
+    )
     try:
-        asyncio.run(_dispatch_agent(res["roomName"]))
-    except Exception as e:
-        _rollback_dispatched_session(tenant_id=tenant_id, room_name=res["roomName"])
-        raise HTTPException(
-            status_code=502,
-            detail=f"agent dispatch failed: {e}",
-        ) from e
+        future.result(timeout=_DISPATCH_TIMEOUT_SEC)
+        log.info(
+            "agent dispatch ok room=%s tenant=%s agent=%s elapsed_ms=%d",
+            room_name,
+            tenant_id,
+            agent_id,
+            int((time.monotonic() - started) * 1000),
+        )
+    except Exception:
+        future.cancel()
+        log.exception(
+            "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+
+
+def _with_dispatch(
+    res: dict,
+    tenant_id: str,
+    agent_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    greeting: str | None = None,
+    verified_caller_phone: str | None = None,
+) -> dict:
+    background_tasks.add_task(
+        _run_dispatch_background,
+        res["roomName"],
+        tenant_id,
+        agent_id,
+        greeting,
+        verified_caller_phone,
+    )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
 
 def _dev_mint_session(
-    *, tenant_id: str, agent_id: str, request: Request, auto_reset_quota: bool
+    *,
+    tenant_id: str,
+    agent_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    auto_reset_quota: bool,
+    greeting: str | None = None,
+    verified_caller_phone: str | None = None,
 ) -> dict:
     secret = _secrets.get(tenant_id)
     if not secret:
@@ -408,8 +611,9 @@ def _dev_mint_session(
         record_mint_rejection(tenant_id, 429, "rate limited")
         raise HTTPException(status_code=429, detail="rate limited")
 
-    with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+    with mint_db_connection(connect_timeout=10) as conn:
         try:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -422,6 +626,14 @@ def _dev_mint_session(
                 agent_id=agent_id,
                 signature=signature,
                 origin=request.headers.get("origin"),
+                verified_caller_phone=verified_caller_phone,
+            )
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint",
+                int((time.monotonic() - mint_t0) * 1000),
+                tenant_id,
+                agent_id,
+                res.get("roomName"),
             )
         except MintError as e:
             if (
@@ -430,6 +642,7 @@ def _dev_mint_session(
                 and e.reason == "concurrent cap reached"
             ):
                 _dev_reset_concurrency(conn, tenant_id)
+                mint_t0 = time.monotonic()
                 res = mint_session(
                     conn=conn,
                     secrets=_secrets,
@@ -442,17 +655,33 @@ def _dev_mint_session(
                     agent_id=agent_id,
                     signature=signature,
                     origin=request.headers.get("origin"),
+                    verified_caller_phone=verified_caller_phone,
+                )
+                _mint_log.info(
+                    "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=dev_mint_retry",
+                    int((time.monotonic() - mint_t0) * 1000),
+                    tenant_id,
+                    agent_id,
+                    res.get("roomName"),
                 )
             else:
                 record_mint_rejection(tenant_id, e.status, e.reason)
                 raise HTTPException(status_code=e.status, detail=e.reason) from e
-    return _with_dispatch(res, tenant_id)
+    return _with_dispatch(
+        res,
+        tenant_id,
+        agent_id,
+        background_tasks,
+        greeting=greeting,
+        verified_caller_phone=verified_caller_phone,
+    )
 
 
 @app.post("/v1/session")
 def create_session(
     body: SessionBody,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(...),
     x_timestamp: str = Header(...),
     x_nonce: str = Header(...),
@@ -461,8 +690,11 @@ def create_session(
     if _rate_limited(x_tenant_id):
         record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
+    greeting = _opening_greeting(body.greeting, body.custom_greeting)
+    verified_caller_phone = _normalize_caller_phone(body.verified_caller_phone)
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=10) as conn:
+        with mint_db_connection(connect_timeout=10) as conn:
+            mint_t0 = time.monotonic()
             res = mint_session(
                 conn=conn,
                 secrets=_secrets,
@@ -475,22 +707,46 @@ def create_session(
                 agent_id=body.agent_id,
                 signature=x_signature,
                 origin=request.headers.get("origin"),
+                verified_caller_phone=verified_caller_phone,
             )
-            return _session_response(_with_dispatch(res, x_tenant_id))
+            _mint_log.info(
+                "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=session",
+                int((time.monotonic() - mint_t0) * 1000),
+                x_tenant_id,
+                body.agent_id,
+                res.get("roomName"),
+            )
+            return _session_response(
+                _with_dispatch(
+                    res,
+                    x_tenant_id,
+                    body.agent_id,
+                    background_tasks,
+                    greeting=greeting,
+                    verified_caller_phone=verified_caller_phone,
+                )
+            )
     except MintError as e:
         record_mint_rejection(x_tenant_id, e.status, e.reason)
         return JSONResponse({"error": e.reason}, status_code=e.status)
 
 
 @app.post("/v1/session/dev-mint")
-def create_dev_session(body: DevSessionBody, request: Request):
+def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
     tenant_id = _lookup_tenant_for_agent(body.agentId)
+    greeting = _opening_greeting(body.greeting, body.customGreeting)
+    verified_caller_phone = _normalize_caller_phone(
+        body.verifiedCallerPhone or body.verified_caller_phone
+    )
     return _session_response(
         _dev_mint_session(
             tenant_id=tenant_id,
             agent_id=body.agentId,
             request=request,
+            background_tasks=background_tasks,
             auto_reset_quota=True,
+            greeting=greeting,
+            verified_caller_phone=verified_caller_phone,
         )
     )
 

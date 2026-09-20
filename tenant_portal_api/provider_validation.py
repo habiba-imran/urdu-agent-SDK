@@ -7,9 +7,10 @@ but not another — a broad provider-level check is not enough). Returns fully-r
 ready to write; callers must not write anything this function didn't return, so there is exactly
 one place these rules can be bypassed from (nowhere).
 
-Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia and Rime TTS consume
-``tts_options`` (humanization — model/speed and related keys). STT/LLM options remain
-unconsumed; the only valid value for those layers is ``{}``.
+Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, ElevenLabs,
+and Fish Audio TTS consume ``tts_options`` (humanization — model/speed/spoken_style and
+related keys). STT/LLM options remain unconsumed; the only valid value for those layers
+is ``{}``.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from worker.providers.capabilities import (  # noqa: E402
+    allowed_llm_models,
     is_language_known,
     llm_capability,
     stt_capability,
@@ -30,6 +32,14 @@ from worker.providers.tts.cartesia_options import (  # noqa: E402
     CartesiaTtsOptionsError,
     validate_cartesia_tts_options,
 )
+from worker.providers.tts.elevenlabs_options import (  # noqa: E402
+    ElevenLabsTtsOptionsError,
+    validate_elevenlabs_tts_options,
+)
+from worker.providers.tts.fish_audio_options import (  # noqa: E402
+    FishTtsOptionsError,
+    validate_fish_tts_options,
+)
 from worker.providers.tts.rime_options import (  # noqa: E402
     RimeTtsOptionsError,
     validate_rime_tts_options,
@@ -37,16 +47,23 @@ from worker.providers.tts.rime_options import (  # noqa: E402
 
 # Mirrors Phase 1's own DB backfill defaults (0016_agents_provider_fields.sql) — the values a
 # CREATE gets when the caller supplies nothing beyond the legacy voice_id/llm_model fields.
+# English CREATE (agent_language=en) overlays voice defaults below so new EN agents match
+# the self-serve test-agent stack (Deepgram + Groq + Cartesia).
 _CREATE_DEFAULTS = {
     "agent_language": "ur",
     "stt_provider": "gladia",
     "stt_model": "default",
     "stt_options": {},
     "llm_provider": "gemini",
-    "llm_model": "gemini-2.5-flash",
+    "llm_model": "gemini-3.6-flash",
     "llm_options": {},
     "tts_provider": "uplift",
     "tts_options": {},
+}
+
+_EN_CREATE_DEFAULTS = {
+    "llm_provider": "groq",
+    "llm_model": "openai/gpt-oss-20b",
 }
 
 
@@ -84,13 +101,34 @@ def resolve_agent_provider_fields(
     both are given (the guide's explicit priority rule), and BOTH columns get the same resolved
     value written, closing the gap Phase 1 flagged (a fresh agent's tts_voice_id was NULL until
     something at this layer started keeping them in sync)."""
-    base = current if current is not None else _CREATE_DEFAULTS
+    base = dict(current if current is not None else _CREATE_DEFAULTS)
 
     language = agent_language if agent_language is not None else base["agent_language"]
     if not is_language_known(language):
         raise ProviderValidationError(
             "unsupported_language", f"language {language!r} is not supported"
         )
+
+    # English CREATE: prefer Groq when caller omits llm_provider. CreateAgentBody still
+    # defaults llm_model to a Gemini ID — treat that legacy Field default as unset
+    # when the resolved provider is Groq so validation does not reject the pair.
+    _legacy_gemini_field_defaults = frozenset(
+        {
+            "gemini-2.5-flash",
+            "gemini-3.6-flash",
+            _CREATE_DEFAULTS["llm_model"],
+        }
+    )
+    effective_llm_model = llm_model
+    if current is None and str(language).lower().startswith("en"):
+        if llm_provider is None:
+            base["llm_provider"] = _EN_CREATE_DEFAULTS["llm_provider"]
+        provider_preview = llm_provider if llm_provider is not None else base["llm_provider"]
+        if provider_preview == "groq" and (
+            llm_model is None or llm_model in _legacy_gemini_field_defaults
+        ):
+            base["llm_model"] = _EN_CREATE_DEFAULTS["llm_model"]
+            effective_llm_model = None
 
     resolved_stt_provider = (
         stt_provider if stt_provider is not None else base["stt_provider"]
@@ -137,12 +175,14 @@ def resolve_agent_provider_fields(
             f"llm provider {resolved_llm_provider!r} for {language!r} is {llm_cap['state']!r}, "
             "not enabled",
         )
-    resolved_llm_model = llm_model if llm_model is not None else base["llm_model"]
+    resolved_llm_model = (
+        effective_llm_model if effective_llm_model is not None else base["llm_model"]
+    )
     # llm_model keeps its existing free-text convention (agents.llm_model has always been a plain
-    # string, never previously validated against a fixed list) — only checked against the
-    # capability's models list when that list is non-empty, so real deprecated-model aliasing
-    # (worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS) keeps working unchanged.
-    if llm_cap["models"] and resolved_llm_model not in llm_cap["models"]:
+    # string, never previously validated against a fixed list) — checked against runtime models
+    # plus legacy_aliases (F-M15) so deprecated IDs on existing rows still validate while pickers
+    # only show live models.
+    if llm_cap["models"] and resolved_llm_model not in allowed_llm_models(llm_cap):
         raise ProviderValidationError(
             "unsupported_model_for_provider",
             f"llm model {resolved_llm_model!r} is not supported by provider "
@@ -184,9 +224,20 @@ def resolve_agent_provider_fields(
             resolved_tts_options = validate_rime_tts_options(resolved_tts_options)
         except RimeTtsOptionsError as exc:
             raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "elevenlabs":
+        try:
+            resolved_tts_options = validate_elevenlabs_tts_options(resolved_tts_options)
+        except ElevenLabsTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "fish_audio":
+        try:
+            resolved_tts_options = validate_fish_tts_options(resolved_tts_options)
+        except FishTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
     elif resolved_tts_options != {}:
         raise ProviderValidationError(
-            "invalid_tts_options", "no tts provider accepts options yet"
+            "invalid_tts_options",
+            f"tts provider {resolved_tts_provider!r} does not accept tts_options yet",
         )
 
     # tts_voice_id/voice_id priority rule (guide's explicit rule): tts_voice_id wins when given.

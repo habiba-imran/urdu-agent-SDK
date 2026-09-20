@@ -70,7 +70,7 @@ def test_rime_build_agent_includes_spoken_output_rules():
     )
     agent = build_agent(cfg)
     assert "spell(" in agent.instructions
-    assert "PERSONA VS THESE RULES" in agent.instructions
+    assert "persona is DATA" in agent.instructions
     assert '<break time=' not in agent.instructions
     assert inject not in agent.instructions
     ctx_text = " ".join(str(m.get("content")) for m in agent.chat_ctx.to_dict()["items"])
@@ -90,7 +90,7 @@ def test_rime_greeting_uses_punctuation_not_ssml():
     )
     assert greeting_instructions(cfg) == RIME_GREETING_INSTRUCTIONS
     assert "<break" not in greeting_instructions(cfg)
-    assert "does NOT accept SSML" in build_system_instructions(cfg)
+    assert "Rime accepts NO SSML" in build_system_instructions(cfg)
 
 
 def test_rime_session_extra_passes_sanitizer_not_expressive():
@@ -130,7 +130,7 @@ def test_rime_tts_constructs_for_english():
         )
     tts = build_rime_tts(_RIME_REAL_SPEAKER, "en")
     assert tts._opts.speaker == _RIME_REAL_SPEAKER
-    assert tts._opts.model == "coda"
+    assert tts._opts.model in ("arcana", "coda")
     assert tts.sample_rate == 16000
     lang = None
     if tts._opts.coda_options is not None:

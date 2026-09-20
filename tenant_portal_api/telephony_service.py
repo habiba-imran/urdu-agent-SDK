@@ -645,6 +645,28 @@ class TelephonyService:
                     nums = [n for n in nums if n.get("assigned_agent_id") == assigned_agent_id]
                 return nums
             return queries.list_managed_numbers(conn, tenant_id, assigned_agent_id)
+
+    def get_managed_number(self, tenant_id: str, number_id: str) -> dict[str, Any]:
+        """Fetch a single managed phone number by id."""
+        with self._connection() as conn:
+            if conn is None:
+                nums = self._numbers.get(tenant_id, [])
+                target = next((n for n in nums if n.get("id") == number_id), None)
+                if not target:
+                    raise TelephonyError(
+                        status=404,
+                        code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                        message=f"Managed number {number_id} not found for tenant.",
+                    )
+                return target
+            number = queries.get_managed_number(conn, tenant_id, number_id)
+            if not number:
+                raise TelephonyError(
+                    status=404,
+                    code=TelephonyErrorCode.NUMBER_NOT_FOUND,
+                    message=f"Managed number {number_id} not found for tenant.",
+                )
+            return number
     def search_available_numbers(
         self,
         tenant_id: str,
@@ -2178,18 +2200,50 @@ class TelephonyService:
                         "duration_sec": 45,
                     }
                 return call
-            row = conn.execute(
-                """
-                select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                       from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at,
-                       raw_livekit_sip_participant_status
-                from telephony_calls
-                where tenant_id = %s and id = %s
-                """,
-                (tenant_id, telephony_call_id),
-            ).fetchone()
+
+            import uuid
+            is_uuid = False
+            try:
+                uuid.UUID(str(telephony_call_id))
+                is_uuid = True
+            except (ValueError, AttributeError, TypeError):
+                is_uuid = False
+
+            if is_uuid:
+                row = conn.execute(
+                    """
+                    select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                           tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                           tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                           tc.raw_livekit_sip_participant_status,
+                           coalesce(tc.recording_url, s.recording_url) as recording_url,
+                           s.transcript
+                    from telephony_calls tc
+                    left join sessions s on s.room_name = tc.room_name
+                    where tc.tenant_id = %s and (tc.id = %s or tc.livekit_sip_call_id = %s or tc.room_name = %s)
+                    """,
+                    (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                           tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                           tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                           tc.raw_livekit_sip_participant_status,
+                           coalesce(tc.recording_url, s.recording_url) as recording_url,
+                           s.transcript
+                    from telephony_calls tc
+                    left join sessions s on s.room_name = tc.room_name
+                    where tc.tenant_id = %s and (tc.livekit_sip_call_id = %s or tc.livekit_sip_call_id_full = %s or tc.livekit_agent_dispatch_id = %s or tc.room_name = %s or tc.external_customer_ref = %s)
+                    """,
+                    (tenant_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id, telephony_call_id),
+                ).fetchone()
+
             if not row:
+                call = self._calls.get(telephony_call_id)
+                if call and call.get("tenant_id") == tenant_id:
+                    return call
                 raise TelephonyError(status=404, code=TelephonyErrorCode.CALL_SETUP_FAILED, message="Telephony call record not found.")
             return self._call_from_row(row)
     def list_call_records(
@@ -2203,18 +2257,21 @@ class TelephonyService:
                     res = [c for c in res if c.get("agent_id") == assigned_agent_id]
                 return res[:limit]
             sql = """
-                select id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
-                       from_number, to_number, recipient, platform_status, provider_status, outcome,
-                       duration_sec, error_code, error_message, started_at, ended_at,
-                       raw_livekit_sip_participant_status
-                from telephony_calls
-                where tenant_id = %s
+                select tc.id, tc.tenant_id, tc.session_id, tc.agent_id, tc.phone_number_id, tc.direction, tc.room_name,
+                       tc.from_number, tc.to_number, tc.recipient, tc.platform_status, tc.provider_status, tc.outcome,
+                       tc.duration_sec, tc.error_code, tc.error_message, tc.started_at, tc.ended_at,
+                       tc.raw_livekit_sip_participant_status,
+                       coalesce(tc.recording_url, s.recording_url) as recording_url,
+                       s.transcript
+                from telephony_calls tc
+                left join sessions s on s.room_name = tc.room_name
+                where tc.tenant_id = %s
             """
             params: list[Any] = [tenant_id]
             if assigned_agent_id:
-                sql += " and agent_id = %s"
+                sql += " and tc.agent_id = %s"
                 params.append(assigned_agent_id)
-            sql += " order by created_at desc limit %s"
+            sql += " order by tc.created_at desc limit %s"
             params.append(limit)
             return [self._call_from_row(row) for row in conn.execute(sql, tuple(params)).fetchall()]
     def disable_number(self, tenant_id: str, number_id: str, force: bool = False) -> dict[str, Any]:
@@ -2365,7 +2422,7 @@ class TelephonyService:
         }
 
     def _call_from_row(self, row: Any) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "id": row[0],
             "tenant_id": row[1],
             "session_id": row[2],
@@ -2386,3 +2443,9 @@ class TelephonyService:
             "ended_at": str(row[17]) if row[17] else None,
             "raw_livekit_sip_participant_status": row[18] if len(row) > 18 else None,
         }
+        if len(row) > 19 and row[19]:
+            out["recording_url"] = row[19]
+            out["recordingUrl"] = row[19]
+        if len(row) > 20 and row[20] is not None:
+            out["transcript"] = row[20]
+        return out

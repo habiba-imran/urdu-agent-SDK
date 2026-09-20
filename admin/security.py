@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import hmac
 import os
 import struct
@@ -39,6 +40,11 @@ def verify_password(password: str, stored: str) -> bool:
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(digest_hex)
     except (ValueError, AttributeError):
+        # F-M1: a stored credential that does not parse is corruption or a bad migration,
+        # not a wrong password. Never log the stored value itself.
+        logging.getLogger("admin.security").warning(
+            "stored password hash is malformed — verification cannot succeed"
+        )
         return False
     actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
     return hmac.compare_digest(actual, expected)

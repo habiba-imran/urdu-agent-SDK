@@ -379,11 +379,27 @@ class TelnyxClient:
                     }
                 )
             return results
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                err_json = e.response.json()
+                errors = err_json.get("errors", [])
+                if errors and isinstance(errors, list):
+                    detail = f": {errors[0].get('detail', errors[0].get('title', ''))}"
+                elif "message" in err_json:
+                    detail = f": {err_json['message']}"
+            except Exception:
+                detail = f": {e.response.text[:200]}"
+            raise TelephonyError(
+                status=502,
+                code=TelephonyErrorCode.TELNYX_API_ERROR,
+                message=f"Failed to search available numbers from Telnyx{detail}",
+            ) from e
         except httpx.HTTPError as e:
             raise TelephonyError(
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
-                message="Failed to search available numbers from Telnyx.",
+                message=f"Failed to search available numbers from Telnyx: {e}",
             ) from e
 
     def purchase_number(self, e164_number: str) -> dict[str, Any]:
@@ -957,7 +973,14 @@ class TelnyxClient:
                         "daily_spending_limit": data.get("daily_spend_limit"),
                     }
                 except Exception:
-                    pass
+                    # F-M1: log which provider stage failed before falling back to create.
+                    logger.warning(
+                        "telnyx stage=update_outbound_voice_profile failed id=%s name=%s "
+                        "— falling back to create_or_get",
+                        provider_outbound_voice_profile_id,
+                        name,
+                        exc_info=True,
+                    )
 
             if getattr(response, "status_code", None) in (404, 400, 422):
                 return self.create_or_get_outbound_voice_profile(

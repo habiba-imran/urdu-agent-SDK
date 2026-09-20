@@ -143,25 +143,55 @@ def main() -> int:
         PGSSLMODE=kw["sslmode"],
     )
 
-    for f in files:
-        result = subprocess.run(
-            [
-                "psql",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "--single-transaction",
-                "-q",
-                "-f",
-                str(f),
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
+    import psycopg
+    with psycopg.connect(**kw, connect_timeout=15, autocommit=True) as conn:
+        conn.execute(
+            """
+            drop schema public cascade;
+            create schema public;
+            grant all on schema public to postgres;
+            grant all on schema public to public;
+            grant usage on schema public to authenticated, anon;
+            """
         )
-        if result.returncode != 0:
-            sys.stderr.write(result.stdout + result.stderr)
-            sys.exit(f"db-reset: FAILED on {f.name}")
-        print(f"  applied {f.name}")
+
+    import shutil
+    has_psql = shutil.which("psql") is not None
+
+    if has_psql:
+        for f in files:
+            result = subprocess.run(
+                [
+                    "psql",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "--single-transaction",
+                    "-q",
+                    "-f",
+                    str(f),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                sys.stderr.write(result.stdout + result.stderr)
+                sys.exit(f"db-reset: FAILED on {f.name}")
+            print(f"  applied {f.name}")
+    else:
+        import psycopg
+        with psycopg.connect(**kw, connect_timeout=15, autocommit=False) as conn:
+            for f in files:
+                sql = f.read_text(encoding="utf-8")
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(sql)
+                    conn.commit()
+                    print(f"  applied {f.name}")
+                except Exception as e:
+                    conn.rollback()
+                    sys.stderr.write(f"{e}\n")
+                    sys.exit(f"db-reset: FAILED on {f.name}")
 
     print(f"db-reset: rebuilt from zero ({len(files)} migrations).")
     _warn_if_previews_stale(kw)

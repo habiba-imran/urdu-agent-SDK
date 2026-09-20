@@ -1,5 +1,27 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
-import type { Participant, TranscriptionSegment } from 'livekit-client';
+import type { AudioCaptureOptions, Participant, TranscriptionSegment } from 'livekit-client';
+import {
+  AwaazLabsUvaVoiceError,
+  mapSessionHttpError,
+  type AwaazLabsUvaVoiceErrorCode,
+} from './internal/errors.js';
+import { DEFAULT_FETCH_TIMEOUT_MS, delay, fetchWithTimeout } from './internal/http.js';
+import { applyRefreshedLiveKitToken } from './internal/livekitToken.js';
+
+/**
+ * Prefer browser AEC/NS so agent TTS on speakers is less likely to re-enter the mic
+ * and trip worker-side Silero barge-in (mid-reply flicker / stuck speech).
+ */
+const MIC_CAPTURE_OPTIONS: AudioCaptureOptions = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
+export type { AwaazLabsUvaVoiceErrorCode };
+export { AwaazLabsUvaVoiceError };
+export { AwaazLabsUvaVoiceError as UvaError };
+export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface AwaazLabsUvaVoiceOptions {
   /** Identifies the tenant/app; never authorises. Safe to ship in a public bundle. */
@@ -8,6 +30,11 @@ export interface AwaazLabsUvaVoiceOptions {
   sessionEndpoint: string;
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
+  /**
+   * Max wait for session / refresh / voice-catalog `fetch` (F-M14).
+   * Default: 15000 ms.
+   */
+  fetchTimeoutMs?: number;
 }
 
 export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
@@ -15,6 +42,16 @@ export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
 export interface ConnectOptions {
   agentId: string;
   voiceId?: string;
+}
+
+/** Browser-side split of room_connected: session mint HTTP vs LiveKit room.connect. */
+export interface ConnectTiming {
+  mintMs: number;
+  livekitConnectMs: number;
+  /** Hostname from session wsUrl — use to spot far LiveKit regions. */
+  livekitUrlHost?: string;
+  /** Local participant connection quality right after join, when available. */
+  connectionQuality?: string;
 }
 
 export interface Voice {
@@ -35,16 +72,14 @@ export type AwaazLabsUvaVoiceEvent =
   | 'error'
   | 'ended'
   | 'connected'
+  | 'connect_timing'
   | 'disconnected'
   | 'agent_speaking'
   | 'metrics_updated'
-  | 'audio_blocked';
+  | 'audio_blocked'
+  | 'turn_latency';
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
-
-export type AwaazLabsUvaVoiceErrorCode = 'quota_exceeded' | 'agent_not_found' | 'session_failed';
-
-export type UvaErrorCode = AwaazLabsUvaVoiceErrorCode;
 
 export interface TranscriptEvent {
   /** Stable per-segment id from LiveKit — the same id recurs with updated `text`/`final` as a
@@ -61,18 +96,6 @@ export interface MetricsEvent {
   [key: string]: unknown;
 }
 
-export class AwaazLabsUvaVoiceError extends Error {
-  constructor(
-    public readonly code: AwaazLabsUvaVoiceErrorCode,
-    message?: string,
-  ) {
-    super(message ?? code);
-    this.name = 'AwaazLabsUvaVoiceError';
-  }
-}
-
-export { AwaazLabsUvaVoiceError as UvaError };
-
 interface SessionResponse {
   token: string;
   wsUrl: string;
@@ -87,9 +110,13 @@ export interface AwaazLabsUvaVoiceEventMap {
   error: [AwaazLabsUvaVoiceError];
   ended: [unknown];
   connected: [];
+  /** Fired just before `connected` with mint vs LiveKit join split (room_connected diagnosis). */
+  connect_timing: [ConnectTiming];
   disconnected: [unknown];
   agent_speaking: [boolean];
   metrics_updated: [MetricsEvent];
+  /** Per-turn stage breakdown emitted by the worker on every user turn (UVA-5). */
+  turn_latency: [MetricsEvent];
   /**
    * Fired when the browser blocks audio autoplay (canPlaybackAudio=false) or
    * unblocks it (canPlaybackAudio=true). When blocked=true, show a user-visible
@@ -102,22 +129,41 @@ export type UvaEventMap = AwaazLabsUvaVoiceEventMap;
 
 type Listener<TArgs extends unknown[] = unknown[]> = (...args: TArgs) => void;
 
+/** Coerce session expiresIn to a positive second count (default 120). */
+function normalizeExpiresInSec(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 120;
+  // Guard against hosts that accidentally send milliseconds (e.g. 120000).
+  if (n > 10_000) return Math.round(n / 1000);
+  return Math.round(n);
+}
+
 export class AwaazLabsUvaVoice {
   private room: Room | null = null;
   private readonly listeners = new Map<AwaazLabsUvaVoiceEvent, Set<Listener>>();
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Prevents overlapping refresh loops (timer + retry must not stack). */
+  private refreshInFlight = false;
   private session: SessionResponse | null = null;
+  /** Wall clock when `session` was last received (connect or successful refresh). */
+  private sessionReceivedAt: number | null = null;
   private state: ConnectionState = 'idle';
+  /** Last emitted speaking flags — skip no-op ActiveSpeakersChanged churn. */
+  private lastCallerSpeaking: boolean | null = null;
+  private lastAgentSpeaking: boolean | null = null;
+  private lastConnectTiming: ConnectTiming | null = null;
 
-  static async listVoices(endpointUrl: string): Promise<Voice[]> {
+  static async listVoices(endpointUrl: string, timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS): Promise<Voice[]> {
     if (!endpointUrl.trim()) {
       throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
     }
     try {
-      const res = await fetch(endpointUrl);
+      const res = await fetchWithTimeout(endpointUrl, undefined, timeoutMs);
       if (!res.ok) {
-        throw new AwaazLabsUvaVoiceError('session_failed', `Failed to fetch voices catalog: ${res.statusText}`);
+        // F-M16: same status/body taxonomy as connect() — do not collapse every failure to session_failed.
+        const errorBody = await res.text().catch(() => '');
+        throw mapSessionHttpError(res.status, errorBody || res.statusText);
       }
       return (await res.json()) as Voice[];
     } catch (e) {
@@ -136,12 +182,21 @@ export class AwaazLabsUvaVoice {
     }
   }
 
+  private get fetchTimeoutMs(): number {
+    return this.options.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  }
+
   get connectionState(): ConnectionState {
     return this.state;
   }
 
   get isConnected(): boolean {
     return this.state === 'connected';
+  }
+
+  /** Last successful connect() mint vs LiveKit join timings, or null before first connect. */
+  get connectTiming(): ConnectTiming | null {
+    return this.lastConnectTiming;
   }
 
   /** Whether the local microphone track is currently enabled. `false` when not connected. */
@@ -152,7 +207,7 @@ export class AwaazLabsUvaVoice {
   /** Enable/disable the local microphone track. No-op if not connected. */
   async setMicMuted(muted: boolean): Promise<void> {
     if (!this.room) return;
-    await this.room.localParticipant.setMicrophoneEnabled(!muted);
+    await this.room.localParticipant.setMicrophoneEnabled(!muted, MIC_CAPTURE_OPTIONS);
   }
 
   async connect(opts: ConnectOptions): Promise<void> {
@@ -165,24 +220,36 @@ export class AwaazLabsUvaVoice {
 
     this.state = 'connecting';
 
-    let body: SessionResponse;
-    try {
-      const res = await fetch(this.options.sessionEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          publishableKey: this.options.publishableKey,
-          agentId: opts.agentId,
-        }),
+    const room = new Room({
+      audioCaptureDefaults: MIC_CAPTURE_OPTIONS,
+    });
+    this.wireRoomEvents(room);
+
+    // Acquire microphone access concurrently with fetching the session token
+    const micPromise = room.localParticipant
+      .setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS)
+      .catch(() => {
+        // Ignore here, we will check isMicrophoneEnabled after connecting
       });
-      if (res.status === 429) {
-        throw new AwaazLabsUvaVoiceError('quota_exceeded');
-      }
-      if (res.status === 404) {
-        throw new AwaazLabsUvaVoiceError('agent_not_found');
-      }
+
+    let body: SessionResponse;
+    const mintStarted = performance.now();
+    try {
+      const res = await fetchWithTimeout(
+        this.options.sessionEndpoint,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            publishableKey: this.options.publishableKey,
+            agentId: opts.agentId,
+          }),
+        },
+        this.fetchTimeoutMs,
+      );
       if (!res.ok) {
-        throw new AwaazLabsUvaVoiceError('session_failed');
+        const errorBody = await res.text().catch(() => '');
+        throw mapSessionHttpError(res.status, errorBody);
       }
       const parsed = (await res.json()) as Partial<SessionResponse>;
       if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
@@ -191,23 +258,56 @@ export class AwaazLabsUvaVoice {
       body = parsed as SessionResponse;
     } catch (err) {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
       if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
     }
+    const mintMs = Math.round(performance.now() - mintStarted);
 
-    const room = new Room();
-    this.wireRoomEvents(room);
-
+    const connectStarted = performance.now();
     try {
-      await room.connect(body.wsUrl, body.token);
-    } catch {
+      // Align LiveKit join timeouts with fetchTimeoutMs so a hung signalling path
+      // cannot sit open forever after a successful mint (F-M14 adjacent hang).
+      await room.connect(body.wsUrl, body.token, {
+        peerConnectionTimeout: this.fetchTimeoutMs,
+        websocketTimeout: this.fetchTimeoutMs,
+      });
+    } catch (err) {
       this.state = 'idle';
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      await room.disconnect().catch(() => {});
+      if (err instanceof AwaazLabsUvaVoiceError) throw err;
       throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
     }
-
+    const livekitConnectMs = Math.round(performance.now() - connectStarted);
+    let livekitUrlHost: string | undefined;
     try {
-      await room.localParticipant.setMicrophoneEnabled(true);
+      livekitUrlHost = new URL(body.wsUrl).host;
     } catch {
+      livekitUrlHost = undefined;
+    }
+    const quality = room.localParticipant?.connectionQuality;
+    this.lastConnectTiming = {
+      mintMs,
+      livekitConnectMs,
+      livekitUrlHost,
+      connectionQuality: quality != null ? String(quality) : undefined,
+    };
+    this.emit('connect_timing', this.lastConnectTiming);
+    // Emit after timings so hosts can read connectTiming inside connected handlers.
+    this.state = 'connected';
+    this.emit('connected');
+
+    await micPromise;
+    if (!room.localParticipant.isMicrophoneEnabled) {
+      // Pre-connect enable often no-ops; retry after the room is connected.
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS);
+      } catch {
+        // Fall through to the enabled check below.
+      }
+    }
+    if (!room.localParticipant.isMicrophoneEnabled) {
       await room.disconnect();
       this.state = 'idle';
       throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
@@ -215,6 +315,7 @@ export class AwaazLabsUvaVoice {
 
     this.room = room;
     this.session = body;
+    this.sessionReceivedAt = Date.now();
     this.scheduleTokenRefresh(body);
   }
 
@@ -231,15 +332,37 @@ export class AwaazLabsUvaVoice {
     return this;
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(reason?: unknown): Promise<void> {
     this.clearRefreshTimer();
-    if (!this.room) return;
+    const room = this.room;
+    if (!room) {
+      this.session = null;
+      this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
+      this.state = 'idle';
+      return;
+    }
     this.state = 'disconnecting';
-    await this.room.disconnect();
-    this.detachAllRemoteAudio();
-    this.room = null;
-    this.session = null;
-    this.state = 'idle';
+    const canDisconnect = typeof (room as { disconnect?: unknown }).disconnect === 'function';
+    if (canDisconnect) {
+      await (room as { disconnect: () => Promise<void> }).disconnect().catch(() => {});
+    }
+    // Real LiveKit Room fires RoomEvent.Disconnected, which already clears state + emits.
+    // Stubs / failed-refresh paths still need local cleanup when that event never runs.
+    if (this.room === room) {
+      this.detachAllRemoteAudio();
+      this.room = null;
+      this.session = null;
+      this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
+      this.state = 'idle';
+      if (!canDisconnect) {
+        this.emit('disconnected', reason);
+        this.emit('ended', reason);
+      }
+    }
   }
 
   /**
@@ -256,14 +379,19 @@ export class AwaazLabsUvaVoice {
 
   private emit<K extends AwaazLabsUvaVoiceEvent>(event: K, ...args: AwaazLabsUvaVoiceEventMap[K]): void {
     for (const cb of this.listeners.get(event) ?? []) {
-      (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
+      try {
+        (cb as Listener<AwaazLabsUvaVoiceEventMap[K]>)(...args);
+      } catch (err) {
+        // F-L8: one throwing host listener must not block later listeners for the same event.
+        console.error(`[AwaazLabsUvaVoice] listener for "${event}" threw:`, err);
+      }
     }
   }
 
   private wireRoomEvents(room: Room): void {
     room.on(RoomEvent.Connected, () => {
+      // Public `connected` is emitted from connect() after mint/join timings are recorded.
       this.state = 'connected';
-      this.emit('connected');
     });
 
     room.on(RoomEvent.Disconnected, (reason) => {
@@ -271,9 +399,21 @@ export class AwaazLabsUvaVoice {
       this.detachAllRemoteAudio();
       this.room = null;
       this.session = null;
+      this.sessionReceivedAt = null;
+      this.lastCallerSpeaking = null;
+      this.lastAgentSpeaking = null;
       this.state = 'idle';
       this.emit('disconnected', reason);
       this.emit('ended', reason);
+    });
+
+    room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      if (!participant?.isLocal || !this.lastConnectTiming) return;
+      // Refresh quality on the last timing snapshot for hosts that re-read connectTiming.
+      this.lastConnectTiming = {
+        ...this.lastConnectTiming,
+        connectionQuality: String(quality),
+      };
     });
 
     room.on(
@@ -287,9 +427,19 @@ export class AwaazLabsUvaVoice {
     );
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      // Local mic only — do not treat remote/agent speakers as "caller speaking"
+      // (that false positive made demos look like VAD barge-in when the agent talked).
+      const callerSpeaking = speakers.some((speaker) => speaker.isLocal);
       const agentSpeaking = speakers.some((speaker) => !speaker.isLocal);
-      this.emit('speaking', speakers.length > 0);
-      this.emit('agent_speaking', agentSpeaking);
+      // Emit only on edge changes — LiveKit often re-fires the same speaker set.
+      if (callerSpeaking !== this.lastCallerSpeaking) {
+        this.lastCallerSpeaking = callerSpeaking;
+        this.emit('speaking', callerSpeaking);
+      }
+      if (agentSpeaking !== this.lastAgentSpeaking) {
+        this.lastAgentSpeaking = agentSpeaking;
+        this.emit('agent_speaking', agentSpeaking);
+      }
     });
 
     // --- AUDIO PLAYBACK FIX ---
@@ -322,12 +472,12 @@ export class AwaazLabsUvaVoice {
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
       const metrics = this.tryParseMetrics(metadata);
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
-      if (metrics) this.emit('metrics_updated', metrics);
+      if (metrics) this.emitLatencyEvents(metrics);
     });
 
     // Browsers block audio autoplay without a prior user gesture.
@@ -346,8 +496,12 @@ export class AwaazLabsUvaVoice {
     element.autoplay = true;
     element.setAttribute('playsinline', 'true');
     element.style.display = 'none';
-    document.body.appendChild(element);
+    // F-L7: no `document` / `document.body` under Next.js SSR (or non-DOM runtimes).
+    // Still track the element so TrackUnsubscribed cleanup works if attach raced hydration.
     this.remoteAudioElements.set(trackSid, element);
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.appendChild(element);
+    }
     // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
     // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
     void element.play().catch(() => {
@@ -377,7 +531,9 @@ export class AwaazLabsUvaVoice {
 
   private scheduleTokenRefresh(session: SessionResponse): void {
     this.clearRefreshTimer();
-    const ttlSeconds = session.expiresIn ?? 120;
+    const ttlSeconds = normalizeExpiresInSec(session.expiresIn);
+    // Refresh 60s before expiry, but never sooner than 5s after mint/refresh.
+    // Leave a wide retry window before the JWT deadline (F-H12).
     const refreshDelayMs = Math.max(5_000, (ttlSeconds - 60) * 1000);
     this.refreshTimer = setTimeout(() => {
       void this.refreshToken();
@@ -392,35 +548,107 @@ export class AwaazLabsUvaVoice {
   }
 
   private async refreshToken(): Promise<void> {
+    // Single-flight: a second timer tick must not start a parallel retry storm.
+    if (this.refreshInFlight) return;
+    if (!this.room || !this.session) return;
+    this.refreshInFlight = true;
+    try {
+      await this.refreshTokenLoop();
+    } finally {
+      this.refreshInFlight = false;
+    }
+  }
+
+  private async refreshTokenLoop(): Promise<void> {
     if (!this.room || !this.session) return;
     const refreshEndpoint = this.resolveRefreshEndpoint();
-    try {
-      const res = await fetch(refreshEndpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.session.token}`,
-        },
-      });
-      if (!res.ok) throw new Error('refresh failed');
-      const parsed = (await res.json()) as Partial<SessionResponse>;
-      if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-        throw new Error('refresh response incomplete');
+    const expiresInSec = normalizeExpiresInSec(this.session.expiresIn);
+    const receivedAt = this.sessionReceivedAt ?? Date.now();
+    const deadline = receivedAt + expiresInSec * 1000;
+    // 1s → 2s → 4s → 8s (cap). A ~15s DevTools block must only burn a few attempts.
+    let backoffMs = 1_000;
+    let attempt = 0;
+
+    while (this.room && this.session) {
+      attempt += 1;
+      let permanentAuthFailure = false;
+      try {
+        const res = await fetchWithTimeout(
+          refreshEndpoint,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${this.session.token}`,
+            },
+          },
+          this.fetchTimeoutMs,
+        );
+        if (res.status === 401 || res.status === 403) {
+          permanentAuthFailure = true;
+        } else if (!res.ok) {
+          throw new Error('refresh failed');
+        } else {
+          const parsed = (await res.json()) as Partial<SessionResponse>;
+          if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
+            throw new Error('refresh response incomplete');
+          }
+          this.session = {
+            token: parsed.token,
+            wsUrl: parsed.wsUrl,
+            roomName: parsed.roomName,
+            refreshUrl: parsed.refreshUrl ?? this.session.refreshUrl,
+            expiresIn: parsed.expiresIn ?? this.session.expiresIn,
+          };
+          this.sessionReceivedAt = Date.now();
+          // F-H12: Room has no public updateToken — push JWT into engine + region provider
+          // so reconnect uses the refreshed credential (see applyRefreshedLiveKitToken).
+          await applyRefreshedLiveKitToken(this.room, this.session.token);
+          this.scheduleTokenRefresh(this.session);
+          return;
+        }
+      } catch {
+        // Transient failure (network, DevTools block, timeout, 5xx, incomplete body).
       }
-      this.session = {
-        token: parsed.token,
-        wsUrl: parsed.wsUrl,
-        roomName: parsed.roomName,
-        refreshUrl: parsed.refreshUrl ?? this.session.refreshUrl,
-        expiresIn: parsed.expiresIn ?? this.session.expiresIn,
-      };
-      const tokenUpdater = this.room as Room & { updateToken?: (token: string) => Promise<void> };
-      if (typeof tokenUpdater.updateToken === 'function') {
-        await tokenUpdater.updateToken(this.session.token);
+
+      if (!this.room || !this.session) return;
+
+      if (permanentAuthFailure) {
+        this.emit(
+          'error',
+          new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh rejected'),
+        );
+        // Do not limp until JWT death — tear down so hosts get a clean ended signal.
+        await this.disconnect('token_refresh_failed');
+        return;
       }
-      this.scheduleTokenRefresh(this.session);
-    } catch {
-      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', 'token refresh failed'));
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+
+      // Always sleep between attempts while time remains — never spin.
+      const waitMs = Math.min(backoffMs, 8_000, remainingMs);
+      await delay(waitMs);
+      backoffMs = Math.min(backoffMs * 2, 8_000);
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+
+      // Safety cap so a clock skew / bad expiresIn cannot hammer the host forever.
+      if (attempt >= 20) {
+        break;
+      }
     }
+
+    if (!this.room || !this.session) return;
+    // F-H12: only emit terminal error after retries are exhausted (or past token expiry).
+    this.emit(
+      'error',
+      new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh failed'),
+    );
+    await this.disconnect('token_refresh_failed');
   }
 
   private resolveRefreshEndpoint(): string {
@@ -444,6 +672,15 @@ export class AwaazLabsUvaVoice {
       return `${this.options.sessionEndpoint}/refresh`;
     }
     return `${this.options.sessionEndpoint.replace(/\/$/, '')}/refresh`;
+  }
+
+  private emitLatencyEvents(metrics: MetricsEvent): void {
+    if (metrics.type === 'turn_latency') {
+      this.emit('turn_latency', metrics);
+    }
+    if (metrics.type === 'metrics_updated' || metrics.type === 'turn_latency') {
+      this.emit('metrics_updated', metrics);
+    }
   }
 
   private decodePayload(payload: Uint8Array): string {

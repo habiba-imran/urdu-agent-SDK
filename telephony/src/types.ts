@@ -48,8 +48,8 @@ export interface TelephonyClientOptions {
 
 export interface MachineOperation {
   method: HttpMethod;
-  path: `/machine/telephony/${string}`;
-  action: `telephony.${string}`;
+  path: `/machine/${string}`;
+  action: `telephony.${string}` | `session.${string}`;
 }
 
 export type TelephonyErrorCode =
