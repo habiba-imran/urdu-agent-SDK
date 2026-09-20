@@ -7,6 +7,7 @@ via env fallback for existing development tenants.
 from __future__ import annotations
 
 import os
+import logging
 import threading
 import time
 import sys
@@ -22,6 +23,8 @@ except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 from .secrets import SecretProvider
+
+_log = logging.getLogger("control_plane.secrets_db")
 
 
 class DbSecretProvider(SecretProvider):
@@ -57,7 +60,13 @@ class DbSecretProvider(SecretProvider):
                     self._write_cache(tenant_id, secret)
                     return secret
         except Exception:
-            pass  # DB lookup failure or column missing — fall through to fallback
+            # F-M1: silently falling back to the env map hides a DB outage AND means
+            # authentication quietly runs on a possibly stale secret set (see F-M29).
+            _log.warning(
+                "tenant secret DB lookup failed for %s — using env fallback",
+                tenant_id,
+                exc_info=True,
+            )
 
         # 2. Fallback to EnvSecretProvider if provided
         if self._fallback:

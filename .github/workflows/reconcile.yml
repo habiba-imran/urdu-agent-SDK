@@ -1,0 +1,107 @@
+name: Reconcile Sessions and Telephony
+
+# F-H18: session close, quota release and usage_events happen in LiveKit shutdown callbacks,
+# so a crash/OOM/eviction leaves sessions open, concurrency slots consumed and calls unbilled.
+# Both reconcile scripts existed but nothing scheduled them. This is that schedule.
+# Runbook: docs/WAVE2-SESSION-RECONCILE.md
+#
+# Mode: dry-run by default. Set the repository variable RECONCILE_APPLY to "true" once the
+# dry-run counts in the logs look right — no code change needed to switch, and no accidental
+# writes before someone has read a week of output.
+#
+# A missing SUPABASE_DB_URL fails the run instead of skipping it: a green run that reconciled
+# nothing is how F-H18 stayed invisible in the first place.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes (GitHub best-effort; can lag under load)
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write changes (otherwise dry-run)"
+        type: boolean
+        default: false
+      max_age_minutes:
+        description: "Age at which an open session is considered stale"
+        type: string
+        default: "30"
+
+concurrency:
+  group: reconcile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    name: Reconcile stale sessions and telephony state
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "psycopg[binary]==3.3.4" python-dotenv==1.2.2
+
+      - name: Resolve mode
+        id: mode
+        env:
+          INPUT_APPLY: ${{ inputs.apply }}
+          VAR_APPLY: ${{ vars.RECONCILE_APPLY }}
+          INPUT_MAX_AGE: ${{ inputs.max_age_minutes }}
+        run: |
+          set -euo pipefail
+          apply=false
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$INPUT_APPLY" = "true" ]; then apply=true; fi
+          elif [ "${VAR_APPLY,,}" = "true" ]; then
+            apply=true
+          fi
+          max_age="${INPUT_MAX_AGE:-30}"
+          case "$max_age" in ''|*[!0-9]*) echo "::error::max_age_minutes must be a number"; exit 1 ;; esac
+          echo "apply=$apply" >> "$GITHUB_OUTPUT"
+          echo "max_age=$max_age" >> "$GITHUB_OUTPUT"
+          echo "apply=$apply max_age_minutes=$max_age"
+
+      - name: Check database credentials
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set — nothing was reconciled"
+            exit 1
+          fi
+
+      - name: Reconcile sessions and quota
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          APPLY: ${{ steps.mode.outputs.apply }}
+          MAX_AGE: ${{ steps.mode.outputs.max_age }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            python scripts/reconcile_sessions.py --max-age-minutes "$MAX_AGE"
+          else
+            python scripts/reconcile_sessions.py --max-age-minutes "$MAX_AGE" --dry-run
+          fi
+
+      # Runs even if the session pass failed: the two reconcilers are independent, and a
+      # telephony quota leak should not wait on an unrelated session-side error.
+      - name: Reconcile telephony state
+        if: always() && steps.mode.outcome == 'success'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          APPLY: ${{ steps.mode.outputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            python scripts/reconcile_telephony.py --apply
+          else
+            python scripts/reconcile_telephony.py
+          fi
