@@ -18,7 +18,7 @@ import os
 import sys
 import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict
 from pathlib import Path
 
 import aiohttp
@@ -304,7 +304,7 @@ def list_voices():
 
 
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
-_hits: dict[str, list[float]] = defaultdict(list)
+_hits: OrderedDict[str, list[float]] = OrderedDict()
 
 
 class SessionBody(BaseModel):
@@ -369,14 +369,150 @@ class RefreshResponse(BaseModel):
     expiresIn: int
 
 
-def _rate_limited(tenant_id: str) -> bool:
+# F-H4: the limiter used to be checked AND filled from the raw X-Tenant-Id header before any
+# signature was verified. Since that header is the tenant UUID the dashboard displays as the
+# "publishable key", anyone who knew it could send 120 junk requests a minute and lock the
+# real tenant out of minting, with no credential at all.
+#
+# Split into check and record: the tenant bucket is still checked up front, but only a
+# request that actually passed HMAC verification records a hit, so unauthenticated junk can
+# no longer fill someone else's bucket. Floods are absorbed by a separate per-IP bucket,
+# which spends the caller's own resource rather than the victim's.
+#
+# F-H5: this state is per process and in memory. With N workers the effective limit is N
+# times the stated one, and it resets on every deploy — documented here rather than implied.
+# It is now bounded: at most _MAX_TRACKED_KEYS buckets, oldest evicted first, so a flood of
+# distinct keys cannot grow it without limit.
+RATE_LIMIT_IP_PER_MIN = 240
+_MAX_TRACKED_KEYS = 10_000
+_hits_lock = threading.Lock()
+
+
+_PRUNE_INTERVAL_SEC = 60
+_last_prune = 0.0
+
+
+def _prune_locked(now: float) -> None:
+    """Keep _hits bounded without making every request pay for a full scan.
+
+    Eviction of the oldest bucket is O(1) and happens only when the cap is exceeded; the
+    full sweep for expired windows runs at most once a minute. An earlier version scanned
+    every bucket on every request, which turned the limiter itself into the bottleneck
+    under exactly the flood it exists to absorb.
+    """
+    global _last_prune
+    while len(_hits) > _MAX_TRACKED_KEYS:
+        _hits.popitem(last=False)
+    if now - _last_prune < _PRUNE_INTERVAL_SEC:
+        return
+    _last_prune = now
+    for key in [k for k, window in _hits.items() if not window or now - window[-1] >= 60]:
+        del _hits[key]
+
+
+def _rate_limit_exceeded(key: str, limit: int) -> bool:
+    """True when `key` is already at its limit. Does not count this request."""
     now = time.time()
-    window = _hits[tenant_id]
-    window[:] = [t for t in window if now - t < 60]
-    if len(window) >= RATE_LIMIT_PER_MIN:
+    with _hits_lock:
+        window = _hits.get(key)
+        if window is None:
+            return False
+        window[:] = [t for t in window if now - t < 60]
+        return len(window) >= limit
+
+
+def _rate_limit_record(key: str) -> None:
+    now = time.time()
+    with _hits_lock:
+        window = _hits.setdefault(key, [])
+        window[:] = [t for t in window if now - t < 60]
+        window.append(now)
+        _hits.move_to_end(key)
+        _prune_locked(now)
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client identity for the pre-auth bucket. X-Forwarded-For is attacker
+    controlled, so it is only a courtesy for correct proxies — the bucket is a flood damper,
+    not an authorization decision."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return f"ip:{forwarded}"
+    return f"ip:{request.client.host if request.client else 'unknown'}"
+
+
+def _rate_limited(tenant_id: str) -> bool:
+    """Back-compat wrapper: check-and-record against the tenant bucket.
+
+    Still used by dev-mint, where the caller is already inside the dev gate.
+    """
+    if _rate_limit_exceeded(tenant_id, RATE_LIMIT_PER_MIN):
         return True
-    window.append(now)
+    _rate_limit_record(tenant_id)
     return False
+
+
+# F-H7. A session's token is refreshed every TTL_SEC (120s) for as long as the call runs,
+# so this is the only place the platform can revoke an in-flight call.
+MAX_REFRESHES = 720  # ~24h at a 120s TTL; a real call never reaches this
+
+
+def _next_refresh_count(metadata: dict) -> int:
+    try:
+        count = int(metadata.get("refresh_count", 0))
+    except (TypeError, ValueError):
+        count = 0
+    count += 1
+    if count > MAX_REFRESHES:
+        raise HTTPException(status_code=403, detail="refresh limit reached")
+    return count
+
+
+def _enforce_refresh_gates(*, tenant_id: str, room: str) -> None:
+    """Re-run the mint's tenant/quota/session gates on every refresh.
+
+    Deliberately fails OPEN on an infrastructure error: a database blip must not drop every
+    live call at once. It fails CLOSED on an actual answer — suspended tenant, closed
+    session, monthly cap reached — which is the case F-H7 is about.
+    """
+    try:
+        with mint_db_connection(connect_timeout=5) as conn:
+            row = conn.execute(
+                "select status, max_minutes_month from tenants where id = %s",
+                (tenant_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=401, detail="unknown tenant")
+            status, max_minutes = row
+            if status != "active":
+                raise HTTPException(status_code=403, detail="tenant not active")
+
+            session_row = conn.execute(
+                "select ended_at from sessions where tenant_id = %s and room_name = %s "
+                "order by started_at desc limit 1",
+                (tenant_id, room),
+            ).fetchone()
+            if session_row is not None and session_row[0] is not None:
+                raise HTTPException(status_code=409, detail="session already closed")
+
+            quota = conn.execute(
+                "select minutes_this_month from quota_state where tenant_id = %s",
+                (tenant_id,),
+            ).fetchone()
+            if quota is not None and max_minutes is not None and quota[0] is not None:
+                if quota[0] >= max_minutes:
+                    raise HTTPException(
+                        status_code=429, detail="monthly minutes cap reached"
+                    )
+    except HTTPException:
+        raise
+    except Exception:
+        _mint_log.warning(
+            "refresh gate checks unavailable tenant=%s room=%s - allowing refresh",
+            tenant_id,
+            room,
+            exc_info=True,
+        )
 
 
 def _mint_refresh_token(token: str) -> RefreshResponse:
@@ -399,6 +535,14 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
             status_code=401, detail="token metadata missing tenant or agent"
         )
 
+    # F-H7: refresh used to verify only the JWT signature and re-issue the same grants —
+    # it never re-read tenant status, never re-checked quota, never noticed a closed
+    # session, and had no cap. A tenant suspended for non-payment or abuse kept every
+    # in-flight call alive indefinitely, so "suspend" was not a stop control.
+    _enforce_refresh_gates(tenant_id=tenant_id, room=room)
+
+    refresh_count = _next_refresh_count(metadata)
+
     # A.4: refresh must not strip metadata the mint put there (e.g. verified_caller_phone),
     # otherwise a mid-call refresh would silently revoke the caller's write-tool ownership.
     refreshed_metadata = {
@@ -406,6 +550,7 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
     }
     refreshed_metadata["tenant_id"] = tenant_id
     refreshed_metadata["agent_id"] = agent_id
+    refreshed_metadata["refresh_count"] = refresh_count
 
     refreshed = (
         api.AccessToken(_LK_KEY, _LK_SECRET)
@@ -723,7 +868,14 @@ def create_session(
     x_nonce: str = Header(...),
     x_signature: str = Header(...),
 ):
-    if _rate_limited(x_tenant_id):
+    # F-H4: the caller's own bucket first — this one is filled by unauthenticated requests
+    # because it costs the sender, not the tenant.
+    ip_key = _client_ip(request)
+    if _rate_limit_exceeded(ip_key, RATE_LIMIT_IP_PER_MIN):
+        return JSONResponse({"error": "rate limited"}, status_code=429)
+    _rate_limit_record(ip_key)
+
+    if _rate_limit_exceeded(x_tenant_id, RATE_LIMIT_PER_MIN):
         record_mint_rejection(x_tenant_id, 429, "rate limited")
         return JSONResponse({"error": "rate limited"}, status_code=429)
     greeting = _opening_greeting(body.greeting, body.custom_greeting)
@@ -745,6 +897,8 @@ def create_session(
                 origin=request.headers.get("origin"),
                 verified_caller_phone=verified_caller_phone,
             )
+            # Only an authenticated mint counts against the tenant's bucket (F-H4).
+            _rate_limit_record(x_tenant_id)
             _mint_log.info(
                 "mint_elapsed_ms=%d tenant=%s agent=%s room=%s source=session",
                 int((time.monotonic() - mint_t0) * 1000),
