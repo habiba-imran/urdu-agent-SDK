@@ -11,8 +11,10 @@ test:
 lint:
 	@$(PY) -m ruff check . && $(PY) -m ruff format --check . && (cd sdk 2>/dev/null && npm run lint || true)
 secrets:
-	@$(BASH) -c 'gitleaks detect --no-banner --redact -v 2>/dev/null || { echo "GATE FAIL: secrets"; exit 1; }'
+	@$(BASH) -c 'command -v gitleaks >/dev/null 2>&1 || { echo "GATE FAIL: gitleaks is not installed - install it (https://github.com/gitleaks/gitleaks) or run the scan in CI (.github/workflows/ci.yml security-scan job)"; exit 1; }'
+	@$(BASH) -c 'gitleaks detect --no-banner --redact -v || { echo "GATE FAIL: secrets detected in the working tree or history"; exit 1; }'
 	@$(BASH) -c 'if git ls-files | grep -E '"'"'^\.env'"'"' | grep -qv -e '"'"'\.example'"'"' -e '"'"'\.sample'"'"' -e '"'"'\.template'"'"'; then echo "GATE FAIL: real .env file tracked (not a template)"; exit 1; fi'
+
 rls-check:
 	@$(PY) scripts/rls_check.py
 usage-check:
