@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Body, Query
+from fastapi import FastAPI, Header, HTTPException, Body, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,11 @@ from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from control_plane.login_guard import (  # noqa: E402
+    LoginThrottled,
+    assert_not_throttled,
+    record_attempt,
+)
 from control_plane.runtime_env import is_hosted  # noqa: E402
 from control_plane.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
@@ -305,17 +310,51 @@ async def tenant_portal_health():
 
 
 @app.post("/portal/login")
-def portal_login(body: TenantLoginBody):
-    try:
-        with _conn() as conn:
-            return tenant_login(
+def portal_login(body: TenantLoginBody, request: Request):
+    """F-H14: this endpoint had no rate limit, throttle or lockout, and failures were never
+    recorded anywhere - so credential guessing against the portal that can read a tenant's
+    signing secret left no trace."""
+    client_ip = request.client.host if request.client else None
+    with _conn() as conn:
+        try:
+            assert_not_throttled(
+                conn, realm="portal", identity=body.tenant_id, client_ip=client_ip
+            )
+        except LoginThrottled as e:
+            raise HTTPException(
+                status_code=e.status,
+                detail="too many failed login attempts - try again later",
+                headers={"Retry-After": str(e.retry_after_seconds)},
+            ) from e
+
+        try:
+            result = tenant_login(
                 conn,
                 tenant_id=body.tenant_id,
                 tenant_secret=body.tenant_secret,
                 jwt_secret=TENANT_PORTAL_JWT_SECRET,
             )
-    except TenantAuthError as e:
-        raise HTTPException(status_code=e.status, detail=e.reason) from e
+        except TenantAuthError as e:
+            record_attempt(
+                conn,
+                realm="portal",
+                identity=body.tenant_id,
+                client_ip=client_ip,
+                successful=False,
+                reason=e.reason,
+            )
+            conn.commit()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+        record_attempt(
+            conn,
+            realm="portal",
+            identity=body.tenant_id,
+            client_ip=client_ip,
+            successful=True,
+        )
+        conn.commit()
+        return result
 
 
 @app.get("/portal/agents")

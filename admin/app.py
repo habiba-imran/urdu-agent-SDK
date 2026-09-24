@@ -25,17 +25,25 @@ from pathlib import Path
 
 import psycopg
 from dotenv import dotenv_values
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 try:
     from scripts.dbconn import conn_kwargs
 except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 
+# Shared with the tenant portal so both login endpoints throttle and audit identically.
+# docker/admin.Dockerfile vendors just these control_plane files into the admin image.
+from control_plane.login_guard import (  # noqa: E402
+    LoginThrottled,
+    assert_not_throttled,
+    record_attempt,
+)
 from .audit import record_admin_action  # noqa: E402
 from .auth import AdminAuthError, login as admin_login, verify_admin_jwt  # noqa: E402
 from . import queries  # noqa: E402
@@ -146,18 +154,52 @@ def _require_admin(authorization: str | None) -> dict:
 
 
 @app.post("/admin/login")
-def login_route(body: LoginBody):
-    try:
-        with _conn() as conn:
-            return admin_login(
+def login_route(body: LoginBody, request: Request):
+    """F-H14: no rate limit, throttle or lockout, and record_admin_action only ran on
+    success - so admin_audit_log held no failed attempts against the one portal with
+    cross-tenant read access and the ability to rotate any tenant's secret."""
+    client_ip = request.client.host if request.client else None
+    with _conn() as conn:
+        try:
+            assert_not_throttled(
+                conn, realm="admin", identity=body.email, client_ip=client_ip
+            )
+        except LoginThrottled as e:
+            raise HTTPException(
+                status_code=e.status,
+                detail="too many failed login attempts - try again later",
+                headers={"Retry-After": str(e.retry_after_seconds)},
+            ) from e
+
+        try:
+            result = admin_login(
                 conn,
                 email=body.email,
                 password=body.password,
                 totp_code=body.totp_code,
                 jwt_secret=ADMIN_JWT_SECRET,
             )
-    except AdminAuthError as e:
-        raise HTTPException(status_code=e.status, detail=e.reason) from e
+        except AdminAuthError as e:
+            record_attempt(
+                conn,
+                realm="admin",
+                identity=body.email,
+                client_ip=client_ip,
+                successful=False,
+                reason=e.reason,
+            )
+            conn.commit()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+        record_attempt(
+            conn,
+            realm="admin",
+            identity=body.email,
+            client_ip=client_ip,
+            successful=True,
+        )
+        conn.commit()
+        return result
 
 
 @app.get("/admin/tenants")

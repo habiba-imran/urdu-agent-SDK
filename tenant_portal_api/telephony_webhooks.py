@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from collections import OrderedDict
 import sys
 import time
 from pathlib import Path
@@ -36,8 +37,18 @@ MAX_WEBHOOK_BODY_BYTES = 256 * 1024
 router = APIRouter()
 
 _WEBHOOK_REPLAY_WINDOW_SEC = 300
-_seen_webhook_signatures: set[tuple[str, str]] = set()
-_seen_webhook_event_ids: set[str] = set()
+# F-H5: these grew without bound and reset on every deploy. Bounded LRUs now — still
+# per-process (durable dedup is the database's job, below), but no longer a slow leak.
+_MAX_SEEN_ENTRIES = 20_000
+_seen_webhook_signatures: OrderedDict[tuple[str, str], None] = OrderedDict()
+_seen_webhook_event_ids: OrderedDict[str, None] = OrderedDict()
+
+
+def _remember(seen: OrderedDict, key) -> None:
+    seen[key] = None
+    seen.move_to_end(key)
+    while len(seen) > _MAX_SEEN_ENTRIES:
+        seen.popitem(last=False)
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -151,7 +162,7 @@ def verify_telnyx_webhook_signature(
         )
         return False
 
-    _seen_webhook_signatures.add(replay_key)
+    _remember(_seen_webhook_signatures, replay_key)
     return True
 
 
@@ -377,7 +388,7 @@ async def telnyx_webhook_endpoint(
 
     if event_id in _seen_webhook_event_ids:
         return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
-    _seen_webhook_event_ids.add(event_id)
+    _remember(_seen_webhook_event_ids, event_id)
 
     if not is_mock_provider_mode():
         try:
@@ -390,9 +401,28 @@ async def telnyx_webhook_endpoint(
             if duplicate:
                 return duplicate
         except Exception as exc:
-            logger.warning(
-                "Telnyx webhook durable processing failed: %s", exc.__class__.__name__
+            # F-H6: this used to log and fall through to HTTP 200, so the provider never
+            # retried and the event was lost for good — taking call terminal status and
+            # quota release with it. Forget the id first, or the retry we are now asking
+            # for would be rejected as a duplicate by the in-memory guard above.
+            _seen_webhook_event_ids.pop(event_id, None)
+            logger.error(
+                "Telnyx webhook durable write failed for event %s (%s) - asking the "
+                "provider to retry",
+                event_id,
+                exc.__class__.__name__,
+                exc_info=True,
             )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": TelephonyErrorCode.WEBHOOK_PERSIST_FAILED,
+                        "message": "Webhook could not be recorded; retry expected.",
+                        "status": 500,
+                    }
+                },
+            ) from exc
 
     logger.info("Received Telnyx webhook event: %s (id: %s)", event_type, event_id)
     return {"status": "accepted", "event_id": event_id, "event_type": event_type}

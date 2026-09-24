@@ -106,7 +106,23 @@ def mint_session(
         # 1. HMAC verify (constant-time)
         expected = expected_signature(secret, tenant_id, ts, nonce, agent_id)
         if not hmac.compare_digest(expected, signature or ""):
-            raise MintError(401, "bad signature")
+            # F-M29: the provider caches tenant secrets for up to a minute, so a host that
+            # has just rotated its secret would be rejected for that whole window. A failed
+            # signature is the one moment worth paying for a fresh read — drop the cached
+            # value and try once more before calling it a bad signature.
+            invalidate = getattr(secrets, "invalidate", None)
+            retried = False
+            if callable(invalidate):
+                invalidate(tenant_id)
+                fresh = secrets.get(tenant_id)
+                if fresh and fresh != secret:
+                    secret = fresh
+                    expected = expected_signature(
+                        secret, tenant_id, ts, nonce, agent_id
+                    )
+                    retried = hmac.compare_digest(expected, signature or "")
+            if not retried:
+                raise MintError(401, "bad signature")
 
         # 2. replay window
         try:

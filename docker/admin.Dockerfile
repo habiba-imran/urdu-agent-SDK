@@ -13,6 +13,10 @@ COPY docker/requirements-admin.txt .
 RUN pip install --no-cache-dir -r requirements-admin.txt
 
 COPY admin/ admin/
+# Shared Wave 2 helpers this service imports (hosted detection, login throttle, security
+# headers). Only these files - not the whole control_plane package, which would pull in
+# the mint and its livekit dependency this image deliberately does not install.
+COPY control_plane/__init__.py control_plane/runtime_env.py control_plane/login_guard.py control_plane/security_headers.py control_plane/
 COPY scripts/dbconn.py scripts/
 
 # Real env vars this service reads at runtime — see docs/62-GUIDE-PROD-ENV-VARS.md for the
