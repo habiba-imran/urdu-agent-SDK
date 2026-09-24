@@ -1,5 +1,10 @@
 # 63-GUIDE-WORKER-DEPLOYMENT-DEFERRAL.md — why the worker gets no Dockerfile yet
 
+> **SUPERSEDED (F-L12, Wave 2).** `docker/worker.Dockerfile` now exists, so this document no
+> longer describes the repository. It is kept for the reasoning behind the original deferral,
+> not as a statement of current state. For how the worker is built and run today see
+> `docker/worker.Dockerfile` and `docs/WAVE2-HABIBA-RENDER-DEPLOY.md`.
+
 P9. Explicit scope note, not an oversight: `docker/control-plane.Dockerfile` and
 `docker/admin.Dockerfile` exist; `worker/` does not get one in this pass. Per direct instruction,
 worker deployment is deferred to Phase 12. This doc records why, so a future reader doesn't

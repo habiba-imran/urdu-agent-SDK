@@ -89,15 +89,18 @@ def mint_session(
 
     with conn.transaction():
         # tenant record (need config + the stored hash; the raw secret comes from the provider)
+        # F-L9: hmac_secret_hash used to be selected here and never used, which read as if
+        # the mint verified a hash. It does not — it compares against the raw secret from
+        # the provider (F-C6 is the finding about that column holding the raw value).
         row = conn.execute(
-            "select status, max_concurrent, max_minutes_month, hmac_secret_hash, allowed_origins "
+            "select status, max_concurrent, max_minutes_month, allowed_origins "
             "from tenants where id = %s",
             (tenant_id,),
         ).fetchone()
         # 401 (not 403) on unknown tenant, so the endpoint does not confirm which tenants exist
         if row is None:
             raise MintError(401, "unknown tenant")
-        status, max_concurrent, max_minutes, stored_hash, allowed_origins = row
+        status, max_concurrent, max_minutes, allowed_origins = row
 
         secret = secrets.get(tenant_id)
         if not secret:
