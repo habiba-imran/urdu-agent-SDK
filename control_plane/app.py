@@ -45,6 +45,7 @@ except ImportError:
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
 from .runtime_env import is_hosted, resolve_allowed_origins  # noqa: E402
+from .security_headers import SecurityHeadersMiddleware  # noqa: E402
 from .mint_db import mint_db_connection  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
@@ -157,6 +158,14 @@ app = FastAPI(
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
     openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
+
+
+# F-M10: no service set CSP, HSTS, X-Frame-Options or X-Content-Type-Options.
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    hsts=is_hosted(),
+    docs_enabled=_DOCS_ENABLED,
 )
 
 

@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 
 import psycopg
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from tenant_portal_api.auth import TenantAuthError, verify_tenant_jwt
@@ -57,6 +57,8 @@ router = APIRouter()
 _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _service = TelephonyService()
 MOCK_MACHINE_SIGNATURE = "valid_mock_signature"
+# F-M3: page-size ceiling for list routes (see tenant_portal_api/app.py::MAX_PAGE_LIMIT).
+MAX_PAGE_LIMIT = 200
 
 
 def _mock_switch_enabled(name: str) -> bool:
@@ -562,14 +564,16 @@ def portal_create_outbound_call(
         )
     except TelephonyError as e:
         raise HTTPException(status_code=e.status, detail=e.to_dict())
-    except Exception as e:
+    except Exception:
         logger.exception(
             "Unhandled outbound call setup failure for tenant %s", tenant_id
         )
         err = TelephonyError(
             status=502,
             code=TelephonyErrorCode.CALL_SETUP_FAILED,
-            message=f"Outbound call setup failed: {e}",
+            # F-M5: the exception text is logged above, not returned - it leaked
+            # internal hostnames and driver messages to the caller.
+            message="Outbound call setup failed",
         )
         raise HTTPException(status_code=err.status, detail=err.to_dict())
 
@@ -577,7 +581,7 @@ def portal_create_outbound_call(
 @router.get("/portal/telephony/calls")
 def portal_list_calls(
     assigned_agent_id: str | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
     tenant_id: str = Depends(get_current_tenant_id),
 ):
     """List telephony call records."""
@@ -1162,7 +1166,9 @@ async def machine_create_outbound_call(
         err = TelephonyError(
             status=502,
             code=TelephonyErrorCode.CALL_SETUP_FAILED,
-            message=f"Outbound call setup failed: {e}",
+            # F-M5: the exception text is logged above, not returned - it leaked
+            # internal hostnames and driver messages to the caller.
+            message="Outbound call setup failed",
         )
         raise HTTPException(status_code=err.status, detail=err.to_dict()) from e
 

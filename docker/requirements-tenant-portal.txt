@@ -1,0 +1,23 @@
+# F-M30: the tenant portal image installed the monolithic top-level requirements.txt, which
+# pulls livekit-agents and every provider plugin, numpy, openai and python-socketio into a
+# service that imports none of them — a much larger image and attack surface, and it is how
+# the portal inherited the vulnerable aiohttp of F-H15.
+#
+# Derived from the real imports of tenant_portal_api/*.py plus the modules it vendors
+# (control_plane.secrets / secrets_db / mint / runtime_env / security_headers, and
+# worker.providers.capabilities + worker/providers/tts/*_options for picker validation).
+# Pins copied verbatim from requirements.txt — same versions, not re-chosen.
+#
+# If an import error appears in this service, add the specific package here; do NOT switch
+# back to the monolithic file.
+
+fastapi==0.139.0
+uvicorn==0.51.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+python-dotenv==1.2.2
+PyJWT==2.13.0
+cryptography==50.0.0
+httpx==0.28.1
+# livekit-api: control_plane.mint (vendored into this image) signs LiveKit tokens.
+livekit-api==1.2.0

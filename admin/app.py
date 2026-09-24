@@ -17,6 +17,7 @@ admin_audit_log row (GATE 6 line 3) via admin/audit.py::record_admin_action.
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets as _pysecrets
 import sys
@@ -96,6 +97,19 @@ ADMIN_PORTAL_ORIGINS = [
 ] or [_DEFAULT_ADMIN_ORIGINS]
 
 app = FastAPI(title="UVA super-admin portal")
+# F-M10: baseline security headers. The admin image (docker/admin.Dockerfile) copies only
+# admin/ + scripts/dbconn.py, so control_plane may not be importable here; the headers are
+# applied when it is, and their absence is logged rather than crashing the service.
+try:
+    from control_plane.security_headers import SecurityHeadersMiddleware
+
+    app.add_middleware(SecurityHeadersMiddleware, hsts=_admin_is_hosted())
+except ImportError:  # pragma: no cover - depends on how the image was built
+    logging.getLogger("admin").warning(
+        "control_plane.security_headers not importable - security headers are NOT set"
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ADMIN_PORTAL_ORIGINS,  # fixed allowlist, never a tenant origin, never "*"

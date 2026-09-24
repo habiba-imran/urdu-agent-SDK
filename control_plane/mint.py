@@ -44,6 +44,28 @@ def expected_signature(
     return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
 
 
+# F-M13 rollout guard: 0030 adds agents.archived_at. Probed once per process so a mint
+# against a not-yet-migrated database keeps working instead of failing on a missing column.
+_has_archived_at: bool | None = None
+
+
+def reset_schema_probe() -> None:
+    """Forget the probe result (tests, and after a migration lands)."""
+    global _has_archived_at
+    _has_archived_at = None
+
+
+def _agents_have_archived_at(conn: psycopg.Connection) -> bool:
+    global _has_archived_at
+    if _has_archived_at is None:
+        row = conn.execute(
+            "select 1 from information_schema.columns "
+            "where table_name = 'agents' and column_name = 'archived_at'"
+        ).fetchone()
+        _has_archived_at = row is not None
+    return _has_archived_at
+
+
 def mint_session(
     *,
     conn: psycopg.Connection,
@@ -107,11 +129,20 @@ def mint_session(
         if status != "active":
             raise MintError(403, "tenant not active")
 
-        # 5. agent belongs to tenant — the IDOR guard
-        owned = conn.execute(
-            "select 1 from agents where id = %s and tenant_id = %s",
-            (agent_id, tenant_id),
-        ).fetchone()
+        # 5. agent belongs to tenant — the IDOR guard. F-M13: an archived agent must not
+        # start new sessions either. The column is probed once rather than assumed, so this
+        # keeps working against a database where 0030 has not been applied yet.
+        if _agents_have_archived_at(conn):
+            owned = conn.execute(
+                "select 1 from agents "
+                "where id = %s and tenant_id = %s and archived_at is null",
+                (agent_id, tenant_id),
+            ).fetchone()
+        else:
+            owned = conn.execute(
+                "select 1 from agents where id = %s and tenant_id = %s",
+                (agent_id, tenant_id),
+            ).fetchone()
         if owned is None:
             raise MintError(403, "agent does not belong to tenant")
 

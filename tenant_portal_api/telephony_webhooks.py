@@ -30,6 +30,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# F-M4: Telnyx webhooks are a few KB; 256 KiB is generous and bounded.
+MAX_WEBHOOK_BODY_BYTES = 256 * 1024
+
 router = APIRouter()
 
 _WEBHOOK_REPLAY_WINDOW_SEC = 300
@@ -329,7 +332,16 @@ async def telnyx_webhook_endpoint(
     telnyx_timestamp: str | None = Header(None, alias="Telnyx-Timestamp"),
 ):
     """Receive and deduplicate Telnyx call and number order webhooks."""
+    # F-M4: this endpoint is unauthenticated (the signature is verified below, after the
+    # body is read), so an arbitrarily large body used to be pulled into memory first.
+    # Telnyx webhook payloads are a few KB; anything near the cap is not one.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="webhook payload too large")
     raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        # Chunked requests have no content-length to check up front.
+        raise HTTPException(status_code=413, detail="webhook payload too large")
     if not verify_telnyx_webhook_signature(
         raw_body, telnyx_signature, telnyx_timestamp
     ):

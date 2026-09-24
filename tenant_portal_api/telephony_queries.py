@@ -260,51 +260,13 @@ def assign_number_to_agent(
     return bool(res)
 
 
-# Idempotency Repository
-def get_idempotency_key(
-    conn: DbConnection, tenant_id: str, idempotency_key: str, action: str
-) -> dict[str, Any] | None:
-    """Check idempotency key table for matching key and action."""
-    row = conn.execute(
-        """
-        select request_hash, response_body, platform_status
-        from telephony_idempotency_keys
-        where tenant_id = %s and idempotency_key = %s and action = %s
-        """,
-        (tenant_id, idempotency_key, action),
-    ).fetchone()
-    if not row:
-        return None
-    return {
-        "request_hash": row[0],
-        "response_body": row[1] if isinstance(row[1], dict) else json.loads(row[1]),
-        "platform_status": row[2],
-    }
+# NOTE: a second, shadowed definition of get_idempotency_key() used to sit here. Python bound the
+# later one, so this copy was dead code that quietly disagreed with live behaviour
+# (the removed save_idempotency_key did ON CONFLICT DO NOTHING; the live one upserts
+# to 'completed'). Removed in Wave 2 cleanup - ruff F811 flagged both.
 
 
-def save_idempotency_key(
-    conn: DbConnection,
-    tenant_id: str,
-    idempotency_key: str,
-    action: str,
-    request_hash: str,
-    response_body: dict[str, Any],
-) -> None:
-    """Save completed idempotency payload."""
-    body_json = (
-        json.dumps(response_body)
-        if not isinstance(response_body, str)
-        else response_body
-    )
-    conn.execute(
-        """
-        insert into telephony_idempotency_keys (
-            tenant_id, idempotency_key, action, request_hash, response_body, platform_status, completed_at
-        ) values (%s, %s, %s, %s, %s::jsonb, 'completed', now())
-        on conflict (tenant_id, idempotency_key, action) do nothing
-        """,
-        (tenant_id, idempotency_key, action, request_hash, body_json),
-    )
+
 
 
 # Call & Quota Repository

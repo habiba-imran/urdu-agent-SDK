@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Body
+from fastapi import FastAPI, Header, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,8 @@ from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from control_plane.runtime_env import is_hosted  # noqa: E402
+from control_plane.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
 from control_plane.secrets_db import DbSecretProvider  # noqa: E402
 
@@ -64,6 +66,13 @@ TENANT_PORTAL_ORIGINS = [
 _machine_secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 
 app = FastAPI(title="UVA tenant portal API")
+# F-M10: baseline security headers (CSP is the main mitigation for the F-C6 XSS chain).
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    hsts=is_hosted(),
+)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=TENANT_PORTAL_ORIGINS,
@@ -85,9 +94,25 @@ class TenantLoginBody(BaseModel):
     tenant_secret: str = Field(..., min_length=1)
 
 
+# F-M2 (portal half): agents.prompt had no length limit at write time, so a tenant could
+# store an arbitrarily large persona that every LLM turn then paid for — the mechanism behind
+# the observed Groq ITPM exhaustion. worker/prompt_compact.py only compacts at session build,
+# for Groq, after the row already exists. This is the cap at the point of storage.
+#
+# Deliberately far above worker/prompt_compact.py's ~3000-char Groq soft cap: personas for
+# other providers are legitimately longer, and this is a sanity ceiling, not a token budget.
+MAX_PROMPT_CHARS = 24_000
+MAX_GREETING_CHARS = 2_000
+# F-M26: unbounded resource creation on an authenticated but unmetered endpoint.
+MAX_AGENTS_PER_TENANT = int(os.environ.get("PORTAL_MAX_AGENTS_PER_TENANT", "100"))
+# F-M3: ?limit=1000000 returned every session with full transcripts - memory pressure and a
+# data-exfiltration amplifier.
+MAX_PAGE_LIMIT = 200
+
+
 class CreateAgentBody(BaseModel):
-    name: str = Field(..., min_length=1)
-    prompt: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_CHARS)
     voice_id: str = Field(..., min_length=1)
     llm_model: str = Field(default="gemini-2.5-flash", min_length=1)
     # Additive, Phase 3 of docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md (ADR-036). All
@@ -103,7 +128,7 @@ class CreateAgentBody(BaseModel):
     tts_provider: str | None = Field(default=None, min_length=1)
     tts_voice_id: str | None = Field(default=None, min_length=1)
     tts_options: dict | None = Field(default=None)
-    greeting: str | None = Field(default=None)
+    greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
     # Client backend tool gateway (RAG/FAQ/scheduling). Per-agent so multi-client SDK
     # workers call the right host — not a single global worker env URL.
@@ -112,8 +137,8 @@ class CreateAgentBody(BaseModel):
 
 
 class UpdateAgentBody(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    prompt: str | None = Field(default=None, min_length=1)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    prompt: str | None = Field(default=None, min_length=1, max_length=MAX_PROMPT_CHARS)
     voice_id: str | None = Field(default=None, min_length=1)
     llm_model: str | None = Field(default=None, min_length=1)
     agent_language: str | None = Field(default=None, min_length=1)
@@ -125,7 +150,7 @@ class UpdateAgentBody(BaseModel):
     tts_provider: str | None = Field(default=None, min_length=1)
     tts_voice_id: str | None = Field(default=None, min_length=1)
     tts_options: dict | None = Field(default=None)
-    greeting: str | None = Field(default=None)
+    greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
     tools_base_url: str | None = Field(default=None)
     tools_auth_secret: str | None = Field(default=None)
@@ -306,6 +331,15 @@ def create_agent_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
+        # F-M26: nothing limited how many agents a tenant could create.
+        existing = conn.execute(
+            "select count(*) from agents where tenant_id = %s", (claims["sub"],)
+        ).fetchone()
+        if existing and existing[0] >= MAX_AGENTS_PER_TENANT:
+            raise HTTPException(
+                status_code=409,
+                detail=f"agent limit reached ({MAX_AGENTS_PER_TENANT}) - delete an agent first",
+            )
         resolved = _resolve_provider_fields(conn, body, current=None)
         opening = _opening_from_body(body, None)
         tools = _tools_webhook_from_body(body, None)
@@ -407,8 +441,47 @@ def credentials_secret_route(authorization: str | None = Header(default=None)):
             raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+@app.delete("/portal/agents/{agent_id}")
+def archive_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+    """F-M13: retire an agent.
+
+    Archive, not delete: sessions.agent_id cascades on delete, so removing the row would take
+    the tenant's session and usage history with it. Archived agents disappear from the list,
+    release any phone number assigned to them, and free a slot against MAX_AGENTS_PER_TENANT.
+    Erasure of the personal data in those sessions is the retention job's job (F-C4).
+    """
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        live = queries.count_live_sessions_for_agent(conn, claims["sub"], agent_id)
+        if live:
+            raise HTTPException(
+                status_code=409,
+                detail=f"agent has {live} live session(s) - end them before archiving",
+            )
+        if not queries.archive_agent(conn, claims["sub"], agent_id):
+            raise HTTPException(status_code=404, detail="agent not found")
+        conn.commit()
+    return {"id": agent_id, "archived": True}
+
+
+@app.get("/portal/escalations")
+def list_escalations_route(
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
+    authorization: str | None = Header(default=None),
+):
+    """F-M12: escalations was write-only. worker/tools.py::escalate_to_human inserted rows
+    that no API, UI or query could read back, so the feature produced records nobody could
+    act on while caller phone numbers accumulated unseen."""
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        return queries.list_escalations(conn, claims["sub"], limit=limit)
+
+
 @app.get("/portal/sessions")
-def sessions_route(limit: int = 50, authorization: str | None = Header(default=None)):
+def sessions_route(
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
+    authorization: str | None = Header(default=None),
+):
     claims = _require_tenant(authorization)
     with _conn() as conn:
         return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
