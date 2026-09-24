@@ -24,5 +24,10 @@ COPY scripts/dbconn.py scripts/
 # full inventory with defaults/required-ness. NOT baked in here; supplied by the deploy platform:
 #   SUPABASE_DB_URL, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, CP_TENANT_SECRETS
 
+# Wave 2: declares this process a hosted deployment, so missing signing secrets,
+# an unset CORS allowlist, or a telephony mock-auth switch fail at startup
+# instead of silently falling back to development defaults (F-C1/F-C3/F-M18).
+ENV UVA_ENV=production
+
 EXPOSE 8000
 CMD ["uvicorn", "control_plane.app:app", "--host", "0.0.0.0", "--port", "8000"]

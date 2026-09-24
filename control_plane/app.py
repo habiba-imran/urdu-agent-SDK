@@ -44,6 +44,7 @@ except ImportError:
 
 
 from .mint import MintError, TTL_SEC, mint_session  # noqa: E402
+from .runtime_env import is_hosted, resolve_allowed_origins  # noqa: E402
 from .mint_db import mint_db_connection  # noqa: E402
 from .secrets import EnvSecretProvider  # noqa: E402
 from .secrets_db import DbSecretProvider  # noqa: E402
@@ -96,7 +97,32 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 _CORS_ORIGINS_RAW = os.environ.get("CP_ALLOWED_ORIGINS") or _ENV.get(
     "CP_ALLOWED_ORIGINS", ""
 )
-_CORS_ORIGINS = [o.strip() for o in _CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
+# F-C3: an unset CP_ALLOWED_ORIGINS used to mean allow_origins=["*"] WITH
+# allow_credentials=True, in production as well as dev, so any website could drive this API
+# from a visitor's browser. A hosted deployment must now name its origins; local development
+# falls back to the usual localhost ports instead of the whole web.
+_DEV_DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+_CORS_ORIGINS, _CORS_ALLOW_CREDENTIALS = resolve_allowed_origins(
+    _CORS_ORIGINS_RAW,
+    hosted=is_hosted(),
+    dev_defaults=_DEV_DEFAULT_ORIGINS,
+    var_name="CP_ALLOWED_ORIGINS",
+    why=(
+        "It is the browser origin allowlist for session minting; an empty value "
+        "previously meant 'allow every origin, with credentials'."
+    ),
+)
+if _CORS_ORIGINS == _DEV_DEFAULT_ORIGINS and not _CORS_ORIGINS_RAW.strip():
+    logging.getLogger("control_plane").warning(
+        "CP_ALLOWED_ORIGINS is not set - defaulting to local development origins (%s)",
+        ", ".join(_CORS_ORIGINS),
+    )
+
 
 _SENTRY_DSN = os.environ.get("SENTRY_DSN") or _ENV.get("SENTRY_DSN", "")
 if _SENTRY_DSN and sentry_sdk is not None:
@@ -115,19 +141,29 @@ if _SENTRY_DSN and sentry_sdk is not None:
         )
 
 
+# F-M6: the interactive schema (including the dev-mint route) was public in production.
+# Off by default on a hosted deployment; CP_ENABLE_DOCS=1 re-enables it deliberately.
+_DOCS_ENABLED = (os.environ.get("CP_ENABLE_DOCS") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+} or not is_hosted()
+
 app = FastAPI(
     title="UVA Control Plane",
     description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=_CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -731,9 +767,56 @@ def create_session(
         return JSONResponse({"error": e.reason}, status_code=e.status)
 
 
+def _dev_mint_enabled() -> bool:
+    """F-C2: dev-mint issues a real LiveKit token to anyone who knows an agent UUID.
+
+    It exists so the dashboard Test Studio (and the local sandbox page) can start a call
+    without a host backend. That is a development convenience, so it is off by default on a
+    hosted deployment and must be turned on deliberately with CP_ENABLE_DEV_MINT=1.
+    """
+    flag = (os.environ.get("CP_ENABLE_DEV_MINT") or "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    return not is_hosted()
+
+
+def _dev_mint_reset_quota_allowed() -> bool:
+    """F-C2: dev-mint used to call _dev_reset_concurrency on every concurrency-cap hit,
+    zeroing the tenant's live concurrent_now — which defeated the concurrency cap outright
+    and let one caller consume a tenant's provider spend without limit. Opt-in only."""
+    return (os.environ.get("CP_DEV_MINT_RESET_QUOTA") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 @app.post("/v1/session/dev-mint")
-def create_dev_session(body: DevSessionBody, request: Request, background_tasks: BackgroundTasks):
+def create_dev_session(
+    body: DevSessionBody, request: Request, background_tasks: BackgroundTasks
+):
+    if not _dev_mint_enabled():
+        # 404, not 403: a disabled development endpoint should not advertise that it exists.
+        raise HTTPException(status_code=404, detail="not found")
+
     tenant_id = _lookup_tenant_for_agent(body.agentId)
+
+    # F-C2: publishableKey was accepted and discarded, so agentId alone was the only thing
+    # standing between a stranger and a live session. It is the tenant id (F-L4), not a
+    # secret, but requiring it to match the agent's owner stops a lone leaked agent UUID
+    # from minting sessions.
+    supplied_key = (body.publishableKey or "").strip()
+    if not supplied_key:
+        raise HTTPException(status_code=401, detail="publishableKey is required")
+    if supplied_key != str(tenant_id):
+        record_mint_rejection(tenant_id, 403, "dev-mint publishable key mismatch")
+        raise HTTPException(
+            status_code=403, detail="publishableKey does not match this agent"
+        )
+
     greeting = _opening_greeting(body.greeting, body.customGreeting)
     verified_caller_phone = _normalize_caller_phone(
         body.verifiedCallerPhone or body.verified_caller_phone
@@ -744,7 +827,7 @@ def create_dev_session(body: DevSessionBody, request: Request, background_tasks:
             agent_id=body.agentId,
             request=request,
             background_tasks=background_tasks,
-            auto_reset_quota=True,
+            auto_reset_quota=_dev_mint_reset_quota_allowed(),
             greeting=greeting,
             verified_caller_phone=verified_caller_phone,
         )

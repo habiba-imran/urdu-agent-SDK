@@ -46,8 +46,10 @@ except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from control_plane.runtime_env import is_hosted  # noqa: E402
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
 from control_plane.secrets_db import DbSecretProvider  # noqa: E402
+from tenant_portal_api.jwt_secret import portal_jwt_secret  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +58,36 @@ _secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 _service = TelephonyService()
 MOCK_MACHINE_SIGNATURE = "valid_mock_signature"
 
-TENANT_PORTAL_JWT_SECRET = os.environ.get(
-    "TENANT_PORTAL_JWT_SECRET", "mock_jwt_secret_for_tests"
-)
+
+def _mock_switch_enabled(name: str) -> bool:
+    return os.environ.get(name) == "1"
+
+
+def assert_mock_switches_disabled() -> None:
+    """F-M18/F-M19: these exist for offline unit tests and must never be live on a
+    deployed service — they hand out a tenant with no token, accept a literal signature
+    string, and turn off Telnyx webhook signature checks plus credential encryption.
+    Nothing used to assert that at startup; a single stray env var was the whole gate."""
+    if not is_hosted():
+        return
+    live = [
+        name
+        for name in ("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH", "TELEPHONY_ALLOW_MOCK_MACHINE_AUTH")
+        if _mock_switch_enabled(name)
+    ]
+    mode = (os.environ.get("TELEPHONY_PROVIDER_MODE") or "real").strip().lower()
+    if mode != "real":
+        live.append(f"TELEPHONY_PROVIDER_MODE={mode}")
+    if live:
+        raise RuntimeError(
+            "refusing to start in a hosted environment with telephony test switches on: "
+            + ", ".join(live)
+            + " — these bypass authentication, webhook signature verification and "
+            "credential encryption."
+        )
+
+
+assert_mock_switches_disabled()
 
 
 def get_current_tenant_id(
@@ -70,7 +99,7 @@ def get_current_tenant_id(
     available when TELEPHONY_ALLOW_MOCK_PORTAL_AUTH=1 for offline unit tests.
     """
     if not authorization or not authorization.startswith("Bearer "):
-        if os.environ.get("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH") == "1":
+        if _mock_switch_enabled("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH") and not is_hosted():
             return "tenant_test_123"
         raise HTTPException(
             status_code=401,
@@ -84,7 +113,7 @@ def get_current_tenant_id(
         )
     token = authorization[len("Bearer ") :].strip()
     try:
-        claims = verify_tenant_jwt(token, TENANT_PORTAL_JWT_SECRET)
+        claims = verify_tenant_jwt(token, portal_jwt_secret())
         tenant_id = claims.get("sub")
         if not tenant_id:
             raise HTTPException(
@@ -144,7 +173,7 @@ def _verify_machine(
     if not conn:
         # Offline route tests run without a database connection. Keep that test-only
         # path explicit so arbitrary signatures cannot pass in mock/no-DB mode.
-        if os.environ.get("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH") != "1":
+        if not _mock_switch_enabled("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH") or is_hosted():
             reject("Machine auth unavailable")
         if signature != MOCK_MACHINE_SIGNATURE:
             reject()
@@ -183,7 +212,7 @@ def _verify_machine_with_db(
         _verify_machine(injected_conn, tenant_id, ts, nonce, action, body, signature)
         return
 
-    if os.environ.get("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH") == "1":
+    if _mock_switch_enabled("TELEPHONY_ALLOW_MOCK_MACHINE_AUTH") and not is_hosted():
         _verify_machine(None, tenant_id, ts, nonce, action, body, signature)
         return
 

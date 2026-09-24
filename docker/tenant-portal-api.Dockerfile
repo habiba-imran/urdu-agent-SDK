@@ -17,5 +17,10 @@ COPY worker/__init__.py worker/
 COPY worker/providers/ worker/providers/
 COPY scripts/ scripts/
 
+# Wave 2: declares this process a hosted deployment, so missing signing secrets,
+# an unset CORS allowlist, or a telephony mock-auth switch fail at startup
+# instead of silently falling back to development defaults (F-C1/F-C3/F-M18).
+ENV UVA_ENV=production
+
 EXPOSE 8000
 CMD ["uvicorn", "tenant_portal_api.app:app", "--host", "0.0.0.0", "--port", "8000"]
