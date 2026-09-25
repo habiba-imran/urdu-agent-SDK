@@ -44,6 +44,28 @@ def expected_signature(
     return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
 
 
+# F-M13 rollout guard: 0030 adds agents.archived_at. Probed once per process so a mint
+# against a not-yet-migrated database keeps working instead of failing on a missing column.
+_has_archived_at: bool | None = None
+
+
+def reset_schema_probe() -> None:
+    """Forget the probe result (tests, and after a migration lands)."""
+    global _has_archived_at
+    _has_archived_at = None
+
+
+def _agents_have_archived_at(conn: psycopg.Connection) -> bool:
+    global _has_archived_at
+    if _has_archived_at is None:
+        row = conn.execute(
+            "select 1 from information_schema.columns "
+            "where table_name = 'agents' and column_name = 'archived_at'"
+        ).fetchone()
+        _has_archived_at = row is not None
+    return _has_archived_at
+
+
 def mint_session(
     *,
     conn: psycopg.Connection,
@@ -67,15 +89,18 @@ def mint_session(
 
     with conn.transaction():
         # tenant record (need config + the stored hash; the raw secret comes from the provider)
+        # F-L9: hmac_secret_hash used to be selected here and never used, which read as if
+        # the mint verified a hash. It does not — it compares against the raw secret from
+        # the provider (F-C6 is the finding about that column holding the raw value).
         row = conn.execute(
-            "select status, max_concurrent, max_minutes_month, hmac_secret_hash, allowed_origins "
+            "select status, max_concurrent, max_minutes_month, allowed_origins "
             "from tenants where id = %s",
             (tenant_id,),
         ).fetchone()
         # 401 (not 403) on unknown tenant, so the endpoint does not confirm which tenants exist
         if row is None:
             raise MintError(401, "unknown tenant")
-        status, max_concurrent, max_minutes, stored_hash, allowed_origins = row
+        status, max_concurrent, max_minutes, allowed_origins = row
 
         secret = secrets.get(tenant_id)
         if not secret:
@@ -84,7 +109,23 @@ def mint_session(
         # 1. HMAC verify (constant-time)
         expected = expected_signature(secret, tenant_id, ts, nonce, agent_id)
         if not hmac.compare_digest(expected, signature or ""):
-            raise MintError(401, "bad signature")
+            # F-M29: the provider caches tenant secrets for up to a minute, so a host that
+            # has just rotated its secret would be rejected for that whole window. A failed
+            # signature is the one moment worth paying for a fresh read — drop the cached
+            # value and try once more before calling it a bad signature.
+            invalidate = getattr(secrets, "invalidate", None)
+            retried = False
+            if callable(invalidate):
+                invalidate(tenant_id)
+                fresh = secrets.get(tenant_id)
+                if fresh and fresh != secret:
+                    secret = fresh
+                    expected = expected_signature(
+                        secret, tenant_id, ts, nonce, agent_id
+                    )
+                    retried = hmac.compare_digest(expected, signature or "")
+            if not retried:
+                raise MintError(401, "bad signature")
 
         # 2. replay window
         try:
@@ -107,11 +148,20 @@ def mint_session(
         if status != "active":
             raise MintError(403, "tenant not active")
 
-        # 5. agent belongs to tenant — the IDOR guard
-        owned = conn.execute(
-            "select 1 from agents where id = %s and tenant_id = %s",
-            (agent_id, tenant_id),
-        ).fetchone()
+        # 5. agent belongs to tenant — the IDOR guard. F-M13: an archived agent must not
+        # start new sessions either. The column is probed once rather than assumed, so this
+        # keeps working against a database where 0030 has not been applied yet.
+        if _agents_have_archived_at(conn):
+            owned = conn.execute(
+                "select 1 from agents "
+                "where id = %s and tenant_id = %s and archived_at is null",
+                (agent_id, tenant_id),
+            ).fetchone()
+        else:
+            owned = conn.execute(
+                "select 1 from agents where id = %s and tenant_id = %s",
+                (agent_id, tenant_id),
+            ).fetchone()
         if owned is None:
             raise MintError(403, "agent does not belong to tenant")
 

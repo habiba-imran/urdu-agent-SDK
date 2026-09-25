@@ -91,6 +91,22 @@ class DbSecretProvider(SecretProvider):
                 return None
             return value
 
+    def invalidate(self, tenant_id: str) -> None:
+        """Drop one tenant's cached secret (F-M29).
+
+        The mint calls this when a signature fails: the usual cause is a rotation that
+        happened inside the cache window, and re-reading turns a minute of 401s into a
+        single extra query. Rotation in another process cannot notify this one, so the
+        cache TTL still bounds how long a withdrawn secret keeps working — set
+        CP_DB_SECRET_CACHE_TTL_SEC=0 to disable caching entirely.
+        """
+        with self._lock:
+            self._cache.pop(tenant_id, None)
+
+    def invalidate_all(self) -> None:
+        with self._lock:
+            self._cache.clear()
+
     def _write_cache(self, tenant_id: str, value: str | None) -> None:
         if self._cache_ttl_sec <= 0:
             return

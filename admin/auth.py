@@ -23,12 +23,13 @@ RLS policy for authenticated/anon (0007_admin.sql) — only this trusted path ev
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 
 import jwt as pyjwt
 import psycopg
 
-from .security import hash_password, totp_verify, verify_password
+from .security import hash_password, totp_counter_for, verify_password
 
 ADMIN_JWT_AUDIENCE = "admin-portal"
 ADMIN_JWT_ISSUER = "uva-admin"
@@ -56,6 +57,31 @@ def provision_admin(
     return admin_id
 
 
+def _consume_totp_counter(conn: psycopg.Connection, admin_id, counter: int) -> bool:
+    """Claim this TOTP step for this admin. False when it was already used (a replay).
+
+    The UPDATE is the check: it only matches when the stored counter is lower, so two
+    concurrent logins with the same code cannot both win.
+    """
+    try:
+        claimed = conn.execute(
+            "update admin_users set last_totp_counter = %s "
+            "where id = %s and (last_totp_counter is null or last_totp_counter < %s) "
+            "returning id",
+            (counter, admin_id, counter),
+        ).fetchone()
+    except psycopg.errors.UndefinedColumn:
+        # 0031 not applied yet: fall back to the pre-fix behaviour rather than locking
+        # every admin out, and say so.
+        conn.rollback()
+        logging.getLogger("admin.auth").warning(
+            "admin_users.last_totp_counter missing (migration 0031) - TOTP replay "
+            "protection is NOT active"
+        )
+        return True
+    return claimed is not None
+
+
 def login(
     conn: psycopg.Connection,
     *,
@@ -78,7 +104,14 @@ def login(
 
     if not verify_password(password, password_hash):
         raise AdminAuthError(401, "invalid credentials")
-    if not totp_verify(totp_secret, totp_code):
+
+    # F-H14: a TOTP code must be single-use. The +/-1 step drift window keeps a code
+    # arithmetically valid for up to 90 seconds, so without this a captured code can be
+    # replayed (RFC 6238 §5.2 requires refusing a previously accepted code).
+    counter = totp_counter_for(totp_secret, totp_code)
+    if counter is None:
+        raise AdminAuthError(401, "invalid credentials")
+    if not _consume_totp_counter(conn, admin_id, counter):
         raise AdminAuthError(401, "invalid credentials")
 
     now_dt = (

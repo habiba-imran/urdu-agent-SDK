@@ -76,6 +76,32 @@ def totp_now(
     return _hotp(secret_b32, counter, digits)
 
 
+def totp_counter_for(
+    secret_b32: str,
+    code: str,
+    *,
+    step: int = 30,
+    digits: int = 6,
+    window: int = 1,
+    at: float | None = None,
+) -> int | None:
+    """Return the step counter this code matches, or None.
+
+    F-H14: the caller needs the counter, not just a boolean. RFC 6238 §5.2 requires a
+    previously accepted code to be refused, and with a +/-1 step drift window a code stays
+    arithmetically valid for up to 90 seconds — long enough to replay a captured code.
+    """
+    if not code or not code.isdigit() or len(code) != digits:
+        return None
+    t = at if at is not None else time.time()
+    counter = int(t // step)
+    for offset in range(-window, window + 1):
+        candidate = counter + offset
+        if hmac.compare_digest(_hotp(secret_b32, candidate, digits), code):
+            return candidate
+    return None
+
+
 def totp_verify(
     secret_b32: str,
     code: str,
@@ -85,12 +111,12 @@ def totp_verify(
     window: int = 1,
     at: float | None = None,
 ) -> bool:
-    """Accept the current step +/- `window` steps (RFC 6238 §5.2 clock-drift tolerance)."""
-    if not code or not code.isdigit() or len(code) != digits:
-        return False
-    t = at if at is not None else time.time()
-    counter = int(t // step)
-    for offset in range(-window, window + 1):
-        if hmac.compare_digest(_hotp(secret_b32, counter + offset, digits), code):
-            return True
-    return False
+    """Accept the current step +/- `window` steps (RFC 6238 §5.2 clock-drift tolerance).
+
+    Replay protection lives in admin/auth.py::login, which consumes the counter — this
+    function answers "is this code arithmetically valid", nothing more.
+    """
+    return (
+        totp_counter_for(secret_b32, code, step=step, digits=digits, window=window, at=at)
+        is not None
+    )

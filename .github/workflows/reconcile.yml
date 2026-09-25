@@ -94,6 +94,19 @@ jobs:
 
       # Runs even if the session pass failed: the two reconcilers are independent, and a
       # telephony quota leak should not wait on an unrelated session-side error.
+      # F-M11: used_nonces gains a row per successful mint and nothing deleted them.
+      - name: Purge expired replay nonces
+        if: always() && steps.mode.outcome == 'success'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          APPLY: ${{ steps.mode.outputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            python scripts/purge_used_nonces.py
+          else
+            python scripts/purge_used_nonces.py --dry-run
+          fi
+
       - name: Reconcile telephony state
         if: always() && steps.mode.outcome == 'success'
         env:

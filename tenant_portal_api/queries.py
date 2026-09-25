@@ -65,7 +65,7 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
             where s.tenant_id = %s
             group by s.agent_id
         ) u on u.agent_id = a.id
-        where a.tenant_id = %s
+        where a.tenant_id = %s and a.archived_at is null
         order by a.created_at desc
         """,
         (tenant_id, tenant_id),
@@ -276,9 +276,15 @@ def get_raw_secret(conn: psycopg.Connection, tenant_id: str) -> str:
 LIVE_SESSION_MAX_AGE_MIN = 30
 
 
+# F-M3: the route caps this too, but a helper that accepts any integer is one careless
+# caller away from ?limit=1000000 returning every session with full transcripts.
+MAX_SESSION_PAGE = 200
+
+
 def list_recent_sessions(
     conn: psycopg.Connection, tenant_id: str, *, limit: int = 50
 ) -> list[dict]:
+    limit = max(1, min(int(limit), MAX_SESSION_PAGE))
     rows = conn.execute(
         """
         select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
@@ -433,3 +439,75 @@ def usage_summary(conn: psycopg.Connection, tenant_id: str) -> dict:
             for r in daily
         ],
     }
+
+
+# F-M13: archive rather than delete. sessions.agent_id cascades on delete (0001_schema.sql),
+# so a real DELETE would take the tenant's session and usage history with it.
+def archive_agent(conn: psycopg.Connection, tenant_id: str, agent_id: str) -> bool:
+    """Mark an agent archived. Returns False when it does not belong to this tenant."""
+    row = conn.execute(
+        "update agents set archived_at = now() "
+        "where id = %s and tenant_id = %s and archived_at is null "
+        "returning id",
+        (agent_id, tenant_id),
+    ).fetchone()
+    if row is None:
+        return False
+    # Stop PSTN traffic routing to an archived agent; the number stays with the tenant.
+    try:
+        conn.execute(
+            "update telephony_managed_numbers set assigned_agent_id = null "
+            "where tenant_id = %s and assigned_agent_id = %s",
+            (tenant_id, agent_id),
+        )
+    except psycopg.errors.UndefinedTable:
+        # Telephony tables are optional in some environments (fresh dev database).
+        pass
+    return True
+
+
+def count_live_sessions_for_agent(
+    conn: psycopg.Connection, tenant_id: str, agent_id: str
+) -> int:
+    row = conn.execute(
+        "select count(*) from sessions "
+        "where tenant_id = %s and agent_id = %s and ended_at is null",
+        (tenant_id, agent_id),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+# F-M12: escalations was write-only — worker/tools.py inserted rows that no API, UI or query
+# could read back, so a shipped, LLM-callable feature produced records nobody could act on
+# and caller phone numbers accumulated unseen.
+def list_escalations(
+    conn: psycopg.Connection, tenant_id: str, *, limit: int = 50
+) -> list[dict]:
+    limit = max(1, min(int(limit), MAX_SESSION_PAGE))
+    rows = conn.execute(
+        """
+        select e.id, e.session_id, e.reason, e.contact_info, e.requested_at, e.status,
+               s.room_name, s.agent_id, a.name
+        from escalations e
+        left join sessions s on s.id = e.session_id
+        left join agents a on a.id = s.agent_id
+        where e.tenant_id = %s
+        order by e.requested_at desc
+        limit %s
+        """,
+        (tenant_id, limit),
+    ).fetchall()
+    return [
+        {
+            "id": str(r[0]),
+            "session_id": str(r[1]) if r[1] else None,
+            "reason": r[2],
+            "contact_info": r[3],
+            "requested_at": r[4].isoformat() if r[4] else None,
+            "status": r[5],
+            "room_name": r[6],
+            "agent_id": str(r[7]) if r[7] else None,
+            "agent_name": r[8],
+        }
+        for r in rows
+    ]

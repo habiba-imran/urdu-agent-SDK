@@ -1,0 +1,32 @@
+# F-M28: with pushes to main triggering production deploys, an unreviewed commit could reach
+# production. CODEOWNERS makes review of the sensitive paths automatic — it only has teeth
+# once branch protection on main requires review from code owners, which is a repository
+# setting, not a file (audit §6 Q5).
+#
+# Ownership follows the Wave 1/2 split recorded in the priority list.
+
+# Default: anything not matched below.
+*                               @habiba-imran
+
+# Voice pipeline and the browser SDK.
+/worker/                        @habiba-imran
+/sdk/                           @habiba-imran
+
+# Production path: packaging, CI/CD, control plane, portal, admin, schema.
+/sdk-server/                    @undergroundehsan
+/telephony/                     @undergroundehsan
+/.github/                       @undergroundehsan
+/control_plane/                 @undergroundehsan
+/tenant_portal_api/             @undergroundehsan
+/admin/                         @undergroundehsan
+/docker/                        @undergroundehsan
+/supabase/migrations/           @undergroundehsan
+/scripts/                       @undergroundehsan
+
+# Anything that mints, signs, encrypts or deploys deserves a second pair of eyes.
+/control_plane/mint.py          @undergroundehsan @habiba-imran
+/control_plane/secrets.py       @undergroundehsan @habiba-imran
+/control_plane/secrets_db.py    @undergroundehsan @habiba-imran
+/control_plane/runtime_env.py   @undergroundehsan @habiba-imran
+/tenant_portal_api/jwt_secret.py @undergroundehsan @habiba-imran
+/.github/workflows/             @undergroundehsan @habiba-imran

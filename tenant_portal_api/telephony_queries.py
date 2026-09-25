@@ -14,6 +14,7 @@ import logging
 from typing import Any, Protocol
 
 _log = logging.getLogger("tenant_portal_api.telephony_queries")
+logger = _log  # alias: both spellings are used in this module
 
 
 class DbConnection(Protocol):
@@ -260,63 +261,42 @@ def assign_number_to_agent(
     return bool(res)
 
 
-# Idempotency Repository
-def get_idempotency_key(
-    conn: DbConnection, tenant_id: str, idempotency_key: str, action: str
-) -> dict[str, Any] | None:
-    """Check idempotency key table for matching key and action."""
-    row = conn.execute(
-        """
-        select request_hash, response_body, platform_status
-        from telephony_idempotency_keys
-        where tenant_id = %s and idempotency_key = %s and action = %s
-        """,
-        (tenant_id, idempotency_key, action),
-    ).fetchone()
-    if not row:
-        return None
-    return {
-        "request_hash": row[0],
-        "response_body": row[1] if isinstance(row[1], dict) else json.loads(row[1]),
-        "platform_status": row[2],
-    }
+# NOTE: a second, shadowed definition of get_idempotency_key() used to sit here. Python bound the
+# later one, so this copy was dead code that quietly disagreed with live behaviour
+# (the removed save_idempotency_key did ON CONFLICT DO NOTHING; the live one upserts
+# to 'completed'). Removed in Wave 2 cleanup - ruff F811 flagged both.
 
 
-def save_idempotency_key(
-    conn: DbConnection,
-    tenant_id: str,
-    idempotency_key: str,
-    action: str,
-    request_hash: str,
-    response_body: dict[str, Any],
-) -> None:
-    """Save completed idempotency payload."""
-    body_json = (
-        json.dumps(response_body)
-        if not isinstance(response_body, str)
-        else response_body
-    )
-    conn.execute(
-        """
-        insert into telephony_idempotency_keys (
-            tenant_id, idempotency_key, action, request_hash, response_body, platform_status, completed_at
-        ) values (%s, %s, %s, %s, %s::jsonb, 'completed', now())
-        on conflict (tenant_id, idempotency_key, action) do nothing
-        """,
-        (tenant_id, idempotency_key, action, request_hash, body_json),
-    )
+
 
 
 # Call & Quota Repository
 def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
-    """Atomically reserve quota for a call in quota_state."""
+    """Atomically reserve quota for a call in quota_state.
+
+    F-H17: this used to read only tenants.max_concurrent, so a tenant blocked from browser
+    sessions by the monthly minutes cap could still place unlimited outbound PSTN calls —
+    the one path that spends real carrier money. It also returned True for a tenant id that
+    does not exist, failing OPEN on the spend path. Both now match control_plane/mint.py,
+    which has always checked status, concurrency AND monthly minutes before issuing a token.
+    """
     tenant_row = conn.execute(
-        "select max_concurrent from tenants where id = %s",
+        "select max_concurrent, max_minutes_month, status from tenants where id = %s",
         (tenant_id,),
     ).fetchone()
     if not tenant_row:
-        return True
-    max_conc = tenant_row[0]
+        # F-H17: unknown tenant used to be granted quota. Refuse: nothing legitimate places
+        # a call for a tenant that is not in the database.
+        logger.warning(
+            "refusing call quota for unknown tenant %s", tenant_id
+        )
+        return False
+    max_conc, max_minutes, status = tenant_row
+    if status != "active":
+        logger.warning(
+            "refusing call quota for tenant %s with status=%s", tenant_id, status
+        )
+        return False
     conn.execute(
         """
         insert into quota_state (tenant_id, concurrent_now)
@@ -326,11 +306,22 @@ def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
         (tenant_id,),
     )
     quota_row = conn.execute(
-        "select concurrent_now from quota_state where tenant_id = %s for update",
+        "select concurrent_now, minutes_this_month from quota_state "
+        "where tenant_id = %s for update",
         (tenant_id,),
     ).fetchone()
     curr = quota_row[0] if quota_row else 0
+    minutes_used = (quota_row[1] if quota_row else 0) or 0
     if curr >= max_conc:
+        return False
+    # F-H17: the monthly minutes cap applies to PSTN too.
+    if max_minutes is not None and minutes_used >= max_minutes:
+        logger.warning(
+            "refusing call quota for tenant %s: monthly minutes cap reached (%s/%s)",
+            tenant_id,
+            minutes_used,
+            max_minutes,
+        )
         return False
     conn.execute(
         """

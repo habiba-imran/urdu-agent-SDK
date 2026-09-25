@@ -1,0 +1,69 @@
+# F-H16: docker/worker.Dockerfile does `COPY . .` with no ignore file, so every image built
+# from this repo carried .git/ (the full history), tests/, docs/, scratch/, and any local
+# .env.local into the runtime layer.
+#
+# Deny-ish by default for the heavy/secret-bearing paths. Service Dockerfiles that copy
+# specific directories are unaffected; this only matters for the ones that copy the context.
+
+# Version control and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Secrets and local environment — never in an image
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+state/admin_bootstrap.local.md
+
+# Python build artefacts and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node / frontend — not part of any Python service image
+node_modules/
+dashboard/
+voice-picker/
+demo-app/
+client-submission_v2/
+client-integration-test/
+client-deliverables-final/
+self-serve-demo-UI/
+sdk/node_modules/
+sdk-server/node_modules/
+telephony/node_modules/
+**/dist/
+**/.next/
+
+# Tests, docs and working notes
+tests/
+docs/
+scratch/
+graphify-out/
+state/
+*.md
+!README.md
+
+# Media fixtures (large, never needed at runtime)
+voice-picker/previews/
+**/*.wav
+**/*.ogg
+**/*.mp3
+**/*.tgz
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
