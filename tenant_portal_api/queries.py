@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import psycopg
+
+from control_plane.secret_crypto import decrypt_tool_secret, encrypt_tool_secret
 from psycopg.types.json import Jsonb
 
 _UNSET = object()
@@ -43,9 +45,13 @@ def _agent_row_to_dict(row) -> dict:
 
 
 def _agent_row_internal(row) -> dict:
-    """Full row including tools_auth_secret — worker / internal use only."""
+    """Full row including tools_auth_secret — worker / internal use only.
+
+    F-M8: the column may now hold ciphertext; callers want the usable value (a PATCH that
+    preserves the current secret would otherwise re-encrypt a ciphertext).
+    """
     d = _agent_row_to_dict(row)
-    d["tools_auth_secret"] = row[18]
+    d["tools_auth_secret"] = decrypt_tool_secret(row[18])
     return d
 
 
@@ -139,7 +145,8 @@ def create_agent(
             greeting,
             first_speaker,
             tools_base_url,
-            tools_auth_secret,
+            # F-M8: stored encrypted when a key is configured; unchanged otherwise.
+            encrypt_tool_secret(tools_auth_secret),
         ),
     ).fetchone()
     return _agent_row_to_dict(row)
@@ -212,9 +219,13 @@ def update_agent(
             current["greeting"] if greeting is _UNSET else greeting,
             current["first_speaker"] if first_speaker is _UNSET else first_speaker,
             current["tools_base_url"] if tools_base_url is _UNSET else tools_base_url,
-            current["tools_auth_secret"]
-            if tools_auth_secret is _UNSET
-            else tools_auth_secret,
+            # F-M8: current["tools_auth_secret"] is already decrypted by
+            # _agent_row_internal, so both branches re-encrypt a plaintext value.
+            encrypt_tool_secret(
+                current["tools_auth_secret"]
+                if tools_auth_secret is _UNSET
+                else tools_auth_secret
+            ),
             agent_id,
             tenant_id,
         ),

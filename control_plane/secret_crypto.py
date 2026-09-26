@@ -106,3 +106,70 @@ def decrypt_tenant_secret(stored: str | None) -> str | None:
         raise TenantSecretCryptoError(
             "stored tenant secret could not be decrypted"
         ) from exc
+
+
+# --------------------------------------------------------------------------------------
+# F-M8: agents.tools_auth_secret was the third secret-handling standard in one schema
+# (tenant HMAC plaintext, telephony credentials custom-encrypted, tool secret plaintext).
+# It is the shared secret the worker sends to a tenant's own tool gateway, so like the
+# tenant secret it must be recoverable, not hashed. Same key, distinct prefix and AAD, so a
+# ciphertext from one purpose cannot be pasted into the other.
+# --------------------------------------------------------------------------------------
+
+TOOL_PREFIX = "aenc:v1:"
+_TOOL_AAD = b"uva-agent-tools-auth-secret"
+
+
+def _derive_tool(master: str, salt: bytes) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=b"uva-agent-tools-auth-secret-v1",
+    ).derive(master.encode("utf-8"))
+
+
+def tool_secret_looks_encrypted(value: str | None) -> bool:
+    return bool(value) and value.startswith(TOOL_PREFIX)
+
+
+def encrypt_tool_secret(secret: str | None) -> str | None:
+    """Ciphertext for storage, or the value unchanged when no key is configured."""
+    master = encryption_key()
+    if not secret or master is None:
+        return secret
+    if tool_secret_looks_encrypted(secret):
+        return secret
+    salt = os.urandom(_SALT_LEN)
+    nonce = os.urandom(_NONCE_LEN)
+    ciphertext = AESGCM(_derive_tool(master, salt)).encrypt(
+        nonce, secret.encode("utf-8"), _TOOL_AAD
+    )
+    return TOOL_PREFIX + base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("ascii")
+
+
+def decrypt_tool_secret(stored: str | None) -> str | None:
+    """Plaintext for use. A value that is not in the encrypted format is returned as-is, so
+    a not-yet-migrated row keeps working."""
+    if not stored or not tool_secret_looks_encrypted(stored):
+        return stored
+    master = encryption_key()
+    if master is None:
+        _log.error(
+            "%s is not set but an agent tool secret is encrypted - tool calls will be "
+            "unauthenticated",
+            ENV_VAR,
+        )
+        return None
+    try:
+        blob = base64.urlsafe_b64decode(stored[len(TOOL_PREFIX) :].encode("ascii"))
+        salt, nonce = blob[:_SALT_LEN], blob[_SALT_LEN : _SALT_LEN + _NONCE_LEN]
+        ciphertext = blob[_SALT_LEN + _NONCE_LEN :]
+        return (
+            AESGCM(_derive_tool(master, salt))
+            .decrypt(nonce, ciphertext, _TOOL_AAD)
+            .decode("utf-8")
+        )
+    except Exception:
+        _log.error("agent tool secret could not be decrypted", exc_info=True)
+        return None

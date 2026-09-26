@@ -149,3 +149,49 @@ def test_plaintext_row_still_resolves_during_rollout(key):
             assert DbSecretProvider().get(tenant_id) == "still-plaintext"
         finally:
             conn.execute("delete from tenants where id = %s", (tenant_id,))
+
+
+# --------------------------------------------------------------- F-M8 agent tool secrets
+
+
+def test_tool_secret_round_trip(key):
+    """F-M8: agents.tools_auth_secret was the third secret-handling standard in one schema."""
+    secret = "tool-gateway-shared-secret"
+    blob = secret_crypto.encrypt_tool_secret(secret)
+    assert blob.startswith(secret_crypto.TOOL_PREFIX)
+    assert secret not in blob
+    assert secret_crypto.decrypt_tool_secret(blob) == secret
+
+
+def test_tool_secret_passthrough_without_a_key(monkeypatch):
+    """Rollout: with no key set, values are stored and read unchanged."""
+    monkeypatch.delenv(secret_crypto.ENV_VAR, raising=False)
+    assert secret_crypto.encrypt_tool_secret("plain") == "plain"
+    assert secret_crypto.decrypt_tool_secret("plain") == "plain"
+
+
+def test_plaintext_tool_secret_still_readable(key):
+    """A not-yet-swept row keeps working."""
+    assert secret_crypto.decrypt_tool_secret("legacy-plaintext") == "legacy-plaintext"
+
+
+def test_encrypting_twice_does_not_double_wrap(key):
+    once = secret_crypto.encrypt_tool_secret("s3cret")
+    twice = secret_crypto.encrypt_tool_secret(once)
+    assert twice == once
+    assert secret_crypto.decrypt_tool_secret(twice) == "s3cret"
+
+
+def test_tool_secret_wrong_key_returns_none_not_garbage(key, monkeypatch):
+    """The worker sends this to the tenant's gateway; a wrong value must not be sent."""
+    blob = secret_crypto.encrypt_tool_secret("s3cret")
+    monkeypatch.setenv(secret_crypto.ENV_VAR, "different-key")
+    assert secret_crypto.decrypt_tool_secret(blob) is None
+
+
+def test_tenant_and_tool_ciphertexts_are_not_interchangeable(key):
+    """Distinct AAD and prefix: a ciphertext from one purpose cannot be used as the other."""
+    tenant_blob = secret_crypto.encrypt_tenant_secret("value")
+    assert secret_crypto.decrypt_tool_secret(tenant_blob) == tenant_blob  # not treated as tool
+    tool_blob = secret_crypto.encrypt_tool_secret("value")
+    assert secret_crypto.decrypt_tenant_secret(tool_blob) == tool_blob  # not treated as tenant

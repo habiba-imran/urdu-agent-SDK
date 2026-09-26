@@ -43,9 +43,12 @@ except ImportError:  # pragma: no cover
 from control_plane.secret_crypto import (  # noqa: E402
     ENV_VAR,
     decrypt_tenant_secret,
+    decrypt_tool_secret,
     encrypt_tenant_secret,
+    encrypt_tool_secret,
     is_enabled,
     looks_encrypted,
+    tool_secret_looks_encrypted,
 )
 
 
@@ -147,9 +150,54 @@ def finalize(*, dry_run: bool) -> int:
     return 0
 
 
+def encrypt_agent_tool_secrets(*, dry_run: bool) -> int:
+    """F-M8: agents.tools_auth_secret was stored in plaintext too.
+
+    There is no second column here — the value is replaced in place, and readers pass a
+    plaintext value through unchanged, so a half-swept table works either way.
+    """
+    with psycopg.connect(**conn_kwargs(), connect_timeout=15, autocommit=True) as conn:
+        rows = conn.execute(
+            "select id, tools_auth_secret from agents "
+            "where tools_auth_secret is not null and tools_auth_secret <> ''"
+        ).fetchall()
+        pending = [(a, v) for a, v in rows if not tool_secret_looks_encrypted(v)]
+        print(
+            f"[encrypt] agent tool secrets: {len(rows)} set, {len(pending)} still plaintext"
+        )
+        done = 0
+        for agent_id, plaintext in pending:
+            blob = encrypt_tool_secret(plaintext)
+            if not blob or not tool_secret_looks_encrypted(blob):
+                print(f"[encrypt] REFUSING: could not encrypt agent {agent_id}")
+                return 1
+            if decrypt_tool_secret(blob) != plaintext:
+                print(f"[encrypt] REFUSING: round-trip check failed for agent {agent_id}")
+                return 1
+            if dry_run:
+                print(f"[encrypt] would encrypt tool secret for agent {agent_id}")
+            else:
+                conn.execute(
+                    "update agents set tools_auth_secret = %s where id = %s",
+                    (blob, agent_id),
+                )
+                print(f"[encrypt] encrypted tool secret for agent {agent_id}")
+            done += 1
+        print(
+            f"[encrypt] {'would encrypt' if dry_run else 'encrypted'} {done} agent tool "
+            "secret(s)"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="Show what would change")
+    parser.add_argument(
+        "--agents",
+        action="store_true",
+        help="Encrypt agents.tools_auth_secret in place instead of tenant secrets (F-M8)",
+    )
     parser.add_argument(
         "--finalize",
         action="store_true",
@@ -163,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
             "secrets (control plane and tenant portal) before running this."
         )
         return 1
+    if args.agents:
+        return encrypt_agent_tool_secrets(dry_run=args.dry_run)
     if args.finalize:
         return finalize(dry_run=args.dry_run)
     return encrypt_all(dry_run=args.dry_run)
