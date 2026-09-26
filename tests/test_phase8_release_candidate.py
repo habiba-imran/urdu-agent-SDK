@@ -5,6 +5,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+# F-H1: this shells out to scripts/assemble_phase8_release_candidate.py, which builds
+# release artifacts against real providers (it fails on a missing GLADIA_API_KEY). The
+# subprocess boundary hides it from conftest's offline guard, so mark it live and run it
+# deliberately: pytest -m live
+pytestmark = pytest.mark.live
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 

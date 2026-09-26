@@ -75,7 +75,9 @@ class ConflictQuotaDb:
                 )
             )
         if "from tenants where id = %s" in sql:
-            return FakeCursor((5,))
+            # F-H17: (max_concurrent, max_minutes_month, status) - PSTN spend is now gated
+            # on the monthly cap and tenant status as well as concurrency.
+            return FakeCursor((5, 100000, "active"))
         if "insert into quota_state" in sql:
             return FakeCursor()
         if "from telephony_idempotency_keys" in sql:

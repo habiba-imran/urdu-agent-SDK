@@ -23,6 +23,7 @@ from worker.telephony_runtime import resolve_inbound_sip_call, resolve_session_m
 class ClientCallingSimulationDb:
     def __init__(self):
         self.tenants = [{"id": "tenant_client_1", "status": "active", "max_concurrent": 2}]
+        self.minutes: dict[str, int] = {}
         self.phone_numbers = [{
             "id": "num_client_1",
             "tenant_id": "tenant_client_1",
@@ -51,17 +52,29 @@ class ClientCallingSimulationDb:
     def execute(self, query: str, params: tuple[Any, ...] = ()):
         sql = " ".join(query.lower().split())
 
-        if "select max_concurrent from tenants" in sql:
+        # F-H17: reserve_call_quota now reads the monthly cap and tenant status too, so
+        # PSTN spend is gated the same way browser sessions always were.
+        if "select max_concurrent" in sql and "from tenants" in sql:
             t = next((x for x in self.tenants if x["id"] == params[0]), None)
-            return FakeCursor((t["max_concurrent"],) if t else None)
+            if not t:
+                return FakeCursor(None)
+            return FakeCursor(
+                (
+                    t["max_concurrent"],
+                    t.get("max_minutes_month", 100000),
+                    t.get("status", "active"),
+                )
+            )
 
         if "insert into quota_state" in sql:
             if params[0] not in self.quota:
                 self.quota[params[0]] = 0
             return FakeCursor()
 
-        if "select concurrent_now from quota_state" in sql:
-            return FakeCursor((self.quota.get(params[0], 0),))
+        if "select concurrent_now" in sql and "from quota_state" in sql:
+            return FakeCursor(
+                (self.quota.get(params[0], 0), self.minutes.get(params[0], 0))
+            )
 
         if "update quota_state set concurrent_now = concurrent_now + 1" in sql:
             self.quota[params[0]] = self.quota.get(params[0], 0) + 1

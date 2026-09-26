@@ -288,7 +288,13 @@ def get_tenant_credentials_masked(conn: psycopg.Connection, tenant_id: str) -> d
     """
     row = conn.execute(
         """
-        SELECT id, name, allowed_origins, hmac_secret_hash, (hmac_secret IS NOT NULL) AS has_raw_secret, status
+        -- F-C6: "does this tenant have a signing secret" must count the encrypted column
+        -- too, or every rotated tenant looks unprovisioned once the plaintext is cleared.
+        SELECT id, name, allowed_origins, hmac_secret_hash,
+               (hmac_secret IS NOT NULL
+                OR (to_jsonb(tenants) ? 'hmac_secret_enc' AND hmac_secret_enc IS NOT NULL))
+               AS has_raw_secret,
+               status
         FROM tenants
         WHERE id = %s
         """,
