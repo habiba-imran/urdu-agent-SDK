@@ -82,7 +82,8 @@ class ActiveConnectionDb:
         if "from tenant_telnyx_connections" in sql:
             return FakeCursor(row=self.active_row())
         if "from tenants" in sql:
-            return FakeCursor(row=(10,))
+            # F-H17: (max_concurrent, max_minutes_month, status)
+            return FakeCursor(row=(10, 100000, "active"))
         if "from telnyx_sip_connections" in sql:
             return FakeCursor(row=None)
         if "from telnyx_outbound_voice_profiles" in sql:
@@ -402,7 +403,8 @@ def test_connect_telnyx_account_stores_encrypted_ref_and_sanitizes_response(capl
     assert RAW_TELNYX_KEY not in response_json
     assert "encrypted_api_key_ref" not in response
     assert db.stored_encrypted_ref is not None
-    assert db.stored_encrypted_ref.startswith("enc:v1:")
+    # F-M7: new writes use the AES-GCM v2 format; v1 remains readable for existing rows.
+    assert db.stored_encrypted_ref.startswith("enc:v2:")
     assert RAW_TELNYX_KEY not in db.stored_encrypted_ref
     assert all(RAW_TELNYX_KEY not in record.getMessage() for record in caplog.records)
 

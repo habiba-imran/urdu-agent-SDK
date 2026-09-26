@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import psycopg
+
+from control_plane.secret_crypto import decrypt_tool_secret, encrypt_tool_secret
 from psycopg.types.json import Jsonb
 
 _UNSET = object()
@@ -43,9 +45,13 @@ def _agent_row_to_dict(row) -> dict:
 
 
 def _agent_row_internal(row) -> dict:
-    """Full row including tools_auth_secret — worker / internal use only."""
+    """Full row including tools_auth_secret — worker / internal use only.
+
+    F-M8: the column may now hold ciphertext; callers want the usable value (a PATCH that
+    preserves the current secret would otherwise re-encrypt a ciphertext).
+    """
     d = _agent_row_to_dict(row)
-    d["tools_auth_secret"] = row[18]
+    d["tools_auth_secret"] = decrypt_tool_secret(row[18])
     return d
 
 
@@ -139,7 +145,8 @@ def create_agent(
             greeting,
             first_speaker,
             tools_base_url,
-            tools_auth_secret,
+            # F-M8: stored encrypted when a key is configured; unchanged otherwise.
+            encrypt_tool_secret(tools_auth_secret),
         ),
     ).fetchone()
     return _agent_row_to_dict(row)
@@ -212,9 +219,13 @@ def update_agent(
             current["greeting"] if greeting is _UNSET else greeting,
             current["first_speaker"] if first_speaker is _UNSET else first_speaker,
             current["tools_base_url"] if tools_base_url is _UNSET else tools_base_url,
-            current["tools_auth_secret"]
-            if tools_auth_secret is _UNSET
-            else tools_auth_secret,
+            # F-M8: current["tools_auth_secret"] is already decrypted by
+            # _agent_row_internal, so both branches re-encrypt a plaintext value.
+            encrypt_tool_secret(
+                current["tools_auth_secret"]
+                if tools_auth_secret is _UNSET
+                else tools_auth_secret
+            ),
             agent_id,
             tenant_id,
         ),
@@ -250,15 +261,73 @@ def get_raw_secret(conn: psycopg.Connection, tenant_id: str) -> str:
     action. Scoped by tenant_id from the caller's own verified portal JWT — same trust boundary
     as get_credentials above, just returning the real value instead of the masked placeholder.
     """
-    row = conn.execute(
-        "select hmac_secret from tenants where id = %s",
-        (tenant_id,),
-    ).fetchone()
+    # F-C6: the secret may now be stored encrypted (tenants.hmac_secret_enc). Prefer it and
+    # fall back to the plaintext column during rollout.
+    try:
+        row = conn.execute(
+            "select hmac_secret_enc, hmac_secret from tenants where id = %s",
+            (tenant_id,),
+        ).fetchone()
+        encrypted, plaintext = (row[0], row[1]) if row else (None, None)
+    except psycopg.errors.UndefinedColumn:
+        conn.rollback()
+        row = conn.execute(
+            "select hmac_secret from tenants where id = %s",
+            (tenant_id,),
+        ).fetchone()
+        encrypted, plaintext = None, (row[0] if row else None)
+
     if row is None:
         raise ValueError("tenant not found")
-    if not row[0]:
+    if encrypted:
+        from control_plane.secret_crypto import decrypt_tenant_secret
+
+        secret = decrypt_tenant_secret(encrypted)
+        if not secret:
+            raise ValueError("no secret provisioned")
+        return secret
+    if not plaintext:
         raise ValueError("no secret provisioned")
-    return row[0]
+    return plaintext
+
+
+def rotate_own_secret(conn: psycopg.Connection, tenant_id: str) -> str:
+    """F-C6: self-service rotation. There was none — only an admin route (admin/app.py:206),
+    so a tenant who believed their secret was exposed could not do anything about it.
+
+    Returns the new secret ONCE. Stored encrypted when a key is configured.
+    """
+    import hashlib
+    import secrets as _pysecrets
+
+    from control_plane.secret_crypto import encrypt_tenant_secret
+
+    new_secret = _pysecrets.token_urlsafe(32)
+    new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
+    encrypted = encrypt_tenant_secret(new_secret)
+
+    if encrypted:
+        try:
+            updated = conn.execute(
+                "update tenants set hmac_secret_enc = %s, hmac_secret = null, "
+                "hmac_secret_hash = %s where id = %s returning id",
+                (encrypted, new_hash, tenant_id),
+            ).fetchone()
+        except psycopg.errors.UndefinedColumn:
+            conn.rollback()
+            updated = None
+        else:
+            if updated is None:
+                raise ValueError("tenant not found")
+            return new_secret
+
+    updated = conn.execute(
+        "update tenants set hmac_secret = %s, hmac_secret_hash = %s where id = %s returning id",
+        (new_secret, new_hash, tenant_id),
+    ).fetchone()
+    if updated is None:
+        raise ValueError("tenant not found")
+    return new_secret
 
 
 # An open session (ended_at IS NULL) older than this is NOT live — it leaked.
@@ -511,3 +580,21 @@ def list_escalations(
         }
         for r in rows
     ]
+
+
+# Audit §3.1 / §7: tenants.allowed_origins defaults to '{}' and the mint only enforces it when
+# it is non-empty (`if allowed_origins and origin not in allowed_origins`). The portal showed
+# the list read-only and no route anywhere could set it, so every tenant was unrestricted and
+# had no way to stop being unrestricted.
+MAX_ALLOWED_ORIGINS = 20
+
+
+def set_allowed_origins(
+    conn: psycopg.Connection, tenant_id: str, origins: list[str]
+) -> list[str]:
+    """Replace a tenant's browser origin allowlist. An empty list means 'not enforced'."""
+    conn.execute(
+        "update tenants set allowed_origins = %s where id = %s",
+        (origins, tenant_id),
+    )
+    return origins

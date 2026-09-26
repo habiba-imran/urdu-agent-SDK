@@ -82,6 +82,22 @@ def _consume_totp_counter(conn: psycopg.Connection, admin_id, counter: int) -> b
     return claimed is not None
 
 
+def _account_disabled(conn: psycopg.Connection, admin_id) -> bool:
+    """True when the account is disabled (§3.5). False when 0032 has not been applied."""
+    try:
+        row = conn.execute(
+            "select disabled_at from admin_users where id = %s", (admin_id,)
+        ).fetchone()
+    except psycopg.errors.UndefinedColumn:
+        conn.rollback()
+        logging.getLogger("admin.auth").warning(
+            "admin_users.disabled_at missing (migration 0032) - account disablement is "
+            "NOT enforced"
+        )
+        return False
+    return bool(row and row[0] is not None)
+
+
 def login(
     conn: psycopg.Connection,
     *,
@@ -101,6 +117,10 @@ def login(
     if row is None:
         raise AdminAuthError(401, "invalid credentials")
     admin_id, password_hash, totp_secret = row
+    # §3.5: a disabled account must not be able to log in. Same 401 as a wrong password, so
+    # the endpoint does not confirm which accounts exist or which are suspended.
+    if _account_disabled(conn, admin_id):
+        raise AdminAuthError(401, "invalid credentials")
 
     if not verify_password(password, password_hash):
         raise AdminAuthError(401, "invalid credentials")
@@ -129,6 +149,45 @@ def login(
     }
     token = pyjwt.encode(claims, jwt_secret, algorithm="HS256")
     return {"token": token, "admin_id": str(admin_id), "expires_in": ADMIN_JWT_TTL_SEC}
+
+
+def assert_admin_session_valid(conn: psycopg.Connection, claims: dict) -> None:
+    """Refuse a token whose account was disabled or whose sessions were revoked (§3.5).
+
+    Admin tokens live for 8 hours and were previously accepted for that whole window no
+    matter what happened to the account; the only kill switch was rotating
+    ADMIN_JWT_SECRET, which signs out every admin at once.
+
+    Fails OPEN if the columns are missing (0032 not applied yet) and CLOSED on an actual
+    negative answer.
+    """
+    admin_id = claims.get("sub")
+    if not admin_id:
+        raise AdminAuthError(401, "invalid admin token")
+    try:
+        row = conn.execute(
+            "select disabled_at, tokens_valid_from from admin_users where id = %s",
+            (admin_id,),
+        ).fetchone()
+    except psycopg.errors.UndefinedColumn:
+        conn.rollback()
+        logging.getLogger("admin.auth").warning(
+            "admin_users.disabled_at/tokens_valid_from missing (migration 0032) - admin "
+            "token revocation is NOT active"
+        )
+        return
+    if row is None:
+        raise AdminAuthError(401, "admin account no longer exists")
+    disabled_at, tokens_valid_from = row
+    if disabled_at is not None:
+        raise AdminAuthError(401, "admin account is disabled")
+    if tokens_valid_from is not None:
+        issued_at = claims.get("iat")
+        if issued_at is None:
+            raise AdminAuthError(401, "admin token cannot be checked against revocation")
+        issued_dt = datetime.datetime.fromtimestamp(int(issued_at), tz=datetime.UTC)
+        if issued_dt < tokens_valid_from:
+            raise AdminAuthError(401, "admin session was revoked")
 
 
 def verify_admin_jwt(token: str, jwt_secret: str) -> dict:

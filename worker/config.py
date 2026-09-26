@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from control_plane.secret_crypto import decrypt_tool_secret
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 # Short process cache so repeat connects / warm demos skip a remote TLS+RLS round-trip.
@@ -131,7 +133,10 @@ def _row_to_config(row: tuple, *, recording_enabled: bool = False) -> AgentConfi
         greeting=row[15],
         first_speaker=row[16] or "agent",
         tools_base_url=row[17],
-        tools_auth_secret=row[18],
+        # F-M8: agents.tools_auth_secret is stored encrypted when
+        # TENANT_SECRET_ENCRYPTION_KEY is configured (control_plane/secret_crypto.py).
+        # A plaintext value passes through unchanged, so a not-yet-migrated row still works.
+        tools_auth_secret=decrypt_tool_secret(row[18]),
         recording_enabled=bool(recording_enabled),
     )
 

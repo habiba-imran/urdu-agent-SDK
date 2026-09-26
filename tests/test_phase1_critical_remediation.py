@@ -250,7 +250,16 @@ class MockPhase1Db:
                 )
             )
 
-        if "quota_state" in sql and "update" in sql:
+        # F-H17: reserve_call_quota now reads the tenant's limits and status, and refuses an
+        # unknown tenant instead of failing open. This mock previously had no tenants row at
+        # all and relied on that fail-open, so give it one.
+        if "from tenants where id = %s" in sql:
+            return FakeCursor((10, 100000, "active"))
+
+        if "select concurrent_now" in sql and "from quota_state" in sql:
+            return FakeCursor((0, 0))
+
+        if "quota_state" in sql and ("update" in sql or "insert" in sql):
             self.quota_reserved = True
             return FakeCursor(None)
 

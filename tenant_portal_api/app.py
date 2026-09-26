@@ -10,9 +10,11 @@ admin/ or control_plane/ routes:
 from __future__ import annotations
 
 import os
+import time
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Iterator
 
 import psycopg
@@ -460,6 +462,67 @@ def provider_capabilities_route(authorization: str | None = Header(default=None)
         return get_public_capabilities(conn)
 
 
+class AllowedOriginsBody(BaseModel):
+    """Browser origins allowed to start sessions for this tenant.
+
+    An empty list keeps the pre-existing behaviour (not enforced), which is what every tenant
+    has today — the column defaults to '{}' and nothing could ever change it.
+    """
+
+    allowed_origins: list[str] = Field(default_factory=list)
+
+
+def _normalize_origin(raw: str) -> str:
+    """An Origin header is scheme://host[:port] with no path - match that exactly, or the
+    mint's `origin not in allowed_origins` comparison silently never matches."""
+    text = (raw or "").strip().rstrip("/")
+    if not text:
+        raise HTTPException(status_code=422, detail="origin must not be empty")
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"origin must look like https://app.example.com (got {raw!r})",
+        )
+    if parsed.path or parsed.query or parsed.fragment:
+        raise HTTPException(
+            status_code=422,
+            detail=f"origin must not include a path, query or fragment (got {raw!r})",
+        )
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+@app.put("/portal/credentials/allowed-origins")
+def set_allowed_origins_route(
+    body: AllowedOriginsBody, authorization: str | None = Header(default=None)
+):
+    """Audit §3.1 / §7: the allowlist was displayed read-only and nothing could set it, so
+    the mint's origin check ('if allowed_origins and origin not in allowed_origins') was
+    dead code for every tenant."""
+    claims = _require_tenant(authorization)
+    if len(body.allowed_origins) > queries.MAX_ALLOWED_ORIGINS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"at most {queries.MAX_ALLOWED_ORIGINS} origins",
+        )
+    origins = []
+    for raw in body.allowed_origins:
+        normalized = _normalize_origin(raw)
+        if normalized not in origins:
+            origins.append(normalized)
+    with _conn() as conn:
+        queries.set_allowed_origins(conn, claims["sub"], origins)
+        conn.commit()
+    return {
+        "allowed_origins": origins,
+        "enforced": bool(origins),
+        "note": (
+            "An empty list is not enforced: any browser origin may start a session for this "
+            "tenant."
+        ),
+    }
+
+
 @app.get("/portal/credentials")
 def credentials_route(authorization: str | None = Header(default=None)):
     claims = _require_tenant(authorization)
@@ -470,14 +533,89 @@ def credentials_route(authorization: str | None = Header(default=None)):
             raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+# F-C6: revealing the permanent signing credential to any holder of an 8-hour token stored
+# in localStorage is the last link in the XSS chain. A stolen token is usually used later
+# than it was issued, so the reveal now requires a token minted in the last few minutes —
+# the legitimate flow (log in, open the credentials tab) is inside that window, replaying a
+# harvested token generally is not.
+REVEAL_MAX_TOKEN_AGE_SEC = 300
+
+
+def _require_fresh_tenant_token(claims: dict) -> None:
+    issued_at = claims.get("iat")
+    if issued_at is None:
+        raise HTTPException(status_code=401, detail="token cannot be age-checked")
+    age = time.time() - float(issued_at)
+    if age > REVEAL_MAX_TOKEN_AGE_SEC:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "log in again to reveal or rotate the signing secret "
+                f"(token older than {REVEAL_MAX_TOKEN_AGE_SEC // 60} minutes)"
+            ),
+        )
+
+
 @app.get("/portal/credentials/secret")
-def credentials_secret_route(authorization: str | None = Header(default=None)):
+def credentials_secret_route(
+    request: Request, authorization: str | None = Header(default=None)
+):
     claims = _require_tenant(authorization)
+    _require_fresh_tenant_token(claims)
+    client_ip = request.client.host if request.client else None
     with _conn() as conn:
         try:
-            return {"hmac_secret": queries.get_raw_secret(conn, claims["sub"])}
+            secret = queries.get_raw_secret(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        # Every reveal is recorded: the audit noted one XSS yields the permanent credential,
+        # and until now nothing would show that it had happened.
+        record_attempt(
+            conn,
+            realm="portal-secret-reveal",
+            identity=claims["sub"],
+            client_ip=client_ip,
+            successful=True,
+            reason="hmac secret revealed",
+        )
+        conn.commit()
+    return {"hmac_secret": secret}
+
+
+@app.post("/portal/credentials/rotate-secret")
+def rotate_secret_route(
+    request: Request, authorization: str | None = Header(default=None)
+):
+    """F-C6: there was no self-service rotation — only an admin route — so a tenant who
+    believed their secret was exposed could not do anything about it themselves.
+
+    The new secret is returned ONCE. Every host backend signing with the old one must be
+    updated; there is no grace period, by design.
+    """
+    claims = _require_tenant(authorization)
+    _require_fresh_tenant_token(claims)
+    client_ip = request.client.host if request.client else None
+    with _conn() as conn:
+        try:
+            new_secret = queries.rotate_own_secret(conn, claims["sub"])
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        record_attempt(
+            conn,
+            realm="portal-secret-rotate",
+            identity=claims["sub"],
+            client_ip=client_ip,
+            successful=True,
+            reason="hmac secret rotated",
+        )
+        conn.commit()
+    return {
+        "hmac_secret": new_secret,
+        "warning": (
+            "This value is shown once. Update every host backend that signs mint requests; "
+            "the previous secret stops working immediately."
+        ),
+    }
 
 
 @app.delete("/portal/agents/{agent_id}")

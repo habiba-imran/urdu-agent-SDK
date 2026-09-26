@@ -35,6 +35,29 @@ except Exception:
 for _var in ("UPLIFT_MODE", "GLADIA_MODE", "LLM_MODE"):
     os.environ.setdefault(_var, "fixture")
 
+# F-H1: telephony credential encryption raises at import when this is unset, which kept
+# several telephony test modules uncollectable. A throwaway value keeps them self-contained;
+# a real deployment sets its own (see .env.example).
+os.environ.setdefault("TELEPHONY_CREDENTIAL_ENCRYPTION_KEY", "test-only-credential-key")
+
+
+def pytest_configure(config):
+    """F-H1: `live` marks tests that spend real provider money or need a live backend.
+
+    pytest.ini deselects them by default (addopts = -m "not live"); run them deliberately
+    with `pytest -m live`.
+    """
+    config.addinivalue_line(
+        "markers", "live: spends real provider/carrier money or needs a live backend"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Everything in a *_live.py module is a live test, whether or not it says so."""
+    for item in items:
+        if item.fspath.basename.endswith("_live.py"):
+            item.add_marker("live")
+
 # Has the harness been configured to reach any real backend? Credentials live in .env.local
 # (now loaded above into os.environ), so this check reflects the actual state.
 _CREDENTIAL_VARS = (
@@ -171,3 +194,26 @@ def pytest_runtest_call(item):
                 allow_module_level=False,
             ) from exc
         raise
+
+
+# F-H1: the only modules that still cannot be collected, each with the reason. These import
+# tests/helpers.py, which imports a top-level `config` package that does not exist in this
+# checkout — the retired pre-port CER harness (ADR-030, human sign-off recorded in
+# state/BLOCKERS.md). They are kept on disk deliberately so the evidence survives if that
+# harness is ever revived; listing them here makes the exclusion explicit and reviewable
+# instead of implied by a whitelist's omissions.
+collect_ignore = [
+    "helpers.py",
+    "test_e2e.py",
+    "test_env_smoke.py",
+    "test_interruption.py",
+    "test_latency.py",
+    "test_schema.py",
+    "test_stt_accuracy.py",
+    "test_tools.py",
+    # The CER harness runner itself (imports services.tts_cache; services/ does not exist).
+    "test_harness.py",
+    "test_tts.py",
+    # Imports the missing `bench` package (same retired harness).
+    "test_phase8_prod.py",
+]

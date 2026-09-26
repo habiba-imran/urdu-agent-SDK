@@ -10,6 +10,8 @@ Source notes:
 
 from __future__ import annotations
 
+import os
+
 TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES: tuple[str, ...] = (
     "AE",
     "AG",
@@ -150,5 +152,27 @@ TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES: tuple[str, ...] = (
 
 
 def default_telnyx_outbound_destinations() -> list[str]:
-    """Return default allowed destinations (US, CA) compatible with standard & trial Telnyx accounts."""
-    return ["US", "CA"]
+    """Allowed outbound destination countries for a tenant's Telnyx voice profile.
+
+    Defaults to US + CA, which is what a standard or trial Telnyx account can dial without
+    extra enablement. Note what that excludes: **PK is not in this list**, so outbound PSTN
+    to Pakistan — this product's primary market — is refused by the provider until the list
+    is widened. tests/test_telephony_outbound_destinations.py asserts the full
+    TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES list (including PK) and has never run
+    (F-H1), so the two have disagreed silently.
+
+    Widening is an account-level decision, not a code one — an account that has not been
+    enabled for a destination will simply have the API call rejected — so it is configurable
+    rather than changed underneath whoever is running this:
+
+        TELNYX_OUTBOUND_DESTINATIONS=all          -> the full country list
+        TELNYX_OUTBOUND_DESTINATIONS=US,CA,PK     -> exactly these
+        unset                                     -> US, CA (unchanged)
+    """
+    raw = (os.environ.get("TELNYX_OUTBOUND_DESTINATIONS") or "").strip()
+    if not raw:
+        return ["US", "CA"]
+    if raw.lower() == "all":
+        return list(TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES)
+    codes = [c.strip().upper() for c in raw.split(",") if c.strip()]
+    return codes or ["US", "CA"]

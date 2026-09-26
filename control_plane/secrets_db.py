@@ -22,6 +22,12 @@ try:
 except ImportError:
     from dbconn import conn_kwargs  # type: ignore # noqa: E402
 
+from .secret_crypto import (
+    ENV_VAR as SECRET_KEY_ENV,
+    TenantSecretCryptoError,
+    decrypt_tenant_secret,
+    is_enabled as is_encryption_enabled,
+)
 from .secrets import SecretProvider
 
 _log = logging.getLogger("control_plane.secrets_db")
@@ -48,15 +54,52 @@ class DbSecretProvider(SecretProvider):
         if cached is not None:
             return cached
 
-        # 1. Try DB lookup
+        # 1. Try DB lookup. F-C6: prefer the encrypted column, fall back to the plaintext
+        # one so a database that has not been migrated (or a service that has not been given
+        # TENANT_SECRET_ENCRYPTION_KEY yet) keeps minting.
         try:
             with psycopg.connect(**conn_kwargs(), connect_timeout=5) as conn:
-                row = conn.execute(
-                    "SELECT hmac_secret FROM tenants WHERE id = %s",
-                    (tenant_id,),
-                ).fetchone()
-                if row and row[0]:
-                    secret = row[0]
+                try:
+                    row = conn.execute(
+                        "SELECT hmac_secret_enc, hmac_secret FROM tenants WHERE id = %s",
+                        (tenant_id,),
+                    ).fetchone()
+                    encrypted, plaintext = (row[0], row[1]) if row else (None, None)
+                except psycopg.errors.UndefinedColumn:
+                    # 0033 not applied yet.
+                    conn.rollback()
+                    row = conn.execute(
+                        "SELECT hmac_secret FROM tenants WHERE id = %s",
+                        (tenant_id,),
+                    ).fetchone()
+                    encrypted, plaintext = None, (row[0] if row else None)
+
+                secret = None
+                if encrypted:
+                    try:
+                        secret = decrypt_tenant_secret(encrypted)
+                    except TenantSecretCryptoError:
+                        # Never fall through to the plaintext column here: if a ciphertext
+                        # exists but cannot be opened, the key is wrong or the row was
+                        # tampered with, and quietly signing with something else would hide
+                        # that.
+                        _log.error(
+                            "tenant %s has an encrypted secret that could not be decrypted "
+                            "- check %s",
+                            tenant_id,
+                            SECRET_KEY_ENV,
+                            exc_info=True,
+                        )
+                        return None
+                elif plaintext:
+                    secret = plaintext
+                    if is_encryption_enabled():
+                        _log.warning(
+                            "tenant %s still stores a PLAINTEXT signing secret - run "
+                            "scripts/encrypt_tenant_secrets.py (F-C6)",
+                            tenant_id,
+                        )
+                if secret:
                     self._write_cache(tenant_id, secret)
                     return secret
         except Exception:

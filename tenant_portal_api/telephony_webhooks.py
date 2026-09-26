@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import threading
 from collections import OrderedDict
 import sys
 import time
@@ -42,6 +43,29 @@ _WEBHOOK_REPLAY_WINDOW_SEC = 300
 _MAX_SEEN_ENTRIES = 20_000
 _seen_webhook_signatures: OrderedDict[tuple[str, str], None] = OrderedDict()
 _seen_webhook_event_ids: OrderedDict[str, None] = OrderedDict()
+
+
+# Audit §5a: "None at all on /portal/login, /admin/login, /portal/telephony/outbound-calls,
+# or the Telnyx webhook". Logins are F-H14 and outbound calls are inside F-H17; this is the
+# webhook itself. Unauthenticated endpoint, so the bucket is the caller's IP and it is
+# checked before signature verification does any cryptographic work.
+WEBHOOK_RATE_LIMIT_PER_MIN = 600  # Telnyx bursts on call state; generous but finite
+_webhook_hits: OrderedDict[str, list[float]] = OrderedDict()
+_webhook_hits_lock = threading.Lock()
+
+
+def _webhook_rate_limited(client_ip: str) -> bool:
+    now = time.time()
+    with _webhook_hits_lock:
+        window = _webhook_hits.setdefault(client_ip, [])
+        window[:] = [t for t in window if now - t < 60]
+        if len(window) >= WEBHOOK_RATE_LIMIT_PER_MIN:
+            return True
+        window.append(now)
+        _webhook_hits.move_to_end(client_ip)
+        while len(_webhook_hits) > _MAX_SEEN_ENTRIES:
+            _webhook_hits.popitem(last=False)
+    return False
 
 
 def _remember(seen: OrderedDict, key) -> None:
@@ -343,6 +367,18 @@ async def telnyx_webhook_endpoint(
     telnyx_timestamp: str | None = Header(None, alias="Telnyx-Timestamp"),
 ):
     """Receive and deduplicate Telnyx call and number order webhooks."""
+    client_ip = request.client.host if request.client else "unknown"
+    if _webhook_rate_limited(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": TelephonyErrorCode.WEBHOOK_SIGNATURE_INVALID,
+                    "message": "Too many webhook requests.",
+                    "status": 429,
+                }
+            },
+        )
     # F-M4: this endpoint is unauthenticated (the signature is verified below, after the
     # body is read), so an arbitrarily large body used to be pulled into memory first.
     # Telnyx webhook payloads are a few KB; anything near the cap is not one.
