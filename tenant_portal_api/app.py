@@ -13,6 +13,7 @@ import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Iterator
 
 import psycopg
@@ -458,6 +459,67 @@ def provider_capabilities_route(authorization: str | None = Header(default=None)
     _require_tenant(authorization)
     with _conn() as conn:
         return get_public_capabilities(conn)
+
+
+class AllowedOriginsBody(BaseModel):
+    """Browser origins allowed to start sessions for this tenant.
+
+    An empty list keeps the pre-existing behaviour (not enforced), which is what every tenant
+    has today — the column defaults to '{}' and nothing could ever change it.
+    """
+
+    allowed_origins: list[str] = Field(default_factory=list)
+
+
+def _normalize_origin(raw: str) -> str:
+    """An Origin header is scheme://host[:port] with no path - match that exactly, or the
+    mint's `origin not in allowed_origins` comparison silently never matches."""
+    text = (raw or "").strip().rstrip("/")
+    if not text:
+        raise HTTPException(status_code=422, detail="origin must not be empty")
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"origin must look like https://app.example.com (got {raw!r})",
+        )
+    if parsed.path or parsed.query or parsed.fragment:
+        raise HTTPException(
+            status_code=422,
+            detail=f"origin must not include a path, query or fragment (got {raw!r})",
+        )
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+@app.put("/portal/credentials/allowed-origins")
+def set_allowed_origins_route(
+    body: AllowedOriginsBody, authorization: str | None = Header(default=None)
+):
+    """Audit §3.1 / §7: the allowlist was displayed read-only and nothing could set it, so
+    the mint's origin check ('if allowed_origins and origin not in allowed_origins') was
+    dead code for every tenant."""
+    claims = _require_tenant(authorization)
+    if len(body.allowed_origins) > queries.MAX_ALLOWED_ORIGINS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"at most {queries.MAX_ALLOWED_ORIGINS} origins",
+        )
+    origins = []
+    for raw in body.allowed_origins:
+        normalized = _normalize_origin(raw)
+        if normalized not in origins:
+            origins.append(normalized)
+    with _conn() as conn:
+        queries.set_allowed_origins(conn, claims["sub"], origins)
+        conn.commit()
+    return {
+        "allowed_origins": origins,
+        "enforced": bool(origins),
+        "note": (
+            "An empty list is not enforced: any browser origin may start a session for this "
+            "tenant."
+        ),
+    }
 
 
 @app.get("/portal/credentials")

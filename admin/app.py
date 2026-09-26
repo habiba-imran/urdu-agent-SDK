@@ -45,7 +45,12 @@ from control_plane.login_guard import (  # noqa: E402
     record_attempt,
 )
 from .audit import record_admin_action  # noqa: E402
-from .auth import AdminAuthError, login as admin_login, verify_admin_jwt  # noqa: E402
+from .auth import (  # noqa: E402
+    AdminAuthError,
+    assert_admin_session_valid,
+    login as admin_login,
+    verify_admin_jwt,
+)
 from . import queries  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -144,13 +149,87 @@ def _conn() -> psycopg.Connection:
 
 
 def _require_admin(authorization: str | None) -> dict:
+    """Verify the token AND that the account behind it is still allowed to act.
+
+    §3.5: signature verification alone meant an 8-hour token kept working after the account
+    should have been disabled, and the only kill switch was rotating ADMIN_JWT_SECRET, which
+    signs out every admin at once.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization[len("Bearer ") :]
     try:
-        return verify_admin_jwt(token, ADMIN_JWT_SECRET)
+        claims = verify_admin_jwt(token, ADMIN_JWT_SECRET)
+        with _conn() as conn:
+            assert_admin_session_valid(conn, claims)
+        return claims
     except AdminAuthError as e:
         raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+
+class AdminAccountActionBody(BaseModel):
+    admin_id: str
+
+
+@app.post("/admin/admins/disable")
+def disable_admin_route(
+    body: AdminAccountActionBody, authorization: str | None = Header(default=None)
+):
+    """§3.5: turn an admin account off. Login is refused and its tokens stop working."""
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            updated = conn.execute(
+                "update admin_users set disabled_at = now() "
+                "where id = %s and disabled_at is null returning id",
+                (body.admin_id,),
+            ).fetchone()
+        except psycopg.errors.UndefinedColumn as e:
+            conn.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail="admin disablement needs migration 0032",
+            ) from e
+        if updated is None:
+            raise HTTPException(status_code=404, detail="admin not found or already disabled")
+        record_admin_action(
+            conn,
+            admin_id=claims["sub"],
+            action="disable_admin",
+            detail={"target_admin_id": body.admin_id},
+        )
+        conn.commit()
+    return {"admin_id": body.admin_id, "disabled": True}
+
+
+@app.post("/admin/admins/revoke-sessions")
+def revoke_admin_sessions_route(
+    body: AdminAccountActionBody, authorization: str | None = Header(default=None)
+):
+    """§3.5: sign one admin out everywhere, without rotating the shared signing key."""
+    claims = _require_admin(authorization)
+    with _conn() as conn:
+        try:
+            updated = conn.execute(
+                "update admin_users set tokens_valid_from = now() where id = %s returning id",
+                (body.admin_id,),
+            ).fetchone()
+        except psycopg.errors.UndefinedColumn as e:
+            conn.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail="session revocation needs migration 0032",
+            ) from e
+        if updated is None:
+            raise HTTPException(status_code=404, detail="admin not found")
+        record_admin_action(
+            conn,
+            admin_id=claims["sub"],
+            action="revoke_admin_sessions",
+            detail={"target_admin_id": body.admin_id},
+        )
+        conn.commit()
+    return {"admin_id": body.admin_id, "sessions_revoked": True}
 
 
 @app.post("/admin/login")

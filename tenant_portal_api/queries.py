@@ -511,3 +511,21 @@ def list_escalations(
         }
         for r in rows
     ]
+
+
+# Audit §3.1 / §7: tenants.allowed_origins defaults to '{}' and the mint only enforces it when
+# it is non-empty (`if allowed_origins and origin not in allowed_origins`). The portal showed
+# the list read-only and no route anywhere could set it, so every tenant was unrestricted and
+# had no way to stop being unrestricted.
+MAX_ALLOWED_ORIGINS = 20
+
+
+def set_allowed_origins(
+    conn: psycopg.Connection, tenant_id: str, origins: list[str]
+) -> list[str]:
+    """Replace a tenant's browser origin allowlist. An empty list means 'not enforced'."""
+    conn.execute(
+        "update tenants set allowed_origins = %s where id = %s",
+        (origins, tenant_id),
+    )
+    return origins
