@@ -27,13 +27,11 @@ function providerOptions(
   return Object.keys(layer ?? {}).map((provider) => ({ value: provider, label: capitalize(provider) }));
 }
 
-export default function AgentDetailPage({
-  params,
-}: {
-  params?: { id?: string };
-}) {
-  const routeParams = useParams<{ id: string }>();
-  const id = params?.id || routeParams?.id;
+export default function AgentDetailPage() {
+  // Next 15 makes the `params` prop a Promise, so a client component cannot read it
+  // synchronously. useParams() is the client-side way to read a dynamic segment and was
+  // already the fallback here — the prop is simply gone now.
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
   const {

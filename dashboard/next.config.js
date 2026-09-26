@@ -55,6 +55,9 @@ if (isProd) {
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // This repo has lockfiles at the root and in dashboard/, and Next 15 otherwise guesses the
+  // workspace root (it picked the repo root, which would trace far more than this app).
+  outputFileTracingRoot: __dirname,
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
