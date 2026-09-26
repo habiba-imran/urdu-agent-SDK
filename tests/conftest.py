@@ -41,17 +41,6 @@ for _var in ("UPLIFT_MODE", "GLADIA_MODE", "LLM_MODE"):
 os.environ.setdefault("TELEPHONY_CREDENTIAL_ENCRYPTION_KEY", "test-only-credential-key")
 
 
-def pytest_configure(config):
-    """F-H1: `live` marks tests that spend real provider money or need a live backend.
-
-    pytest.ini deselects them by default (addopts = -m "not live"); run them deliberately
-    with `pytest -m live`.
-    """
-    config.addinivalue_line(
-        "markers", "live: spends real provider/carrier money or needs a live backend"
-    )
-
-
 def pytest_collection_modifyitems(config, items):
     """Everything in a *_live.py module is a live test, whether or not it says so."""
     for item in items:
@@ -153,6 +142,12 @@ def _guard_create_connection(address, *args, **kwargs):
 
 
 def pytest_configure(config):
+    # F-H1: `live` marks tests that spend real provider/carrier money or need a live
+    # backend. pytest.ini deselects them by default (addopts = -m "not live"); run them
+    # deliberately with `pytest -m live`.
+    config.addinivalue_line(
+        "markers", "live: spends real provider/carrier money or needs a live backend"
+    )
     socket.getaddrinfo = _guard_getaddrinfo
     socket.socket.connect = _guard_connect
     socket.socket.connect_ex = _guard_connect_ex
@@ -181,6 +176,16 @@ def pytest_runtest_call(item):
     except Skipped:
         raise
     except BaseException as exc:
+        # F-H1: with default discovery, provider-construction tests now run everywhere. A
+        # missing provider key is "this machine has no credentials", not a defect, and must
+        # not turn CI red — the plugins raise a recognisable ValueError for it.
+        message = str(exc)
+        if "API key is required" in message or "api_key is required" in message:
+            raise Skipped(
+                f"{item.name}: needs a provider API key that is not configured here "
+                f"({message.splitlines()[0][:120]})",
+                allow_module_level=False,
+            ) from exc
         tripped = _hits["n"] > before
         if tripped or not _HAS_CREDENTIALS:
             reason = (
