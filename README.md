@@ -137,6 +137,11 @@ cd telephony && npm ci && npm run lint && npm test
 
 ## 🔐 Security & Trust Boundaries
 
-1. **Zero Client Secrets**: The browser SDK `@awaazlabs-uva/voice` holds **zero** provider or tenant secrets.
+1. **Zero Secrets in the Browser SDK**: `@awaazlabs-uva/voice` holds **zero** provider or
+   tenant secrets — it only ever receives a short-lived, room-scoped LiveKit token from the
+   host's own backend. This is a claim about the SDK, not about the whole product: the
+   tenant dashboard is a browser app that holds a portal session token, and the tenant's
+   HMAC signing secret is retrievable through it by its owner (encrypted at rest, revealed
+   only to a freshly authenticated session, and rotatable from the credentials tab).
 2. **HMAC Signing**: Host backends hold the tenant's raw HMAC secret and sign every mint request with a 60-second replay window.
 3. **Tenant Prompt Isolation**: Tenant prompts are treated as untrusted data and placed in a separate `chat_ctx` system message framing, never interpolated into system operating rules.

@@ -64,6 +64,15 @@ export default function CredentialsPage() {
         setHmacNotProvisioned(true);
         return { secret: null, notProvisioned: true };
       }
+      // F-C6: revealing the permanent signing secret needs a recently issued session, so a
+      // token that has been open for a while is refused. Say what to do about it instead of
+      // showing the raw backend message.
+      if (/log in again|older than|age-checked/i.test(msg)) {
+        setHmacError(
+          'For security, revealing the signing secret needs a fresh sign-in. Log out and back in, then try again.',
+        );
+        return { secret: null, notProvisioned: false };
+      }
       setHmacError(msg);
       return { secret: null, notProvisioned: false };
     } finally {

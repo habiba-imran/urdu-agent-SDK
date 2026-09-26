@@ -15,6 +15,12 @@ not a bug.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import sys
+
+import logging
+
 import psycopg
 
 AGENT_SEC_COST_PER_MIN_USD = (
@@ -215,17 +221,39 @@ def blockers(conn: psycopg.Connection, *, hours: int = 24) -> list[dict]:
     ]
 
 
-def rotate_tenant_secret(conn: psycopg.Connection, tenant_id: str) -> str:
-    """Generates a new 32-byte URL-safe secret for tenant_id, updates tenants table,
-    and returns the raw secret ONCE.
+def _write_rotated_secret(conn: psycopg.Connection, tenant_id: str, new_secret: str, new_hash: str):
+    """F-C6: store the new secret encrypted when a key is configured.
+
+    Falls back to the plaintext column when TENANT_SECRET_ENCRYPTION_KEY is unset or 0033
+    has not been applied, so rotation keeps working mid-rollout rather than failing.
     """
-    import hashlib
-    import secrets as _pysecrets
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from control_plane.secret_crypto import encrypt_tenant_secret
+    except ImportError:  # pragma: no cover - admin image vendors this, see admin.Dockerfile
+        encrypt_tenant_secret = lambda _value: None  # noqa: E731
 
-    new_secret = _pysecrets.token_urlsafe(32)
-    new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
-
-    cur = conn.execute(
+    encrypted = encrypt_tenant_secret(new_secret)
+    if encrypted:
+        try:
+            return conn.execute(
+                """
+                UPDATE tenants
+                SET hmac_secret_enc = %s,
+                    hmac_secret = NULL,
+                    hmac_secret_hash = %s
+                WHERE id = %s
+                RETURNING id
+                """,
+                (encrypted, new_hash, tenant_id),
+            )
+        except psycopg.errors.UndefinedColumn:
+            conn.rollback()
+            logging.getLogger("admin.queries").warning(
+                "tenants.hmac_secret_enc missing (migration 0033) - rotated secret stored "
+                "in plaintext"
+            )
+    return conn.execute(
         """
         UPDATE tenants
         SET hmac_secret = %s,
@@ -235,6 +263,18 @@ def rotate_tenant_secret(conn: psycopg.Connection, tenant_id: str) -> str:
         """,
         (new_secret, new_hash, tenant_id),
     )
+
+
+def rotate_tenant_secret(conn: psycopg.Connection, tenant_id: str) -> str:
+    """Generates a new 32-byte URL-safe secret for tenant_id, updates tenants table,
+    and returns the raw secret ONCE.
+    """
+    import hashlib
+    import secrets as _pysecrets
+
+    new_secret = _pysecrets.token_urlsafe(32)
+    new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
+    cur = _write_rotated_secret(conn, tenant_id, new_secret, new_hash)
     if not cur.fetchone():
         raise ValueError(f"Tenant {tenant_id} not found")
 

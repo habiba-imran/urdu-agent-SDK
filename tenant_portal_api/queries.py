@@ -250,15 +250,73 @@ def get_raw_secret(conn: psycopg.Connection, tenant_id: str) -> str:
     action. Scoped by tenant_id from the caller's own verified portal JWT — same trust boundary
     as get_credentials above, just returning the real value instead of the masked placeholder.
     """
-    row = conn.execute(
-        "select hmac_secret from tenants where id = %s",
-        (tenant_id,),
-    ).fetchone()
+    # F-C6: the secret may now be stored encrypted (tenants.hmac_secret_enc). Prefer it and
+    # fall back to the plaintext column during rollout.
+    try:
+        row = conn.execute(
+            "select hmac_secret_enc, hmac_secret from tenants where id = %s",
+            (tenant_id,),
+        ).fetchone()
+        encrypted, plaintext = (row[0], row[1]) if row else (None, None)
+    except psycopg.errors.UndefinedColumn:
+        conn.rollback()
+        row = conn.execute(
+            "select hmac_secret from tenants where id = %s",
+            (tenant_id,),
+        ).fetchone()
+        encrypted, plaintext = None, (row[0] if row else None)
+
     if row is None:
         raise ValueError("tenant not found")
-    if not row[0]:
+    if encrypted:
+        from control_plane.secret_crypto import decrypt_tenant_secret
+
+        secret = decrypt_tenant_secret(encrypted)
+        if not secret:
+            raise ValueError("no secret provisioned")
+        return secret
+    if not plaintext:
         raise ValueError("no secret provisioned")
-    return row[0]
+    return plaintext
+
+
+def rotate_own_secret(conn: psycopg.Connection, tenant_id: str) -> str:
+    """F-C6: self-service rotation. There was none — only an admin route (admin/app.py:206),
+    so a tenant who believed their secret was exposed could not do anything about it.
+
+    Returns the new secret ONCE. Stored encrypted when a key is configured.
+    """
+    import hashlib
+    import secrets as _pysecrets
+
+    from control_plane.secret_crypto import encrypt_tenant_secret
+
+    new_secret = _pysecrets.token_urlsafe(32)
+    new_hash = hashlib.sha256(new_secret.encode()).hexdigest()
+    encrypted = encrypt_tenant_secret(new_secret)
+
+    if encrypted:
+        try:
+            updated = conn.execute(
+                "update tenants set hmac_secret_enc = %s, hmac_secret = null, "
+                "hmac_secret_hash = %s where id = %s returning id",
+                (encrypted, new_hash, tenant_id),
+            ).fetchone()
+        except psycopg.errors.UndefinedColumn:
+            conn.rollback()
+            updated = None
+        else:
+            if updated is None:
+                raise ValueError("tenant not found")
+            return new_secret
+
+    updated = conn.execute(
+        "update tenants set hmac_secret = %s, hmac_secret_hash = %s where id = %s returning id",
+        (new_secret, new_hash, tenant_id),
+    ).fetchone()
+    if updated is None:
+        raise ValueError("tenant not found")
+    return new_secret
 
 
 # An open session (ended_at IS NULL) older than this is NOT live — it leaked.
