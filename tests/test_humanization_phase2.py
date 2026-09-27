@@ -92,13 +92,32 @@ def test_deepgram_build_uses_resolved_endpointing(monkeypatch):
 
 
 def test_gladia_still_disables_code_switching(monkeypatch):
+    """Keep Gladia code_switching=False even if another test already imported the real plugin.
+
+    ``worker.providers.stt.gladia.build`` does ``from livekit.plugins import gladia`` inside
+    the function. Patching only ``sys.modules['livekit.plugins.gladia']`` is not enough once
+    the real submodule is bound on ``livekit.plugins`` — that path was order-dependent and
+    could construct a real STT (and skip/fail on missing keys) depending on collection order.
+    """
     created: dict = {}
 
     class FakeSTT:
         def __init__(self, **kwargs):
             created.update(kwargs)
 
-    monkeypatch.setitem(sys.modules, "livekit.plugins.gladia", SimpleNamespace(STT=FakeSTT))
+    fake = SimpleNamespace(STT=FakeSTT)
+    monkeypatch.setitem(sys.modules, "livekit.plugins.gladia", fake)
+
+    import livekit.plugins as lk_plugins
+
+    # Force a real-plugin import first so this test stays green regardless of order.
+    try:
+        from livekit.plugins import gladia as _real_gladia  # noqa: F401
+    except Exception:
+        pass
+    monkeypatch.setattr(lk_plugins, "gladia", fake, raising=False)
+
     gladia_mod.build("ur")
     assert created["languages"] == ["ur"]
     assert created["code_switching"] is False
+    assert len(created) == 2

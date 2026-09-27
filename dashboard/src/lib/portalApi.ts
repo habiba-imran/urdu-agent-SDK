@@ -26,6 +26,8 @@ export type PortalAgent = {
   tts_provider?: string;
   tts_voice_id?: string | null;
   tts_options?: Record<string, unknown>;
+  /** F-C4 — opt-in call recording (default false). */
+  recording_enabled?: boolean;
 };
 
 // ── Provider capabilities (ADR-036) — which STT/LLM/TTS providers + models/voices are enabled
@@ -192,6 +194,7 @@ export function updateAgent(
     llm_model?: string;
     top_p?: number;
     agent_description?: string;
+    recording_enabled?: boolean;
   } & AgentProviderFields,
 ) {
   return request<PortalAgent>(`/portal/agents/${agentId}`, {

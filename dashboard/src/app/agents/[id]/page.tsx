@@ -61,6 +61,7 @@ export default function AgentDetailPage() {
   const [llmProvider, setLlmProvider] = useState('');
   const [ttsProvider, setTtsProvider] = useState('');
 
+  const [recordingEnabled, setRecordingEnabled] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -82,6 +83,7 @@ export default function AgentDetailPage() {
     setSttModel(agent.stt_model || '');
     setLlmProvider(agent.llm_provider || '');
     setTtsProvider(agent.tts_provider || '');
+    setRecordingEnabled(Boolean(agent.recording_enabled));
   }, [agent]);
 
   const langEntry = capabilities?.languages[language];
@@ -139,6 +141,7 @@ export default function AgentDetailPage() {
         llm_provider: llmProvider,
         tts_provider: ttsProvider,
         tts_voice_id: voiceId,
+        recording_enabled: recordingEnabled,
       });
       await mutateAgents(
         (current) => (current ?? []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a)),
@@ -345,6 +348,22 @@ export default function AgentDetailPage() {
               <span className="ml-2">set at creation, not editable</span>
             </div>
           </div>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-primary"
+              checked={recordingEnabled}
+              onChange={(e) => setRecordingEnabled(e.target.checked)}
+            />
+            <span className="space-y-0.5">
+              <span className="block text-sm font-medium text-foreground">Record calls</span>
+              <span className="block text-xs text-muted-foreground">
+                Off by default. When on, callers hear a short disclosure and audio is stored with
+                retention limits.
+              </span>
+            </span>
+          </label>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">

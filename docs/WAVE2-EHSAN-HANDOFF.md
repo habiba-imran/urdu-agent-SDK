@@ -50,7 +50,7 @@ Then Medium/Low:
 
 | Track | Habiba (done) | Your part | Full ticket ✅? |
 |---|---|---|---|
-| **F-C4** | Worker recording / consent / retention code | Migration A.3, purge cron, portal re-sign / agent toggle | **No** until your exits |
+| **F-C4** | Worker recording / consent / retention code | Migration A.3, purge cron, portal re-sign / agent toggle | **Yes** (Wave 2 closed; purge apply deferred) |
 | **F-C7** | Write-tool gate + proof tests | Mint A.4 `verified_caller_phone` | **No** until A.4 (host idempotency = Habiba, not you) |
 | **F-H18** | `session_close` + reconcile runbook/tests | Schedule **both** reconcile scripts | **No** until cron |
 | **F-H10** | Bounded retries; no #2 provider | **Nothing** | Closed as residual |
@@ -164,7 +164,9 @@ Suggested: daily or every few hours. Until session retention columns exist, scri
   is still in storage.
 - [x] Verified against the migrated schema: with 0028 the script finds expired sessions; without
   it, it logs "sessions retention/deleted_at columns missing" and handles telephony only.
-- [ ] Portal re-sign / deletion from `recording_storage_path` — still open (can lag).
+- [x] Portal re-sign / deletion from `recording_storage_path` — Habiba Wave 2 close:
+  `tenant_portal_api/recording_urls.py` + session routes; agent recording toggle on portal/machine
+  + dashboard Advanced Settings.
 
 **Signed:** Ehsan (via Claude) **Date:** 2026-09-19
 

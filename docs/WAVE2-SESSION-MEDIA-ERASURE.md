@@ -42,17 +42,13 @@ python scripts/purge_expired_session_media.py
 ## Worker behaviour (already in code)
 
 - On session close, worker sets `retention_until` via `worker/session_retention.py` (default **30 days**, env `UVA_RECORDING_RETENTION_DAYS`).
-- Uploads store **`recording_storage_path` only** — long-lived signed `recording_url` is no longer written (portal should re-sign from path on read — Ehsan follow-up).
+- Uploads store **`recording_storage_path` only** — long-lived signed `recording_url` is no longer written (portal re-signs from path on read — `tenant_portal_api/recording_urls.py`).
 
-## Scheduling (Ehsan — still open)
+## Scheduling (2026-09-27)
 
-Nothing in this repo schedules the purge yet (same gap as F-H18 reconcile). Options:
+**Landed:** `.github/workflows/purge-session-media.yml` — daily 03:30 UTC + `workflow_dispatch`. Dry-run by default; set `PURGE_APPLY=true` to delete (requires `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` for storage).
 
-- GitHub Actions cron (see `refresh-voice-previews.yml` pattern), or
-- Render cron job, or
-- Ops runbook until automation lands
-
-**Interim:** run `--dry-run` then live purge manually after any deletion request; file a ticket with owner + date for cron.
+Habiba dry-ran successfully after migration `0028`. Leave apply off until ready (Wave 2 closed with dry-run). Portal re-sign + recording toggle shipped with Wave 2 close.
 
 ## Env required for storage deletes
 

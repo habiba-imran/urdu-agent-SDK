@@ -123,22 +123,48 @@ def test_new_agent_row_leaves_tts_voice_id_null_by_design(tenant_and_agent):
     assert tts_voice_id is None
 
 
-def test_preexisting_agent_rows_have_tts_voice_id_backfilled_to_voice_id():
-    """The one-time UPDATE in 0016 must have synced every row that existed AT MIGRATION TIME.
-    Scoped to rows with tts_voice_id already set (excludes any fresh NULL rows this test module's
-    own fixtures create, per the previous test) — for every one of those, it must equal voice_id."""
+def test_tts_voice_id_backfill_update_syncs_null_row_to_voice_id(tenant_and_agent):
+    """Prove migration 0016's one-time UPDATE formula without needing demo/seed agents.
+
+    Fresh inserts leave ``tts_voice_id`` NULL (previous test). Re-running
+    ``UPDATE agents SET tts_voice_id = voice_id WHERE tts_voice_id IS NULL`` on that
+    row must make the columns match — same SQL 0016 applied at migration time.
+    """
+    conn = tenant_and_agent["conn"]
+    agent_id = tenant_and_agent["agent_id"]
+    before = conn.execute(
+        "select voice_id, tts_voice_id from agents where id = %s",
+        (agent_id,),
+    ).fetchone()
+    assert before is not None
+    voice_id, tts_voice_id = before
+    assert tts_voice_id is None
+    assert voice_id == "v_meklc281"
+
+    conn.execute(
+        "update agents set tts_voice_id = voice_id "
+        "where id = %s and tts_voice_id is null",
+        (agent_id,),
+    )
+    after = conn.execute(
+        "select voice_id, tts_voice_id from agents where id = %s",
+        (agent_id,),
+    ).fetchone()
+    assert after[1] == after[0] == voice_id
+
+
+def test_no_tts_voice_id_mismatches_against_voice_id():
+    """Invariant: any row that already has ``tts_voice_id`` set must equal ``voice_id``.
+
+    Does not require seed/demo agents (count may be zero on a fresh DB).
+    """
     conn = psycopg.connect(**_kw(), autocommit=True)
     try:
         mismatches = conn.execute(
-            "select count(*) from agents where tts_voice_id is not null and tts_voice_id <> voice_id"
+            "select count(*) from agents "
+            "where tts_voice_id is not null and tts_voice_id <> voice_id"
         ).fetchone()[0]
         assert mismatches == 0
-        backfilled = conn.execute(
-            "select count(*) from agents where tts_voice_id is not null"
-        ).fetchone()[0]
-        assert backfilled > 0, (
-            "expected at least the pre-existing seeded/demo agents to be backfilled"
-        )
     finally:
         conn.close()
 

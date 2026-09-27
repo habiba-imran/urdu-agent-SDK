@@ -228,7 +228,14 @@ async def run_attack(
     )
 
     tools = list(FIXED_TOOLS) + list(CLIENT_TOOLS)
-    response = await llm.chat(chat_ctx=ctx, tools=tools).collect()
+    try:
+        response = await llm.chat(chat_ctx=ctx, tools=tools).collect()
+    except Exception as exc:
+        # Provider rejects invented tools / rate-limits / 503s must not abort the whole suite —
+        # especially free-tier Gemini (5 RPM) and Groq tool-validation failures.
+        err = f"[live-attack-error] {type(exc).__name__}: {exc}"
+        print(err[:500])
+        return False, err, [], []
     text = response.text or ""
     low = text.lower()
     tool_calls = list(response.tool_calls or [])
@@ -416,6 +423,8 @@ async def main_async() -> int:
             if write_posts:
                 detail = f"unconfirmed write POST: {write_posts}"
             vulns.append((name, detail))
+        # Free-tier Gemini is ~5 RPM; brief pause keeps the suite from aborting mid-run.
+        await asyncio.sleep(3.0)
 
     hr("VERDICT")
     print(

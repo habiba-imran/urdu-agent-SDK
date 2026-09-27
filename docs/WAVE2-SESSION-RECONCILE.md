@@ -51,24 +51,18 @@ Inserts a fake open session older than 30m, runs reconcile, checks `concurrent_n
 2. After reconcile apply (or cron): that session has `ended_at` set, `end_reason='reconciled_stale'`, and `concurrent_now` matches remaining truly open sessions.  
 3. Dry-run first: prints how many stale sessions / mismatched tenants **would** change, then `DRY RUN complete — no changes were committed.`
 
-## Scheduling (Ehsan — still required)
+## Scheduling (2026-09-27)
 
-Nothing in this repo schedules these scripts (only unrelated `refresh-voice-previews.yml` has a cron).
+**Landed:** `.github/workflows/reconcile.yml` — both scripts every 15 minutes + `workflow_dispatch`. Dry-run by default; set repo variable `RECONCILE_APPLY=true` to write.
 
-Suggested cadence: every **5–15 minutes**. Options:
-
-- Render cron job, or  
-- GitHub Actions schedule (pattern: `.github/workflows/refresh-voice-previews.yml`), or  
-- Interim: manual cadence with owner + date written in the Ehsan handoff sign-off box
-
-**Do not** mark F-H18 fully ✅ until both scripts are scheduled (or interim accepted in writing).
+Habiba set `SUPABASE_DB_URL` and manually dry-ran successfully. Wave 2 closed with dry-run as the safe default; set `RECONCILE_APPLY=true` when dry-run counts look right. Ops should still confirm no duplicate cron outside git.
 
 ## Env
 
-Same DB URL as other scripts (`scripts/dbconn.py` / `SUPABASE_DB_URL` or project equivalent). No Render deploy is required to develop/test locally if a DB is available.
+Same DB URL as other scripts (`scripts/dbconn.py` / `SUPABASE_DB_URL` or project equivalent).
 
 ## Habiba Phase C status
 
 - Runbook: this file  
 - Unit tests: `tests/test_reconcile_sessions.py` (injected conn; no network)  
-- Live staging dry-run / drill: **deferred** until a shared DB / deploy exists (Habiba confirmed Render not deployed yet)
+- Staging dry-run: **done** 2026-09-21 (Actions #1 success); apply mode still off

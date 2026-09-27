@@ -54,7 +54,7 @@ One owner per file in Wave 1. Do not open overlapping PRs on the same path. If a
 | Humanization + TTFT (**not `F-*`**; CTO brief) | Cartesia emotion markup vs token tax; Gemini first-token too slow vs Groq; no history window; 429 retries = dead air | `worker/main.py`, `worker/telephony_tts.py`, `worker/providers/llm/` |
 | Worker cold start (**not `F-*`**; §3.2) | Time-to-first-greeting after room join (VAD / session start) | `worker/main.py` |
 
-Parked / residual after Habiba Medium+Low Phase H (2026-09-19): F-M1 **portal half** (Ehsan); F-M25 **Render probe** (Habiba deploy); optional F-M15 live log spot-check / F-M24 staging env confirm / F-L6 browser confirm. Habiba **worker** Medium+Low code closed — see `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`. Critical/High shared exits unchanged (F-C4/F-C7/F-H18).
+Parked / residual after Habiba Medium+Low Phase H + 2026-09-27 Wave 2 **close**: F-M25 **Render worker probe** (Habiba — **deferred**, worker local); dashboard login/signup UX (Habiba later); `PURGE_APPLY` after dry-run week. See `docs/WAVE2-CLOSED.md`. Habiba **worker** Medium+Low code closed — see `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`. Ehsan shared exits for F-C4/F-C7/F-H18/F-M1 **landed**; portal recording toggle + re-sign closed with Habiba Wave 2 wrap.
 
 ### Ehsan — package installs and first mint is fast
 
@@ -68,7 +68,7 @@ Parked / residual after Habiba Medium+Low Phase H (2026-09-19): F-M1 **portal ha
 | Per-session LiveKit dispatch handshake (**not `F-*`**; §3.1) | New `LiveKitAPI` + TLS per session on the path to first audio | `control_plane/app.py` **only** `_run_dispatch_background` (~`:419–445`). No drive-by CORS / `dev-mint` edits |
 | Groq + Cartesia accounts live (**not `F-*`**; §6 Q1) | Audit already records Cartesia in a payment-failure state; Wave 1 TTS/TTFT is Cartesia + Groq | No code. Confirm Render/env keys and billing with whoever holds the accounts |
 
-Parked for Ehsan Wave 2+: F-C1, F-C2, F-C3, F-H1 (full whitelist removal), F-H3, Docker, telephony, secrets, legal, rest of §6 inventory.
+Ehsan Wave 2 code gates (C1–C3, C5–C6, H1, H3+, M7–M8, …) closed on `staging` through 2026-09-27. Habiba closed remaining portal recording toggle / re-sign with Wave 2 wrap (`docs/WAVE2-CLOSED.md`). Residual product: legal / §6 inventory; kill-switch/rollback; dashboard signup; Render worker.
 
 ### Delivery items that are not §9 IDs
 
@@ -138,7 +138,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 ### F-C4 — Unconditional call recording with no consent, disclosure, retention, or erasure
 - **Owner:** Habiba
 - **Wave:** 2
-- **Wave 2 status (2026-09-18, Habiba):** Worker Phases B–D landed (`recording_policy`, disclosure, retention/purge script, URL hygiene). **Do not mark full Critical ✅ yet** — shared exits still open: Ehsan A.3 migration sign-off + columns on `sessions`/`escalations`, purge **cron** schedule (interim: manual runbook `docs/WAVE2-SESSION-MEDIA-ERASURE.md`), portal re-sign / agent toggle UI, Render `UVA_SESSION_RECORD_AUDIO` confirmation.
+- **Wave 2 status (2026-09-27):** Worker Phases B–D landed. Ehsan A.3 migration (`0028`) + purge workflow landed; Habiba applied mig through **0033**, ran purge dry-run, set staging hosted env. Portal re-sign + agent recording toggle **shipped** (Wave 2 close). **Post-Wave-2 ops:** flip `PURGE_APPLY` after dry-run week; optional Render `UVA_SESSION_RECORD_AUDIO` when worker is hosted.
 - **Where:** `worker/main.py` (`session.start(..., record={"audio": True, "traces": False, "logs": False, "transcript": False})`, including the inline override that records even when LiveKit sends `enable_recording=false`); `worker/session_recording.py:1–198`; `worker/main.py:742–760`; `worker/session_opening.py` (greeting only — no disclosure text); `supabase/migrations/0011_session_transcript.sql`, `0014_telephony_data_governance_audit.sql`, `0027_session_call_recordings.sql`
 - **Why it matters:** Every browser and PSTN call is recorded to `audio.ogg`, uploaded to Supabase Storage at `{tenant_id}/{room_name}.ogg` (`session_recording.py:70`), and a 7-day signed URL is persisted in plaintext to `sessions.recording_url` (`:89,126–134`) where the portal returns it. The verbatim transcript is stored in `sessions.transcript`. Caller phone numbers are stored in `escalations.contact_info`. None of this is ever deleted; there is no consent capture, spoken disclosure, per-tenant opt-out, PII redaction function, deletion audit trail, or erasure path. Migration `0014` added retention columns to telephony infrastructure tables (trunks, SIP connections) and to none of the tables that hold personal data. §8 Part B maps the same gap to GDPR erasure and to CCPA/CPRA access and deletion.
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-C4** (§9; also §8 Part A/B)
@@ -161,7 +161,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 ### F-C7 — LLM-driven write tools have no confirmation gate and no ownership check
 - **Owner:** Habiba
 - **Wave:** 2
-- **Wave 2 status (2026-09-18, Habiba):** Worker Phase E landed (propose/confirm + user-turn barrier, schema, ownership, budget, idempotency key sent, SIP ANI / telephony remote party wiring). Deterministic injection harness: `tests/test_injection_write_gate.py`. Live script adapted: `tests/test_injection_live.py` (manual). **Do not mark full Critical ✅ yet** — browser cancel/reschedule needs Ehsan A.4 `verified_caller_phone` mint; host/client must accept/dedupe `idempotency_key`; live Gemini run + staging booking call remain manual proof.
+- **Wave 2 status (2026-09-27):** Worker Phase E landed. Ehsan A.4 mint `verified_caller_phone` landed. Habiba `host-tools/` idempotency stub proven. Live Gemini injection **green**; Groq secrecy harden shipped. **Post-Wave-2:** staging end-to-end booking call (human); replace `host-tools` with Finova calendar in prod. See `docs/WAVE2-CLOSED.md`.
 - **Where:** `worker/tools.py` (`book_appointment`, `reschedule_appointment`, `cancel_appointment`); `worker/write_tool_gate.py`; `worker/caller_identity.py`
 - **Why it matters:** `cancel_appointment` identifies the booking by a `customer_phone` string the caller supplied and the LLM transcribed. Nothing verifies the caller owns that number. `reschedule_appointment` has the same shape. Both are irreversible against a tenant's real calendar. The prompt-injection residual previously reached only `escalate_to_human`; it now reaches three destructive writes. No idempotency key is sent. No `MAX_TOOL_CALLS` budget exists. LLM-produced arguments flow into `_post_client_tool` and `INSERT`s with only the Python type signature — no schema validation before dispatch (§5b item 1 / §2 item 11). The live injection test (`tests/test_injection_live.py`) was never executed (§0); that run is a separate Wave 2 ticket after F-H1 collects it.
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-C7** (§9; also §5b)
@@ -300,7 +300,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Where:** `worker/session_close.py` (via `worker/main.py` shutdown callback); `scripts/reconcile_sessions.py`; `scripts/reconcile_telephony.py`
 - **Why it matters:** Session close, concurrency decrement, and `usage_events` writes happen only in LiveKit shutdown callbacks. Crash/OOM/eviction leaves the session open, the slot consumed, and the call unbilled. `tenant_portal_api/queries.py:264–276` documents that this already produced a tenant showing 13 "live" calls whose oldest was 96 hours old. Both reconcile scripts exist and nothing schedules either. The audit fix text is "schedule both reconcile scripts." The callback body is wrapped in `except Exception` → `logger.warning` (`:826–828`).
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-H18** (§9)
-- **Wave 2 status (2026-09-18, Habiba):** Phase B close harden landed (`worker/session_close.py` — close → quota → best-effort transcript/retention/usage; ERROR logs). Phase C runbook + unit tests landed (`docs/WAVE2-SESSION-RECONCILE.md`, `tests/test_reconcile_sessions.py`). **Do not mark full High ✅** — Ehsan must still schedule **both** reconcile scripts (C.3); see `docs/WAVE2-EHSAN-HANDOFF.md` §1. Closeout: `docs/WAVE2-HIGH-PHASE-F-CLOSEOUT.md`.
+- **Wave 2 status (2026-09-27):** Phase B/C Habiba landed. Ehsan scheduled both scripts (`.github/workflows/reconcile.yml`); Habiba set `SUPABASE_DB_URL` and dry-ran successfully. **Still open for full High ✅:** leave dry-run until ready, then set repo var `RECONCILE_APPLY=true`; confirm no duplicate ops cron outside git. Closeout: `docs/WAVE2-HIGH-PHASE-F-CLOSEOUT.md`.
 - **File freeze:** Habiba's worker path waits for Wave 1 `worker/main.py` to merge. Ehsan may add a cron/workflow on **both** existing scripts in parallel (`reconcile_sessions.py` and `reconcile_telephony.py`).
 
 ---
@@ -313,7 +313,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Where:** Full list in Appendix A.3; worst: `control_plane/app.py:204`, `tenant_portal_api/telephony_webhooks.py:307`, `tenant_portal_api/telephony_credentials.py:118`, `worker/session_recording.py:82`. Worker-side also: `worker/main.py:913,927,1069` (incl. VAD preload), `worker/latency.py:146,164,256,282`, `worker/tools.py:139`, `worker/providers/llm/gemini.py:57`.
 - **Why it matters:** Guideline §2 names this pattern explicitly. A DB outage returns a fake voice catalogue; a failed credential re-encryption is invisible; a failed recording delete is invisible. `/v1/voices` is also unauthenticated (`control_plane/app.py:173–249`) — the swallow is F-M1; do not treat the public catalogue itself as a separate ticket.
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-M1** (§9 / Appendix A.3)
-- **Wave 2 status (2026-09-19, Habiba):** Worker Phase B **landed** (`tests/test_fm1_worker_handlers.py`). **Do not mark full Medium ✅** — Ehsan portal / control_plane / telephony half still open (`docs/WAVE2-EHSAN-HANDOFF.md` §7). Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
+- **Wave 2 status (2026-09-27):** Worker Phase B landed. Ehsan portal / CP / telephony half landed (PR #28+). **Medium ✅** for the F-M1 split tracked in Wave 2. Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
 - **Note:** `worker/session_recording.py:82` is Habiba Wave 2 with F-C4. Other worker handlers in A.3 are Habiba Wave 2 after `worker/main.py` / `latency.py` / `tools.py` Wave 1 freeze lifts. Ehsan owns the portal/control-plane handlers. Wave 1 cold-start may *read* the VAD-preload `except` at `main.py:1069`; do not treat log-hygiene as the Wave 1 goal.
 
 ### F-M2 — `agents.prompt` has no length limit
@@ -482,7 +482,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Where:** `worker/main.py:602,608`; `worker/prompt_dump.py`; `.env.example:44` (`UVA_DUMP_PROMPTS=1` documented as default on)
 - **Why it matters:** Caller PII reaches application logs and `docs/last_session_prompt.txt` — neither covered by any retention or redaction rule (F-C4).
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-M24** (§9)
-- **Wave 2 status (2026-09-19, Habiba):** Phase C landed — `UVA_DUMP_PROMPTS` / `UVA_LOG_TRANSCRIPTS` default **off**; `worker/transcript_logging.py`; `tests/test_fm24_prompt_transcript_logging.py`. Confirm staging/prod env not forced on — Habiba deploy. Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
+- **Wave 2 status (2026-09-27):** Phase C landed — defaults **off**. Local/staging confirmed not forced on. Re-check only when a paid Render **worker** is deployed. Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
 - **File freeze:** after Wave 1 `worker/main.py` merge. Wave 1 may *read* prompt_dump while shrinking tokens; do not treat log-PII as the Wave 1 goal.
 
 ### F-M25 — No worker health or readiness endpoint
@@ -491,7 +491,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Where:** `worker/main.py` (LiveKit agent process exposes no HTTP surface)
 - **Why it matters:** Control plane has `/healthz`, `/healthz/deep`, `/healthz/warm`; the process that serves audio has nothing. A wedged worker is undetectable except by a failing call.
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-M25** (§9)
-- **Wave 2 status (2026-09-19, Habiba):** Phase E **code** landed (`worker/health_http.py`, `tests/test_fm25_worker_health.py`). **Do not mark full ops ✅** until Habiba wires Render/`UVA_WORKER_HEALTH_PORT`. Optional Dockerfile HEALTHCHECK = Ehsan with F-M9 only (`WAVE2-EHSAN-HANDOFF.md` §9). Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
+- **Wave 2 status (2026-09-27):** Phase E **code** landed. **Ops deferred** — worker stays local; Render `/healthz` wiring when Habiba deploys a paid worker (`WAVE2-HABIBA-HOST-FOLLOWUPS.md` §3). Dockerfile HEALTHCHECK landed with F-M9. Closeout: `docs/WAVE2-MEDIUM-LOW-PHASE-H-CLOSEOUT.md`.
 
 ### F-M26 — No cap on agents per tenant
 - **Owner:** Ehsan
@@ -911,7 +911,7 @@ These were previously omitted because §9 did not promote them. They are now tic
 ### Live prompt-injection test not executed
 - **Owner:** Habiba
 - **Wave:** 2
-- **Wave 2 status (2026-09-18):** Deterministic F-C7 harness whitelisted (`tests/test_injection_write_gate.py`). Live Gemini script adapted for CLIENT write tools (`tests/test_injection_live.py`) — still **manual** (`python tests/test_injection_live.py`); not in `pytest.ini` whitelist. `pytest.ini` now defines `live` marker + `addopts = -m "not live"` for F-H1 coordination. Paste live run output into `docs/WAVE2-PHASE-F-CLOSEOUT.md` when executed.
+- **Wave 2 status (2026-09-27):** Deterministic harness green. Live script: `python tests/test_injection_live.py` (auto-marked `live`; deselected by default). **2026-09-27:** Gemini all attacks rejected + no unconfirmed write POST — recorded in `docs/WAVE2-PHASE-F-CLOSEOUT.md`. Groq `reveal_system_prompt` residual (EN path) still open.
 - **Where:** §0 / §5b; `tests/test_injection_live.py` (never collected — F-H1); F-C7 is the code fix this test is meant to verify
 - **Why it matters:** Distinct from pentest/load/soak. The audit analysed the injection surface from code only and states which parts need a live test. F-C7's fix text is: run the live injection test and add it to a gate that actually runs. Do this after F-C7 and after F-H1 collects `*_live.py` under a `live` marker (deselect by default in CI).
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → §0; §5b; F-C7 fix
