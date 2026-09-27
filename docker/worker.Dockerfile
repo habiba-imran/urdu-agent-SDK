@@ -39,6 +39,7 @@ USER uva
 
 # F-M25: worker/health_http.py serves /healthz when UVA_WORKER_HEALTH_PORT is set.
 # Habiba owns wiring the Render probe; this makes the container self-report when enabled.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \n  CMD python -c "import os,sys,urllib.request; port=os.environ.get('UVA_WORKER_HEALTH_PORT'); sys.exit(0) if not port else sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3).status==200 else 1)"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD python -c "import os,sys,urllib.request; port=os.environ.get('UVA_WORKER_HEALTH_PORT'); sys.exit(0) if not port else sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3).status==200 else 1)"
 
 CMD ["python", "-m", "worker.main", "start"]

@@ -38,6 +38,7 @@ EXPOSE 8001
 RUN useradd --system --create-home --uid 10001 uva && chown -R uva:uva /app
 USER uva
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \n  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).status==200 else 1)"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).status==200 else 1)"
 
 CMD ["uvicorn", "admin.app:app", "--host", "0.0.0.0", "--port", "8001"]
