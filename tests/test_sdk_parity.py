@@ -1,31 +1,27 @@
-"""SDK parity check — Phase 3 of docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md (ADR-036).
+"""Server SDK provider/language field check (ADR-036 Phase 3).
 
-sdk-server/src/index.ts and client-submission_v2/sdk/@awaazlabs-uva/agents/src/index.ts are hand
--duplicated files with nothing enforcing they stay in sync (Phase 0 audit finding #5) — the exact
-class of bug that already hit the machine-agent HMAC canonicalization once (Session 13). This
-guards against that regression happening again for the provider/language fields.
+HISTORY: this file used to assert that `sdk-server/src/index.ts` and a hand-duplicated copy
+at `client-submission_v2/sdk/@awaazlabs-uva/agents/src/index.ts` were byte-identical, because
+two hand-maintained copies had already drifted once and broken machine-agent HMAC
+canonicalization.
 
-NOTE ON SCOPE: `tsc` is not installed in this environment (confirmed repeatedly across every
-`make gate` run — "'tsc' is not recognized as an internal or external command"), a pre-existing gap
-(state/PROGRESS.md Session 14d already flagged the TS SDK isn't type-checked by the gate at all).
-This test cannot substitute for real type-checking; it only proves the two files stay byte-
-identical and that the fields this phase added are actually present in both. Real `tsc --noEmit`
-verification is still an open gap, not fixed here — flagged, not silently worked around.
+That second copy no longer exists — commit 62b2eb3 replaced client-submission_v2 with
+`client-deliverables-final/`, which points integrators at the published
+`@awaazlabs-uva/agents` package instead of shipping a source copy. There is now exactly one
+source of truth, so the duplication this guarded against cannot happen, and the byte-identity
+test was failing purely on a missing path (it never ran: F-H1's whitelist hid it).
+
+What is still worth checking — that the provider/language fields ADR-036 added are actually
+present in the published SDK's source — is kept below.
+
+Real type-checking is no longer the gap the old docstring described: `npm test` in
+sdk-server/ builds with tsc and runs the signing/contract suite (audit §2 item 26).
 """
 
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SDK_SERVER = _ROOT / "sdk-server" / "src" / "index.ts"
-_CLIENT_SUBMISSION = (
-    _ROOT
-    / "client-submission_v2"
-    / "sdk"
-    / "@awaazlabs-uva"
-    / "agents"
-    / "src"
-    / "index.ts"
-)
 
 _EXPECTED_NEW_FIELDS = (
     "agentLanguage",
@@ -40,17 +36,23 @@ _EXPECTED_NEW_FIELDS = (
 )
 
 
-def test_sdk_server_and_client_submission_are_byte_identical():
-    server_text = _SDK_SERVER.read_text(encoding="utf-8")
-    client_text = _CLIENT_SUBMISSION.read_text(encoding="utf-8")
-    assert server_text == client_text, (
-        "sdk-server/src/index.ts and the client-submission_v2 copy have drifted apart — "
-        "these are meant to be identical (copy one over the other, don't hand-edit both)"
+def test_sdk_server_is_the_single_source_of_truth():
+    """No second hand-maintained copy of the agents SDK source should reappear."""
+    duplicates = [
+        p
+        for p in _ROOT.rglob("index.ts")
+        if "@awaazlabs-uva" in str(p)
+        and "agents" in str(p)
+        and "node_modules" not in str(p)
+    ]
+    assert duplicates == [], (
+        "a second copy of the agents SDK source has appeared "
+        f"({duplicates}) — integrators should consume the published package, and drift "
+        "between copies has already broken HMAC canonicalization once"
     )
 
 
-def test_new_provider_fields_present_in_both_sdk_files():
-    for path in (_SDK_SERVER, _CLIENT_SUBMISSION):
-        text = path.read_text(encoding="utf-8")
-        missing = [f for f in _EXPECTED_NEW_FIELDS if f not in text]
-        assert missing == [], f"{path}: missing expected fields {missing}"
+def test_new_provider_fields_present_in_the_server_sdk():
+    text = _SDK_SERVER.read_text(encoding="utf-8")
+    missing = [f for f in _EXPECTED_NEW_FIELDS if f not in text]
+    assert missing == [], f"{_SDK_SERVER}: missing expected fields {missing}"
