@@ -168,12 +168,21 @@ def test_plan_greeting_prewarm_skips_wait_on_cache_hit():
     from worker import greeting_cache as gc
     from worker import session_opening as so
 
+    cfg = _cfg()
+    # Runtime keys use the *spoken* greeting (sanitize + Cartesia emotion wrap),
+    # not the raw agents.greeting string. Seed with the same text plan_greeting_prewarm uses.
+    opening = so.resolve_session_opening(cfg)
+    assert opening.mode == "say"
+    assert opening.text
+    assert opening.text != cfg.greeting  # Cartesia enrich must change the key material
+
     key = make_greeting_cache_key(
         agent_id="agent-1",
         tts_provider="cartesia",
         provider_voice_id="voice-x",
-        greeting_text="Hello there.",
+        greeting_text=opening.text,
         audio_channel="webrtc",
+        tts_options=cfg.tts_options,
     )
     cache.put(key, [_frame()])
     assert cache.has(key) is True
@@ -182,8 +191,9 @@ def test_plan_greeting_prewarm_skips_wait_on_cache_hit():
             agent_id="agent-1",
             tts_provider="rime",
             provider_voice_id="voice-x",
-            greeting_text="Hello there.",
+            greeting_text=opening.text,
             audio_channel="webrtc",
+            tts_options=cfg.tts_options,
         )
     ) is False
     # Point the module singleton used by plan_greeting_prewarm at our test cache.
@@ -191,7 +201,7 @@ def test_plan_greeting_prewarm_skips_wait_on_cache_hit():
     gc._cache = cache
     try:
         plan = so.plan_greeting_prewarm(
-            _cfg(),
+            cfg,
             provider_voice_id="voice-x",
             audio_channel="webrtc",
         )
@@ -200,6 +210,7 @@ def test_plan_greeting_prewarm_skips_wait_on_cache_hit():
         assert plan.await_prewarm is False
         assert plan.prewarm_timeout == 0.0
         assert plan.greeting_frames is not None
+        assert plan.await_synthesis is False
     finally:
         gc._cache = old
 

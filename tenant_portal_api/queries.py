@@ -14,12 +14,12 @@ _AGENT_COLUMNS = (
     "id, name, prompt, voice_id, llm_model, created_at, "
     "agent_language, stt_provider, stt_model, stt_options, "
     "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-    "greeting, first_speaker, tools_base_url, tools_auth_secret"
+    "greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret"
 )
 
 
 def _agent_row_to_dict(row) -> dict:
-    secret = row[18]
+    secret = row[19]
     return {
         "id": str(row[0]),
         "name": row[1],
@@ -38,7 +38,8 @@ def _agent_row_to_dict(row) -> dict:
         "tts_options": row[14],
         "greeting": row[15],
         "first_speaker": row[16],
-        "tools_base_url": row[17],
+        "recording_enabled": bool(row[17]),
+        "tools_base_url": row[18],
         # Never return the raw secret over the API — only whether one is configured.
         "tools_auth_secret_configured": bool(secret),
     }
@@ -51,7 +52,7 @@ def _agent_row_internal(row) -> dict:
     preserves the current secret would otherwise re-encrypt a ciphertext).
     """
     d = _agent_row_to_dict(row)
-    d["tools_auth_secret"] = decrypt_tool_secret(row[18])
+    d["tools_auth_secret"] = decrypt_tool_secret(row[19])
     return d
 
 
@@ -61,7 +62,8 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
         select a.id, a.name, a.prompt, a.voice_id, a.llm_model, a.created_at,
                a.agent_language, a.stt_provider, a.stt_model, a.stt_options,
                a.llm_provider, a.llm_options, a.tts_provider, a.tts_voice_id, a.tts_options,
-               a.greeting, a.first_speaker, a.tools_base_url, a.tools_auth_secret,
+               a.greeting, a.first_speaker, a.recording_enabled, a.tools_base_url,
+               a.tools_auth_secret,
                coalesce(u.total_agent_sec, 0) as total_agent_sec
         from agents a
         left join (
@@ -78,8 +80,8 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
     ).fetchall()
     out = []
     for r in rows:
-        d = _agent_row_to_dict(r[:19])
-        d["total_agent_sec"] = float(r[19])
+        d = _agent_row_to_dict(r[:20])
+        d["total_agent_sec"] = float(r[20])
         out.append(d)
     return out
 
@@ -113,6 +115,7 @@ def create_agent(
     tts_options: dict,
     greeting: str | None = None,
     first_speaker: str = "agent",
+    recording_enabled: bool = False,
     tools_base_url: str | None = None,
     tools_auth_secret: str | None = None,
 ) -> dict:
@@ -122,9 +125,9 @@ def create_agent(
             tenant_id, name, prompt, voice_id, llm_model,
             agent_language, stt_provider, stt_model, stt_options,
             llm_provider, llm_options, tts_provider, tts_voice_id, tts_options,
-            greeting, first_speaker, tools_base_url, tools_auth_secret
+            greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning {_AGENT_COLUMNS}
         """,
         (
@@ -144,6 +147,7 @@ def create_agent(
             Jsonb(tts_options),
             greeting,
             first_speaker,
+            bool(recording_enabled),
             tools_base_url,
             # F-M8: stored encrypted when a key is configured; unchanged otherwise.
             encrypt_tool_secret(tools_auth_secret),
@@ -172,6 +176,7 @@ def update_agent(
     tts_options: dict | None = None,
     greeting=_UNSET,
     first_speaker=_UNSET,
+    recording_enabled=_UNSET,
     tools_base_url=_UNSET,
     tools_auth_secret=_UNSET,
 ) -> dict:
@@ -197,6 +202,7 @@ def update_agent(
             tts_options = %s,
             greeting = %s,
             first_speaker = %s,
+            recording_enabled = %s,
             tools_base_url = %s,
             tools_auth_secret = %s
         where id = %s and tenant_id = %s
@@ -218,6 +224,11 @@ def update_agent(
             Jsonb(tts_options if tts_options is not None else current["tts_options"]),
             current["greeting"] if greeting is _UNSET else greeting,
             current["first_speaker"] if first_speaker is _UNSET else first_speaker,
+            (
+                current["recording_enabled"]
+                if recording_enabled is _UNSET
+                else bool(recording_enabled)
+            ),
             current["tools_base_url"] if tools_base_url is _UNSET else tools_base_url,
             # F-M8: current["tools_auth_secret"] is already decrypted by
             # _agent_row_internal, so both branches re-encrypt a plaintext value.

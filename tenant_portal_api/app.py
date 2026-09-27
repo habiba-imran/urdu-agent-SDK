@@ -36,6 +36,7 @@ from .tools_webhook import (
     normalize_tools_base_url,
 )
 from . import queries
+from .recording_urls import enrich_session_recording
 from .telephony_routes import router as telephony_router
 from .telephony_webhooks import router as telephony_webhook_router
 
@@ -137,6 +138,8 @@ class CreateAgentBody(BaseModel):
     tts_options: dict | None = Field(default=None)
     greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
+    # F-C4: opt-in call recording (default false — column default matches).
+    recording_enabled: bool | None = Field(default=None)
     # Client backend tool gateway (RAG/FAQ/scheduling). Per-agent so multi-client SDK
     # workers call the right host — not a single global worker env URL.
     tools_base_url: str | None = Field(default=None)
@@ -159,6 +162,7 @@ class UpdateAgentBody(BaseModel):
     tts_options: dict | None = Field(default=None)
     greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
+    recording_enabled: bool | None = Field(default=None)
     tools_base_url: str | None = Field(default=None)
     tools_auth_secret: str | None = Field(default=None)
 
@@ -237,6 +241,17 @@ def _opening_from_body(
         raise HTTPException(
             status_code=422, detail={"code": e.code, "reason": e.reason}
         ) from e
+
+
+def _recording_enabled_from_body(
+    body: CreateAgentBody | UpdateAgentBody, current: dict | None
+):
+    """Create defaults false; PATCH omit keeps current."""
+    if body.recording_enabled is not None:
+        return bool(body.recording_enabled)
+    if current is None:
+        return False
+    return queries._UNSET
 
 
 def _tools_webhook_from_body(
@@ -402,6 +417,7 @@ def create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            recording_enabled=_recording_enabled_from_body(body, None),
             tools_base_url=tools["tools_base_url"],
             tools_auth_secret=tools["tools_auth_secret"],
         )
@@ -443,6 +459,7 @@ def update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                recording_enabled=_recording_enabled_from_body(body, current),
                 tools_base_url=tools["tools_base_url"],
                 tools_auth_secret=tools["tools_auth_secret"],
             )
@@ -661,7 +678,8 @@ def sessions_route(
 ):
     claims = _require_tenant(authorization)
     with _conn() as conn:
-        return queries.list_recent_sessions(conn, claims["sub"], limit=limit)
+        sessions = queries.list_recent_sessions(conn, claims["sub"], limit=limit)
+    return [enrich_session_recording(s) for s in sessions]
 
 
 @app.post("/machine/sessions/get")
@@ -690,7 +708,7 @@ def machine_get_session_route(
         session = queries.get_session_by_room(conn, x_tenant_id, room_name)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        return session
+        return enrich_session_recording(session)
 
 
 @app.get("/portal/usage-summary")
@@ -759,6 +777,7 @@ def machine_create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            recording_enabled=_recording_enabled_from_body(body, None),
             tools_base_url=tools["tools_base_url"],
             tools_auth_secret=tools["tools_auth_secret"],
         )
@@ -852,6 +871,7 @@ def machine_update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                recording_enabled=_recording_enabled_from_body(body, current),
                 tools_base_url=tools["tools_base_url"],
                 tools_auth_secret=tools["tools_auth_secret"],
             )
