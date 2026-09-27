@@ -4,6 +4,7 @@ import {
   getSessions,
   getUsageSummary,
   getProviderCapabilities,
+  getMembers,
 } from '@/lib/portalApi';
 import { getVoiceCatalogue } from '@/lib/voicesApi';
 import {
@@ -30,6 +31,7 @@ export const swrKeys = {
   telephonyNumbers: 'telephonyNumbers',
   telephonyReadiness: 'telephonyReadiness',
   telephonyDrift: 'telephonyDrift',
+  members: 'members',
 } as const;
 
 export const swrFetchers = {
@@ -45,4 +47,5 @@ export const swrFetchers = {
   telephonyNumbers: () => getManagedNumbers(),
   telephonyReadiness: () => getTelephonyReadiness(),
   telephonyDrift: () => getNumberDrift(),
+  members: () => getMembers(),
 };

@@ -7,7 +7,8 @@
 // connect-src has to allow the browser to reach the control plane and portal API, whose
 // origins differ per environment — hence the env vars, with localhost defaults for dev.
 const CONTROL_PLANE = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL || 'http://localhost:8000';
-const PORTAL_API = process.env.NEXT_PUBLIC_PORTAL_API_URL || 'http://localhost:8002';
+const PORTAL_API =
+  process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL || 'http://localhost:8002';
 // LiveKit is reached over WebSocket from the Test Studio.
 const LIVEKIT = process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://*.livekit.cloud';
 

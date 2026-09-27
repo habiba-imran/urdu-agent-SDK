@@ -4,10 +4,10 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { preload } from 'swr';
-import { LayoutDashboard, Bot, KeyRound, PhoneCall, BarChart3, LogOut, Phone, Mic } from 'lucide-react';
+import { LayoutDashboard, Bot, KeyRound, PhoneCall, BarChart3, LogOut, Phone, Mic, Users } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { clearStoredTenantToken } from '@/lib/portalAuth';
+import { logoutPortalSession } from '@/lib/portalAuth';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 
 const navItems = [
@@ -32,6 +32,7 @@ const navItems = [
   },
   { href: '/usage', label: 'Usage', icon: BarChart3, prefetch: ['usage'] as const },
   { href: '/credentials', label: 'Credentials', icon: KeyRound, prefetch: ['credentials'] as const },
+  { href: '/members', label: 'Members', icon: Users, prefetch: ['members'] as const },
   { href: '/sessions', label: 'Call Sessions', icon: PhoneCall, prefetch: ['sessions'] as const },
 ];
 
@@ -56,8 +57,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
 
   const handleLogout = () => {
-    clearStoredTenantToken();
-    router.replace('/login');
+    void logoutPortalSession().finally(() => {
+      router.replace('/login');
+    });
   };
 
   return (

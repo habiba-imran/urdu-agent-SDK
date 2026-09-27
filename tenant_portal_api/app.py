@@ -24,6 +24,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
+from .membership import (
+    exchange_supabase_user_for_portal_session,
+    invite_member_to_tenant,
+    list_members,
+)
+from .supabase_auth import verify_supabase_access_token
 from .db_pool import portal_db_connection
 from .jwt_secret import portal_jwt_secret
 from .machine_auth import MachineAuthError, verify_machine_request
@@ -100,6 +106,18 @@ app.add_middleware(
 class TenantLoginBody(BaseModel):
     tenant_id: str = Field(..., min_length=1)
     tenant_secret: str = Field(..., min_length=1)
+
+
+class SupabaseExchangeBody(BaseModel):
+    """Dashboard Phase 1: exchange a Supabase access_token for a tenant portal JWT."""
+
+    access_token: str = Field(..., min_length=1)
+
+
+class InviteMemberBody(BaseModel):
+    """Phase 2: invite email only — tenant_id is taken from the portal JWT, never the body."""
+
+    email: str = Field(..., min_length=3, max_length=320)
 
 
 # F-M2 (portal half): agents.prompt had no length limit at write time, so a tenant could
@@ -372,6 +390,117 @@ def portal_login(body: TenantLoginBody, request: Request):
         )
         conn.commit()
         return result
+
+
+@app.post("/portal/auth/supabase")
+def portal_auth_supabase(body: SupabaseExchangeBody, request: Request):
+    """Phase 1 human login: verify Supabase access_token → resolve/bootstrap membership
+    → issue the same tenant-scoped portal JWT used by the rest of /portal/*.
+    """
+    client_ip = request.client.host if request.client else None
+    try:
+        claims = verify_supabase_access_token(body.access_token)
+    except TenantAuthError as e:
+        raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+    auth_user_id = str(claims["sub"])
+    email = claims.get("email")
+    if isinstance(email, str):
+        email = email.strip() or None
+    else:
+        email = None
+    throttle_id = (email or auth_user_id).lower()
+
+    with _conn() as conn:
+        try:
+            assert_not_throttled(
+                conn, realm="portal", identity=throttle_id, client_ip=client_ip
+            )
+        except LoginThrottled as e:
+            raise HTTPException(
+                status_code=e.status,
+                detail="too many failed login attempts - try again later",
+                headers={"Retry-After": str(e.retry_after_seconds)},
+            ) from e
+
+        try:
+            result = exchange_supabase_user_for_portal_session(
+                conn,
+                auth_user_id=auth_user_id,
+                email=email,
+                jwt_secret=TENANT_PORTAL_JWT_SECRET,
+            )
+        except TenantAuthError as e:
+            record_attempt(
+                conn,
+                realm="portal",
+                identity=throttle_id,
+                client_ip=client_ip,
+                successful=False,
+                reason=e.reason,
+            )
+            conn.commit()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
+        except psycopg.Error as e:
+            conn.rollback()
+            # Most common Phase 1 miss: migration 0034 not applied.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "tenant membership store unavailable — apply migration "
+                    "0034_tenant_members.sql and retry"
+                ),
+            ) from e
+
+        record_attempt(
+            conn,
+            realm="portal",
+            identity=throttle_id,
+            client_ip=client_ip,
+            successful=True,
+        )
+        conn.commit()
+        return result
+
+
+def _auth_user_id_from_claims(claims: dict) -> str:
+    uid = claims.get("auth_user_id")
+    if not uid:
+        raise HTTPException(
+            status_code=403,
+            detail="session missing auth_user_id — sign out and sign in again",
+        )
+    return str(uid)
+
+
+@app.get("/portal/members")
+def portal_list_members(authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        return list_members(conn, claims["sub"])
+
+
+@app.post("/portal/members/invite")
+def portal_invite_member(
+    body: InviteMemberBody, authorization: str | None = Header(default=None)
+):
+    """Owner invites a human to THIS tenant. Tenant id comes only from JWT ``sub``."""
+    claims = _require_tenant(authorization)
+    inviter = _auth_user_id_from_claims(claims)
+    # Ignore any tenant_id the client might try to smuggle — body has email only.
+    with _conn() as conn:
+        try:
+            invited = invite_member_to_tenant(
+                conn,
+                tenant_id=claims["sub"],
+                inviter_auth_user_id=inviter,
+                email=body.email,
+            )
+            conn.commit()
+            return invited
+        except TenantAuthError as e:
+            conn.rollback()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
 
 
 @app.get("/portal/agents")

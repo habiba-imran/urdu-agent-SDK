@@ -225,6 +225,28 @@ export function getSessions(limit = 50) {
   return request<PortalSession[]>(`/portal/sessions?limit=${limit}`);
 }
 
+export type PortalMember = {
+  auth_user_id: string;
+  email: string | null;
+  role: "owner" | "member" | string;
+  status: "invited" | "active" | string;
+  created_at: string | null;
+};
+
+export function getMembers() {
+  return request<PortalMember[]>("/portal/members");
+}
+
+export function inviteMember(email: string) {
+  return request<PortalMember & { tenant_id: string; existing_auth_user?: boolean }>(
+    "/portal/members/invite",
+    {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    },
+  );
+}
+
 export function getUsageSummary() {
   return request<PortalUsageSummary>("/portal/usage-summary");
 }
