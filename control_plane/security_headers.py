@@ -43,12 +43,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     `hsts` should stay False for services reachable over plain HTTP in development —
     a max-age of a year pinned against localhost is painful to undo in a browser.
+
+    `corp` defaults to ``cross-origin`` so browser dashboards on a different origin
+    (e.g. Vercel → Render portal) can read CORS-allowed JSON responses. ``same-origin``
+    would pass preflight and still fail the actual fetch with a CORP error.
     """
 
-    def __init__(self, app, *, hsts: bool = True, docs_enabled: bool = False) -> None:
+    def __init__(
+        self,
+        app,
+        *,
+        hsts: bool = True,
+        docs_enabled: bool = False,
+        corp: str = "cross-origin",
+    ) -> None:
         super().__init__(app)
         self._hsts = hsts
         self._docs_enabled = docs_enabled
+        self._corp = corp
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -68,7 +80,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         # Session mints and credential reads must never be stored by a proxy or the browser.
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", self._corp)
         if self._hsts:
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
