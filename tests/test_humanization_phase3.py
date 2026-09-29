@@ -89,8 +89,9 @@ def test_elevenlabs_resolve_kwargs_include_defaults():
     kwargs = resolve_elevenlabs_tts_kwargs("vid", "en", {})
     assert kwargs["voice_id"] == "vid"
     assert kwargs["language"] == "en"
-    assert kwargs["model"] == "eleven_turbo_v2_5"
+    assert kwargs["model"] == "eleven_flash_v2_5"
     assert kwargs["auto_mode"] is True
+    assert kwargs["apply_text_normalization"] == "off"
     assert kwargs["enable_ssml_parsing"] is False
     assert kwargs["voice_settings"].stability == 0.5
 
@@ -108,13 +109,16 @@ def test_cartesia_spoken_style_light_uses_plain_overlay():
         "spoken_style": "light"
     }
     assert cartesia_light_spoken_enabled({"spoken_style": "light"}) is True
-    assert cartesia_light_spoken_enabled({}) is True
+    # Platform default is manual_ssml — empty options are not light.
+    assert cartesia_light_spoken_enabled({}) is False
     overlay = tts_overlay_for(_cfg(tts_provider="cartesia", tts_options={"spoken_style": "light"}))
     assert "Do NOT emit <emotion>" in overlay
     manual = tts_overlay_for(
         _cfg(tts_provider="cartesia", tts_options={"spoken_style": "manual_ssml"})
     )
     assert "EMOTION (required" in manual
+    default_manual = tts_overlay_for(_cfg(tts_provider="cartesia"))
+    assert "EMOTION (required" in default_manual
 
 
 def test_elevenlabs_compose_includes_plain_delivery_overlay():

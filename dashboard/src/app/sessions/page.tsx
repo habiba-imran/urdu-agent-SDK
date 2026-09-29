@@ -4,12 +4,13 @@ import React, { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { Copy, Check, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
-import { type PortalSession } from '@/lib/portalApi';
+import { type PortalSession, getSession } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
+import { isPortalAuthFailure } from '@/lib/portalAuth';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
+import { stripTranscriptMarkup } from '@/lib/transcriptText';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -25,14 +26,44 @@ import {
   RowOpenButton,
 } from '@/components/ui/table';
 
-function formatDuration(durationSec: number | null) {
-  if (durationSec === null || durationSec === undefined) {
+function formatDuration(durationSec: number | null | undefined) {
+  if (durationSec === null || durationSec === undefined || Number.isNaN(durationSec)) {
     return 'Unknown';
   }
-
-  const minutes = Math.floor(durationSec / 60);
-  const seconds = durationSec % 60;
+  const total = Math.max(0, Math.round(durationSec));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
   return `${minutes} min ${seconds} sec`;
+}
+
+function isNonBilledReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return (
+    r === 'reconciled_stale' ||
+    r === 'stale_reconciled' ||
+    r === 'stale_no_participant' ||
+    r === 'stale_orphan_dispatch' ||
+    r.startsWith('stale_')
+  );
+}
+
+/** Prefer billable agent_sec (payment truth). Never show reconciled wall-clock as call length. */
+function formatSessionDuration(session: PortalSession): string {
+  const billed = Number(session.billable_agent_sec ?? 0);
+  if (billed > 0) {
+    return formatDuration(billed);
+  }
+  if (session.live) {
+    return 'In progress';
+  }
+  if (session.stale || isNonBilledReason(session.end_reason)) {
+    return 'Not billed';
+  }
+  if (session.duration_sec != null) {
+    return formatDuration(session.duration_sec);
+  }
+  return 'Unknown';
 }
 
 function formatTimestamp(timestamp: string | null) {
@@ -41,6 +72,13 @@ function formatTimestamp(timestamp: string | null) {
   }
 
   return new Date(timestamp).toLocaleString();
+}
+
+/** Middle-truncate long ids for table/drawer display; full value stays in title / clipboard. */
+function shortId(value: string, head = 8, tail = 4): string {
+  if (!value) return '';
+  if (value.length <= head + tail + 1) return value;
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
 // Known raw values written by control_plane/app.py, worker/main.py, and
@@ -76,11 +114,41 @@ function humanizeEndReason(reason: string | null): string {
     .join(' ');
 }
 
+function StatusBadge({ session }: { session: PortalSession }) {
+  if (session.live) {
+    return <Badge className="bg-emerald-600 text-white">Live</Badge>;
+  }
+  if (session.stale) {
+    return (
+      <Badge variant="outline" className="border-amber-500 text-amber-700">
+        Stale
+      </Badge>
+    );
+  }
+  return <Badge variant="outline">Ended</Badge>;
+}
+
+function IdChip({ value, className }: { value: string; className?: string }) {
+  return (
+    <span
+      title={value}
+      className={cn(
+        'inline-flex max-w-full items-center rounded-pill border border-border bg-surface-muted px-2.5 py-1 font-mono text-[11px] tabular-nums tracking-tight text-text-body',
+        className,
+      )}
+    >
+      <span className="truncate">{shortId(value)}</span>
+    </span>
+  );
+}
+
 function StatBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-muted px-3 py-2">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-sm font-semibold text-foreground">{value}</div>
+    <div className="rounded-input border border-border bg-surface px-3.5 py-3">
+      <div className="font-mono-label text-text-muted">{label}</div>
+      <div className="mt-1.5 text-[15px] font-semibold leading-snug tracking-[-0.01em] text-text">
+        {value}
+      </div>
     </div>
   );
 }
@@ -97,16 +165,23 @@ function CopyableId({
   onCopy: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex items-center justify-between gap-2 rounded-md border border-slate-300 bg-muted px-3 py-2">
-        <span className="truncate font-mono text-xs text-foreground">{value}</span>
+    <div className="flex flex-col gap-1.5">
+      <span className="font-mono-label text-text-muted">{label}</span>
+      <div className="flex items-center gap-2 rounded-input border border-border bg-surface-muted px-3 py-2.5">
+        <span title={value} className="min-w-0 flex-1 font-mono text-[12px] tabular-nums text-text">
+          <span className="sm:hidden">{shortId(value, 10, 6)}</span>
+          <span className="hidden break-all sm:inline">{value}</span>
+        </span>
         <button
           type="button"
           onClick={onCopy}
           aria-label={copied ? `Copied ${label}` : `Copy ${label}`}
           title={copied ? 'Copied' : 'Copy'}
-          className="inline-flex shrink-0 items-center justify-center rounded-md p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+          className={cn(
+            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-pill border border-border bg-surface text-text-muted transition-colors duration-console',
+            'hover:bg-surface-muted hover:text-text',
+            copied && 'border-transparent bg-text text-white hover:bg-text hover:text-white',
+          )}
         >
           {copied ? (
             <Check className="h-3.5 w-3.5" aria-hidden="true" />
@@ -119,6 +194,10 @@ function CopyableId({
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <h3 className="font-mono-label text-text-muted">{children}</h3>;
+}
+
 const PAGE_SIZE = 15;
 
 export default function SessionsPage() {
@@ -127,6 +206,7 @@ export default function SessionsPage() {
     swrFetchers.sessions,
   );
   const [activeSession, setActiveSession] = useState<PortalSession | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
@@ -139,6 +219,19 @@ export default function SessionsPage() {
   }, [totalPages]);
   const paginatedSessions = (sessions ?? []).slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const openSession = async (session: PortalSession) => {
+    setActiveSession(session);
+    setDetailLoading(true);
+    try {
+      const full = await getSession(session.id);
+      setActiveSession(full);
+    } catch {
+      // Keep list row data if detail fails.
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const handleCopy = (field: string, value: string) => {
     navigator.clipboard.writeText(value);
     setCopiedField(field);
@@ -149,26 +242,47 @@ export default function SessionsPage() {
 
   const handleExportSessions = () => {
     const csv = toCsv(
-      ['Session ID', 'Agent', 'Room', 'Status', 'Duration (sec)', 'End Reason', 'Started At', 'Ended At'],
-      (sessions ?? []).map((session) => [
-        session.id,
-        session.agent_name,
-        session.room_name,
-        session.live ? 'Live' : session.stale ? 'Stale' : 'Ended',
-        String(session.duration_sec ?? ''),
-        session.stale ? 'Never closed' : humanizeEndReason(session.end_reason),
-        session.started_at ?? '',
-        session.ended_at ?? '',
-      ]),
+      [
+        'Session ID',
+        'Agent',
+        'Room',
+        'Status',
+        'Billable (sec)',
+        'Billable (min)',
+        'Recorded duration_sec',
+        'End Reason',
+        'Started At',
+        'Ended At',
+      ],
+      (sessions ?? []).map((session) => {
+        const billed = Number(session.billable_agent_sec ?? 0);
+        return [
+          session.id,
+          session.agent_name,
+          session.room_name,
+          session.live ? 'Live' : session.stale ? 'Stale' : 'Ended',
+          String(billed),
+          billed > 0 ? (billed / 60).toFixed(4) : '0',
+          String(session.duration_sec ?? ''),
+          session.stale ? 'Never closed' : session.end_reason ?? '',
+          session.started_at ?? '',
+          session.ended_at ?? '',
+        ];
+      }),
     );
     downloadCsv('sessions.csv', csv);
   };
 
+  const drawerTitle = activeSession?.agent_name ?? 'Session';
+  const drawerDescription = activeSession
+    ? `${activeSession.live ? 'Live' : activeSession.stale ? 'Stale' : 'Ended'} · ${formatTimestamp(activeSession.started_at)}`
+    : undefined;
+
   return (
     <div>
       <PageHeader
-        title="Call Sessions"
-        description="Historical record of completed WebRTC calls. Open a row to inspect the session details currently exposed by the tenant API."
+        title="Sessions"
+        description="Call history. Duration is billable agent time — the same minutes counted on Usage."
         actions={
           (sessions ?? []).length > 0 ? (
             <Button variant="secondary" onClick={handleExportSessions}>
@@ -179,73 +293,73 @@ export default function SessionsPage() {
         }
       />
 
-      {error ? (
-        <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+      {error && !isPortalAuthFailure(error) ? (
+        <div className="mb-6 rounded-input border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <strong>Backend connection error:</strong>{' '}
           {error instanceof Error ? error.message : 'Failed to load sessions'}
         </div>
       ) : null}
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? (
-            <DataTableSkeleton rows={5} />
-          ) : (sessions ?? []).length === 0 ? (
-            <EmptyState title="No recent sessions found" />
-          ) : (
-            <Table className="overflow-x-hidden" tableClassName="table-fixed">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Session ID</TableHead>
-                  <TableHead className="hidden md:table-cell">Room Name</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Started At</TableHead>
+      {loading ? (
+        <div className="rounded-card border border-border bg-surface p-6 shadow-card">
+          <DataTableSkeleton rows={5} />
+        </div>
+      ) : (sessions ?? []).length === 0 ? (
+        <div className="rounded-card border border-border bg-surface p-6 shadow-card">
+          <EmptyState title="No recent sessions found" />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <Table className="overflow-x-hidden" tableClassName="table-fixed">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[22%]">Session</TableHead>
+                <TableHead className="hidden w-[22%] md:table-cell">Room</TableHead>
+                <TableHead className="w-[18%]">Agent</TableHead>
+                <TableHead className="w-[16%]">Duration</TableHead>
+                <TableHead className="w-[12%]">Status</TableHead>
+                <TableHead className="hidden w-[18%] lg:table-cell">Started</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedSessions.map((session) => (
+                <TableRow key={session.id} onClick={() => void openSession(session)}>
+                  <TableCell>
+                    <RowOpenButton
+                      onClick={() => void openSession(session)}
+                      ariaLabel={`Open session ${session.id}`}
+                      className="inline-flex max-w-full"
+                    >
+                      <IdChip value={session.id} />
+                    </RowOpenButton>
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    <IdChip value={session.room_name} />
+                  </TableCell>
+                  <TableCell>
+                    <span className="block truncate font-medium text-text">{session.agent_name}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="tabular-nums text-text-body">
+                      {formatSessionDuration(session)}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge session={session} />
+                  </TableCell>
+                  <TableCell className="hidden text-[13px] text-text-muted lg:table-cell">
+                    {formatTimestamp(session.started_at)}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedSessions.map((session) => (
-                  <TableRow key={session.id} onClick={() => setActiveSession(session)}>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      <RowOpenButton
-                        onClick={() => setActiveSession(session)}
-                        ariaLabel={`Open session ${session.id}`}
-                        className="block w-full truncate font-mono text-xs"
-                      >
-                        {session.id}
-                      </RowOpenButton>
-                    </TableCell>
-                    <TableCell className="hidden truncate font-mono text-xs md:table-cell">
-                      {session.room_name}
-                    </TableCell>
-                    <TableCell className="truncate">{session.agent_name}</TableCell>
-                    <TableCell className="truncate">{formatDuration(session.duration_sec)}</TableCell>
-                    <TableCell>
-                      {session.live ? (
-                        <Badge className="bg-emerald-600 text-white">Live</Badge>
-                      ) : session.stale ? (
-                        <Badge variant="outline" className="border-amber-500 text-amber-700">
-                          Stale
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Ended</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden truncate text-muted-foreground lg:table-cell">
-                      {formatTimestamp(session.started_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+              ))}
+            </TableBody>
+          </Table>
 
-          {!loading && (sessions ?? []).length > PAGE_SIZE ? (
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-              <span className="text-xs text-muted-foreground">
-                Showing {(page - 1) * PAGE_SIZE + 1}–
-                {Math.min(page * PAGE_SIZE, (sessions ?? []).length)} of {(sessions ?? []).length}
+          {(sessions ?? []).length > PAGE_SIZE ? (
+            <div className="flex items-center justify-between px-1 pt-1">
+              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-text-muted">
+                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, (sessions ?? []).length)} of{' '}
+                {(sessions ?? []).length}
               </span>
               <div className="flex items-center gap-2">
                 <Button
@@ -257,8 +371,8 @@ export default function SessionsPage() {
                 >
                   <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                 </Button>
-                <span className="text-xs text-muted-foreground">
-                  Page {page} of {totalPages}
+                <span className="font-mono text-[11px] tabular-nums text-text-muted">
+                  {page} / {totalPages}
                 </span>
                 <Button
                   variant="outline"
@@ -272,39 +386,33 @@ export default function SessionsPage() {
               </div>
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
       <Drawer
         open={activeSession !== null}
         onOpenChange={(open) => {
           if (!open) setActiveSession(null);
         }}
-        title="Session Details"
-        description={activeSession ? formatTimestamp(activeSession.started_at) : undefined}
+        title={drawerTitle}
+        description={drawerDescription}
+        className="max-w-[480px] sm:max-w-[520px]"
       >
         {activeSession ? (
-          <div className="flex flex-col gap-6">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-lg font-semibold text-foreground">
-                  {activeSession.agent_name}
-                </div>
-                <div className="text-sm text-muted-foreground">Voice agent call session</div>
-              </div>
-              {activeSession.live ? (
-                <Badge className="shrink-0 bg-emerald-600 text-white">Live</Badge>
-              ) : activeSession.stale ? (
-                <Badge variant="outline" className="shrink-0 border-amber-500 text-amber-700">
-                  Stale
-                </Badge>
+          <div className="flex flex-col gap-7">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge session={activeSession} />
+              {!activeSession.live && !activeSession.stale ? (
+                <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-text-muted">
+                  {humanizeEndReason(activeSession.end_reason)}
+                </span>
               ) : null}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <StatBlock label="Duration" value={formatDuration(activeSession.duration_sec)} />
+            <div className="grid grid-cols-2 gap-2.5">
+              <StatBlock label="Billable duration" value={formatSessionDuration(activeSession)} />
               <StatBlock
-                label="End Reason"
+                label="End reason"
                 value={
                   activeSession.stale
                     ? 'Never closed'
@@ -315,33 +423,50 @@ export default function SessionsPage() {
               <StatBlock label="Ended" value={formatTimestamp(activeSession.ended_at)} />
             </div>
 
+            {Number(activeSession.billable_agent_sec ?? 0) > 0 ? (
+              <p className="rounded-input border border-border bg-surface-muted px-3.5 py-2.5 text-[13px] text-text-body">
+                <span className="font-medium text-text">
+                  {Number(activeSession.billable_agent_sec).toFixed(0)} sec
+                </span>
+                <span className="text-text-muted">
+                  {' '}
+                  ({(Number(activeSession.billable_agent_sec) / 60).toFixed(2)} min) billable
+                </span>
+                {activeSession.duration_sec != null &&
+                Math.abs(Number(activeSession.billable_agent_sec) - activeSession.duration_sec) >
+                  0.01
+                  ? ` · recorded ${activeSession.duration_sec}s`
+                  : null}
+              </p>
+            ) : null}
+
             {activeSession.stale ? (
-              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+              <p className="rounded-input border border-amber-500/25 bg-[#FDF3E0] px-3.5 py-2.5 text-[13px] text-amber-900">
                 This session was never closed by the voice worker — it most likely exited
                 ungracefully. It is not an active call and is not consuming a concurrency slot
                 once reconciliation runs.
               </p>
             ) : null}
 
-            <div className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Call Summary
-              </h3>
-              {activeSession.summary ? (
-                <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+            <div className="flex flex-col gap-2.5">
+              <SectionLabel>Call summary</SectionLabel>
+              {detailLoading ? (
+                <p className="rounded-input border border-border bg-surface-muted px-3.5 py-3 text-[13px] text-text-muted">
+                  Loading transcript…
+                </p>
+              ) : activeSession.summary ? (
+                <p className="rounded-input border border-border bg-surface px-3.5 py-3 text-[15px] leading-relaxed text-text">
                   {activeSession.summary}
                 </p>
               ) : (
-                <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                <p className="rounded-input border border-border bg-surface-muted px-3.5 py-3 text-[13px] text-text-muted">
                   No summary available for this call.
                 </p>
               )}
             </div>
 
             <div className="flex flex-col gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Technical Details
-              </h3>
+              <SectionLabel>IDs</SectionLabel>
               <CopyableId
                 label="Session ID"
                 value={activeSession.id}
@@ -362,28 +487,26 @@ export default function SessionsPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Transcript
-              </h3>
+            <div className="flex flex-col gap-2.5">
+              <SectionLabel>Transcript</SectionLabel>
               {activeSession.transcript && activeSession.transcript.length > 0 ? (
-                <div className="flex max-h-80 flex-col gap-2 overflow-y-auto rounded-md border border-border p-3">
+                <div className="flex max-h-80 flex-col gap-2 overflow-y-auto rounded-input border border-border bg-surface p-3">
                   {activeSession.transcript.map((turn, i) => (
                     <div
                       key={i}
                       className={cn(
-                        'max-w-[85%] rounded-md px-3 py-1.5 text-sm',
+                        'max-w-[88%] rounded-input px-3 py-2 text-[14px] leading-relaxed',
                         turn.role === 'assistant'
-                          ? 'self-start bg-muted text-foreground'
-                          : 'self-end bg-primary text-primary-foreground',
+                          ? 'self-start bg-surface-muted text-text'
+                          : 'self-end bg-text text-white',
                       )}
                     >
-                      {turn.text}
+                      {stripTranscriptMarkup(turn.text)}
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                <p className="rounded-input border border-border bg-surface-muted px-3.5 py-3 text-[13px] text-text-muted">
                   No transcript available for this call.
                 </p>
               )}

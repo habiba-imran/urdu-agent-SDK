@@ -46,9 +46,10 @@ CARTESIA_TTS_DEFAULTS: dict = {
     # only when a future livekit-agents build exposes a public AgentSession expressive kwarg
     # (and you are on inference TTS).
     "expressive": False,
-    # Phase 3: ``light`` = plain-text rules + constructor emotion (lower LLM token tax than
-    # mandatory per-turn <emotion> tags). Opt into manual_ssml via tts_options when A/B needs it.
-    "spoken_style": "light",
+    # Platform default: per-turn <emotion>/<break> (and bounded um/so) so voice has tone
+    # shifts and natural disfluency. ``light`` remains an opt-in lower-token A/B via
+    # tts_options.spoken_style=light (constructor calm/content only).
+    "spoken_style": "manual_ssml",
 }
 
 # Phase C — match Cartesia output to the LiveKit agent audio path.

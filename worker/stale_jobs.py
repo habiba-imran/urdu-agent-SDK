@@ -9,6 +9,7 @@ before ``entrypoint`` connects, and time out waiting for a browser participant o
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from livekit.agents import JobRequest
+
+logger = logging.getLogger("worker.stale_jobs")
 
 # Mint TTL is 120s; allow a short join buffer before treating the dispatch as orphaned.
 DEFAULT_STALE_JOB_MAX_AGE_SEC = 180
@@ -120,24 +123,17 @@ def close_open_session(
     import psycopg
 
     with psycopg.connect(**_conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
+        # Stale closes are not billed — never write wall-clock as duration_sec
+        # (billing truth is usage_events.agent_sec). Default 0 when caller omits it.
         if duration_sec is None:
-            row = conn.execute(
-                "select tenant_id, extract(epoch from (now() - started_at))::int "
-                "from sessions where room_name = %s and ended_at is null",
-                (room_name,),
-            ).fetchone()
-            if row is None:
-                return False
-            tenant_id, computed = row
-            duration_sec = max(1, int(computed or 1))
-        else:
-            row = conn.execute(
-                "select tenant_id from sessions where room_name = %s and ended_at is null",
-                (room_name,),
-            ).fetchone()
-            if row is None:
-                return False
-            tenant_id = row[0]
+            duration_sec = 0
+        row = conn.execute(
+            "select tenant_id from sessions where room_name = %s and ended_at is null",
+            (room_name,),
+        ).fetchone()
+        if row is None:
+            return False
+        tenant_id = row[0]
 
         updated = conn.execute(
             """
@@ -152,6 +148,21 @@ def close_open_session(
         ).fetchone()
         if updated is None:
             return False
+
+        try:
+            from worker.session_retention import apply_retention_on_session_close
+
+            apply_retention_on_session_close(
+                conn,
+                room_name=room_name,
+                session_id=str(updated[0]),
+            )
+        except Exception as exc:
+            logger.warning(
+                "stale_jobs: failed to set retention_until room=%s: %s",
+                room_name,
+                exc,
+            )
 
         if tenant_id:
             conn.execute(

@@ -54,8 +54,8 @@ def test_compose_en_excludes_urdu_profile():
         )
     )
     assert "LANGUAGE — Pakistani Urdu" not in text
-    assert "Do NOT emit <emotion>" in text
-    assert "EMOTION (required" not in text
+    assert "EMOTION (required" in text
+    assert "Do NOT emit <emotion>" not in text
 
 
 def test_language_directive_urdu_and_english():

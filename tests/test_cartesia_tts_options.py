@@ -14,8 +14,8 @@ def test_empty_options_validate_and_apply_defaults():
     kwargs = resolve_cartesia_tts_kwargs("voice-uuid", "en", {})
     assert kwargs["model"] == CARTESIA_TTS_DEFAULTS["model"]
     assert kwargs["speed"] == CARTESIA_TTS_DEFAULTS["speed"]
-    # Default spoken_style=light keeps baseline constructor emotion.
-    assert kwargs["emotion"] == CARTESIA_TTS_DEFAULTS["emotion"]
+    # Default spoken_style=manual_ssml omits constructor emotion so per-turn tags drive tone.
+    assert "emotion" not in kwargs
     assert kwargs["voice"] == "voice-uuid"
     assert kwargs["language"] == "en"
     assert kwargs["encoding"] == "pcm_s16le"

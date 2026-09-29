@@ -217,6 +217,19 @@ def test_rime_invalid_tts_options_rejected(conn):
     assert exc.value.code == "invalid_tts_options"
 
 
+def test_elevenlabs_tts_options_accepted_for_english(conn):
+    resolved = _call(
+        conn,
+        agent_language="en",
+        tts_provider="elevenlabs",
+        tts_voice_id="elevenlabs-default",
+        voice_id=None,
+        tts_options={"voice_settings": {"style": 0.3, "stability": 0.5}},
+    )
+    assert resolved["tts_provider"] == "elevenlabs"
+    assert resolved["tts_options"]["voice_settings"]["style"] == 0.3
+
+
 def test_unknown_voice_rejected(conn):
     with pytest.raises(ProviderValidationError) as exc:
         _call(conn, voice_id="not-a-real-voice-id")

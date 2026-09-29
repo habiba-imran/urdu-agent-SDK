@@ -2447,5 +2447,10 @@ class TelephonyService:
             out["recording_url"] = row[19]
             out["recordingUrl"] = row[19]
         if len(row) > 20 and row[20] is not None:
-            out["transcript"] = row[20]
+            try:
+                from worker.humanization.history import sanitize_transcript_turns
+
+                out["transcript"] = sanitize_transcript_turns(row[20])
+            except Exception:
+                out["transcript"] = row[20]
         return out

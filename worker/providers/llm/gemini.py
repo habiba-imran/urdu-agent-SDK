@@ -1,10 +1,12 @@
 """Gemini LLM adapter — moved verbatim from worker/factories.py::make_llm()
 (Phase 2, docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md, ADR-036).
 
-``getProviderCapabilities()`` still advertises ``gemini-2.5-flash``. Google retires
-model IDs frequently, so the worker remaps to a live flash model (default
-``gemini-3.6-flash``). LiveKit's default generateContent timeout is 10s and 504'd in
-the client demo, so we set a 30s request timeout and disable thinking on the voice path.
+F-M15: capabilities ``models`` lists live runtime IDs; deprecated Google IDs are
+``legacy_aliases``. This adapter remaps deprecated/empty IDs to a live flash model
+(default ``gemini-3.6-flash``) and logs ``requested`` → ``effective`` (never silent).
+
+LiveKit's default generateContent timeout is 10s and 504'd in the client demo, so we set a
+30s request timeout and disable thinking on the voice path.
 
 Gemini 3 does **not** honor ``thinking_budget`` — LiveKit logs a warning and ignores it
 unless ``thinking_level`` is set (``minimal`` / ``low`` / …). English PSTN additionally
@@ -20,8 +22,11 @@ Phase 5E A/B (defaults unchanged until TTFT + listening pass):
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
+
+logger = logging.getLogger("worker.providers.llm.gemini")
 
 _DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-3.6-flash")
 _DEPRECATED_GEMINI_MODELS = {
@@ -44,15 +49,35 @@ def _resolve_thinking_level() -> str:
     return raw
 
 
+def resolve_gemini_model(model: str) -> tuple[str, str | None]:
+    """Return ``(effective_model, remap_reason)``.
+
+    ``remap_reason`` is None when the requested ID is used as-is.
+    """
+    requested = (model or "").strip()
+    if not requested:
+        return _DEFAULT_GEMINI_MODEL, "empty_model"
+    if requested in _DEPRECATED_GEMINI_MODELS:
+        return _DEPRECATED_GEMINI_MODELS[requested], "deprecated_id"
+    return requested, None
+
+
 def build(model: str) -> Any:
     """Google Gemini, BYO key. NOT LiveKit Inference — its concurrency cap sits below the
     agent-session cap and would become the real ceiling (docs/23-PHASE-3-WORKER.md)."""
     from google.genai import types
     from livekit.plugins import google
 
-    resolved_model = _DEPRECATED_GEMINI_MODELS.get(
-        model, model or _DEFAULT_GEMINI_MODEL
-    )
+    requested = (model or "").strip()
+    resolved_model, reason = resolve_gemini_model(model)
+    if reason is not None:
+        logger.info(
+            "llm model remapped provider=gemini requested=%r effective=%s reason=%s",
+            requested or "",
+            resolved_model,
+            reason,
+        )
+
     kwargs: dict[str, Any] = {
         "model": resolved_model,
         # livekit-plugins-google copies this onto generateContent; LiveKit's default
@@ -71,6 +96,10 @@ def build(model: str) -> Any:
     else:
         try:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "stage=gemini_thinking_config failed model=%s err=%s",
+                resolved_model,
+                exc,
+            )
     return google.LLM(**kwargs)

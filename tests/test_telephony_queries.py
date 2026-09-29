@@ -86,21 +86,47 @@ def test_assign_number_to_agent_invalid_agent():
     assert res is False
 
 
+# F-H17: the tenant row is now (max_concurrent, max_minutes_month, status) and the quota row
+# is (concurrent_now, minutes_this_month) - PSTN spend is gated on the monthly cap and tenant
+# status too, not just concurrency.
 def test_reserve_call_quota():
     conn = FakeDbConn()
-    conn.rows_to_return = [(5,), (2,)]
+    conn.rows_to_return = [(5, 1000, "active"), (2, 100)]
     res = reserve_call_quota(conn, "tenant_abc")
     assert res is True
     assert "from tenants where id = %s" in conn.executed_queries[0][0].lower()
     assert "for update" not in conn.executed_queries[0][0].lower()
-    assert "from quota_state where tenant_id = %s for update" in conn.executed_queries[2][0].lower()
+    assert "from quota_state " in conn.executed_queries[2][0].lower()
+    assert "for update" in conn.executed_queries[2][0].lower()
 
 
 def test_reserve_call_quota_exceeded():
     conn = FakeDbConn()
-    conn.rows_to_return = [(5,), (5,)]
+    conn.rows_to_return = [(5, 1000, "active"), (5, 100)]
     res = reserve_call_quota(conn, "tenant_abc")
     assert res is False
+
+
+def test_reserve_call_quota_refuses_past_monthly_minutes_cap():
+    """F-H17: a tenant blocked from browser sessions by the monthly cap could still place
+    unlimited outbound PSTN calls - the path that spends real carrier money."""
+    conn = FakeDbConn()
+    conn.rows_to_return = [(5, 100, "active"), (0, 100)]
+    assert reserve_call_quota(conn, "tenant_abc") is False
+
+
+def test_reserve_call_quota_refuses_unknown_tenant():
+    """F-H17: `if not tenant_row: return True` granted quota to a tenant that does not
+    exist - fail-open on the spend path."""
+    conn = FakeDbConn()
+    conn.rows_to_return = []
+    assert reserve_call_quota(conn, "tenant_does_not_exist") is False
+
+
+def test_reserve_call_quota_refuses_suspended_tenant():
+    conn = FakeDbConn()
+    conn.rows_to_return = [(5, 1000, "suspended"), (0, 0)]
+    assert reserve_call_quota(conn, "tenant_abc") is False
 
 
 def test_release_call_quota_unpersisted_decrements_concurrency():

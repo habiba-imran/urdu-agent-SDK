@@ -1,5 +1,22 @@
 # HANDOFF
 
+## Current (2026-09-18) — Wave 2 F-C4 + F-C7
+
+**Read first:** [`docs/WAVE2-FC4-FC7-STATUS-HANDOFF.md`](../docs/WAVE2-FC4-FC7-STATUS-HANDOFF.md)
+
+- Habiba **Phases A–F code/docs/tests are done** for this plan.
+- Plan / Criticals are **not fully closed** until Ehsan A.3 + A.4 + purge cron, client idempotency accept, and light Habiba/ops checks (see that handoff checklist).
+- Do **not** re-implement B–F in a new chat unless fixing a real bug.
+
+Plan: `docs/WAVE2-P0-FC4-FC7-IMPLEMENTATION-PLAN.md`  
+Evidence: `docs/WAVE2-PHASE-F-CLOSEOUT.md`  
+**Next (High):** Habiba High Phases A–F **done**. F-H18 full ✅ needs Ehsan C.3 cron. F-H10 second provider **closed** (product: none). Medium/Low not started.  
+**Give Ehsan:** `docs/WAVE2-EHSAN-HANDOFF.md`  
+**Habiba host follow-ups (idempotency + Render later):** `docs/WAVE2-HABIBA-HOST-FOLLOWUPS.md`  
+**F-H10 inventory:** `docs/WAVE2-FH10-PHASE-D-INVENTORY.md`
+
+---
+
 ## Session 9 | 2026-07-17 (overnight, autonomous, human asleep) | Phase 6 (Admin Portal) — GATE 6 CLOSED.
 Branch: `phase/3-worker`. HEAD after this file's commit will be one past `a4ab567` (the last code
 commit). Working tree clean except this file at write time — verify with `git status --short`.

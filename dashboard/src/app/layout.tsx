@@ -1,10 +1,11 @@
 import './globals.css';
 import React from 'react';
 import AppShell from '@/components/AppShell';
+import { SwrProvider } from '@/components/SwrProvider';
 
 export const metadata = {
-  title: 'AwaazLabs Tenant Portal',
-  description: 'Self-service management portal for Urdu Voice-Agent-as-a-Service',
+  title: 'Awaaz Labs Console',
+  description: 'Developer console for agents, phone, sessions, and API keys',
 };
 
 export default function RootLayout({
@@ -15,7 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AppShell>{children}</AppShell>
+        <SwrProvider>
+          <AppShell>{children}</AppShell>
+        </SwrProvider>
       </body>
     </html>
   );

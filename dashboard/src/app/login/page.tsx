@@ -5,16 +5,19 @@ import { useRouter } from 'next/navigation';
 
 import {
   PortalAuthError,
-  loginTenantPortal,
+  PORTAL_SESSION_TTL_HOURS,
+  loginWithEmailPassword,
   setStoredTenantToken,
 } from '@/lib/portalAuth';
+import { preload } from 'swr';
+import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [tenantId, setTenantId] = useState('');
-  const [tenantSecret, setTenantSecret] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +27,18 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const result = await loginTenantPortal({
-        tenant_id: tenantId.trim(),
-        tenant_secret: tenantSecret.trim(),
-      });
+      const result = await loginWithEmailPassword(email, password);
       setStoredTenantToken(result.token);
+      // Warm Overview cache before first paint.
+      for (const key of [
+        'agents',
+        'credentials',
+        'usage',
+        'telephonyNumbers',
+        'telephonyReadiness',
+      ] as const) {
+        void preload(swrKeys[key], swrFetchers[key]);
+      }
       router.replace('/');
     } catch (err) {
       setError(
@@ -42,50 +52,56 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-8">
+    <div className="flex min-h-screen items-center justify-center bg-bg p-8">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>AwaazLabs Tenant Portal</CardTitle>
-          <CardDescription>Sign in with your tenant ID and tenant secret.</CardDescription>
+          <p className="font-mono-label text-text-muted">Awaaz Labs</p>
+          <CardTitle>Sign in</CardTitle>
+          <CardDescription>
+            Email and password for your invited account. Sessions last {PORTAL_SESSION_TTL_HOURS}{' '}
+            hours; we renew quietly when Auth is still signed in.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {error ? (
-            <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="mb-4 rounded-input border border-danger/30 bg-[#FBEAEA] px-4 py-3 text-sm text-danger">
               {error}
             </div>
           ) : null}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="tenant-id" className="text-sm font-medium text-muted-foreground">
-                Tenant ID
+              <label htmlFor="email" className="font-mono-label text-text-muted">
+                Email
               </label>
               <input
-                id="tenant-id"
-                type="text"
-                value={tenantId}
-                onChange={(event) => setTenantId(event.target.value)}
+                id="email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 required
-                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-11 w-full rounded-input border border-border bg-surface px-3 text-sm text-text outline-none transition-colors duration-console focus:border-accent focus:ring-2 focus:ring-accent-soft"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="tenant-secret" className="text-sm font-medium text-muted-foreground">
-                Tenant Secret
+              <label htmlFor="password" className="font-mono-label text-text-muted">
+                Password
               </label>
               <input
-                id="tenant-secret"
+                id="password"
                 type="password"
-                value={tenantSecret}
-                onChange={(event) => setTenantSecret(event.target.value)}
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
                 required
-                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-11 w-full rounded-input border border-border bg-surface px-3 text-sm text-text outline-none transition-colors duration-console focus:border-accent focus:ring-2 focus:ring-accent-soft"
               />
             </div>
 
             <Button type="submit" disabled={submitting} className="mt-2 w-full">
-              {submitting ? 'Signing in...' : 'Sign In'}
+              {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
         </CardContent>

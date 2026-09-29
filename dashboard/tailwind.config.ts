@@ -1,41 +1,65 @@
 import type { Config } from 'tailwindcss';
 import tailwindcssAnimate from 'tailwindcss-animate';
 
-/**
- * Theme tokens vendored from AwaazLabs-client-Dashboard's tailwind.config.ts, so this
- * dashboard's UI matches theirs. Every color maps to a token declared in
- * src/app/globals.css. Adding a literal color value here defeats the point of vendoring.
- */
 const config: Config = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
       borderRadius: {
-        lg: '0.75rem',
-        md: '0.5rem',
-        sm: '0.375rem',
+        pill: 'var(--radius-pill)',
+        card: 'var(--radius-card)',
+        input: 'var(--radius-input)',
+        sm: 'var(--radius-sm)',
+        md: 'var(--radius-input)',
+        lg: 'var(--radius-card)',
+      },
+      boxShadow: {
+        card: 'var(--shadow-card)',
+        float: 'var(--shadow-float)',
       },
       colors: {
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
-        muted: 'hsl(var(--muted))',
-        'muted-foreground': 'hsl(var(--muted-foreground))',
-        primary: 'hsl(var(--primary))',
-        'primary-foreground': 'hsl(var(--primary-foreground))',
-        secondary: 'hsl(var(--secondary))',
-        'secondary-foreground': 'hsl(var(--secondary-foreground))',
-        destructive: 'hsl(var(--destructive))',
-        'destructive-foreground': 'hsl(var(--destructive-foreground))',
-        accent: 'hsl(var(--accent))',
-        'accent-foreground': 'hsl(var(--accent-foreground))',
-        popover: 'hsl(var(--popover))',
-        'popover-foreground': 'hsl(var(--popover-foreground))',
-        card: 'hsl(var(--card))',
-        'card-foreground': 'hsl(var(--card-foreground))',
-        'status-warning': 'var(--status-warning)',
+        bg: 'var(--bg)',
+        surface: 'var(--surface)',
+        'surface-muted': 'var(--surface-muted)',
+        border: 'var(--border)',
+        text: 'var(--text)',
+        'text-body': 'var(--text-body)',
+        'text-muted': 'var(--text-muted)',
+        accent: 'var(--accent)',
+        'accent-soft': 'var(--accent-soft)',
+        success: 'var(--success)',
+        warning: 'var(--warning)',
+        danger: 'var(--danger)',
+        background: 'var(--bg)',
+        foreground: 'var(--text)',
+        muted: 'var(--surface-muted)',
+        'muted-foreground': 'var(--text-muted)',
+        input: 'var(--border)',
+        ring: 'var(--accent)',
+        primary: 'var(--text)',
+        'primary-foreground': '#ffffff',
+        secondary: 'var(--surface)',
+        'secondary-foreground': 'var(--text)',
+        destructive: 'var(--danger)',
+        'destructive-foreground': '#ffffff',
+        'accent-foreground': 'var(--text)',
+        popover: 'var(--surface)',
+        'popover-foreground': 'var(--text)',
+        card: 'var(--surface)',
+        'card-foreground': 'var(--text)',
+        'status-warning': 'var(--warning)',
+        'status-success': 'var(--success)',
+        'status-danger': 'var(--danger)',
+      },
+      maxWidth: {
+        console: '1120px',
+      },
+      transitionDuration: {
+        console: '150ms',
       },
     },
   },

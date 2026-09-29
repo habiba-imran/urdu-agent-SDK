@@ -14,7 +14,6 @@ export interface ButtonProps {
   disabled?: boolean;
   onClick?: () => void;
   type?: 'button' | 'submit' | 'reset';
-  /** Accessible name. Required in practice for icon-only buttons. */
   'aria-label'?: string;
   title?: string;
 }
@@ -34,15 +33,19 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
   ref,
 ) {
   const variants: Record<ButtonVariant, string> = {
-    default: 'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50',
-    secondary: 'bg-muted text-foreground hover:bg-muted/70 disabled:opacity-50',
-    outline: 'border border-border bg-transparent hover:bg-muted/50 disabled:opacity-50',
-    destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50',
+    default:
+      'bg-text text-white hover:opacity-90 disabled:opacity-50',
+    secondary:
+      'border border-border bg-surface text-text hover:bg-surface-muted disabled:opacity-50',
+    outline:
+      'border border-border bg-surface text-text hover:bg-surface-muted disabled:opacity-50',
+    destructive:
+      'border border-border bg-surface text-danger hover:bg-surface-muted disabled:opacity-50',
   };
 
   const sizes: Record<ButtonSize, string> = {
-    md: 'px-3 py-1.5 text-sm',
-    sm: 'px-2.5 py-1 text-xs',
+    md: 'px-5 py-3',
+    sm: 'px-4 py-2.5',
   };
 
   return (
@@ -52,7 +55,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
       title={title}
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex items-center justify-center rounded-md font-medium transition-colors',
+        'inline-flex cursor-pointer items-center justify-center gap-2 rounded-pill font-mono text-[11px] font-medium uppercase tracking-[0.14em] transition-all duration-console',
         sizes[size],
         variants[variant],
         className,

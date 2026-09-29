@@ -75,10 +75,35 @@ def test_compose_cartesia_has_universal_llm_and_tts_layers():
     )
     assert UNIVERSAL_SPOKEN_RULES in text
     assert GEMINI_LLM_OVERLAY in text
-    assert "Do NOT emit <emotion>" in text
-    assert "EMOTION (required" not in text
+    assert "EMOTION (required" in text
+    assert "Do NOT emit <emotion>" not in text
     # Universal + TTS should not triple the same anti-markdown paragraph.
     assert text.count("Do not use markdown, headings, bullets, emoji") == 1
+
+
+def test_compose_cartesia_groq_uses_tts_markup_aware_overlay():
+    from worker.humanization import GROQ_LLM_OVERLAY_TTS_MARKUP
+
+    text = compose_system_instructions(
+        _cfg(tts_provider="cartesia", llm_provider="groq", llm_model="openai/gpt-oss-20b")
+    )
+    assert GROQ_LLM_OVERLAY_TTS_MARKUP in text
+    assert "Do not invent fillers or emotion tags just to pad" not in text
+    assert "EMOTION (required" in text
+
+
+def test_compose_cartesia_light_groq_keeps_plain_overlay():
+    text = compose_system_instructions(
+        _cfg(
+            tts_provider="cartesia",
+            llm_provider="groq",
+            llm_model="openai/gpt-oss-20b",
+            tts_options={"spoken_style": "light"},
+        )
+    )
+    assert GROQ_LLM_OVERLAY in text
+    assert "Do NOT emit <emotion>" in text
+    assert "EMOTION (required" not in text
 
 
 def test_compose_rime_has_no_cartesia_ssml_examples():
@@ -113,8 +138,11 @@ def test_compose_fish_and_uplift_get_universal_and_gemini_overlay():
 
 
 def test_groq_overlay_char_budget_is_small():
+    from worker.humanization import GROQ_LLM_OVERLAY_TTS_MARKUP
+
     # Keep Groq overlay tiny relative to free-tier prompt pressure.
     assert len(GROQ_LLM_OVERLAY) < 400
+    assert len(GROQ_LLM_OVERLAY_TTS_MARKUP) < 400
     assert len(GEMINI_LLM_OVERLAY) < 400
     profile = build_spoken_output_profile(
         _cfg(tts_provider="elevenlabs", llm_provider="groq")

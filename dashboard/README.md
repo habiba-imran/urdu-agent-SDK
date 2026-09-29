@@ -1,17 +1,21 @@
-# Urdu VaaS Tenant Dashboard (Habiba Track - Phase 4)
+# Urdu VaaS Tenant Dashboard
 
-A modern, responsive Next.js web application for tenant self-service management in the Urdu Voice-Agent-as-a-Service (VaaS) platform.
+Next.js console for tenant self-service (credentials, agents, sessions, etc.).
 
-## Features
-- **Overview Dashboard**: Active agents count, live concurrent calls, monthly minute quotas.
-- **Agent Configuration**: Create & edit agents, assign Urdu system prompts, select voices.
-- **Voice Picker Catalogue**: Browse published Urdu voices (Helpdesk Agent, Street Vendor, Prime Time Anchor, Nosey Aunty, etc.) with pre-rendered preview audio player.
-- **Credentials Manager**: Publishable key display & masked HMAC secret lifecycle.
-- **Call Session History**: Log of completed sessions, call duration, and disconnect reasons.
+## Auth (Phase 1)
+
+Email + password via **Supabase Auth**. After login the dashboard exchanges the Supabase
+session for a tenant portal JWT. Tenant ID / HMAC are **not** used as the human login.
+
+See `docs/PHASE1-DASHBOARD-SUPABASE-AUTH.md` for setup.
 
 ## Quickstart
+
 ```bash
+cp .env.example .env.local
+# fill NEXT_PUBLIC_SUPABASE_* and portal/control-plane URLs
 npm install
 npm run dev
 ```
-Open `http://localhost:3000` in your browser.
+
+Open `http://localhost:3000` → `/login`.

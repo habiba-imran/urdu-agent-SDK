@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -112,7 +113,10 @@ def test_portal_login_and_scoped_routes():
         usage = client.get("/portal/usage-summary", headers=headers)
         assert usage.status_code == 200
         usage_json = usage.json()
-        assert usage_json["quota"]["minutes_this_month"] == 12.0
+        assert usage_json["quota"]["minutes_this_month"] == pytest.approx(31 / 60, rel=1e-6)
+        assert usage_json["billable_minutes"] == pytest.approx(31 / 60, abs=1e-4)
+        assert usage_json["billable_agent_sec"] == 31.0
+        assert usage_json["timezone"] == "UTC"
         assert any(row["kind"] == "agent_sec" for row in usage_json["totals"])
 
         # Calendar-month bounds, not a rolling "last N days" window (regression: this endpoint

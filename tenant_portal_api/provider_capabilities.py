@@ -48,19 +48,37 @@ def _pick_default_voice(voice_ids: list[str], provider: str) -> str | None:
 def get_public_capabilities(conn: psycopg.Connection) -> dict:
     languages: dict = {}
 
+    # One round-trip for all enabled voices — avoid N×(language×tts provider) queries.
+    voice_rows = conn.execute(
+        """
+        select id, provider, language
+        from voices
+        where rollout_state = 'enabled' and enabled = true
+        order by id
+        """
+    ).fetchall()
+    voices_by_lang_provider: dict[tuple[str, str], list[str]] = {}
+    for voice_id, provider, language in voice_rows:
+        voices_by_lang_provider.setdefault((language, provider), []).append(voice_id)
+
     for language, layers in CAPABILITIES.items():
         entry: dict = {"label": _LANGUAGE_LABELS.get(language, language)}
 
         for layer in ("stt", "llm"):
-            enabled = {
-                provider: {
+            enabled = {}
+            for provider, cap in layers.get(layer, {}).items():
+                if cap["state"] != "enabled":
+                    continue
+                entry_cap: dict = {
                     "state": cap["state"],
-                    "models": cap["models"],
+                    # F-M15: models = runtime/picker IDs only (not legacy_aliases).
+                    "models": list(cap["models"]),
                     "defaultModel": cap["default_model"],
                 }
-                for provider, cap in layers.get(layer, {}).items()
-                if cap["state"] == "enabled"
-            }
+                aliases = list(cap.get("legacy_aliases") or [])
+                if aliases:
+                    entry_cap["legacyAliases"] = aliases
+                enabled[provider] = entry_cap
             if enabled:
                 entry[layer] = enabled
 
@@ -68,12 +86,7 @@ def get_public_capabilities(conn: psycopg.Connection) -> dict:
         for provider, cap in layers.get("tts", {}).items():
             if cap["state"] != "enabled":
                 continue
-            voice_rows = conn.execute(
-                "select id from voices where provider = %s and language = %s "
-                "and rollout_state = 'enabled' and enabled = true order by id",
-                (provider, language),
-            ).fetchall()
-            voice_ids = [r[0] for r in voice_rows]
+            voice_ids = list(voices_by_lang_provider.get((language, provider), []))
             tts_enabled[provider] = {
                 "state": cap["state"],
                 "voices": voice_ids,

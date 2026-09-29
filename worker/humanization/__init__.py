@@ -17,12 +17,14 @@ from .history import (
     apply_history_hygiene,
     plain_text_for_history,
     resolve_chat_history_max_items,
+    sanitize_transcript_turns,
     system_instructions_static_prefix_ok,
 )
 from .resolve import EffectiveProviders, resolve_effective_providers
 from .spoken import (
     GEMINI_LLM_OVERLAY,
     GROQ_LLM_OVERLAY,
+    GROQ_LLM_OVERLAY_TTS_MARKUP,
     UNIVERSAL_SPOKEN_RULES,
     URDU_SPOKEN_OUTPUT_RULES,
     build_spoken_output_profile,
@@ -47,6 +49,7 @@ __all__ = [
     "EffectiveProviders",
     "GEMINI_LLM_OVERLAY",
     "GROQ_LLM_OVERLAY",
+    "GROQ_LLM_OVERLAY_TTS_MARKUP",
     "SpokenOutputProfile",
     "TTSHumanizationProfile",
     "TURN_AB_LISTEN_LOG_FIELDS",
@@ -67,6 +70,7 @@ __all__ = [
     "resolve_deepgram_stt_mode",
     "resolve_effective_providers",
     "resolve_turn_detector_version",
+    "sanitize_transcript_turns",
     "system_instructions_static_prefix_ok",
     "tts_overlay_for",
     "turn_profile_to_livekit_options",

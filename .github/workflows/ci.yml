@@ -82,7 +82,66 @@ jobs:
           name: sdk-dist
           path: sdk/dist/
 
-  # --- Job 3: Docker Container Build Smoke Test ---
+  # --- Job 3: Dependency, Secret and Bundle Scanning (F-M20) ---
+  # F-C5 and F-H15 were both findable automatically; nothing in CI looked. The repo already
+  # had gitleaks and a bundle check in `make gate`, but only on a developer's machine, and
+  # `make secrets` fails silently when gitleaks is not installed (F-M22).
+  security-scan:
+    name: Dependency and Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans history, not just the tip
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Advisory data changes daily, so this is reported, not gating: a new CVE in a
+      # dependency must not block an unrelated hotfix. Read the summary on every run.
+      - name: Audit Python dependencies (pip-audit)
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt --desc --strict || echo "::warning::pip-audit reported findings - see log"
+
+      - name: Audit npm packages
+        continue-on-error: true
+        run: |
+          for dir in sdk sdk-server telephony dashboard; do
+            if [ -f "$dir/package.json" ]; then
+              echo "--- $dir"
+              (cd "$dir" && npm audit --audit-level=high) || echo "::warning::npm audit findings in $dir"
+            fi
+          done
+
+      # A committed secret is different: that gates, because it cannot be un-leaked later.
+      - name: Scan for committed secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+      - name: Check the published browser bundle holds no secrets
+        run: |
+          cd sdk
+          npm ci
+          npm run build
+          if grep -rEq "(API_KEY|SECRET|SERVICE_ROLE|Bearer )" dist/; then
+            echo "::error::a secret-shaped string reached the published SDK bundle"
+            exit 1
+          fi
+          echo "bundle clean"
+
+  # --- Job 4: Docker Container Build Smoke Test ---
   docker-smoke:
     name: Docker Container Build Smoke Test
     runs-on: ubuntu-latest

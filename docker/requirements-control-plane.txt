@@ -9,3 +9,5 @@ psycopg==3.3.4
 psycopg-binary==3.3.4
 python-dotenv==1.2.2
 livekit-api==1.2.0
+# F-M8 / F-C6: control_plane.secret_crypto (AES-GCM + HKDF) — required at import by secrets_db.
+cryptography==50.0.0

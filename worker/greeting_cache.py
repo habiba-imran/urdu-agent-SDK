@@ -282,8 +282,11 @@ def seed_greeting_pcm_from_env() -> bool:
     channel = (os.getenv("UVA_PREWARM_AUDIO_CHANNEL") or "webrtc").strip().lower()
     language = (os.getenv("UVA_PREWARM_TTS_LANGUAGE") or "en").strip().lower()
 
-    # Match runtime opening: sanitize so cache key equals plan_greeting_prewarm's key.
+    # Match runtime opening: sanitize + Cartesia enrich so the key equals
+    # plan_greeting_prewarm / resolve_session_opening (otherwise env seed never hits).
     try:
+        from worker.cartesia_spoken_output import enrich_static_greeting_for_tts
+        from worker.config import AgentConfig
         from worker.spoken_sanitize import sanitizer_for_provider
 
         sanitize = sanitizer_for_provider(provider)
@@ -291,8 +294,25 @@ def seed_greeting_pcm_from_env() -> bool:
             text = sanitize(text).strip()
             if not text:
                 return False
-    except Exception:
-        pass
+        seed_cfg = AgentConfig(
+            agent_id=agent_id,
+            tenant_id="",
+            name="",
+            prompt="",
+            voice_id=voice_id,
+            llm_model="",
+            tts_provider=provider,
+            greeting=text,
+        )
+        text = enrich_static_greeting_for_tts(seed_cfg, text)
+        if not text:
+            return False
+    except Exception as exc:
+        logger.warning(
+            "stage=greeting_sanitize failed provider=%s err=%s (seeding unsanitized)",
+            provider,
+            exc,
+        )
 
     key = make_greeting_cache_key(
         agent_id=agent_id,

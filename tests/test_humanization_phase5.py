@@ -64,7 +64,7 @@ def test_cartesia_demo_env_model_override(monkeypatch):
 
 
 def test_cartesia_experiment_label_includes_style():
-    assert cartesia_experiment_label({}) == "sonic-3.5+light"
+    assert cartesia_experiment_label({}) == "sonic-3.5+manual_ssml"
     assert (
         cartesia_experiment_label({"model": "sonic-3.6", "spoken_style": "light"})
         == "sonic-3.6+light"

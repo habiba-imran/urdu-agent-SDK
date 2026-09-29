@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from worker.plain_spoken_sanitize import (
+    CARTESIA_SPELL_TAG_RE,
     strip_foreign_tts_markup,
     strip_markdown_emoji_bullets,
 )
@@ -31,15 +32,6 @@ logger = logging.getLogger("worker.humanization.history")
 
 # Wave 1 default: cap ChatContext growth on long calls (disable with UVA_CHAT_HISTORY_MAX_ITEMS=0).
 _DEFAULT_CHAT_HISTORY_MAX_ITEMS = 48
-
-# Cartesia tags that should not linger in LLM history (delivery-only).
-_CARTESIA_HISTORY_TAG_RE = re.compile(
-    r"</?(?:break|emotion|spell|speed|volume)\b[^>]*>",
-    re.IGNORECASE,
-)
-_CARTESIA_SPELL_WRAP_RE = re.compile(
-    r"<spell>(.*?)</spell>", re.IGNORECASE | re.DOTALL
-)
 
 
 def resolve_chat_history_max_items() -> int | None:
@@ -69,16 +61,35 @@ def resolve_chat_history_max_items() -> int | None:
 def plain_text_for_history(text: str) -> str:
     """Strip TTS delivery markup for LLM history / DB transcript.
 
-    Always strips Cartesia-style tags and foreign brackets — history must stay
-    provider-agnostic even when the active TTS was Cartesia (tags were for audio only).
+    Always strips Cartesia/ElevenLabs/Fish/Mist delivery tags — history and the
+    Sessions UI must stay provider-agnostic (tags were for audio only).
     """
     if not text:
         return text
-    out = _CARTESIA_SPELL_WRAP_RE.sub(r"\1", text)
-    out = _CARTESIA_HISTORY_TAG_RE.sub("", out)
+    # Unwrap <spell>…</spell> first so inner words survive, then drop all markup.
+    out = CARTESIA_SPELL_TAG_RE.sub(r"\1", text)
     out = strip_foreign_tts_markup(out, strip_brackets=True)
     out = strip_markdown_emoji_bullets(out)
     return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
+def sanitize_transcript_turns(
+    turns: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Return a copy of transcript turns with TTS markup stripped from ``text``."""
+    if turns is None:
+        return None
+    cleaned: list[dict[str, Any]] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            cleaned.append(turn)
+            continue
+        row = dict(turn)
+        raw = row.get("text")
+        if isinstance(raw, str) and raw:
+            row["text"] = plain_text_for_history(raw)
+        cleaned.append(row)
+    return cleaned
 
 
 def apply_history_hygiene(

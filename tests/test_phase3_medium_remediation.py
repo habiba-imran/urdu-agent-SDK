@@ -34,7 +34,7 @@ class MockPhase3Db:
         if "select id, encrypted_api_key_ref from telephony_connections" in sql:
             matches = [
                 c for c in self.connections
-                if c.get("encrypted_api_key_ref") and not str(c.get("encrypted_api_key_ref")).startswith("enc:v1:")
+                if c.get("encrypted_api_key_ref") and not str(c.get("encrypted_api_key_ref")).startswith("enc:v2:")
             ]
             rows = [(c["id"], c["encrypted_api_key_ref"]) for c in matches]
             class MultiCursor:

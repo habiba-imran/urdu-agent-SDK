@@ -8,6 +8,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import threading
+from collections import OrderedDict
 import sys
 import time
 from pathlib import Path
@@ -30,11 +32,47 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# F-M4: Telnyx webhooks are a few KB; 256 KiB is generous and bounded.
+MAX_WEBHOOK_BODY_BYTES = 256 * 1024
+
 router = APIRouter()
 
 _WEBHOOK_REPLAY_WINDOW_SEC = 300
-_seen_webhook_signatures: set[tuple[str, str]] = set()
-_seen_webhook_event_ids: set[str] = set()
+# F-H5: these grew without bound and reset on every deploy. Bounded LRUs now — still
+# per-process (durable dedup is the database's job, below), but no longer a slow leak.
+_MAX_SEEN_ENTRIES = 20_000
+_seen_webhook_signatures: OrderedDict[tuple[str, str], None] = OrderedDict()
+_seen_webhook_event_ids: OrderedDict[str, None] = OrderedDict()
+
+
+# Audit §5a: "None at all on /portal/login, /admin/login, /portal/telephony/outbound-calls,
+# or the Telnyx webhook". Logins are F-H14 and outbound calls are inside F-H17; this is the
+# webhook itself. Unauthenticated endpoint, so the bucket is the caller's IP and it is
+# checked before signature verification does any cryptographic work.
+WEBHOOK_RATE_LIMIT_PER_MIN = 600  # Telnyx bursts on call state; generous but finite
+_webhook_hits: OrderedDict[str, list[float]] = OrderedDict()
+_webhook_hits_lock = threading.Lock()
+
+
+def _webhook_rate_limited(client_ip: str) -> bool:
+    now = time.time()
+    with _webhook_hits_lock:
+        window = _webhook_hits.setdefault(client_ip, [])
+        window[:] = [t for t in window if now - t < 60]
+        if len(window) >= WEBHOOK_RATE_LIMIT_PER_MIN:
+            return True
+        window.append(now)
+        _webhook_hits.move_to_end(client_ip)
+        while len(_webhook_hits) > _MAX_SEEN_ENTRIES:
+            _webhook_hits.popitem(last=False)
+    return False
+
+
+def _remember(seen: OrderedDict, key) -> None:
+    seen[key] = None
+    seen.move_to_end(key)
+    while len(seen) > _MAX_SEEN_ENTRIES:
+        seen.popitem(last=False)
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -148,7 +186,7 @@ def verify_telnyx_webhook_signature(
         )
         return False
 
-    _seen_webhook_signatures.add(replay_key)
+    _remember(_seen_webhook_signatures, replay_key)
     return True
 
 
@@ -305,8 +343,17 @@ def _persist_telnyx_webhook_event(
                     conn.commit()
                     return None
             except Exception:
-                # Handle databases without partial index constraint gracefully
-                pass
+                # Handle databases without the partial index constraint gracefully, but
+                # F-M1: do not pretend the event row was written — a lost webhook event
+                # is exactly the failure F-H6 describes.
+                logger.warning(
+                    "webhook event insert failed tenant=%s event_id=%s type=%s — "
+                    "continuing with side effects",
+                    tenant_id,
+                    event_id,
+                    event_type,
+                    exc_info=True,
+                )
         _apply_webhook_side_effects(conn, event_type, data)
         conn.commit()
     return None
@@ -320,7 +367,28 @@ async def telnyx_webhook_endpoint(
     telnyx_timestamp: str | None = Header(None, alias="Telnyx-Timestamp"),
 ):
     """Receive and deduplicate Telnyx call and number order webhooks."""
+    client_ip = request.client.host if request.client else "unknown"
+    if _webhook_rate_limited(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": TelephonyErrorCode.WEBHOOK_SIGNATURE_INVALID,
+                    "message": "Too many webhook requests.",
+                    "status": 429,
+                }
+            },
+        )
+    # F-M4: this endpoint is unauthenticated (the signature is verified below, after the
+    # body is read), so an arbitrarily large body used to be pulled into memory first.
+    # Telnyx webhook payloads are a few KB; anything near the cap is not one.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_WEBHOOK_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="webhook payload too large")
     raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        # Chunked requests have no content-length to check up front.
+        raise HTTPException(status_code=413, detail="webhook payload too large")
     if not verify_telnyx_webhook_signature(
         raw_body, telnyx_signature, telnyx_timestamp
     ):
@@ -356,7 +424,7 @@ async def telnyx_webhook_endpoint(
 
     if event_id in _seen_webhook_event_ids:
         return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
-    _seen_webhook_event_ids.add(event_id)
+    _remember(_seen_webhook_event_ids, event_id)
 
     if not is_mock_provider_mode():
         try:
@@ -369,9 +437,28 @@ async def telnyx_webhook_endpoint(
             if duplicate:
                 return duplicate
         except Exception as exc:
-            logger.warning(
-                "Telnyx webhook durable processing failed: %s", exc.__class__.__name__
+            # F-H6: this used to log and fall through to HTTP 200, so the provider never
+            # retried and the event was lost for good — taking call terminal status and
+            # quota release with it. Forget the id first, or the retry we are now asking
+            # for would be rejected as a duplicate by the in-memory guard above.
+            _seen_webhook_event_ids.pop(event_id, None)
+            logger.error(
+                "Telnyx webhook durable write failed for event %s (%s) - asking the "
+                "provider to retry",
+                event_id,
+                exc.__class__.__name__,
+                exc_info=True,
             )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": TelephonyErrorCode.WEBHOOK_PERSIST_FAILED,
+                        "message": "Webhook could not be recorded; retry expected.",
+                        "status": 500,
+                    }
+                },
+            ) from exc
 
     logger.info("Received Telnyx webhook event: %s (id: %s)", event_type, event_id)
     return {"status": "accepted", "event_id": event_id, "event_type": event_type}

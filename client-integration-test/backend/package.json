@@ -1,0 +1,19 @@
+{
+  "name": "client-integration-test-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@awaazlabs-uva/agents": "0.1.0",
+    "@awaazlabs-uva/telephony": "0.1.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  }
+}

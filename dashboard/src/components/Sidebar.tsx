@@ -4,10 +4,19 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { preload } from 'swr';
-import { LayoutDashboard, Bot, KeyRound, PhoneCall, BarChart3, LogOut, Phone, Mic } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Bot,
+  KeyRound,
+  PhoneCall,
+  BarChart3,
+  LogOut,
+  Users,
+  BookOpen,
+} from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { clearStoredTenantToken } from '@/lib/portalAuth';
+import { logoutPortalSession } from '@/lib/portalAuth';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 
 const navItems = [
@@ -15,30 +24,28 @@ const navItems = [
     href: '/',
     label: 'Overview',
     icon: LayoutDashboard,
-    prefetch: ['agents', 'credentials', 'usage', 'sessions', 'telephonyConnection'] as const,
-  },
-  { href: '/agents', label: 'Agents', icon: Bot, prefetch: ['agents', 'voices'] as const },
-  {
-    href: '/telephony',
-    label: 'Telephony',
-    icon: Phone,
-    prefetch: ['telephonyConnection', 'telephonyNumbers', 'telephonyReadiness'] as const,
+    prefetch: ['agents', 'credentials', 'usage', 'telephonyNumbers', 'telephonyReadiness'] as const,
   },
   {
-    href: '/test-studio',
-    label: 'Test Studio',
-    icon: Mic,
-    prefetch: ['agents'] as const,
+    href: '/agents',
+    label: 'Agents',
+    icon: Bot,
+    prefetch: ['agents', 'telephonyNumbers'] as const,
   },
   { href: '/usage', label: 'Usage', icon: BarChart3, prefetch: ['usage'] as const },
-  { href: '/credentials', label: 'Credentials', icon: KeyRound, prefetch: ['credentials'] as const },
+  { href: '/credentials', label: 'Credentials', icon: KeyRound, prefetch: ['credentials', 'agents'] as const },
+  { href: '/docs', label: 'Docs', icon: BookOpen, prefetch: [] as const },
+  { href: '/members', label: 'Members', icon: Users, prefetch: ['members'] as const },
   { href: '/sessions', label: 'Call Sessions', icon: PhoneCall, prefetch: ['sessions'] as const },
 ];
 
 /** Warms SWR's global cache for a route's data before the user actually navigates there,
  *  so the page renders from cache instantly instead of showing a skeleton. Safe to call
  *  repeatedly — SWR dedupes concurrent/duplicate requests for the same key on its own. */
-function prefetchRouteData(keys: readonly (keyof typeof swrKeys)[]) {
+function prefetchRouteData(keys: readonly (keyof typeof swrKeys)[] | undefined) {
+  if (!keys?.length) {
+    return;
+  }
   for (const key of keys) {
     if (key in swrKeys && key in swrFetchers) {
       void preload(swrKeys[key], swrFetchers[key]);
@@ -56,8 +63,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
 
   const handleLogout = () => {
-    clearStoredTenantToken();
-    router.replace('/login');
+    void logoutPortalSession().finally(() => {
+      router.replace('/login');
+    });
   };
 
   return (

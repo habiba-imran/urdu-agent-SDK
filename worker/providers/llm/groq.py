@@ -4,16 +4,13 @@ Enabled for `en` only — `rollout_state` in worker/providers/capabilities.py is
 file. `model` constructor arg verified directly against the installed livekit-plugins-groq==1.6.5
 package (inspect.signature), not assumed from docs: real keyword-only param.
 
-``getProviderCapabilities()`` still advertises historical Groq Llama / Qwen IDs so existing agent
-rows and client pickers keep validating. Free/developer Llama IDs were retired (enterprise-only
-now), and ``qwen/qwen3.6-27b`` 404s on many keys — this adapter remaps them to a live production
-model (same pattern as ``worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS``).
+F-M15: capabilities ``models`` lists live runtime IDs only; dead Llama/Qwen IDs are
+``legacy_aliases`` (still validate on agent rows). This adapter remaps dead/empty IDs to a live
+production model and logs ``requested`` → ``effective`` (never silent).
 
 Free-tier voice default is ``openai/gpt-oss-20b`` (~1000 t/s production) with
 ``reasoning_effort=low`` and a tight ``max_completion_tokens`` cap. Override via
-``GROQ_LLM_MODEL`` (dead IDs in that env var are ignored). Prompt size (not model "size") is
-what usually causes 429s — keep ``GROQ_PROMPT_SOFT_CHARS`` low and check
-``docs/last_session_prompt.txt``.
+``GROQ_LLM_MODEL`` (dead IDs in that env var are ignored).
 
 Installing this package also pulls in livekit-plugins-openai as a real dependency — Groq's plugin
 is built on the OpenAI-compatible interface (base_url defaults to
@@ -30,10 +27,13 @@ check in this file.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger("worker.providers.llm.groq")
 
 # Live free/developer production default (Groq docs, 2026-09).
 _FALLBACK_GROQ_MODEL = "openai/gpt-oss-20b"
@@ -60,15 +60,32 @@ def _live_default_model() -> str:
     return raw
 
 
+def resolve_groq_model(model: str) -> tuple[str, str | None]:
+    """Return ``(effective_model, remap_reason)``.
+
+    ``remap_reason`` is None when the requested ID is used as-is.
+    """
+    requested = (model or "").strip()
+    default = _live_default_model()
+    if not requested:
+        return default, "empty_model"
+    if requested in _DEAD_GROQ_MODELS:
+        return default, "dead_model"
+    return requested, None
+
+
 def build(model: str) -> Any:
     from livekit.plugins import groq
 
     requested = (model or "").strip()
-    default = _live_default_model()
-    if not requested or requested in _DEAD_GROQ_MODELS:
-        resolved_model = default
-    else:
-        resolved_model = requested
+    resolved_model, reason = resolve_groq_model(model)
+    if reason is not None:
+        logger.info(
+            "llm model remapped provider=groq requested=%r effective=%s reason=%s",
+            requested or "",
+            resolved_model,
+            reason,
+        )
 
     kwargs: dict[str, Any] = {
         "model": resolved_model,

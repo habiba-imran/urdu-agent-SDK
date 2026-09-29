@@ -105,7 +105,8 @@ async def test_prewarm_llm_tolerates_failure():
     await prewarm_llm(llm)
 
 
-def test_turn_latency_tracker_emits_on_tts():
+def test_turn_latency_tracker_emits_on_tts(monkeypatch):
+    monkeypatch.setenv("UVA_PUBLISH_TURN_LATENCY", "1")
     room = MagicMock()
     room.name = "room-1"
     logger = MagicMock()

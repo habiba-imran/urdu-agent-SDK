@@ -7,7 +7,7 @@ export function Card({ className, children }: { className?: string; children: Re
   return (
     <div
       className={cn(
-        'rounded-lg border border-slate-300 bg-card text-card-foreground shadow-sm',
+        'rounded-card border border-border bg-surface text-text shadow-card',
         className,
       )}
     >
@@ -17,15 +17,19 @@ export function Card({ className, children }: { className?: string; children: Re
 }
 
 export function CardHeader({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <div className={cn('flex flex-col space-y-1.5 p-6', className)}>{children}</div>;
+  return <div className={cn('flex flex-col gap-2 p-6', className)}>{children}</div>;
 }
 
 export function CardTitle({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <h3 className={cn('text-lg font-semibold leading-none tracking-tight', className)}>{children}</h3>;
+  return (
+    <h3 className={cn('font-sans text-xl font-semibold tracking-[-0.01em] text-text', className)}>
+      {children}
+    </h3>
+  );
 }
 
 export function CardDescription({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <p className={cn('text-sm text-muted-foreground', className)}>{children}</p>;
+  return <p className={cn('text-[15px] leading-relaxed text-text-body', className)}>{children}</p>;
 }
 
 export function CardContent({ className, children }: { className?: string; children: React.ReactNode }) {

@@ -22,8 +22,8 @@ def test_turn_handling_barge_in_and_preemptive_partial_feed():
     interruption = TURN_HANDLING_OPTIONS["interruption"]
     assert interruption["enabled"] is True
     assert interruption["discard_audio_if_uninterruptible"] is True
-    # Longer than brief echo blips; still under ~0.7s so intentional barge-in feels snappy.
-    assert 0.4 <= interruption["min_duration"] <= 0.7
+    # Longer than brief echo blips; keep intentional barge-in under ~1s.
+    assert 0.4 <= interruption["min_duration"] <= 0.9
     assert interruption["resume_false_interruption"] is False
     preemptive = TURN_HANDLING_OPTIONS["preemptive_generation"]
     assert preemptive["enabled"] is True

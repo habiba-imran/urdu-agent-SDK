@@ -61,13 +61,31 @@ cp .env.example .env.local
 ```
 
 ### 2. Build the Database Schema
-There is no forward-only migration runner yet. The only automation rebuilds a **development**
-database from nothing by applying every file in `supabase/migrations/` in order — it **drops and
-recreates all tables, so it destroys every row**. Never point it at production.
+
+`scripts/migrate.py` is the forward-only runner: it records what it applies in a
+`schema_migrations` table, runs each file in its own transaction, and never drops anything.
+
 ```bash
-make db-reset   # runs scripts/db_reset.py against SUPABASE_DB_URL (requires psql)
+make db-migrate-status   # what is applied, what is pending
+make db-migrate          # apply pending migrations
 ```
-Production schema changes are currently applied by hand from `supabase/migrations/`.
+
+For a **brand new, empty** database, add `--allow-initial` once so `0001_schema.sql` runs
+(it drops every table before creating them, which is why the runner skips it by default):
+
+```bash
+python scripts/migrate.py --allow-initial
+```
+
+For an **existing** database that was built by hand, record the current files as applied
+before using the runner normally:
+
+```bash
+python scripts/migrate.py --baseline
+```
+
+`make db-reset` still exists for local development only — it **drops and recreates every
+table, destroying all rows**. Never point it at a database you care about.
 
 ### 3. Start Control Plane (Port 8000)
 ```bash
@@ -119,6 +137,11 @@ cd telephony && npm ci && npm run lint && npm test
 
 ## 🔐 Security & Trust Boundaries
 
-1. **Zero Client Secrets**: The browser SDK `@awaazlabs-uva/voice` holds **zero** provider or tenant secrets.
+1. **Zero Secrets in the Browser SDK**: `@awaazlabs-uva/voice` holds **zero** provider or
+   tenant secrets — it only ever receives a short-lived, room-scoped LiveKit token from the
+   host's own backend. This is a claim about the SDK, not about the whole product: the
+   tenant dashboard is a browser app that holds a portal session token, and the tenant's
+   HMAC signing secret is retrievable through it by its owner (encrypted at rest, revealed
+   only to a freshly authenticated session, and rotatable from the credentials tab).
 2. **HMAC Signing**: Host backends hold the tenant's raw HMAC secret and sign every mint request with a 60-second replay window.
 3. **Tenant Prompt Isolation**: Tenant prompts are treated as untrusted data and placed in a separate `chat_ctx` system message framing, never interpolated into system operating rules.

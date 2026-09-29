@@ -141,14 +141,10 @@ export function TabsTrigger({
       disabled={disabled}
       onClick={() => ctx.setValue(value)}
       className={cn(
-        'rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50',
-        variant === 'prominent'
-          ? active
-            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-            : 'border-border bg-transparent hover:bg-muted/40'
-          : active
-            ? 'bg-muted/60 border-border'
-            : 'bg-transparent hover:bg-muted/40',
+        'rounded-pill px-3.5 py-2.5 font-mono text-[11px] font-medium uppercase tracking-[0.14em] transition-colors duration-console disabled:opacity-50',
+        active
+          ? 'bg-surface-muted text-text'
+          : 'bg-transparent text-text-muted hover:text-text',
         className,
       )}
     >

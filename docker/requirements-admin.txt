@@ -7,3 +7,5 @@ psycopg==3.3.4
 psycopg-binary==3.3.4
 python-dotenv==1.2.2
 PyJWT==2.13.0
+# F-M8 / F-C6: admin secret rotation imports control_plane.secret_crypto when vendored.
+cryptography==50.0.0

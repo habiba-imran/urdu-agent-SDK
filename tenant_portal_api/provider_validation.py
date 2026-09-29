@@ -7,9 +7,10 @@ but not another — a broad provider-level check is not enough). Returns fully-r
 ready to write; callers must not write anything this function didn't return, so there is exactly
 one place these rules can be bypassed from (nowhere).
 
-Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia and Rime TTS consume
-``tts_options`` (humanization — model/speed and related keys). STT/LLM options remain
-unconsumed; the only valid value for those layers is ``{}``.
+Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, ElevenLabs,
+and Fish Audio TTS consume ``tts_options`` (humanization — model/speed/spoken_style and
+related keys). STT/LLM options remain unconsumed; the only valid value for those layers
+is ``{}``.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from worker.providers.capabilities import (  # noqa: E402
+    allowed_llm_models,
     is_language_known,
     llm_capability,
     stt_capability,
@@ -29,6 +31,14 @@ from worker.providers.capabilities import (  # noqa: E402
 from worker.providers.tts.cartesia_options import (  # noqa: E402
     CartesiaTtsOptionsError,
     validate_cartesia_tts_options,
+)
+from worker.providers.tts.elevenlabs_options import (  # noqa: E402
+    ElevenLabsTtsOptionsError,
+    validate_elevenlabs_tts_options,
+)
+from worker.providers.tts.fish_audio_options import (  # noqa: E402
+    FishTtsOptionsError,
+    validate_fish_tts_options,
 )
 from worker.providers.tts.rime_options import (  # noqa: E402
     RimeTtsOptionsError,
@@ -169,10 +179,10 @@ def resolve_agent_provider_fields(
         effective_llm_model if effective_llm_model is not None else base["llm_model"]
     )
     # llm_model keeps its existing free-text convention (agents.llm_model has always been a plain
-    # string, never previously validated against a fixed list) — only checked against the
-    # capability's models list when that list is non-empty, so real deprecated-model aliasing
-    # (worker/providers/llm/gemini.py::_DEPRECATED_GEMINI_MODELS) keeps working unchanged.
-    if llm_cap["models"] and resolved_llm_model not in llm_cap["models"]:
+    # string, never previously validated against a fixed list) — checked against runtime models
+    # plus legacy_aliases (F-M15) so deprecated IDs on existing rows still validate while pickers
+    # only show live models.
+    if llm_cap["models"] and resolved_llm_model not in allowed_llm_models(llm_cap):
         raise ProviderValidationError(
             "unsupported_model_for_provider",
             f"llm model {resolved_llm_model!r} is not supported by provider "
@@ -214,9 +224,20 @@ def resolve_agent_provider_fields(
             resolved_tts_options = validate_rime_tts_options(resolved_tts_options)
         except RimeTtsOptionsError as exc:
             raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "elevenlabs":
+        try:
+            resolved_tts_options = validate_elevenlabs_tts_options(resolved_tts_options)
+        except ElevenLabsTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
+    elif resolved_tts_provider == "fish_audio":
+        try:
+            resolved_tts_options = validate_fish_tts_options(resolved_tts_options)
+        except FishTtsOptionsError as exc:
+            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
     elif resolved_tts_options != {}:
         raise ProviderValidationError(
-            "invalid_tts_options", "no tts provider accepts options yet"
+            "invalid_tts_options",
+            f"tts provider {resolved_tts_provider!r} does not accept tts_options yet",
         )
 
     # tts_voice_id/voice_id priority rule (guide's explicit rule): tts_voice_id wins when given.

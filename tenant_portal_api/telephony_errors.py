@@ -75,6 +75,9 @@ class TelephonyErrorCode:
     WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid"
     WEBHOOK_DUPLICATE = "webhook_duplicate"
     WEBHOOK_UNMAPPED_PROVIDER_ID = "webhook_unmapped_provider_id"
+    # F-H6: the durable write failed, so the event is NOT recorded and the provider should
+    # retry. Returning 200 here is how call terminal status and quota release got lost.
+    WEBHOOK_PERSIST_FAILED = "webhook_persist_failed"
 
     # Data Governance
     RETENTION_POLICY_VIOLATION = "retention_policy_violation"

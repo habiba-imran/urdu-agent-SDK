@@ -24,3 +24,8 @@ client-test-app/
 codebase-context/
 
 self-serve-demo-UI/
+
+# F-L11: generated analysis snapshots and scratch working files. They were committed at the
+# repo root and inflate every clone and image build; they are outputs, not sources.
+graphify-out/
+scratch/

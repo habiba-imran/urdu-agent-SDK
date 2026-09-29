@@ -1,31 +1,97 @@
 name: Deploy to Production
 
+# F-H3: this used to fire Render deploy hooks straight off a push to main, with no
+# dependency on CI. Combined with a permanently red pipeline (F-H2) and most tests never
+# running (F-H1), nothing stood between a commit and production.
+#
+# It now runs only after the CI Pipeline workflow has COMPLETED SUCCESSFULLY for that same
+# commit. workflow_run is the trigger that can express "after another workflow" for pushes;
+# it always runs from the default branch's copy of this file.
+#
+# A missing deploy hook now fails the job instead of silently skipping it: the old
+# `if: env.HOOK_URL != ''` produced a green "deploy" that deployed nothing, so a rotated or
+# unset secret looked exactly like a successful release.
+
 on:
-  push:
+  workflow_run:
+    workflows: ["CI Pipeline"]
     branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this deploy is being run by hand (recorded in the run log)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   deploy-production:
     name: Trigger Render Production Deploys
     runs-on: ubuntu-latest
+    # For workflow_run, gate on the triggering run's conclusion. A manual dispatch is an
+    # explicit human decision and carries its own reason.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
+      - name: Record what is being deployed
+        env:
+          REASON: ${{ inputs.reason }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual deploy. Reason: $REASON"
+          else
+            echo "Deploying $SOURCE_SHA after CI conclusion=$SOURCE_CONCLUSION"
+          fi
+
       - name: Deploy Production Control Plane
         env:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_CONTROL_PLANE }}
-        if: env.HOOK_URL != ''
         run: |
-          curl -s -X POST "$HOOK_URL"
+          if [ -z "$HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_CONTROL_PLANE is not set - nothing was deployed"
+            exit 1
+          fi
+          curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
 
       - name: Deploy Production Voice Worker
         env:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER }}
-        if: env.HOOK_URL != ''
         run: |
-          curl -s -X POST "$HOOK_URL"
+          if [ -z "$HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_WORKER is not set - nothing was deployed"
+            exit 1
+          fi
+          curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
 
       - name: Deploy Production Admin Portal
         env:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_ADMIN }}
-        if: env.HOOK_URL != ''
         run: |
-          curl -s -X POST "$HOOK_URL"
+          if [ -z "$HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_ADMIN is not set - nothing was deployed"
+            exit 1
+          fi
+          curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
+
+      # The tenant portal backs the dashboard and all telephony and has no deploy hook here
+      # (audit F-H3). Set RENDER_DEPLOY_HOOK_TENANT_PORTAL to bring it into this pipeline;
+      # until then it stays a documented manual step rather than a silent omission.
+      - name: Deploy Production Tenant Portal API
+        env:
+          HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_TENANT_PORTAL }}
+        run: |
+          if [ -z "$HOOK_URL" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_TENANT_PORTAL is not set - the tenant portal was NOT deployed and must be updated by hand"
+            exit 0
+          fi
+          curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
