@@ -3,11 +3,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-/**
- * Data table primitive. Every dense table gets a `<caption>` (visually hidden by default
- * so it names the table for screen readers without changing the visual layout), and every
- * header cell carries `scope="col"`.
- */
 export function Table({
   className,
   tableClassName,
@@ -16,19 +11,16 @@ export function Table({
   captionSrOnly = true,
 }: {
   className?: string;
-  /** Extra classes on the `<table>` itself — e.g. `table-fixed` for a table sized to always
-   *  fit its container (columns wrap instead of forcing horizontal scroll). */
   tableClassName?: string;
   children: React.ReactNode;
-  /** Accessible name for the table. Hidden visually unless `captionSrOnly` is false. */
   caption?: React.ReactNode;
   captionSrOnly?: boolean;
 }) {
   return (
-    <div className={cn('w-full overflow-auto', className)}>
-      <table className={cn('w-full caption-bottom text-sm', tableClassName)}>
+    <div className={cn('w-full overflow-auto rounded-card border border-border bg-surface shadow-card', className)}>
+      <table className={cn('w-full caption-bottom text-[15px]', tableClassName)}>
         {caption ? (
-          <caption className={cn(captionSrOnly ? 'sr-only' : 'mt-4 text-sm text-muted-foreground')}>
+          <caption className={cn(captionSrOnly ? 'sr-only' : 'mt-4 text-sm text-text-muted')}>
             {caption}
           </caption>
         ) : null}
@@ -39,23 +31,13 @@ export function Table({
 }
 
 export function TableHeader({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <thead className={cn('[&_tr]:border-b', className)}>{children}</thead>;
+  return <thead className={cn(className)}>{children}</thead>;
 }
 
 export function TableBody({ className, children }: { className?: string; children: React.ReactNode }) {
   return <tbody className={cn('[&_tr:last-child]:border-0', className)}>{children}</tbody>;
 }
 
-/**
- * A row. Pass `onClick` for row-activated tables.
- *
- * `onClick` is a **mouse convenience only**. The row deliberately does NOT take
- * `role="button"` or `tabIndex` — keyboard/assistive-technology access is provided instead
- * by `RowOpenButton`, a real `<button>` inside the first cell.
- *
- * Cells containing their own controls must call `stopPropagation()` so a click on them
- * doesn't also fire the row's `onClick`.
- */
 export function TableRow({
   className,
   children,
@@ -67,7 +49,11 @@ export function TableRow({
 }) {
   return (
     <tr
-      className={cn('border-b transition-colors hover:bg-muted/30', onClick && 'cursor-pointer', className)}
+      className={cn(
+        'h-14 border-b border-border transition-colors duration-console hover:bg-surface-muted',
+        onClick && 'cursor-pointer',
+        className,
+      )}
       onClick={onClick}
     >
       {children}
@@ -75,10 +61,6 @@ export function TableRow({
   );
 }
 
-/**
- * The keyboard-reachable control that opens a row's detail view. Lives in the first cell.
- * Its accessible name must identify the row, not merely say "Open".
- */
 export function RowOpenButton({
   onClick,
   ariaLabel,
@@ -98,7 +80,7 @@ export function RowOpenButton({
         onClick();
       }}
       aria-label={ariaLabel}
-      className={cn('text-left font-medium text-foreground hover:underline', className)}
+      className={cn('text-left font-medium text-text transition-colors duration-console hover:text-accent', className)}
     >
       {children}
     </button>
@@ -109,7 +91,10 @@ export function TableHead({ className, children }: { className?: string; childre
   return (
     <th
       scope="col"
-      className={cn('h-10 px-3 text-left align-middle font-medium text-muted-foreground', className)}
+      className={cn(
+        'h-12 px-4 text-left align-middle font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted',
+        className,
+      )}
     >
       {children}
     </th>
@@ -117,9 +102,9 @@ export function TableHead({ className, children }: { className?: string; childre
 }
 
 export function TableCell({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <td className={cn('p-3 align-middle', className)}>{children}</td>;
+  return <td className={cn('px-4 py-3 align-middle text-text-body', className)}>{children}</td>;
 }
 
 export function TableCaption({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <caption className={cn('mt-4 text-sm text-muted-foreground', className)}>{children}</caption>;
+  return <caption className={cn('mt-4 text-sm text-text-muted', className)}>{children}</caption>;
 }

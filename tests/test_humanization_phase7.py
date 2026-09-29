@@ -26,6 +26,33 @@ def test_plain_text_strips_cartesia_and_brackets():
     assert "ok" in out
 
 
+def test_plain_text_strips_malformed_emotion_value_tag():
+    # LLM occasionally emits emotion_value= without a space; markdown would then
+    # eat the underscore and leave a visible <emotionvalue=...> tag.
+    raw = '<emotion_value="curious"/> Thank you, Habiba.'
+    out = plain_text_for_history(raw)
+    assert "<emotion" not in out.lower()
+    assert "Thank you, Habiba." in out
+
+
+def test_sanitize_transcript_turns_all_providers_markup():
+    from worker.humanization.history import sanitize_transcript_turns
+
+    turns = sanitize_transcript_turns(
+        [
+            {
+                "role": "assistant",
+                "text": '<emotion value="calm"/> Hello <break time="300ms"/> there [laughs]',
+                "at": 1,
+            },
+            {"role": "user", "text": "hi", "at": 2},
+        ]
+    )
+    assert turns is not None
+    assert turns[0]["text"] == "Hello there"
+    assert turns[1]["text"] == "hi"
+
+
 def test_history_max_items_default_on(monkeypatch):
     monkeypatch.delenv("UVA_CHAT_HISTORY_MAX_ITEMS", raising=False)
     assert resolve_chat_history_max_items() == 48

@@ -127,6 +127,66 @@ def test_invited_member_reuses_existing_tenant(db, monkeypatch):
     assert member["role"] == "member"
 
 
+def test_claim_existing_hmac_tenant_links_owner_without_new_tenant(db, monkeypatch):
+    """Pre-email tenants: prove HMAC → attach Auth user as owner (no second tenant)."""
+    monkeypatch.delenv("TENANT_SECRET_ENCRYPTION_KEY", raising=False)
+    from control_plane.secrets import secret_hash
+    from tenant_portal_api.membership import (
+        claim_existing_tenant_for_auth_user,
+        get_membership_by_auth_user,
+    )
+
+    tenant_id = str(uuid.uuid4())
+    raw_secret = "legacy-hmac-secret-value-for-claim"
+    auth_user_id = str(uuid.uuid4())
+    email = f"legacy-{auth_user_id[:8]}@example.com"
+    jwt_secret = "test-portal-jwt-secret"
+
+    db.execute(
+        """
+        insert into tenants (
+            id, name, hmac_secret, hmac_secret_hash, status,
+            max_concurrent, max_minutes_month, allowed_origins
+        )
+        values (%s, 'Legacy Workspace', %s, %s, 'active', 20, 10000, '{}')
+        """,
+        (tenant_id, raw_secret, secret_hash(raw_secret)),
+    )
+    db.commit()
+
+    session = claim_existing_tenant_for_auth_user(
+        db,
+        auth_user_id=auth_user_id,
+        email=email,
+        tenant_id=tenant_id,
+        tenant_secret=raw_secret,
+        jwt_secret=jwt_secret,
+    )
+    db.commit()
+
+    assert session["tenant_id"] == tenant_id
+    assert session["role"] == "owner"
+    assert session["claimed"] is True
+
+    membership = get_membership_by_auth_user(db, auth_user_id)
+    assert membership is not None
+    assert membership["tenant_id"] == tenant_id
+    assert membership["role"] == "owner"
+
+    # Wrong secret must fail.
+    other = str(uuid.uuid4())
+    with pytest.raises(Exception) as excinfo:
+        claim_existing_tenant_for_auth_user(
+            db,
+            auth_user_id=other,
+            email=f"x-{other[:8]}@example.com",
+            tenant_id=tenant_id,
+            tenant_secret="wrong-secret",
+            jwt_secret=jwt_secret,
+        )
+    assert "401" in str(excinfo.value) or "invalid" in str(excinfo.value).lower()
+
+
 def test_verify_supabase_access_token_roundtrip(monkeypatch):
     from tenant_portal_api.supabase_auth import verify_supabase_access_token
 

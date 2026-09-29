@@ -40,7 +40,7 @@ def build_transcript(session_obj: Any) -> list[dict[str, Any]]:
     try:
         from worker.humanization.history import plain_text_for_history
 
-        return [
+        turns = [
             {
                 "role": m.role,
                 "text": plain_text_for_history(m.text_content or ""),
@@ -49,6 +49,7 @@ def build_transcript(session_obj: Any) -> list[dict[str, Any]]:
             for m in session_obj.history.messages()
             if m.role in ("user", "assistant") and (m.text_content or "").strip()
         ]
+        return turns
     except Exception as e:
         logger.warning(
             "session_close stage=transcript_build failed (using empty) err=%s",
@@ -249,16 +250,20 @@ def _attach_transcript(
 ) -> bool:
     try:
         from psycopg.types.json import Jsonb
+        from worker.humanization.history import sanitize_transcript_turns
+
+        # Defense in depth: strip provider TTS markup even if caller passed raw turns.
+        cleaned = sanitize_transcript_turns(transcript) or []
 
         conn.execute(
             "update sessions set transcript = %s where room_name = %s",
-            (Jsonb(transcript), room_name),
+            (Jsonb(cleaned), room_name),
         )
         logger.info(
             "session_close stage=transcript ok room=%s tenant_id=%s turns=%s",
             room_name,
             tenant_id or "-",
-            len(transcript),
+            len(cleaned),
         )
         return True
     except Exception as e:

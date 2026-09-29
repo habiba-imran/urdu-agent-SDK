@@ -3,8 +3,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-/** Simple determinate progress bar — not part of the vendored AwaazLabs set (they don't
- *  have one either), written fresh to match the same token-driven visual language. */
 export function Progress({
   value,
   max,
@@ -21,9 +19,12 @@ export function Progress({
       aria-valuenow={value}
       aria-valuemin={0}
       aria-valuemax={max}
-      className={cn('h-2 w-full overflow-hidden rounded-full bg-muted', className)}
+      className={cn('h-2 w-full overflow-hidden rounded-pill bg-surface-muted', className)}
     >
-      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+      <div
+        className="h-full rounded-pill bg-text transition-all duration-console"
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }

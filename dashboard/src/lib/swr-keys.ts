@@ -37,9 +37,7 @@ export const swrKeys = {
 export const swrFetchers = {
   agents: () => getAgents(),
   credentials: () => getCredentials(),
-  // 300, not the default 50 -- the sessions page paginates client-side at 15/page, so a small
-  // fetch limit would make pagination pointless past page ~4 even when more sessions exist.
-  sessions: () => getSessions(300),
+  sessions: () => getSessions(50),
   usage: () => getUsageSummary(),
   voices: () => getVoiceCatalogue(),
   providerCapabilities: () => getProviderCapabilities(),

@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import psycopg
 
 from control_plane.secret_crypto import decrypt_tool_secret, encrypt_tool_secret
 from psycopg.types.json import Jsonb
 
 _UNSET = object()
+
+
+def _sanitize_session_transcript(raw: Any) -> Any:
+    """Strip TTS delivery markup (emotion/break/audio tags) before returning to clients."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return raw
+    try:
+        from worker.humanization.history import sanitize_transcript_turns
+
+        return sanitize_transcript_turns(raw)
+    except Exception:
+        return raw
 
 
 _AGENT_COLUMNS = (
@@ -262,8 +278,10 @@ def get_credentials(conn: psycopg.Connection, tenant_id: str) -> dict:
         "name": row[1],
         "allowed_origins": row[2] or [],
         "hmac_secret_hash": row[3],
-        "secret_masked": "masked",
+        # Never return the raw secret here — reveal is a separate age-checked route.
+        "secret_masked": "••••••••••••••••••••••••••••••••",
         "status": row[4],
+        "secret_provisioned": bool(row[3]),
     }
 
 
@@ -362,26 +380,65 @@ MAX_SESSION_PAGE = 200
 
 
 def list_recent_sessions(
-    conn: psycopg.Connection, tenant_id: str, *, limit: int = 50
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    limit: int = 50,
+    include_transcript: bool = False,
 ) -> list[dict]:
+    """List recent sessions for a tenant.
+
+    By default omits ``transcript`` (large JSON) — the sessions drawer fetches
+    detail via ``get_session``. Recording re-sign is also skipped on the list
+    route (see app.py); paths are not returned to clients.
+    """
     limit = max(1, min(int(limit), MAX_SESSION_PAGE))
-    rows = conn.execute(
-        """
-        select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
-               s.duration_sec, s.end_reason,
-               (
-                 s.ended_at is null
-                 and s.started_at > now() - (%s || ' minutes')::interval
-               ) as live,
-               s.summary, s.transcript, s.recording_url, s.recording_storage_path
-        from sessions s
-        join agents a on a.id = s.agent_id
-        where s.tenant_id = %s
-        order by s.started_at desc
-        limit %s
-        """,
-        (LIVE_SESSION_MAX_AGE_MIN, tenant_id, limit),
-    ).fetchall()
+    if include_transcript:
+        rows = conn.execute(
+            """
+            select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
+                   s.duration_sec, s.end_reason,
+                   (
+                     s.ended_at is null
+                     and s.started_at > now() - (%s || ' minutes')::interval
+                   ) as live,
+                   s.summary, s.transcript,
+                   (
+                     select coalesce(sum(ue.qty), 0)
+                     from usage_events ue
+                     where ue.session_id = s.id and ue.kind = 'agent_sec'
+                   ) as billable_agent_sec
+            from sessions s
+            join agents a on a.id = s.agent_id
+            where s.tenant_id = %s
+            order by s.started_at desc
+            limit %s
+            """,
+            (LIVE_SESSION_MAX_AGE_MIN, tenant_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
+                   s.duration_sec, s.end_reason,
+                   (
+                     s.ended_at is null
+                     and s.started_at > now() - (%s || ' minutes')::interval
+                   ) as live,
+                   s.summary, null,
+                   (
+                     select coalesce(sum(ue.qty), 0)
+                     from usage_events ue
+                     where ue.session_id = s.id and ue.kind = 'agent_sec'
+                   ) as billable_agent_sec
+            from sessions s
+            join agents a on a.id = s.agent_id
+            where s.tenant_id = %s
+            order by s.started_at desc
+            limit %s
+            """,
+            (LIVE_SESSION_MAX_AGE_MIN, tenant_id, limit),
+        ).fetchall()
     return [
         {
             "id": str(r[0]),
@@ -390,23 +447,62 @@ def list_recent_sessions(
             "room_name": r[3],
             "started_at": r[4].isoformat() if r[4] else None,
             "ended_at": r[5].isoformat() if r[5] else None,
-            "duration_sec": r[6],
+            "duration_sec": int(r[6]) if r[6] is not None else None,
             "end_reason": r[7],
             "live": r[8],
-            # Open but past the staleness bound: never closed, and reconciliation has not
-            # swept it yet. Surfaced rather than silently folded into "Ended" so a leaked
-            # session stays diagnosable from the dashboard instead of looking like a clean call.
             "stale": r[5] is None and not r[8],
-            # Both set by the worker at session end (worker/tools.py::end_conversation_summary
-            # for summary, worker/main.py::_release_quota_slot for transcript) — null for any
-            # session that never reached a clean agent-initiated or shutdown-callback close.
             "summary": r[9],
-            "transcript": r[10],
-            "recording_url": r[11],
-            "recording_storage_path": r[12],
+            "transcript": _sanitize_session_transcript(r[10]),
+            "billable_agent_sec": float(r[11] or 0),
         }
         for r in rows
     ]
+
+
+def get_session(
+    conn: psycopg.Connection, tenant_id: str, session_id: str
+) -> dict | None:
+    """Full session row for drawer/detail (includes transcript + recording path)."""
+    row = conn.execute(
+        """
+        select s.id, s.agent_id, a.name, s.room_name, s.started_at, s.ended_at,
+               s.duration_sec, s.end_reason,
+               (
+                 s.ended_at is null
+                 and s.started_at > now() - (%s || ' minutes')::interval
+               ) as live,
+               s.summary, s.transcript, s.recording_url, s.recording_storage_path,
+               (
+                 select coalesce(sum(ue.qty), 0)
+                 from usage_events ue
+                 where ue.session_id = s.id and ue.kind = 'agent_sec'
+               ) as billable_agent_sec
+        from sessions s
+        join agents a on a.id = s.agent_id
+        where s.tenant_id = %s and s.id = %s
+        limit 1
+        """,
+        (LIVE_SESSION_MAX_AGE_MIN, tenant_id, session_id),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": str(row[0]),
+        "agent_id": str(row[1]),
+        "agent_name": row[2],
+        "room_name": row[3],
+        "started_at": row[4].isoformat() if row[4] else None,
+        "ended_at": row[5].isoformat() if row[5] else None,
+        "duration_sec": int(row[6]) if row[6] is not None else None,
+        "end_reason": row[7],
+        "live": row[8],
+        "stale": row[5] is None and not row[8],
+        "summary": row[9],
+        "transcript": _sanitize_session_transcript(row[10]),
+        "recording_url": row[11],
+        "recording_storage_path": row[12],
+        "billable_agent_sec": float(row[13] or 0),
+    }
 
 
 def get_session_by_room(
@@ -435,34 +531,46 @@ def get_session_by_room(
         "duration_sec": row[5],
         "end_reason": row[6],
         "summary": row[7],
-        "transcript": row[8],
+        "transcript": _sanitize_session_transcript(row[8]),
         "recording_url": row[9],
         "recordingUrl": row[9],
         "recording_storage_path": row[10],
     }
 
 
-def usage_summary(conn: psycopg.Connection, tenant_id: str) -> dict:
-    """Usage for the CURRENT CALENDAR MONTH — 1st through the last day, not a rolling window.
+def usage_summary(
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    month: str | None = None,
+) -> dict:
+    """Usage for one calendar month — 1st through exclusive end (1st of next), in DB time (UTC).
 
-    Matches `quota_state.minutes_this_month`, which worker/main.py's shutdown callback already
-    rolls over on `date_trunc('month', now())` (the monthly cap the mint enforces). Before this,
-    the two disagreed: the cap reset on the calendar month while this view showed a rolling
-    "last 30 days" — a tenant could be capped mid-month while the dashboard still showed room, or
-    see last month's tail-end usage bleeding into "this month"'s totals.
+    **Billable minutes** always come from `sum(usage_events.qty where kind='agent_sec') / 60`.
+    That table is the append-only billing truth (see `0001_schema.sql` / `worker/usage.py`).
+    `quota_state.minutes_this_month` is only what the mint enforces for the *current* month and
+    can briefly diverge if a write fails mid-close; it is returned as `enforced_minutes` for
+    transparency, never as the invoice figure.
 
-    Bounds are computed in ONE query (`period` CTE) so `period_start`/`period_end` returned to the
-    caller are read from the exact same `now()` the WHERE clauses filtered on — a second query or
-    a Python-side `datetime.now()` could observe a different moment and label the data wrong,
-    especially right at a month boundary. `period_end` is the exclusive start of next month, not
-    "the last day" — deliberately, so there's no ambiguity about whether the last instant of the
-    month is included.
+    `month` is optional `YYYY-MM` (UTC calendar). When omitted, uses the current UTC month.
     """
+    from datetime import date as date_cls
+    from decimal import Decimal, ROUND_HALF_UP
+
+    def billable_minutes_from_sec(agent_sec: float) -> float:
+        """Seconds → minutes, half-up to 4 decimal places (invoice-safe)."""
+        return float(
+            (Decimal(str(agent_sec)) / Decimal(60)).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
+        )
+
     quota = conn.execute(
         """
         select t.max_concurrent, t.max_minutes_month,
                coalesce(q.concurrent_now, 0) as concurrent_now,
-               coalesce(q.minutes_this_month, 0) as minutes_this_month
+               coalesce(q.minutes_this_month, 0) as minutes_this_month,
+               q.period_start
         from tenants t
         left join quota_state q on q.tenant_id = t.id
         where t.id = %s
@@ -472,48 +580,103 @@ def usage_summary(conn: psycopg.Connection, tenant_id: str) -> dict:
     if quota is None:
         raise ValueError("tenant not found")
 
-    period = conn.execute(
+    current = conn.execute(
         """
         select date_trunc('month', now())::date,
-               (date_trunc('month', now()) + interval '1 month')::date
+               (date_trunc('month', now()) + interval '1 month')::date,
+               to_char(date_trunc('month', now()), 'YYYY-MM')
         """
     ).fetchone()
-    period_start, period_end = period[0], period[1]
+    current_start, current_end, current_month = current[0], current[1], current[2]
+
+    if month:
+        try:
+            year_s, month_s = month.split("-", 1)
+            year_i, month_i = int(year_s), int(month_s)
+            if month_i < 1 or month_i > 12:
+                raise ValueError
+            requested = date_cls(year_i, month_i, 1)
+        except ValueError as e:
+            raise ValueError("month must be YYYY-MM") from e
+        if requested > current_start:
+            raise ValueError("month cannot be in the future")
+        earliest = conn.execute(
+            "select (date_trunc('month', now()) - interval '36 months')::date"
+        ).fetchone()[0]
+        if requested < earliest:
+            raise ValueError("month is older than the 36-month retention window")
+        period_start = requested
+        if month_i == 12:
+            period_end = date_cls(year_i + 1, 1, 1)
+        else:
+            period_end = date_cls(year_i, month_i + 1, 1)
+    else:
+        period_start, period_end = current_start, current_end
+
+    is_current = period_start == current_start
+
+    period_start_utc = f"{period_start.isoformat()}T00:00:00+00:00"
+    period_end_utc = f"{period_end.isoformat()}T00:00:00+00:00"
 
     totals = conn.execute(
         """
         select kind, coalesce(sum(qty), 0) as total_qty
         from usage_events
         where tenant_id = %s
-          and at >= %s and at < %s
+          and at >= %s::timestamptz
+          and at < %s::timestamptz
         group by kind
         order by kind
         """,
-        (tenant_id, period_start, period_end),
+        (tenant_id, period_start_utc, period_end_utc),
     ).fetchall()
 
     daily = conn.execute(
         """
-        select date_trunc('day', at)::date as day, kind, coalesce(sum(qty), 0) as total_qty
+        select (timezone('UTC', at))::date as day,
+               kind,
+               coalesce(sum(qty), 0) as total_qty
         from usage_events
         where tenant_id = %s
-          and at >= %s and at < %s
-        group by day, kind
-        order by day desc, kind
+          and at >= %s::timestamptz
+          and at < %s::timestamptz
+        group by 1, 2
+        order by 1 desc, 2
         """,
-        (tenant_id, period_start, period_end),
+        (tenant_id, period_start_utc, period_end_utc),
     ).fetchall()
+
+    totals_list = [{"kind": r[0], "total_qty": float(r[1])} for r in totals]
+    agent_sec = next((t["total_qty"] for t in totals_list if t["kind"] == "agent_sec"), 0.0)
+    billable = billable_minutes_from_sec(agent_sec)
+
+    # Sanity: daily agent_sec must reconcilable to totals (UTC day buckets).
+    daily_agent = sum(float(r[2]) for r in daily if r[1] == "agent_sec")
+    if abs(daily_agent - agent_sec) > 0.0001:
+        raise RuntimeError(
+            f"usage reconciliation failed: daily agent_sec {daily_agent} != total {agent_sec}"
+        )
+
+    enforced = float(quota[3]) if is_current else None
+    concurrent_now = int(quota[2]) if is_current else 0
 
     return {
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
+        "current_month": current_month,
+        "is_current_period": is_current,
+        "timezone": "UTC",
+        "billable_minutes": billable,
+        "billable_agent_sec": float(agent_sec),
         "quota": {
             "max_concurrent": quota[0],
             "max_minutes_month": quota[1],
-            "concurrent_now": quota[2],
-            "minutes_this_month": float(quota[3]),
+            "concurrent_now": concurrent_now,
+            # Back-compat field used by Overview / Usage UI — ALWAYS billable, not mint counter.
+            "minutes_this_month": billable,
+            "enforced_minutes": enforced,
         },
-        "totals": [{"kind": r[0], "total_qty": float(r[1])} for r in totals],
+        "totals": totals_list,
         "daily": [
             {"day": r[0].isoformat(), "kind": r[1], "total_qty": float(r[2])}
             for r in daily

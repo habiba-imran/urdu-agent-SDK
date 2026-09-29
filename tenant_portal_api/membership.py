@@ -13,6 +13,7 @@ Tenant B.
 
 from __future__ import annotations
 
+import hmac
 import secrets
 import uuid
 
@@ -142,6 +143,19 @@ def invite_member_to_tenant(
         (tenant_id, normalized),
     ).fetchone()
     if existing_row:
+        status = str(existing_row[2] or "active")
+        if status == "invited":
+            # Resend email with /invite redirect (earlier invites often hit Site URL → /login).
+            auth_user = invite_auth_user_by_email(normalized)
+            return {
+                "auth_user_id": str(existing_row[0]),
+                "email": normalized,
+                "role": str(existing_row[1] or "member"),
+                "status": "invited",
+                "tenant_id": str(tenant_id),
+                "existing_auth_user": True,
+                "resent": True,
+            }
         raise TenantAuthError(409, "user is already a member of this tenant")
 
     auth_user = invite_auth_user_by_email(normalized)
@@ -308,4 +322,147 @@ def exchange_supabase_user_for_portal_session(
     )
     session["role"] = membership["role"]
     session["email"] = membership.get("email") or email
+    return session
+
+
+def _verify_tenant_hmac(
+    conn: psycopg.Connection, *, tenant_id: str, tenant_secret: str
+) -> tuple[str, str]:
+    """Return (tenant_id, status) if HMAC matches; raise TenantAuthError otherwise."""
+    row = conn.execute(
+        """
+        select id, status, hmac_secret_hash
+          from tenants
+         where id = %s
+        """,
+        (tenant_id,),
+    ).fetchone()
+    if row is None:
+        raise TenantAuthError(401, "invalid credentials")
+    tid, status, stored_hash = row
+    if status != "active":
+        raise TenantAuthError(403, "tenant suspended")
+    provided_hash = secret_hash(tenant_secret)
+    if not stored_hash or not hmac.compare_digest(provided_hash, stored_hash):
+        raise TenantAuthError(401, "invalid credentials")
+    return str(tid), str(status)
+
+
+def _tenant_agent_count(conn: psycopg.Connection, tenant_id: str) -> int:
+    try:
+        row = conn.execute(
+            "select count(*) from agents where tenant_id = %s",
+            (tenant_id,),
+        ).fetchone()
+    except psycopg.errors.UndefinedTable:
+        return 0
+    return int(row[0] if row else 0)
+
+
+def _detach_empty_membership(
+    conn: psycopg.Connection, *, auth_user_id: str, membership: dict
+) -> None:
+    """Drop a mistaken Phase-1 bootstrap membership if that tenant has no agents."""
+    if _tenant_agent_count(conn, membership["tenant_id"]) > 0:
+        raise TenantAuthError(
+            409,
+            "your email is already linked to a different tenant that has agents — "
+            "ask an owner to invite you, or use that workspace",
+        )
+    conn.execute(
+        "delete from tenant_members where auth_user_id = %s",
+        (auth_user_id,),
+    )
+
+
+def claim_existing_tenant_for_auth_user(
+    conn: psycopg.Connection,
+    *,
+    auth_user_id: str,
+    email: str | None,
+    tenant_id: str,
+    tenant_secret: str,
+    jwt_secret: str,
+) -> dict:
+    """Link a Supabase Auth user to a pre-email tenant by proving the HMAC secret.
+
+    Legacy tenants (provisioned with tenant id + secret only) have no ``tenant_members``
+    row. After the owner creates an email/password Auth user, they claim the old tenant
+    here instead of keeping a brand-new empty bootstrap workspace.
+    """
+    tid, _status = _verify_tenant_hmac(
+        conn, tenant_id=tenant_id.strip(), tenant_secret=tenant_secret
+    )
+
+    existing = get_membership_by_auth_user(conn, auth_user_id)
+    if existing is not None:
+        if existing["tenant_id"] == tid:
+            mark_member_active(conn, auth_user_id)
+            session = issue_portal_session(
+                conn,
+                tenant_id=tid,
+                jwt_secret=jwt_secret,
+                auth_user_id=auth_user_id,
+                role=existing["role"],
+            )
+            session["role"] = existing["role"]
+            session["email"] = existing.get("email") or email
+            session["claimed"] = False
+            return session
+        _detach_empty_membership(conn, auth_user_id=auth_user_id, membership=existing)
+
+    owner = conn.execute(
+        """
+        select auth_user_id from tenant_members
+         where tenant_id = %s and role = 'owner'
+         limit 1
+        """,
+        (tid,),
+    ).fetchone()
+    if owner is not None and str(owner[0]) != str(auth_user_id):
+        raise TenantAuthError(
+            409,
+            "this tenant already has an owner — ask them to invite your email instead",
+        )
+
+    already = conn.execute(
+        """
+        select auth_user_id, role from tenant_members
+         where tenant_id = %s and auth_user_id = %s
+         limit 1
+        """,
+        (tid, auth_user_id),
+    ).fetchone()
+    if already is None:
+        try:
+            conn.execute(
+                """
+                insert into tenant_members (tenant_id, auth_user_id, email, role, status)
+                values (%s, %s, %s, 'owner', 'active')
+                """,
+                (tid, auth_user_id, email),
+            )
+        except psycopg.errors.UndefinedColumn:
+            conn.execute(
+                """
+                insert into tenant_members (tenant_id, auth_user_id, email, role)
+                values (%s, %s, %s, 'owner')
+                """,
+                (tid, auth_user_id, email),
+            )
+        except psycopg.errors.UniqueViolation as exc:
+            raise TenantAuthError(
+                409, "email is already linked to another tenant"
+            ) from exc
+
+    session = issue_portal_session(
+        conn,
+        tenant_id=tid,
+        jwt_secret=jwt_secret,
+        auth_user_id=auth_user_id,
+        role="owner",
+    )
+    session["role"] = "owner"
+    session["email"] = email
+    session["claimed"] = True
     return session

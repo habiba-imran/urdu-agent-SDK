@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import re
 
+# Delivery markup for Cartesia / Mist-style TTS. Allow malformed attachment
+# (``<emotion_value="calm"/>``) — ``\bemotion\b`` fails there because ``_`` is a
+# word char, then markdown cleanup can leave ``<emotionvalue=...>`` in transcripts.
 SSML_TAG_RE = re.compile(
-    r"</?(?:break|emotion|spell|speed|volume)\b[^>]*>",
+    r"</?(?:break|emotion|spell|speed|volume)[^\s>]*(?:\s[^>]*)?/?>",
     re.IGNORECASE,
 )
 CARTESIA_SPELL_TAG_RE = re.compile(

@@ -94,7 +94,9 @@ def _reconcile_on_conn(
                     """
                     UPDATE sessions
                     SET ended_at = NOW(),
-                        duration_sec = GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at))::int),
+                        -- Not billable: no usage_events row. Do NOT store wall-clock age as
+                        -- duration_sec (that inflated Sessions UI into multi-day "calls").
+                        duration_sec = 0,
                         end_reason = 'reconciled_stale'
                     WHERE ended_at IS NULL
                       AND started_at < NOW() - (INTERVAL '1 minute' * %s)

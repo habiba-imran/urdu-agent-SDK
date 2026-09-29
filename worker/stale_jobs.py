@@ -123,24 +123,17 @@ def close_open_session(
     import psycopg
 
     with psycopg.connect(**_conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
+        # Stale closes are not billed — never write wall-clock as duration_sec
+        # (billing truth is usage_events.agent_sec). Default 0 when caller omits it.
         if duration_sec is None:
-            row = conn.execute(
-                "select tenant_id, extract(epoch from (now() - started_at))::int "
-                "from sessions where room_name = %s and ended_at is null",
-                (room_name,),
-            ).fetchone()
-            if row is None:
-                return False
-            tenant_id, computed = row
-            duration_sec = max(1, int(computed or 1))
-        else:
-            row = conn.execute(
-                "select tenant_id from sessions where room_name = %s and ended_at is null",
-                (room_name,),
-            ).fetchone()
-            if row is None:
-                return False
-            tenant_id = row[0]
+            duration_sec = 0
+        row = conn.execute(
+            "select tenant_id from sessions where room_name = %s and ended_at is null",
+            (room_name,),
+        ).fetchone()
+        if row is None:
+            return False
+        tenant_id = row[0]
 
         updated = conn.execute(
             """

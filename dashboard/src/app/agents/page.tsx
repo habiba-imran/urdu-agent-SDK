@@ -1,110 +1,111 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { Check, Copy, Download, Plus } from 'lucide-react';
+import { Check, Copy, Download } from 'lucide-react';
 
-import { createAgent, type LanguageCapabilities } from '@/lib/portalApi';
+import { type PortalAgent } from '@/lib/portalApi';
+import { type ManagedPhoneNumber } from '@/lib/telephonyApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
+import { isPortalAuthFailure } from '@/lib/portalAuth';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Modal } from '@/components/ui/modal';
-import { Select, type SelectOption } from '@/components/ui/select';
-import { DataTableSkeleton, Skeleton } from '@/components/ui/skeleton';
-import { VoiceCatalogueGrid } from '@/components/VoiceCatalogueGrid';
+import { Drawer } from '@/components/ui/drawer';
+import { DataTableSkeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { RowOpenButton } from '@/components/ui/table';
 
 function capitalize(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
-/** Options for a provider `Select` from one capability layer (e.g. `langEntry.stt`) — the
- *  provider keys themselves are the only source of truth for what's actually enabled. */
-function providerOptions(
-  layer: Record<string, { models?: string[]; voices?: string[] }> | undefined,
-): SelectOption[] {
-  return Object.keys(layer ?? {}).map((provider) => ({ value: provider, label: capitalize(provider) }));
+function formatProviderLabel(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => capitalize(part))
+    .join(' ');
 }
 
-// The starting prompt text for a new agent, keyed by agent_language -- "polite Urdu customer
-// support voice assistant" doesn't make sense as the default for an English agent (ADR-036
-// added English/multi-provider support after this text was written).
-const DEFAULT_PROMPTS: Record<string, string> = {
-  ur: 'You are a polite Urdu customer support voice assistant.',
-  en: 'You are a polite, helpful customer support voice assistant.',
-};
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <h3 className="font-mono-label text-text-muted">{children}</h3>;
+}
 
-function defaultPromptFor(lang: string): string {
-  return DEFAULT_PROMPTS[lang] ?? 'You are a polite, helpful voice assistant.';
+function ProviderReadonlyRow({
+  label,
+  provider,
+  detail,
+}: {
+  label: string;
+  provider?: string | null;
+  detail?: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-1 rounded-input border border-border bg-surface-muted px-3.5 py-3">
+      <span className="text-[12px] font-medium text-text-muted">{label}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">{provider ? formatProviderLabel(provider) : '—'}</Badge>
+        {detail ? (
+          <span className="truncate font-mono text-[12px] text-text-body" title={detail}>
+            {detail}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function primaryNumberLabel(agent: PortalAgent, assigned: ManagedPhoneNumber[]): string {
+  if (assigned.length > 0) return assigned[0]!.e164_number;
+  if (agent.phone_number) return agent.phone_number;
+  return '—';
 }
 
 export default function AgentsPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const {
     data: agents,
     isLoading: agentsLoading,
     error: agentsSWRError,
-    mutate: mutateAgents,
   } = useSWR(swrKeys.agents, swrFetchers.agents);
-  const { data: capabilities } = useSWR(
-    swrKeys.providerCapabilities,
-    swrFetchers.providerCapabilities,
-  );
+  const { data: managedNumbers } = useSWR(swrKeys.telephonyNumbers, swrFetchers.telephonyNumbers);
+  const { data: capabilities } = useSWR(swrKeys.providerCapabilities, swrFetchers.providerCapabilities, {
+    dedupingInterval: 60_000,
+    revalidateIfStale: false,
+    keepPreviousData: true,
+  });
 
-  const [agentName, setAgentName] = useState('New Portal Agent');
-  // Real values for all of these come from applyLanguageDefaults(), always called before the
-  // modal is shown (openCreateModal / handleLanguageChange) -- these initializers are never
-  // actually seen by the user, so they're left empty rather than baking in stale Uplift-only
-  // constants (a legacy voice id, a fixed model name) that predate multi-provider support.
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [language, setLanguage] = useState('ur');
-  const [sttProvider, setSttProvider] = useState('');
-  const [sttModel, setSttModel] = useState('');
-  const [llmProvider, setLlmProvider] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState('');
-  const [llmModel, setLlmModel] = useState('');
-  const [ttsProvider, setTtsProvider] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [activeAgent, setActiveAgent] = useState<PortalAgent | null>(null);
+  const [drawerIdCopied, setDrawerIdCopied] = useState(false);
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drawerCopyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+      if (drawerCopyTimeoutRef.current) clearTimeout(drawerCopyTimeoutRef.current);
     };
   }, []);
 
-  const languageOptions: SelectOption[] = Object.entries(capabilities?.languages ?? {}).map(
-    ([code, entry]) => ({ value: code, label: entry.label }),
-  );
-  const langEntry = capabilities?.languages[language];
-  const sttModelOptions: SelectOption[] = (langEntry?.stt?.[sttProvider]?.models ?? []).map((m) => ({
-    value: m,
-    label: m,
-  }));
-  const llmModelOptions: SelectOption[] = (langEntry?.llm?.[llmProvider]?.models ?? []).map((m) => ({
-    value: m,
-    label: m,
-  }));
-  const allowedVoiceIds = langEntry?.tts?.[ttsProvider]?.voices ?? [];
-  const canCreate = Boolean(
-    agentName.trim() &&
-      systemPrompt.trim() &&
-      selectedVoice &&
-      sttProvider &&
-      llmProvider &&
-      ttsProvider &&
-      !saving,
-  );
+  const numbersByAgent = useMemo(() => {
+    const map = new Map<string, ManagedPhoneNumber[]>();
+    for (const num of managedNumbers ?? []) {
+      if (!num.assigned_agent_id) continue;
+      const list = map.get(num.assigned_agent_id) ?? [];
+      list.push(num);
+      map.set(num.assigned_agent_id, list);
+    }
+    return map;
+  }, [managedNumbers]);
+
+  const activeLanguage = activeAgent?.agent_language || 'ur';
+  const activeLangLabel =
+    capabilities?.languages[activeLanguage]?.label ?? activeLanguage.toUpperCase();
+  const activeVoiceId = activeAgent?.tts_voice_id || activeAgent?.voice_id || '—';
+  const activeAssigned = activeAgent ? numbersByAgent.get(activeAgent.id) ?? [] : [];
 
   const handleCopyAgentId = (agentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -116,106 +117,37 @@ export default function AgentsPage() {
     }, 1500);
   };
 
-  // Switching language invalidates every provider/model/voice choice below it — recompute all
-  // of them to that language's first enabled option, same "no silent fallback" rule test-app's
-  // AgentForm applies to its own picker. The starting prompt text is language-specific too
-  // (see DEFAULT_PROMPTS), so it resets here alongside everything else.
-  const applyLanguageDefaults = (lang: string, entry: LanguageCapabilities | undefined) => {
-    setLanguage(lang);
-    setSystemPrompt(defaultPromptFor(lang));
-    const firstStt = Object.keys(entry?.stt ?? {})[0] ?? '';
-    const firstLlm = Object.keys(entry?.llm ?? {})[0] ?? '';
-    const firstTts = Object.keys(entry?.tts ?? {})[0] ?? '';
-    setSttProvider(firstStt);
-    setSttModel(entry?.stt?.[firstStt]?.defaultModel ?? '');
-    setLlmProvider(firstLlm);
-    setLlmModel(entry?.llm?.[firstLlm]?.defaultModel ?? '');
-    setTtsProvider(firstTts);
-    setSelectedVoice(entry?.tts?.[firstTts]?.defaultVoice ?? '');
+  const handleCopyDrawerId = () => {
+    if (!activeAgent) return;
+    navigator.clipboard.writeText(activeAgent.id);
+    setDrawerIdCopied(true);
+    if (drawerCopyTimeoutRef.current) clearTimeout(drawerCopyTimeoutRef.current);
+    drawerCopyTimeoutRef.current = setTimeout(() => setDrawerIdCopied(false), 1500);
   };
 
-  const handleLanguageChange = (lang: string) => {
-    applyLanguageDefaults(lang, capabilities?.languages[lang]);
+  const openAgentDrawer = (agent: PortalAgent) => {
+    setActiveAgent(agent);
+    setDrawerIdCopied(false);
   };
 
-  const handleSttProviderChange = (next: string) => {
-    setSttProvider(next);
-    setSttModel(langEntry?.stt?.[next]?.defaultModel ?? '');
+  const closeAgentDrawer = () => {
+    setActiveAgent(null);
+    setDrawerIdCopied(false);
   };
-
-  const handleLlmProviderChange = (next: string) => {
-    setLlmProvider(next);
-    setLlmModel(langEntry?.llm?.[next]?.defaultModel ?? '');
-  };
-
-  const handleTtsProviderChange = (next: string) => {
-    setTtsProvider(next);
-    setSelectedVoice(langEntry?.tts?.[next]?.defaultVoice ?? '');
-  };
-
-  const openCreateModal = () => {
-    setAgentName('New Portal Agent');
-    const langCode = capabilities ? Object.keys(capabilities.languages)[0] ?? 'ur' : 'ur';
-    applyLanguageDefaults(langCode, capabilities?.languages[langCode]);
-    setShowModal(true);
-  };
-
-  // Lets other pages (e.g. Overview's empty state) link straight into the create flow via
-  // /agents?new=1, instead of landing on the list and requiring a second click. Waits for
-  // capabilities so the modal opens with real language/provider defaults already populated,
-  // not the pre-load empty state. Consumed once, then stripped from the URL so navigating
-  // back here later (or refreshing) doesn't reopen it.
-  const autoOpenedCreateModal = useRef(false);
-  useEffect(() => {
-    if (autoOpenedCreateModal.current || !capabilities) return;
-    if (searchParams.get('new') === '1') {
-      autoOpenedCreateModal.current = true;
-      openCreateModal();
-      router.replace('/agents');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capabilities, searchParams]);
-
-  const handleCreate = async () => {
-    try {
-      setSaving(true);
-      const created = await createAgent({
-        name: agentName,
-        prompt: systemPrompt,
-        voice_id: selectedVoice,
-        llm_model: llmModel,
-        agent_language: language,
-        stt_provider: sttProvider,
-        stt_model: sttModel,
-        llm_provider: llmProvider,
-        tts_provider: ttsProvider,
-        tts_voice_id: selectedVoice,
-      });
-      await mutateAgents((current) => [created, ...(current ?? [])], { revalidate: false });
-
-      setShowModal(false);
-      setSaveError(null);
-      router.push(`/agents/${created.id}`);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to create agent');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputClassName =
-    'w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   const handleExportAgents = () => {
     const csv = toCsv(
-      ['Agent ID', 'Agent Name', 'Voice', 'Minutes Used', 'Created At'],
-      (agents ?? []).map((agent) => [
-        agent.id,
-        agent.name,
-        agent.voice_id,
-        ((agent.total_agent_sec ?? 0) / 60).toFixed(1),
-        agent.created_at ?? '',
-      ]),
+      ['Agent ID', 'Agent Name', 'Assigned Number', 'Minutes Used', 'Created At'],
+      (agents ?? []).map((agent) => {
+        const assigned = numbersByAgent.get(agent.id) ?? [];
+        return [
+          agent.id,
+          agent.name,
+          primaryNumberLabel(agent, assigned),
+          ((agent.total_agent_sec ?? 0) / 60).toFixed(1),
+          agent.created_at ?? '',
+        ];
+      }),
     );
     downloadCsv('agents.csv', csv);
   };
@@ -223,105 +155,150 @@ export default function AgentsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Manage Agent Configurations"
-        description="Configure system instructions, language, providers, and assigned voices."
+        title="Agents"
+        description="Read-only view of agents and assigned phone numbers. Create and update configuration from your host codebase via the agents and telephony SDKs."
         actions={
-          <>
-            <Button variant="secondary" onClick={handleExportAgents}>
-              <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              Export CSV
-            </Button>
-            <Button onClick={openCreateModal}>
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              New Agent
-            </Button>
-          </>
+          <Button variant="secondary" onClick={handleExportAgents}>
+            <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            Export CSV
+          </Button>
         }
       />
 
-      {agentsSWRError || saveError ? (
-        <div className="mb-6 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+      {agentsSWRError && !isPortalAuthFailure(agentsSWRError) ? (
+        <div className="mb-6 rounded-input border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <strong>Backend connection error:</strong>{' '}
-          {saveError ??
-            (agentsSWRError instanceof Error ? agentsSWRError.message : 'Failed to load agents')}
+          {agentsSWRError instanceof Error ? agentsSWRError.message : 'Failed to load agents'}
         </div>
       ) : null}
 
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Card className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            'pointer-events-none absolute right-5 top-5 z-20 flex items-center gap-1.5',
+            'rounded-pill border border-border bg-text px-3 py-1.5 text-white shadow-float',
+            'font-mono text-[11px] font-medium uppercase tracking-[0.12em]',
+            'transition-all duration-200 ease-out',
+            copiedAgentId ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0',
+          )}
+        >
+          <Check className="h-3.5 w-3.5" aria-hidden="true" />
+          Agent ID copied
+        </div>
         <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
           {agentsLoading ? (
             <DataTableSkeleton rows={4} />
           ) : (agents ?? []).length === 0 ? (
             <EmptyState
               title="No agents found yet"
-              description="Create one to begin."
+              description="Create agents from your host codebase with @awaazlabs-uva/agents."
             />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col text-sm">
-              <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)_3.25rem] border-b border-border">
-                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+              <div className="grid shrink-0 grid-cols-[minmax(0,2.5fr)_minmax(0,0.7fr)_minmax(0,1.2fr)_minmax(0,1fr)_3.25rem] border-b border-border">
+                <div className="h-10 px-3 text-left font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
                   Agent Name
                 </div>
-                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
+                <div className="h-10 px-3 text-left font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
                   Language
                 </div>
-                <div className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                  Assigned Voice
+                <div className="h-10 px-3 text-left font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
+                  Assigned Number
                 </div>
-                <div className="h-10 px-3 text-center align-middle font-medium text-muted-foreground">
+                <div className="h-10 px-3 text-center font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
                   Minutes Used
                 </div>
-                <div className="h-10 px-3 align-middle">
-                  <span className="sr-only">Actions</span>
+                <div className="h-10 px-3">
+                  <span className="sr-only">Copy agent ID</span>
                 </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
                 {(agents ?? []).map((agent) => {
                   const isCopied = copiedAgentId === agent.id;
+                  const assigned = numbersByAgent.get(agent.id) ?? [];
+                  const numberLabel = primaryNumberLabel(agent, assigned);
+                  const extraCount = Math.max(0, assigned.length - 1);
                   return (
                     <div
                       key={agent.id}
-                      onClick={() => router.push(`/agents/${agent.id}`)}
-                      className="group grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)_3.25rem] items-center transition-colors hover:bg-muted/30"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open details for ${agent.name}`}
+                      onClick={() => openAgentDrawer(agent)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openAgentDrawer(agent);
+                        }
+                      }}
+                      className="group grid cursor-pointer grid-cols-[minmax(0,2.5fr)_minmax(0,0.7fr)_minmax(0,1.2fr)_minmax(0,1fr)_3.25rem] items-center transition-colors duration-console hover:bg-surface-muted focus-visible:bg-surface-muted focus-visible:outline-none"
                     >
-                      <div className="truncate p-3 text-left align-middle font-medium">
-                        <RowOpenButton
-                          onClick={() => router.push(`/agents/${agent.id}`)}
-                          ariaLabel={`Edit settings and voice for ${agent.name}`}
-                        >
-                          {agent.name}
-                        </RowOpenButton>
-                      </div>
-                      <div className="truncate p-3 text-left align-middle">
+                      <div className="truncate p-3 font-medium text-text">{agent.name}</div>
+                      <div className="truncate p-3">
                         <Badge variant="outline">
                           {(agent.agent_language ?? 'ur').toUpperCase()}
                         </Badge>
                       </div>
-                      <div className="truncate p-3 text-left align-middle">
-                        <Badge>{agent.voice_id}</Badge>
+                      <div className="truncate p-3">
+                        {numberLabel === '—' ? (
+                          <span className="text-text-muted">—</span>
+                        ) : (
+                          <span
+                            className="font-mono text-[12px] tabular-nums text-text-body"
+                            title={
+                              extraCount > 0
+                                ? assigned.map((n) => n.e164_number).join(', ')
+                                : numberLabel
+                            }
+                          >
+                            {numberLabel}
+                            {extraCount > 0 ? (
+                              <span className="ml-1 text-text-muted">+{extraCount}</span>
+                            ) : null}
+                          </span>
+                        )}
                       </div>
-                      <div className="truncate p-3 text-center align-middle">
+                      <div className="truncate p-3 text-center tabular-nums text-text-body">
                         {((agent.total_agent_sec ?? 0) / 60).toFixed(1)} min
                       </div>
-                      <div className="flex items-center justify-center p-3 align-middle">
+                      <div
+                        className="flex items-center justify-center p-3"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
                         <button
                           type="button"
                           onClick={(e) => handleCopyAgentId(agent.id, e)}
                           aria-label={
-                            isCopied ? `Copied ID for ${agent.name}` : `Copy ID for ${agent.name}`
+                            isCopied
+                              ? `Copied agent ID for ${agent.name}`
+                              : `Copy agent ID for ${agent.name}`
                           }
-                          title={isCopied ? 'Copied' : 'Copy ID'}
+                          title="Copy agent ID"
                           className={cn(
-                            'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100',
-                            isCopied && 'opacity-100',
+                            'relative inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground transition-all duration-200 ease-out',
+                            'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-muted',
+                            isCopied &&
+                              'opacity-100 border-transparent bg-text text-white hover:bg-text hover:text-white',
                           )}
                         >
-                          {isCopied ? (
-                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                          ) : (
-                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                          )}
+                          <Copy
+                            className={cn(
+                              'h-3.5 w-3.5 transition-all duration-200 ease-out',
+                              isCopied ? 'scale-50 opacity-0' : 'scale-100 opacity-100',
+                            )}
+                            aria-hidden="true"
+                          />
+                          <Check
+                            className={cn(
+                              'pointer-events-none absolute h-3.5 w-3.5 transition-all duration-200 ease-out',
+                              isCopied ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
+                            )}
+                            aria-hidden="true"
+                          />
                         </button>
                       </div>
                     </div>
@@ -333,121 +310,164 @@ export default function AgentsPage() {
         </CardContent>
       </Card>
 
-      <Modal
-        open={showModal}
-        onOpenChange={setShowModal}
-        title="Create Agent"
-        className="max-w-5xl"
+      <Drawer
+        open={activeAgent !== null}
+        onOpenChange={(open) => {
+          if (!open) closeAgentDrawer();
+        }}
+        title={activeAgent?.name || 'Agent'}
+        description={`${activeLangLabel} · read-only`}
+        className="max-w-[520px]"
         footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setShowModal(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleCreate()} disabled={!canCreate}>
-              {saving ? 'Saving...' : 'Create Agent'}
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={closeAgentDrawer}>
+              Close
             </Button>
           </div>
         }
       >
-        {!capabilities ? (
-          <div className="flex flex-col gap-3">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-20 w-full" />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Agent Display Name</label>
-                <input
-                  type="text"
-                  value={agentName}
-                  onChange={(e) => setAgentName(e.target.value)}
-                  className={inputClassName}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Language</label>
-                <Select
-                  aria-label="Agent language"
-                  value={language}
-                  onValueChange={handleLanguageChange}
-                  options={languageOptions}
-                  className="w-full"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <fieldset className="flex flex-col gap-1.5">
-                <legend className="mb-1 text-sm font-medium text-muted-foreground">Speech-to-text</legend>
-                <Select
-                  aria-label="STT provider"
-                  value={sttProvider}
-                  onValueChange={handleSttProviderChange}
-                  options={providerOptions(langEntry?.stt)}
-                  placeholder="STT provider"
-                  className="w-full"
-                />
-                <Select
-                  aria-label="STT model"
-                  value={sttModel}
-                  onValueChange={setSttModel}
-                  options={sttModelOptions}
-                  placeholder="STT model"
-                  disabled={sttModelOptions.length === 0}
-                  className="mt-1 w-full"
-                />
-              </fieldset>
-
-              <fieldset className="flex flex-col gap-1.5">
-                <legend className="mb-1 text-sm font-medium text-muted-foreground">Language model</legend>
-                <Select
-                  aria-label="LLM provider"
-                  value={llmProvider}
-                  onValueChange={handleLlmProviderChange}
-                  options={providerOptions(langEntry?.llm)}
-                  placeholder="LLM provider"
-                  className="w-full"
-                />
-                <Select
-                  aria-label="LLM model"
-                  value={llmModel}
-                  onValueChange={setLlmModel}
-                  options={llmModelOptions}
-                  placeholder="LLM model"
-                  disabled={llmModelOptions.length === 0}
-                  className="mt-1 w-full"
-                />
-              </fieldset>
-            </div>
-
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="text-sm font-medium text-muted-foreground">Text-to-speech</legend>
-              <Select
-                aria-label="TTS provider"
-                value={ttsProvider}
-                onValueChange={handleTtsProviderChange}
-                options={providerOptions(langEntry?.tts)}
-                placeholder="TTS provider"
-                className="w-full sm:w-64"
-              />
-            </fieldset>
+        {activeAgent ? (
+          <div className="flex flex-col gap-7">
+            <p className="rounded-input border border-border bg-surface-muted px-3.5 py-3 text-[13px] leading-relaxed text-text-body">
+              This console is read-only. Create agents, change prompts, providers, voices,
+              recording, Telnyx connection, and number assignment from your host codebase with{' '}
+              <code className="font-mono text-[12px]">@awaazlabs-uva/agents</code> and{' '}
+              <code className="font-mono text-[12px]">@awaazlabs-uva/telephony</code>.
+            </p>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-muted-foreground">Assigned Voice</label>
-              <VoiceCatalogueGrid
-                mode="select"
-                selectedVoiceId={selectedVoice}
-                onSelect={(voice) => setSelectedVoice(voice.id)}
-                allowedVoiceIds={allowedVoiceIds}
-              />
+              <SectionLabel>Agent name</SectionLabel>
+              <div className="rounded-input border border-border bg-surface-muted px-3 py-2.5 text-[15px] text-text">
+                {activeAgent.name}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <SectionLabel>Agent ID</SectionLabel>
+              <div className="flex items-center gap-2 rounded-input border border-border bg-surface-muted px-3 py-2.5">
+                <span
+                  title={activeAgent.id}
+                  className="min-w-0 flex-1 truncate font-mono text-[12px] tabular-nums text-text"
+                >
+                  {activeAgent.id}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyDrawerId}
+                  aria-label={drawerIdCopied ? 'Copied agent ID' : 'Copy agent ID'}
+                  title={drawerIdCopied ? 'Copied' : 'Copy agent ID'}
+                  className={cn(
+                    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-pill border border-border bg-surface text-text-muted transition-colors duration-console hover:bg-surface-muted hover:text-text',
+                    drawerIdCopied &&
+                      'border-transparent bg-text text-white hover:bg-text hover:text-white',
+                  )}
+                >
+                  {drawerIdCopied ? (
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <SectionLabel>Language</SectionLabel>
+              <div className="flex items-center gap-2 rounded-input border border-border bg-surface-muted px-3 py-2.5">
+                <Badge variant="outline">{activeLanguage.toUpperCase()}</Badge>
+                <span className="text-[13px] text-text-muted">{activeLangLabel}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <SectionLabel>Assigned phone numbers</SectionLabel>
+              {activeAssigned.length > 0 || activeAgent.phone_number ? (
+                <ul className="flex flex-col gap-2">
+                  {activeAssigned.length > 0
+                    ? activeAssigned.map((num) => (
+                        <li
+                          key={num.id}
+                          className="flex flex-wrap items-center gap-2 rounded-input border border-border bg-surface-muted px-3.5 py-3"
+                        >
+                          <span className="font-mono text-[13px] tabular-nums text-text">
+                            {num.e164_number}
+                          </span>
+                          {num.country ? (
+                            <Badge variant="outline">{num.country}</Badge>
+                          ) : null}
+                          {num.status ? (
+                            <span className="text-[12px] text-text-muted">{num.status}</span>
+                          ) : null}
+                        </li>
+                      ))
+                    : (
+                        <li className="rounded-input border border-border bg-surface-muted px-3.5 py-3 font-mono text-[13px] tabular-nums text-text">
+                          {activeAgent.phone_number}
+                        </li>
+                      )}
+                </ul>
+              ) : (
+                <p className="rounded-input border border-dashed border-border px-3.5 py-3 text-[13px] text-text-muted">
+                  No number assigned. Wire routing with{' '}
+                  <code className="font-mono text-[12px]">@awaazlabs-uva/telephony</code> in your
+                  backend.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <SectionLabel>Providers</SectionLabel>
+              <div className="grid gap-2">
+                <ProviderReadonlyRow
+                  label="Speech-to-text"
+                  provider={activeAgent.stt_provider}
+                  detail={activeAgent.stt_model}
+                />
+                <ProviderReadonlyRow
+                  label="Language model"
+                  provider={activeAgent.llm_provider}
+                  detail={activeAgent.llm_model}
+                />
+                <ProviderReadonlyRow
+                  label="Text-to-speech"
+                  provider={activeAgent.tts_provider}
+                  detail={activeVoiceId}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <SectionLabel>System prompt</SectionLabel>
+              <div
+                dir="auto"
+                className="min-h-[120px] whitespace-pre-wrap rounded-input border border-border bg-surface-muted px-3 py-2.5 font-mono text-[13px] leading-relaxed text-text"
+              >
+                {activeAgent.prompt || '—'}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <SectionLabel>Recording</SectionLabel>
+              <div className="flex flex-col gap-2 rounded-input border border-border bg-surface-muted px-3.5 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[15px] font-medium text-text">Call recording</span>
+                  {activeAgent.recording_enabled ? (
+                    <Badge variant="success">Enabled</Badge>
+                  ) : (
+                    <Badge variant="outline" dot="muted">
+                      Disabled
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-[13px] text-text-muted">
+                  When enabled, callers hear a short disclosure and audio is stored with
+                  retention limits. Change this from your host codebase.
+                </p>
+              </div>
             </div>
           </div>
-        )}
-      </Modal>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

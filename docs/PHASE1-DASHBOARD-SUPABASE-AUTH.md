@@ -55,7 +55,8 @@ Portal env (in addition to Phase 1):
 2. Authentication → **Providers** → Email → disable **Confirm email** for Phase 1 local testing **or** confirm the user after create (otherwise login fails until confirmed).
 3. Authentication → **URL configuration**:
    - Site URL: `http://localhost:3000` (prod: your dashboard origin)
-   - Redirect URLs: include `http://localhost:3000/**`
+   - Redirect URLs: include `http://localhost:3000/invite` and `http://localhost:3000/**`
+   - Portal env: `DASHBOARD_INVITE_REDIRECT_URL=http://localhost:3000/invite` (GoTrue takes this as a query param on `/auth/v1/invite`)
 4. Authentication → **Policies / settings**: turn **off** public sign-ups if the toggle exists (“Allow new users to sign up”) so only users you create in the dashboard can authenticate. Phase 1 creates users manually under Authentication → Users.
 
 ### C. Create the first human user
@@ -78,3 +79,19 @@ Portal env (in addition to Phase 1):
 2. Sign in with the Auth user email/password.
 3. Credentials page should show publishable key (= tenant id) for the auto-created tenant.
 4. Second login must keep the **same** tenant id.
+
+## Legacy tenants (HMAC-era, no email)
+
+Tenants provisioned before email login only have **tenant id + HMAC secret**. They are not
+lost — the owner:
+
+1. Creates an Auth user (Supabase → Users → Add user, or invite flow once someone else owns a tenant).
+2. Opens dashboard **`/claim`** (also linked from login: “Claim existing tenant”).
+3. Signs in with that email/password and pastes tenant id + HMAC secret.
+4. Portal verifies the secret and inserts `tenant_members` (`role=owner`) for the **existing**
+   tenant — agents and credentials stay put.
+
+Do **not** use normal `/login` first for those users if you can avoid it: first email login
+bootstraps a **new** empty tenant. `/claim` skips that and attaches the old one. If they already
+bootstrapped by mistake and the empty workspace has no agents, claim will detach that membership
+and link the HMAC tenant instead.

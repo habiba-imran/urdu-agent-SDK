@@ -75,11 +75,42 @@ def find_auth_user_id_by_email(email: str) -> str | None:
     return None
 
 
+def _invite_redirect_to() -> str:
+    """Dashboard /invite page — must be listed in Supabase Auth Redirect URLs."""
+    redirect_to = (
+        os.environ.get("DASHBOARD_INVITE_REDIRECT_URL")
+        or os.environ.get("NEXT_PUBLIC_DASHBOARD_URL")
+        or "http://localhost:3000"
+    ).strip().rstrip("/")
+    if not redirect_to.endswith("/invite"):
+        redirect_to = f"{redirect_to}/invite"
+    return redirect_to
+
+
+def _send_auth_email_with_redirect(email: str, *, path: str) -> None:
+    """POST GoTrue email endpoint. ``redirect_to`` must be a query param (not JSON body)."""
+    url = f"{_supabase_url()}{path}"
+    with httpx.Client(timeout=20.0) as client:
+        resp = client.post(
+            url,
+            headers=_admin_headers(),
+            params={"redirect_to": _invite_redirect_to()},
+            json={"email": email},
+        )
+        if resp.status_code in (200, 201):
+            return
+        raise TenantAuthError(
+            502,
+            f"supabase {path} failed ({resp.status_code}): {resp.text[:240]}",
+        )
+
+
 def invite_auth_user_by_email(email: str) -> dict[str, Any]:
     """Invite a user via Supabase Auth (sends invite email when SMTP is configured).
 
     Returns the Auth user object (must include ``id``).
-    If the email already exists, falls back to lookup and returns ``{"id": ..., "existing": True}``.
+    If the email already exists, resends a recovery email with the same /invite redirect
+    so the invitee can still set a password (invite API will not re-mail existing users).
     """
     normalized = email.strip().lower()
     if not normalized or "@" not in normalized:
@@ -87,19 +118,24 @@ def invite_auth_user_by_email(email: str) -> dict[str, Any]:
 
     existing = find_auth_user_id_by_email(normalized)
     if existing:
+        # Invite API will not re-mail an existing Auth user — send recovery → /invite
+        # so they can set a password on the same accept page.
+        _send_auth_email_with_redirect(normalized, path="/auth/v1/recover")
         return {"id": existing, "email": normalized, "existing": True}
 
+    # GoTrue reads redirect_to from the *query string*, not the JSON body.
+    # Body-only values are ignored → email falls back to Site URL (often / → /login).
     url = f"{_supabase_url()}/auth/v1/invite"
     try:
         with httpx.Client(timeout=20.0) as client:
             resp = client.post(
                 url,
                 headers=_admin_headers(),
+                params={"redirect_to": _invite_redirect_to()},
                 json={"email": normalized},
             )
             if resp.status_code in (200, 201):
                 data = resp.json()
-                # Response shapes vary: user object at top level or under "user"/"id".
                 if isinstance(data, dict):
                     uid = data.get("id") or (data.get("user") or {}).get("id")
                     if uid:
@@ -111,10 +147,10 @@ def invite_auth_user_by_email(email: str) -> dict[str, Any]:
                         }
                 raise TenantAuthError(502, "supabase invite returned no user id")
 
-            # Already registered
             if resp.status_code in (422, 400) and "already" in (resp.text or "").lower():
                 again = find_auth_user_id_by_email(normalized)
                 if again:
+                    _send_auth_email_with_redirect(normalized, path="/auth/v1/recover")
                     return {"id": again, "email": normalized, "existing": True}
 
             raise TenantAuthError(

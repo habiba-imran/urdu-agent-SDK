@@ -6,6 +6,8 @@ import { Mic, MicOff, PhoneOff, Play, Volume2, Bot, Sparkles, MessageSquare, Ale
 import { AwaazLabsUvaVoice, AwaazLabsUvaVoiceError, type AwaazLabsUvaVoiceErrorCode } from '@awaazlabs-uva/voice';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
+import { stripTranscriptMarkup } from '@/lib/transcriptText';
+import { Select } from '@/components/ui/select';
 
 const CONTROL_PLANE_URL = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL;
 
@@ -258,18 +260,17 @@ export default function TestStudioPage() {
               {loadingAgents ? (
                 <p className="text-xs text-muted-foreground">Loading agents...</p>
               ) : (
-                <select
-                  value={selectedAgentId}
-                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                <Select
+                  value={selectedAgentId || undefined}
+                  onValueChange={setSelectedAgentId}
                   disabled={isConnected || isBusy}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
-                >
-                  {agents?.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.llm_model})
-                    </option>
-                  ))}
-                </select>
+                  className="w-full bg-background px-3 py-2 text-sm"
+                  placeholder="-- Choose Agent --"
+                  options={agents?.map((a: any) => ({
+                    value: a.id,
+                    label: `${a.name} (${a.llm_model})`
+                  })) || []}
+                />
               )}
             </div>
 
@@ -358,7 +359,7 @@ export default function TestStudioPage() {
                       <span className="capitalize">{turn.role}</span>
                       <span>{turn.timestamp}</span>
                     </div>
-                    <p className="leading-relaxed">{turn.text}</p>
+                    <p className="leading-relaxed">{stripTranscriptMarkup(turn.text)}</p>
                   </div>
                 ))
               )}

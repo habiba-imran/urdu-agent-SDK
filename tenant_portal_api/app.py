@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
 from .membership import (
+    claim_existing_tenant_for_auth_user,
     exchange_supabase_user_for_portal_session,
     invite_member_to_tenant,
     list_members,
@@ -91,7 +92,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=TENANT_PORTAL_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=[
         "Authorization",
         "Content-Type",
@@ -112,6 +113,14 @@ class SupabaseExchangeBody(BaseModel):
     """Dashboard Phase 1: exchange a Supabase access_token for a tenant portal JWT."""
 
     access_token: str = Field(..., min_length=1)
+
+
+class ClaimTenantBody(BaseModel):
+    """Link email login to a pre-existing tenant (HMAC-era) without creating a new one."""
+
+    access_token: str = Field(..., min_length=1)
+    tenant_id: str = Field(..., min_length=1)
+    tenant_secret: str = Field(..., min_length=1)
 
 
 class InviteMemberBody(BaseModel):
@@ -463,6 +472,68 @@ def portal_auth_supabase(body: SupabaseExchangeBody, request: Request):
         return result
 
 
+@app.post("/portal/auth/claim-tenant")
+def portal_claim_tenant(body: ClaimTenantBody, request: Request):
+    """Legacy tenants: prove HMAC ownership, attach this Supabase user as owner."""
+    client_ip = request.client.host if request.client else None
+    try:
+        claims = verify_supabase_access_token(body.access_token)
+    except TenantAuthError as e:
+        raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+    auth_user_id = str(claims["sub"])
+    email = claims.get("email")
+    if isinstance(email, str):
+        email = email.strip() or None
+    else:
+        email = None
+    throttle_id = (email or auth_user_id).lower()
+
+    with _conn() as conn:
+        try:
+            assert_not_throttled(
+                conn, realm="portal", identity=throttle_id, client_ip=client_ip
+            )
+        except LoginThrottled as e:
+            raise HTTPException(
+                status_code=e.status,
+                detail="too many failed login attempts - try again later",
+                headers={"Retry-After": str(e.retry_after_seconds)},
+            ) from e
+
+        try:
+            result = claim_existing_tenant_for_auth_user(
+                conn,
+                auth_user_id=auth_user_id,
+                email=email,
+                tenant_id=body.tenant_id,
+                tenant_secret=body.tenant_secret,
+                jwt_secret=TENANT_PORTAL_JWT_SECRET,
+            )
+        except TenantAuthError as e:
+            record_attempt(
+                conn,
+                realm="portal",
+                identity=throttle_id,
+                client_ip=client_ip,
+                successful=False,
+                reason=e.reason,
+            )
+            conn.commit()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+        record_attempt(
+            conn,
+            realm="portal",
+            identity=throttle_id,
+            client_ip=client_ip,
+            successful=True,
+            reason="claimed existing tenant",
+        )
+        conn.commit()
+        return result
+
+
 def _auth_user_id_from_claims(claims: dict) -> str:
     uid = claims.get("auth_user_id")
     if not uid:
@@ -805,10 +876,27 @@ def sessions_route(
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
     authorization: str | None = Header(default=None),
 ):
+    """Lean session list: summary + metadata, no transcript, no recording re-sign.
+
+    Full transcript/recording are loaded via ``GET /portal/sessions/{session_id}``.
+    """
     claims = _require_tenant(authorization)
     with _conn() as conn:
-        sessions = queries.list_recent_sessions(conn, claims["sub"], limit=limit)
-    return [enrich_session_recording(s) for s in sessions]
+        return queries.list_recent_sessions(
+            conn, claims["sub"], limit=limit, include_transcript=False
+        )
+
+
+@app.get("/portal/sessions/{session_id}")
+def session_detail_route(
+    session_id: str, authorization: str | None = Header(default=None)
+):
+    claims = _require_tenant(authorization)
+    with _conn() as conn:
+        session = queries.get_session(conn, claims["sub"], session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="session not found")
+    return enrich_session_recording(session)
 
 
 @app.post("/machine/sessions/get")
@@ -841,16 +929,23 @@ def machine_get_session_route(
 
 
 @app.get("/portal/usage-summary")
-def usage_summary_route(authorization: str | None = Header(default=None)):
-    """Always the CURRENT CALENDAR MONTH (1st through the end of the month) — see
-    queries.usage_summary's docstring. No `days` param: this used to be an arbitrary rolling
-    window that disagreed with the monthly cap the mint actually enforces."""
+def usage_summary_route(
+    authorization: str | None = Header(default=None),
+    month: str | None = Query(
+        default=None,
+        description="Optional calendar month as YYYY-MM. Default: current month.",
+        pattern=r"^\d{4}-\d{2}$",
+    ),
+):
+    """Calendar-month usage (1st through end of month). Optional `month=YYYY-MM` for history."""
     claims = _require_tenant(authorization)
     with _conn() as conn:
         try:
-            return queries.usage_summary(conn, claims["sub"])
+            return queries.usage_summary(conn, claims["sub"], month=month)
         except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            detail = str(e)
+            status = 400 if "month" in detail.lower() else 404
+            raise HTTPException(status_code=status, detail=detail) from e
 
 
 # --- Machine-auth agent management (existing tenants, no dashboard/JWT login required) ---

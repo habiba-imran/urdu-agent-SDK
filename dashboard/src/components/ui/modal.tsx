@@ -53,25 +53,25 @@ export function Modal({
             // `max-h-[85dvh]`, not `vh` — this is `position: fixed`, so a `vh` height
             // resolves against the initial viewport size, which doesn't track the mobile
             // browser's address-bar collapse the way `dvh` does.
-            'fixed left-1/2 top-1/2 z-[100] flex max-h-[85dvh] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card text-card-foreground shadow-lg',
+            'fixed left-1/2 top-1/2 z-[100] flex max-h-[85dvh] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-card border border-border bg-surface text-text shadow-float',
             'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95',
             className,
           )}
         >
-          <div className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-4 rounded-t-lg border-b border-border bg-card px-6 py-4">
+          <div className="sticky top-0 z-10 flex shrink-0 items-start justify-between gap-4 rounded-t-card border-b border-border bg-surface px-6 py-4">
             <div className="flex flex-col gap-1">
-              <Dialog.Title className="text-lg font-semibold leading-none tracking-tight">
+              <Dialog.Title className="font-sans text-xl font-semibold tracking-[-0.01em] text-text">
                 {title}
               </Dialog.Title>
               {description ? (
-                <Dialog.Description className="text-sm text-muted-foreground">
+                <Dialog.Description className="text-[15px] text-text-body">
                   {description}
                 </Dialog.Description>
               ) : null}
             </div>
             <Dialog.Close
               aria-label="Close"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors duration-console hover:bg-surface-muted hover:text-text"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </Dialog.Close>
@@ -80,7 +80,7 @@ export function Modal({
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">{children}</div>
 
           {footer ? (
-            <div className="shrink-0 rounded-b-lg border-t border-border bg-card px-6 py-4">{footer}</div>
+            <div className="shrink-0 rounded-b-card border-t border-border bg-surface px-6 py-4">{footer}</div>
           ) : null}
         </Dialog.Content>
       </Dialog.Portal>

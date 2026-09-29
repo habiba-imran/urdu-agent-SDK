@@ -6,6 +6,7 @@ import { UserPlus } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { inviteMember } from '@/lib/portalApi';
+import { getPortalRole, isPortalAuthFailure } from '@/lib/portalAuth';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +19,7 @@ export default function MembersPage() {
     swrKeys.members,
     swrFetchers.members,
   );
+  const isOwner = getPortalRole() === 'owner';
 
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -32,11 +34,19 @@ export default function MembersPage() {
     try {
       const invited = await inviteMember(email.trim());
       setEmail('');
-      setFormSuccess(
-        invited.existing_auth_user
-          ? `Linked existing Auth user ${invited.email} as member.`
-          : `Invited ${invited.email}. They can sign in after accepting the Supabase invite email (or using the password you set if you created them manually).`,
-      );
+      if (invited.resent) {
+        setFormSuccess(
+          `Invite re-sent to ${invited.email}. They must open the newest email link, set a password on /invite, then sign in.`,
+        );
+      } else if (invited.existing_auth_user) {
+        setFormSuccess(
+          `Linked existing Auth user ${invited.email} as member. A reset/invite email was sent so they can set or confirm their password, then sign in.`,
+        );
+      } else {
+        setFormSuccess(
+          `Invite sent to ${invited.email}. They must open the email link, set a password on /invite, then they can sign in with that email + password.`,
+        );
+      }
       await mutate();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Invite failed');
@@ -52,39 +62,41 @@ export default function MembersPage() {
         description="Invite teammates to this tenant. They share the same keys and data; only owners can invite."
       />
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <form onSubmit={handleInvite} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-              <label htmlFor="invite-email" className="text-sm font-medium text-muted-foreground">
-                Email
-              </label>
-              <input
-                id="invite-email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="teammate@company.com"
-                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <Button type="submit" disabled={submitting || !email.trim()}>
-              <UserPlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              {submitting ? 'Inviting…' : 'Invite member'}
-            </Button>
-          </form>
-          {formError ? (
-            <p className="text-sm text-destructive">{formError}</p>
-          ) : null}
-          {formSuccess ? (
-            <p className="text-sm text-muted-foreground">{formSuccess}</p>
-          ) : null}
-          <p className="text-xs text-muted-foreground">
-            Invites are scoped to your tenant automatically. The browser never chooses a tenant id.
-          </p>
-        </CardContent>
-      </Card>
+      {isOwner ? (
+        <Card>
+          <CardContent className="space-y-4 pt-6">
+            <form onSubmit={handleInvite} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <label htmlFor="invite-email" className="text-sm font-medium text-muted-foreground">
+                  Email
+                </label>
+                <input
+                  id="invite-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="teammate@company.com"
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <Button type="submit" disabled={submitting || !email.trim()}>
+                <UserPlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                {submitting ? 'Inviting…' : 'Invite member'}
+              </Button>
+            </form>
+            {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
+            {formSuccess ? <p className="text-sm text-muted-foreground">{formSuccess}</p> : null}
+            <p className="text-xs text-muted-foreground">
+              Invites are scoped to your tenant automatically. The browser never chooses a tenant id.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Only the workspace owner can invite new members.
+        </p>
+      )}
 
       <Card>
         <CardContent className="pt-6">
@@ -93,10 +105,12 @@ export default function MembersPage() {
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
-          ) : error ? (
+          ) : error && !isPortalAuthFailure(error) ? (
             <p className="text-sm text-destructive">
               {error instanceof Error ? error.message : 'Failed to load members'}
             </p>
+          ) : error && isPortalAuthFailure(error) ? (
+            <p className="text-sm text-muted-foreground">Redirecting to sign in…</p>
           ) : !members || members.length === 0 ? (
             <EmptyState
               title="No members yet"

@@ -1,4 +1,8 @@
-import { clearStoredTenantToken, getStoredTenantToken } from '@/lib/portalAuth';
+import {
+  clearStoredTenantToken,
+  ensurePortalSession,
+  redirectToLogin,
+} from '@/lib/portalAuth';
 
 const API_BASE = process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL;
 
@@ -60,6 +64,8 @@ export type PortalCredentials = {
   hmac_secret_hash: string;
   secret_masked: string;
   status: string;
+  /** True when an HMAC secret hash exists for this tenant. */
+  secret_provisioned?: boolean;
 };
 
 export type PortalSession = {
@@ -81,19 +87,35 @@ export type PortalSession = {
   /** Real user/assistant turns only, in order. Null for any session that never reached a
    *  clean close (worker/main.py::_release_quota_slot). */
   transcript: Array<{ role: string; text: string | null; at: number }> | null;
+  /**
+   * Billable seconds from usage_events.agent_sec (source of truth for payment).
+   * 0 when the session never wrote usage (reconciled/stale/no participant).
+   */
+  billable_agent_sec?: number;
 };
 
 export type PortalUsageSummary = {
-  /** Inclusive start of the current calendar month, e.g. "2026-07-01". */
+  /** Inclusive start of the selected calendar month (UTC), e.g. "2026-07-01". */
   period_start: string;
-  /** Exclusive — the 1st of NEXT month, e.g. "2026-08-01". Not "the last day": avoids any
-   *  ambiguity about whether the final instant of the month is included. */
+  /** Exclusive — the 1st of NEXT month (UTC), e.g. "2026-08-01". */
   period_end: string;
+  /** Server's current UTC calendar month as YYYY-MM. */
+  current_month?: string;
+  /** True when period_start is the current UTC calendar month. */
+  is_current_period?: boolean;
+  /** Always "UTC" — month boundaries for billing. */
+  timezone?: string;
+  /** Invoice figure: sum(agent_sec) / 60, half-up to 4 dp. */
+  billable_minutes?: number;
+  billable_agent_sec?: number;
   quota: {
     max_concurrent: number;
     max_minutes_month: number;
     concurrent_now: number;
+    /** Same as billable_minutes (UI / Overview back-compat). */
     minutes_this_month: number;
+    /** What the mint currently enforces (current month only); may briefly diverge. */
+    enforced_minutes?: number | null;
   };
   totals: Array<{
     kind: string;
@@ -116,33 +138,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  const token = getStoredTenantToken();
+  let token = await ensurePortalSession();
   if (!token) {
+    redirectToLogin();
     throw new PortalApiAuthError("Missing tenant session. Please sign in again.");
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
+  const doFetch = (bearer: string) =>
+    fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+        ...(init?.headers ?? {}),
+      },
+      cache: "no-store",
+    });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearStoredTenantToken();
+  let response = await doFetch(token);
+
+  if (response.status === 401) {
+    // Portal JWT expired or rejected — try one silent re-exchange, then login.
+    clearStoredTenantToken();
+    token = await ensurePortalSession();
+    if (token) {
+      response = await doFetch(token);
+    }
+    if (!token || response.status === 401) {
+      redirectToLogin();
       throw new PortalApiAuthError("Session expired. Please sign in again.");
     }
+  }
 
+  if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
 
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body?.detail) {
-        detail = body.detail;
+      const body = (await response.json()) as { detail?: unknown };
+      if (body?.detail != null) {
+        detail =
+          typeof body.detail === "string"
+            ? body.detail
+            : JSON.stringify(body.detail);
       }
     } catch {}
 
@@ -221,8 +258,30 @@ export function getCredentialSecret() {
   return request<{ hmac_secret: string }>("/portal/credentials/secret");
 }
 
+export function rotateCredentialSecret() {
+  return request<{ hmac_secret: string; warning: string }>(
+    "/portal/credentials/rotate-secret",
+    { method: "POST" },
+  );
+}
+
+export function setAllowedOrigins(allowed_origins: string[]) {
+  return request<{
+    allowed_origins: string[];
+    enforced: boolean;
+    note: string;
+  }>("/portal/credentials/allowed-origins", {
+    method: "PUT",
+    body: JSON.stringify({ allowed_origins }),
+  });
+}
+
 export function getSessions(limit = 50) {
   return request<PortalSession[]>(`/portal/sessions?limit=${limit}`);
+}
+
+export function getSession(sessionId: string) {
+  return request<PortalSession>(`/portal/sessions/${sessionId}`);
 }
 
 export type PortalMember = {
@@ -238,15 +297,19 @@ export function getMembers() {
 }
 
 export function inviteMember(email: string) {
-  return request<PortalMember & { tenant_id: string; existing_auth_user?: boolean }>(
-    "/portal/members/invite",
-    {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    },
-  );
+  return request<
+    PortalMember & {
+      tenant_id: string;
+      existing_auth_user?: boolean;
+      resent?: boolean;
+    }
+  >("/portal/members/invite", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
 }
 
-export function getUsageSummary() {
-  return request<PortalUsageSummary>("/portal/usage-summary");
+export function getUsageSummary(month?: string) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return request<PortalUsageSummary>(`/portal/usage-summary${q}`);
 }

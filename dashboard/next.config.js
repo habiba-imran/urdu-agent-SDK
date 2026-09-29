@@ -11,10 +11,22 @@ const PORTAL_API =
   process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL || 'http://localhost:8002';
 // LiveKit is reached over WebSocket from the Test Studio.
 const LIVEKIT = process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://*.livekit.cloud';
+// Phase 1: browser signs in via Supabase Auth (email/password → /auth/v1/token).
+const SUPABASE = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
 const isProd = process.env.NODE_ENV === 'production';
 
-const connectSrc = ["'self'", CONTROL_PLANE, PORTAL_API, LIVEKIT, 'https://*.livekit.cloud', 'wss://*.livekit.cloud']
+const connectSrc = [
+  "'self'",
+  CONTROL_PLANE,
+  PORTAL_API,
+  LIVEKIT,
+  SUPABASE,
+  'https://*.supabase.co',
+  'wss://*.supabase.co',
+  'https://*.livekit.cloud',
+  'wss://*.livekit.cloud',
+]
   .filter(Boolean)
   .join(' ');
 
