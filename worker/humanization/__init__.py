@@ -1,9 +1,9 @@
-"""Humanization profiles — composed after telephony remaps.
+"""Humanization profiles — composed from configured (sticky) providers.
 
 Call order (do not reorder):
   1. load AgentConfig from DB
-  2. apply telephony remaps (``resolve_effective_providers``)
-  3. build SpokenOutputProfile / TTSHumanizationProfile / TurnProfile from *effective* providers
+  2. resolve_effective_providers (identity — configured providers stick)
+  3. build SpokenOutputProfile / TTSHumanizationProfile / TurnProfile from effective providers
   4. construct STT/LLM/TTS + AgentSession
 
 Phase 0: resolver + dataclass stubs.

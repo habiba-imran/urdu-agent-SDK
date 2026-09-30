@@ -24,7 +24,7 @@ const navItems = [
     href: '/',
     label: 'Overview',
     icon: LayoutDashboard,
-    prefetch: ['agents', 'credentials', 'usage', 'telephonyNumbers', 'telephonyReadiness'] as const,
+    prefetch: ['overview'] as const,
   },
   {
     href: '/agents',

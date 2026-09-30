@@ -22,7 +22,12 @@ from typing import Any
 logger = logging.getLogger("worker.providers.stt.deepgram")
 
 
-def build(language: str, stt_options: dict | None = None) -> Any:
+def build(
+    language: str,
+    stt_options: dict | None = None,
+    *,
+    model: str | None = None,
+) -> Any:
     from livekit.plugins import deepgram
 
     from worker.humanization.turn import (
@@ -33,13 +38,15 @@ def build(language: str, stt_options: dict | None = None) -> Any:
 
     lang = "en-US" if language.startswith("en") else language
     mode = resolve_deepgram_stt_mode(stt_options)
+    nova_model = (model or "nova-3").strip() or "nova-3"
 
     if mode == "flux":
         if not language.startswith("en"):
             logger.warning(
                 "deepgram Flux (flux-general-en) is English-only; "
-                "language=%s falling back to Nova-3",
+                "language=%s falling back to Nova (%s)",
                 language,
+                nova_model,
             )
             mode = "nova"
         else:
@@ -71,14 +78,15 @@ def build(language: str, stt_options: dict | None = None) -> Any:
 
     endpointing_ms = resolve_deepgram_endpointing_ms(stt_options)
     logger.info(
-        "deepgram STT build language=%s endpointing_ms=%s "
-        "(default 200=human-turn; set UVA_DEEPGRAM_ENDPOINTING_MS for A/B; "
+        "deepgram STT build language=%s model=%s endpointing_ms=%s "
+        "(agent stt_model honored; set UVA_DEEPGRAM_ENDPOINTING_MS for A/B; "
         "UVA_DEEPGRAM_STT_MODE=flux for Flux)",
         lang,
+        nova_model,
         endpointing_ms,
     )
     return deepgram.STT(
-        model="nova-3",
+        model=nova_model,
         language=lang,
         no_delay=True,
         endpointing_ms=endpointing_ms,

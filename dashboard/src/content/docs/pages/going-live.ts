@@ -12,21 +12,23 @@ export const markdown = `
 
 - [ ] Production \`UVA_HMAC_SECRET\` only in backend env / secret store — never in the frontend  
 - [ ] Publishable key in the client is the **prod** key (not a leftover test value)  
-- [ ] Rotated any keys that were pasted into chat, tickets, or screenshots — [API Keys](/credentials)  
+- [ ] Hosted console access is **invite- or claim-only** (no open self-serve tenant bootstrap)  
+- [ ] Rotated any keys that were pasted into chat, tickets, or screenshots — ask AwaazLabs to rotate via **admin** (console rotate is disabled) ([Security](/docs/security))  
 - [ ] \`UVA_CONTROL_PLANE_URL\` points at production  
 
-### Origins and host
+### Origins (both required)
 
-- [ ] Allowed origins / CORS on your session endpoint match production domains  
+- [ ] **UVA tenant \`allowed_origins\`** set in [API Keys](/credentials) to your production frontend origin(s) — hosted mint fails closed if this list is empty  
+- [ ] Allowed origins / CORS on **your** session endpoint match those same production domains  
 - [ ] Session endpoint is HTTPS and reachable from the browser  
 - [ ] Mic works on production HTTPS (not only localhost)  
 
 ### Product surfaces
 
-- [ ] Agent prompt and voice verified (inspect on [Agents](/agents); edit via agents SDK)  
-- [ ] Browser path: [Frontend setup](/docs/frontend-setup) smoke test  
+- [ ] Agent prompt, language, and providers verified (inspect on [Agents](/agents); edit via [agents SDK](/docs/backend-setup); matrix on [Providers](/docs/providers))  
+- [ ] Browser path: [Frontend setup](/docs/frontend-setup) smoke test against **your** host mint (not Test Studio alone)  
 - [ ] Phone path (if used): number assigned via telephony SDK; confirm on [Agents](/agents); inbound test  
-
+- [ ] Owner vs member roles understood — credential / invite mutations are owner-only ([Security](/docs/security))  
 
 ### Observability
 

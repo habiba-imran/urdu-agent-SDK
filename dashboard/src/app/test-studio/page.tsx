@@ -8,8 +8,9 @@ import { AwaazLabsUvaVoice, AwaazLabsUvaVoiceError, type AwaazLabsUvaVoiceErrorC
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { stripTranscriptMarkup } from '@/lib/transcriptText';
 import { Select } from '@/components/ui/select';
+import { ensurePortalSession } from '@/lib/portalAuth';
 
-const CONTROL_PLANE_URL = process.env.NEXT_PUBLIC_CONTROL_PLANE_URL;
+const PORTAL_API_URL = process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL;
 
 type TranscriptTurn = {
   id: string;
@@ -21,9 +22,6 @@ type TranscriptTurn = {
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
 function friendlyError(code: AwaazLabsUvaVoiceErrorCode, message: string): string {
-  // The SDK constructs some errors with no message at all, in which case Error's own
-  // constructor falls back to the code string itself (`new Error(message ?? code)`) — so
-  // `message === code` means "no real detail", not an actual message worth showing verbatim.
   const hasRealDetail = Boolean(message) && message !== code;
   switch (code) {
     case 'quota_exceeded':
@@ -34,7 +32,7 @@ function friendlyError(code: AwaazLabsUvaVoiceErrorCode, message: string): strin
     default:
       return hasRealDetail
         ? message
-        : 'Could not start the voice session. Check that control_plane is reachable and this tenant has a signing secret configured.';
+        : 'Could not start the voice session. Check that the tenant portal can reach the control plane (UVA_CONTROL_PLANE_URL) and this tenant has a signing secret configured.';
   }
 }
 
@@ -50,20 +48,31 @@ export default function TestStudioPage() {
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Set default agent selection
   useEffect(() => {
     if (agents && agents.length > 0 && !selectedAgentId) {
       setSelectedAgentId(agents[0].id);
     }
   }, [agents, selectedAgentId]);
 
-  // One real client per publishableKey. Zero secrets held here — same SDK, same session
-  // endpoint (control_plane's dev-mint) any real host backend's browser code would use.
+  // Host-shaped mint via the tenant portal (HMAC stays on the server). Same contract as a
+  // real host backend — never call control-plane /v1/session/dev-mint from the dashboard.
   const client = useMemo(() => {
-    if (!credentials?.publishable_key || !CONTROL_PLANE_URL) return null;
+    if (!credentials?.publishable_key || !PORTAL_API_URL) return null;
+    const sessionEndpoint = `${PORTAL_API_URL.replace(/\/$/, '')}/portal/test-studio/session`;
     return new AwaazLabsUvaVoice({
       publishableKey: credentials.publishable_key,
-      sessionEndpoint: `${CONTROL_PLANE_URL.replace(/\/$/, '')}/v1/session/dev-mint`,
+      sessionEndpoint,
+      sessionCredentials: 'include',
+      sessionHeaders: async () => {
+        const ok = await ensurePortalSession();
+        if (!ok) {
+          throw new AwaazLabsUvaVoiceError(
+            'session_failed',
+            'Missing portal session — sign in again before testing.',
+          );
+        }
+        return {};
+      },
     });
   }, [credentials?.publishable_key]);
 
@@ -121,7 +130,7 @@ export default function TestStudioPage() {
         next[idx] = { ...next[idx], text };
         return next;
       });
-      void final; // interim segments are replaced in place above; nothing extra needed on final
+      void final;
     };
     const onAgentSpeaking = (speaking: boolean) => setAgentSpeaking(speaking);
     const onAudioBlocked = (blocked: boolean) => setAudioBlocked(blocked);
@@ -146,7 +155,6 @@ export default function TestStudioPage() {
     };
   }, [client]);
 
-  // Disconnect on unmount (route change) rather than leaking an open room + quota slot.
   useEffect(() => {
     return () => {
       if (clientRef.current?.isConnected) {
@@ -195,8 +203,6 @@ export default function TestStudioPage() {
   const selectedAgent = agents?.find((a) => a.id === selectedAgentId);
   const isConnected = connectionState === 'connected';
   const isBusy = connectionState === 'connecting' || connectionState === 'disconnecting';
-  // Broader than isConnected: keep showing the mute/end-call panel while tearing down too, so
-  // "End Call" doesn't flicker back into "Start WebRTC Call" mid-disconnect.
   const showInCallControls = connectionState === 'connected' || connectionState === 'disconnecting';
 
   const statusText =
@@ -213,7 +219,6 @@ export default function TestStudioPage() {
   return (
     <div>
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
@@ -221,7 +226,9 @@ export default function TestStudioPage() {
               WebRTC Voice Test Studio
             </h1>
             <p className="text-sm text-muted-foreground">
-              Test your voice agents in real-time directly inside the dashboard with browser microphone input.
+              Console smoke test only. Sessions mint through the portal with HMAC on the server —
+              the same contract as your host backend. Production apps must mint from{' '}
+              <span className="font-medium text-foreground">your</span> backend, not this page.
             </p>
           </div>
           {credentials && (
@@ -230,6 +237,27 @@ export default function TestStudioPage() {
             </div>
           )}
         </div>
+
+        <div className="rounded-lg border border-amber-300/60 bg-amber-50/80 p-3 text-sm text-amber-950">
+          <p className="font-medium">Not the client integration path</p>
+          <p className="mt-1 text-amber-900/90">
+            Your product should call <code className="text-xs">POST /api/voice/session</code> on{' '}
+            <strong>your</strong> host (see Docs → Backend setup). Test Studio is for operators
+            verifying an agent in this console — it never calls{' '}
+            <code className="text-xs">/v1/session/dev-mint</code>.
+          </p>
+        </div>
+
+        {credentials && (credentials.allowed_origins?.length ?? 0) === 0 ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            Tenant <code className="text-xs">allowed_origins</code> is empty. Hosted mint will
+            fail until you set origins on{' '}
+            <a href="/credentials" className="underline underline-offset-2">
+              API Keys
+            </a>{' '}
+            (include this dashboard origin for Test Studio).
+          </div>
+        ) : null}
 
         {errorMsg && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2">
@@ -248,7 +276,6 @@ export default function TestStudioPage() {
         )}
 
         <div className="grid gap-6 md:grid-cols-3">
-          {/* Controls Panel */}
           <div className="rounded-lg border border-border bg-card p-6 space-y-6 md:col-span-1">
             <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
               <Bot className="h-5 w-5 text-primary" />
@@ -266,7 +293,7 @@ export default function TestStudioPage() {
                   disabled={isConnected || isBusy}
                   className="w-full bg-background px-3 py-2 text-sm"
                   placeholder="-- Choose Agent --"
-                  options={agents?.map((a: any) => ({
+                  options={agents?.map((a: { id: string; name: string; llm_model: string }) => ({
                     value: a.id,
                     label: `${a.name} (${a.llm_model})`
                   })) || []}
@@ -320,7 +347,6 @@ export default function TestStudioPage() {
             </div>
           </div>
 
-          {/* Transcript & Status Panel */}
           <div className="rounded-lg border border-border bg-card p-6 flex flex-col h-[500px] md:col-span-2 space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">

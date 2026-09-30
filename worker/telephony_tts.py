@@ -1,20 +1,21 @@
-"""Telephony voice quality helpers — force Cartesia TTS + Groq LLM on PSTN."""
+"""Telephony helpers — historically remapped TTS/LLM on PSTN.
+
+Configured providers now always stick: session runtime uses the agent row as-is.
+These helpers remain as no-ops so call sites / EffectiveProviders flags stay stable.
+"""
 
 from __future__ import annotations
 
 import os
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from worker.config import AgentConfig
 
-# Cartesia plugin default / Katie — low-latency Sonic voice used by test-agent UX.
+# Kept for tests / telephony defaults documentation (no longer forced at runtime).
 TELEPHONY_CARTESIA_VOICE_ID = "cartesia-katie-friendly-fixer"
 TELEPHONY_CARTESIA_PROVIDER_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
 
-# Voice-proven Groq model for free-tier TPM (gpt-oss-20b production).
-# Dead GROQ_LLM_MODEL values (llama / qwen3.6) fall back inside groq.build().
 TELEPHONY_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-20b")
 if TELEPHONY_GROQ_MODEL in (
     "llama-3.3-70b-versatile",
@@ -34,40 +35,9 @@ def force_cartesia_for_telephony(
     *,
     audio_channel: str,
 ) -> tuple["AgentConfig", str | None, bool]:
-    """Remap English Rime/Fish TTS to Cartesia on the PSTN leg.
-
-    Rime at telephony 8 kHz repeatedly under-runs realtime (``flush audio emitter due to
-    slow audio generation``). Fish is testing-only and not trusted on PSTN either.
-
-    **Exempt:**
-      - already Cartesia
-      - Urdu / Uplift (only supported Urdu TTS — never English Katie)
-      - ElevenLabs (direct plugin path stays as configured; not the Rime under-run case)
-    """
-    if audio_channel != "telephony":
-        return cfg, provider_voice_id, False
-
-    tts = (cfg.tts_provider or "").strip().lower()
-    if tts == "cartesia":
-        return cfg, provider_voice_id, False
-
-    lang = (cfg.agent_language or "").strip().lower()
-    if lang == "ur" or lang.startswith("ur") or tts == "uplift":
-        return cfg, provider_voice_id, False
-
-    # Only remap providers known to under-run / unsupported on PSTN.
-    if tts not in {"rime", "fish_audio"}:
-        return cfg, provider_voice_id, False
-
-    new_cfg = replace(
-        cfg,
-        tts_provider="cartesia",
-        tts_voice_id=TELEPHONY_CARTESIA_VOICE_ID,
-        # Drop Rime/Fish-only options so Cartesia gets platform defaults.
-        tts_options={},
-        voice_id=TELEPHONY_CARTESIA_VOICE_ID,
-    )
-    return new_cfg, TELEPHONY_CARTESIA_PROVIDER_VOICE_ID, True
+    """No-op: configured TTS provider always sticks (including Rime on PSTN)."""
+    del audio_channel  # retained for call-site compatibility
+    return cfg, provider_voice_id, False
 
 
 def force_groq_for_telephony(
@@ -75,39 +45,9 @@ def force_groq_for_telephony(
     *,
     audio_channel: str,
 ) -> tuple["AgentConfig", bool]:
-    """Remap Gemini → Groq on English PSTN so turn replies stay near the ≤800ms budget.
-
-    Measured on this workspace (2026-09): Cartesia TTFB ~135–220ms is fine; Gemini 3.6 Flash
-    TTFT is ~1.5–3s (sometimes much worse) even with thinking_level=minimal. Groq
-    ``openai/gpt-oss-20b`` with ``reasoning_effort=low`` returns speakable content in ~0.5s.
-    Urdu agents keep Gemini (Groq is not in ``ur`` capabilities).
-    """
-    if audio_channel != "telephony":
-        return cfg, False
-    lang = (cfg.agent_language or "ur").lower()
-    if lang.startswith("ur"):
-        return cfg, False
-    if (cfg.llm_provider or "").lower() == "groq":
-        return cfg, False
-    if (cfg.llm_provider or "").lower() != "gemini":
-        return cfg, False
-    if not (os.getenv("GROQ_API_KEY") or "").strip():
-        return cfg, False
-
-    return (
-        replace(
-            cfg,
-            llm_provider="groq",
-            llm_model=TELEPHONY_GROQ_MODEL,
-            llm_options={},
-        ),
-        True,
-    )
-
-
-def _force_groq_english_enabled() -> bool:
-    raw = (os.getenv("UVA_FORCE_GROQ_ENGLISH") or "1").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+    """No-op: configured LLM provider always sticks on PSTN."""
+    del audio_channel
+    return cfg, False
 
 
 def force_groq_for_english_webrtc(
@@ -115,31 +55,10 @@ def force_groq_for_english_webrtc(
     *,
     audio_channel: str,
 ) -> tuple["AgentConfig", bool]:
-    """Remap Gemini → Groq on English browser WebRTC for Wave 1 TTFT (when key is set).
+    """No-op: configured LLM provider always sticks on English WebRTC.
 
-    Urdu stays on Gemini (Groq is not in ``ur`` capabilities). Disable with
-    ``UVA_FORCE_GROQ_ENGLISH=0``.
+    ``UVA_FORCE_GROQ_ENGLISH`` is ignored (deprecated); provision ``llm_provider=groq``
+    explicitly when Groq is desired.
     """
-    if audio_channel != "webrtc":
-        return cfg, False
-    if not _force_groq_english_enabled():
-        return cfg, False
-    lang = (cfg.agent_language or "ur").lower()
-    if lang.startswith("ur"):
-        return cfg, False
-    if (cfg.llm_provider or "").lower() == "groq":
-        return cfg, False
-    if (cfg.llm_provider or "").lower() != "gemini":
-        return cfg, False
-    if not (os.getenv("GROQ_API_KEY") or "").strip():
-        return cfg, False
-
-    return (
-        replace(
-            cfg,
-            llm_provider="groq",
-            llm_model=TELEPHONY_GROQ_MODEL,
-            llm_options={},
-        ),
-        True,
-    )
+    del audio_channel
+    return cfg, False

@@ -38,14 +38,15 @@ async def test_hostile_first_turn_book_does_not_post(monkeypatch):
     ud = _ud()
     ctx = SimpleNamespace(userdata=ud)
 
-    # Hostile persona: book immediately with attacker-chosen phone — propose only.
+    # Hostile persona: book with attacker phone and no verified identity — reject.
     out = await book_appointment.__wrapped__(
         ctx,
         customer_name="Attacker",
         customer_phone="+15551234567",
         slot_start_time="2026-09-18T10:00:00",
     )
-    assert out.get("needs_confirmation") is True
+    assert out.get("success") is False
+    assert "verified_caller_phone" in (out.get("error") or "")
     assert posts == []
 
 
@@ -67,13 +68,15 @@ async def test_hostile_same_turn_confirm_does_not_post(monkeypatch):
         customer_phone="+15551234567",
         slot_start_time="2026-09-18T10:00:00",
     )
-    # Same LLM turn double-call with confirmation_id — must not POST.
+    # No verified phone → reject on propose; confirm path never opens.
+    assert propose.get("success") is False
+    assert posts == []
     out = await book_appointment.__wrapped__(
         ctx,
         customer_name="Attacker",
         customer_phone="+15551234567",
         slot_start_time="2026-09-18T10:00:00",
-        confirmation_id=propose["confirmation_id"],
+        confirmation_id=(propose.get("confirmation_id") or "x"),
     )
     assert out.get("success") is False
     assert posts == []
@@ -138,6 +141,7 @@ async def test_legitimate_confirm_after_user_turn_posts_once(monkeypatch):
 
     monkeypatch.setattr("worker.tools._post_client_tool", fake_post)
     ud = _ud()
+    set_verified_caller_phone(ud, "+923001234567")
     ctx = SimpleNamespace(userdata=ud)
 
     propose = await book_appointment.__wrapped__(
@@ -146,7 +150,7 @@ async def test_legitimate_confirm_after_user_turn_posts_once(monkeypatch):
         customer_phone="+923001234567",
         slot_start_time="2026-09-18T10:00:00",
     )
-    note_user_turn(ud)  # caller said yes
+    note_user_turn(ud, text='yes')  # caller said yes
     out = await book_appointment.__wrapped__(
         ctx,
         customer_name="Ali",

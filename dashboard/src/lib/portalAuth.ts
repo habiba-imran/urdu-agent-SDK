@@ -1,7 +1,18 @@
 import { getSupabaseBrowserClient } from "@/lib/supabaseBrowser";
 
 const API_BASE = process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL;
-const TOKEN_KEY = "uva_tenant_portal_token";
+/** Legacy key — cleared on load; JWT must not live in localStorage (P1-H6). */
+const LEGACY_TOKEN_KEY = "uva_tenant_portal_token";
+const ROLE_KEY = "uva_portal_role";
+
+/**
+ * In-tab memory only (not localStorage). Needed when the dashboard origin and
+ * portal API host differ (e.g. localhost:3000 → 127.0.0.1:8002): browsers treat
+ * that as cross-site, so SameSite=Lax HttpOnly cookies are set but not sent on
+ * ``fetch``. Bearer from memory keeps the session alive; HttpOnly cookie still
+ * works when both sides share a site (localhost↔localhost or hosted SameSite=None).
+ */
+let memoryPortalToken: string | null = null;
 
 /** Must match ``tenant_portal_api.auth.TENANT_JWT_TTL_SEC`` (8 hours). */
 export const PORTAL_SESSION_TTL_SEC = 8 * 3600;
@@ -16,149 +27,181 @@ export type PortalLoginResponse = {
   email?: string | null;
 };
 
-export class PortalAuthError extends Error {}
-
-type JwtPayload = {
-  exp?: number;
-  iat?: number;
-  sub?: string;
-  role?: string;
-  auth_user_id?: string;
+export type PortalWhoami = {
+  tenant_id: string;
+  role?: string | null;
+  auth_user_id?: string | null;
+  tenant_name?: string | null;
 };
 
-function decodeJwtPayload(token: string): JwtPayload | null {
+export class PortalAuthError extends Error {}
+
+function clearLegacyLocalStorageToken() {
+  if (typeof window === "undefined") {
+    return;
+  }
   try {
-    const parts = token.split(".");
-    if (parts.length < 2) {
+    window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function setMemoryPortalToken(token: string | null | undefined) {
+  memoryPortalToken =
+    typeof token === "string" && token.trim().length > 0 ? token.trim() : null;
+}
+
+/** Authorization header value when an in-memory portal JWT is available. */
+export function portalAuthHeaders(): Record<string, string> {
+  if (!memoryPortalToken) {
+    return {};
+  }
+  return { Authorization: `Bearer ${memoryPortalToken}` };
+}
+
+export function setPortalRole(role: string | null | undefined) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (role && role.length > 0) {
+    window.sessionStorage.setItem(ROLE_KEY, role);
+  } else {
+    window.sessionStorage.removeItem(ROLE_KEY);
+  }
+}
+
+export function getPortalRole(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const role = window.sessionStorage.getItem(ROLE_KEY);
+  return role && role.length > 0 ? role : null;
+}
+
+/** True when the cached portal role is owner (UI gate — API still enforces). */
+export function isPortalOwner(): boolean {
+  return getPortalRole() === "owner";
+}
+
+/** In-memory portal JWT if present (never reads localStorage). */
+export function getStoredTenantToken(): string | null {
+  clearLegacyLocalStorageToken();
+  return memoryPortalToken;
+}
+
+/** Keep JWT in tab memory only — cookie is still set by the portal API. */
+export function setStoredTenantToken(token: string) {
+  clearLegacyLocalStorageToken();
+  setMemoryPortalToken(token);
+}
+
+export function clearStoredTenantToken() {
+  clearLegacyLocalStorageToken();
+  setMemoryPortalToken(null);
+  setPortalRole(null);
+}
+
+/** @deprecated Prefer ensurePortalSession / whoami. */
+export function isPortalTokenValid(
+  _token: string | null | undefined,
+  _skewSec = 30,
+): boolean {
+  return Boolean(memoryPortalToken);
+}
+
+/** @deprecated Prefer ensurePortalSession / whoami. */
+export function getStoredValidTenantToken(): string | null {
+  return getStoredTenantToken();
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function fetchWhoami(): Promise<PortalWhoami | null> {
+  if (!API_BASE) {
+    return null;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/portal/whoami`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: {
+        ...portalAuthHeaders(),
+      },
+    });
+    if (!response.ok) {
       return null;
     }
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-    const json = atob(padded);
-    return JSON.parse(json) as JwtPayload;
+    return (await response.json()) as PortalWhoami;
   } catch {
     return null;
   }
 }
 
-export function getStoredTenantToken(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.localStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredTenantToken(token: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearStoredTenantToken() {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.removeItem(TOKEN_KEY);
-}
-
-/** True if the portal JWT exists and ``exp`` is still in the future (small skew). */
-export function isPortalTokenValid(
-  token: string | null | undefined,
-  skewSec = 30,
-): boolean {
-  if (!token) {
-    return false;
-  }
-  const payload = decodeJwtPayload(token);
-  if (!payload?.exp || typeof payload.exp !== "number") {
-    return false;
-  }
-  return payload.exp * 1000 > Date.now() + skewSec * 1000;
-}
-
-/** Return stored token only if not expired; clear stale tokens. */
-export function getStoredValidTenantToken(): string | null {
-  const token = getStoredTenantToken();
-  if (!token) {
-    return null;
-  }
-  if (!isPortalTokenValid(token)) {
-    clearStoredTenantToken();
-    return null;
-  }
-  return token;
-}
-
-/** Role claim from the current portal JWT (`owner` | `member`), or null if logged out. */
-export function getPortalRole(): string | null {
-  const token = getStoredValidTenantToken();
-  if (!token) {
-    return null;
-  }
-  const payload = decodeJwtPayload(token);
-  const role = payload?.role;
-  return typeof role === "string" && role.length > 0 ? role : null;
-}
-
-let refreshInFlight: Promise<string | null> | null = null;
-
 /**
- * Ensure a valid portal JWT. If the stored one expired, silently re-exchange
- * using the Supabase session (when still signed in). Returns null if the user
- * must sign in again.
+ * Ensure a valid portal session (HttpOnly cookie and/or in-memory Bearer).
+ * Re-exchanges via Supabase when both are missing/expired.
  */
 export async function ensurePortalSession(): Promise<string | null> {
-  const existing = getStoredValidTenantToken();
-  if (existing) {
-    return existing;
+  clearLegacyLocalStorageToken();
+
+  const existing = await fetchWhoami();
+  if (existing?.tenant_id) {
+    if (existing.role) {
+      setPortalRole(existing.role);
+    }
+    return memoryPortalToken ?? "cookie";
   }
 
   if (refreshInFlight) {
-    return refreshInFlight;
+    const ok = await refreshInFlight;
+    return ok ? memoryPortalToken ?? "cookie" : null;
   }
 
   refreshInFlight = (async () => {
     try {
       if (!API_BASE) {
-        return null;
+        return false;
       }
       const supabase = getSupabaseBrowserClient();
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session?.access_token) {
         clearStoredTenantToken();
-        return null;
+        return false;
       }
       const portal = await exchangeSupabaseAccessToken(data.session.access_token);
-      setStoredTenantToken(portal.token);
-      return portal.token;
+      setPortalRole(portal.role ?? null);
+      return true;
     } catch {
       clearStoredTenantToken();
-      return null;
+      return false;
     } finally {
       refreshInFlight = null;
     }
   })();
 
-  return refreshInFlight;
+  const ok = await refreshInFlight;
+  return ok ? memoryPortalToken ?? "cookie" : null;
 }
 
 const PUBLIC_AUTH_PATHS = new Set(["/login", "/invite", "/claim"]);
 
-/** Hard redirect to login after clearing portal token (avoids sticky error banners). */
+/** Hard redirect to login after clearing portal session. */
 export function redirectToLogin(): void {
   if (typeof window === "undefined") {
     return;
   }
-  clearStoredTenantToken();
-  const path = window.location.pathname;
-  if (PUBLIC_AUTH_PATHS.has(path)) {
-    return;
-  }
-  window.location.replace("/login");
+  void logoutPortalSession().finally(() => {
+    const path = window.location.pathname;
+    if (PUBLIC_AUTH_PATHS.has(path)) {
+      return;
+    }
+    window.location.replace("/login");
+  });
 }
 
-/** Exchange a Supabase access_token for the tenant portal JWT used by /portal/*. */
+/** Exchange a Supabase access_token for the tenant portal JWT (sets HttpOnly cookie). */
 export async function exchangeSupabaseAccessToken(
   accessToken: string,
 ): Promise<PortalLoginResponse> {
@@ -170,6 +213,7 @@ export async function exchangeSupabaseAccessToken(
 
   const response = await fetch(`${API_BASE}/portal/auth/supabase`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -189,7 +233,10 @@ export async function exchangeSupabaseAccessToken(
     throw new PortalAuthError(detail);
   }
 
-  return (await response.json()) as PortalLoginResponse;
+  const portal = (await response.json()) as PortalLoginResponse;
+  setStoredTenantToken(portal.token);
+  setPortalRole(portal.role ?? null);
+  return portal;
 }
 
 /** Email/password via Supabase Auth, then bind to tenant via portal exchange. */
@@ -240,6 +287,7 @@ export async function claimExistingTenant(input: {
 
   const response = await fetch(`${API_BASE}/portal/auth/claim-tenant`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       access_token: accessToken,
@@ -261,11 +309,24 @@ export async function claimExistingTenant(input: {
     throw new PortalAuthError(detail);
   }
 
-  return (await response.json()) as PortalLoginResponse;
+  const portal = (await response.json()) as PortalLoginResponse;
+  setStoredTenantToken(portal.token);
+  setPortalRole(portal.role ?? null);
+  return portal;
 }
 
 export async function logoutPortalSession() {
   clearStoredTenantToken();
+  if (API_BASE) {
+    try {
+      await fetch(`${API_BASE}/portal/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      /* ignore */
+    }
+  }
   try {
     const supabase = getSupabaseBrowserClient();
     await supabase.auth.signOut();

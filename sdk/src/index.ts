@@ -31,6 +31,16 @@ export interface AwaazLabsUvaVoiceOptions {
   /** Optional direct refresh endpoint; falls back to `<sessionEndpoint>/refresh` convention. */
   refreshEndpoint?: string;
   /**
+   * Extra headers on session mint (and merged into refresh). Use for dashboard Test Studio
+   * portal JWT — production hosts should not need this; auth belongs on your session endpoint.
+   */
+  sessionHeaders?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
+  /**
+   * Fetch credentials for session mint/refresh. Portal Test Studio should use ``include``
+   * so the HttpOnly portal cookie is sent (P1-H6). Default ``same-origin``.
+   */
+  sessionCredentials?: RequestCredentials;
+  /**
    * Max wait for session / refresh / voice-catalog `fetch` (F-M14).
    * Default: 15000 ms.
    */
@@ -186,6 +196,23 @@ export class AwaazLabsUvaVoice {
     return this.options.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   }
 
+  private async resolveSessionHeaders(): Promise<Record<string, string>> {
+    const raw = this.options.sessionHeaders;
+    if (!raw) return {};
+    const resolved = typeof raw === 'function' ? await raw() : raw;
+    if (resolved instanceof Headers) {
+      const out: Record<string, string> = {};
+      resolved.forEach((value, key) => {
+        out[key] = value;
+      });
+      return out;
+    }
+    if (Array.isArray(resolved)) {
+      return Object.fromEntries(resolved);
+    }
+    return { ...resolved };
+  }
+
   get connectionState(): ConnectionState {
     return this.state;
   }
@@ -235,11 +262,16 @@ export class AwaazLabsUvaVoice {
     let body: SessionResponse;
     const mintStarted = performance.now();
     try {
+      const sessionHeaders = await this.resolveSessionHeaders();
       const res = await fetchWithTimeout(
         this.options.sessionEndpoint,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: this.options.sessionCredentials ?? 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...sessionHeaders,
+          },
           body: JSON.stringify({
             publishableKey: this.options.publishableKey,
             agentId: opts.agentId,
@@ -573,11 +605,15 @@ export class AwaazLabsUvaVoice {
       attempt += 1;
       let permanentAuthFailure = false;
       try {
+        const sessionHeaders = await this.resolveSessionHeaders();
         const res = await fetchWithTimeout(
           refreshEndpoint,
           {
             method: 'POST',
+            credentials: this.options.sessionCredentials ?? 'same-origin',
             headers: {
+              ...sessionHeaders,
+              // LiveKit session token must win over any portal JWT in sessionHeaders.
               Authorization: `Bearer ${this.session.token}`,
             },
           },

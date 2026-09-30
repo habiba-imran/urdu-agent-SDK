@@ -165,8 +165,20 @@ def mint_session(
         if owned is None:
             raise MintError(403, "agent does not belong to tenant")
 
-        # 6. origin allowlist (per tenant; empty list = not enforced in dev)
-        if allowed_origins and origin not in allowed_origins:
+        # 6. origin allowlist (per tenant).
+        # P1-H2: empty list used to skip the gate entirely. Hosted deployments fail closed —
+        # tenants must set allowed_origins before browser mint succeeds. Local/dev keeps the
+        # empty-list convenience so unit tests and laptop demos still work.
+        from .runtime_env import is_hosted as _is_hosted
+
+        origins_list = list(allowed_origins or [])
+        if not origins_list:
+            if _is_hosted():
+                raise MintError(
+                    403,
+                    "origin allowlist required — set tenant allowed_origins before minting",
+                )
+        elif origin not in origins_list:
             raise MintError(403, "origin not allowed")
 
         # 7. quota — checked BEFORE the token exists

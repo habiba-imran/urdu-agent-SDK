@@ -78,7 +78,7 @@ jobs:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_TENANT_PORTAL_STAGING }}
         run: |
           if [ -z "$HOOK_URL" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_TENANT_PORTAL_STAGING is not set - the tenant portal was NOT deployed and must be updated by hand"
-            exit 0
+            echo "::error::RENDER_DEPLOY_HOOK_TENANT_PORTAL_STAGING is not set — dashboard API would stay stale (P4-H2)"
+            exit 1
           fi
           curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null

@@ -400,20 +400,19 @@ def test_update_agent_of_another_tenant_404_idor(env):
         machine_auth._hits.pop(other_tenant_id, None)
 
 
-def test_rate_limited_429(env, monkeypatch):
+def test_rate_limited_429(env):
+    """Authenticated tenant bucket is full → next valid request is 429 (P1-H3)."""
     client = TestClient(app)
-    fake_time = 1000000.0
-    monkeypatch.setattr(time, "time", lambda: fake_time)
-    last_status = None
-    for _ in range(machine_auth.MACHINE_RATE_LIMIT_PER_MIN + 1):
-        headers = _headers(
-            tenant_id=env["tenant_id"],
-            secret=env["secret"],
-            action="agent.list",
-            body={},
-        )
-        last_status = client.get("/machine/agents", headers=headers).status_code
-    assert last_status == 429
+    # Pre-fill only via successful-auth accounting (junk must not fill this bucket).
+    for _ in range(machine_auth.MACHINE_RATE_LIMIT_PER_MIN):
+        machine_auth._rate_limit_record(env["tenant_id"])
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.list",
+        body={},
+    )
+    assert client.get("/machine/agents", headers=headers).status_code == 429
 
 
 def test_missing_headers_401(env):

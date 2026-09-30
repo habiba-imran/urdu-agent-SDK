@@ -33,17 +33,13 @@ def _build_stt(cfg: AgentRuntimeConfig):
     if cfg.stt_provider == "gladia":
         from .stt.gladia import build
 
-        # Gladia: languages=[agent_language], code_switching=False (ADR-009). No stt_options
-        # passthrough yet — portal rejects nonempty stt_options; do not invent Gladia knobs.
+        # Gladia: languages=[agent_language], code_switching=False (ADR-009).
+        # Gladia accepts no tenant stt_options today (portal enforces {}).
         return build(cfg.agent_language)
     if cfg.stt_provider == "deepgram":
         from .stt.deepgram import build
 
-        return build(cfg.agent_language, cfg.stt_options)
-    if cfg.stt_provider == "soniox":
-        from .stt.soniox import build
-
-        return build()
+        return build(cfg.agent_language, cfg.stt_options, model=cfg.stt_model)
     raise UnsupportedProviderError(f"no STT adapter for provider={cfg.stt_provider!r}")
 
 
@@ -72,10 +68,6 @@ def _build_tts(cfg: AgentRuntimeConfig):
         from .tts.elevenlabs import build
 
         return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options)
-    if cfg.tts_provider == "fish_audio":
-        from .tts.fish_audio import build
-
-        return build(cfg.tts_voice_id, cfg.tts_options)
     if cfg.tts_provider == "rime":
         from .tts.rime import build
 

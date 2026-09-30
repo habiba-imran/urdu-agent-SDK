@@ -132,17 +132,11 @@ def test_elevenlabs_rejected_for_urdu(conn):
     assert exc.value.code == "unsupported_provider_for_language"
 
 
-def test_english_fish_audio_rejected_as_not_yet_enabled(conn):
-    """Updated 2026-08-02 (Phase 6d): elevenlabs is now `enabled` for en (live test passed — see
-    tests/test_elevenlabs_tts.py), so this test's subject swapped a fourth time — fish_audio stays
-    genuinely `testing`/not-enabled, blocked on account funding
-    (state/BLOCKERS.md::BLOCK-FISHAUDIO), unaffected by cartesia/elevenlabs/rime's later
-    promotions (Phase 6c/6d/6f). Must reject with provider_not_enabled, not
-    unsupported_provider_for_language (a real, different case: the provider EXISTS for this
-    language, just isn't live yet)."""
+def test_english_fish_audio_not_offered(conn):
+    """Fish Audio is removed from CAPABILITIES — not selectable for tenants."""
     with pytest.raises(ProviderValidationError) as exc:
         _call(conn, agent_language="en", tts_provider="fish_audio")
-    assert exc.value.code == "provider_not_enabled"
+    assert exc.value.code == "unsupported_provider_for_language"
 
 
 def test_unsupported_model_for_provider_rejected(conn):
@@ -151,11 +145,43 @@ def test_unsupported_model_for_provider_rejected(conn):
     assert exc.value.code == "unsupported_model_for_provider"
 
 
-def test_nonempty_stt_options_rejected(conn):
-    """No adapter consumes any option yet (Phase 2's own explicit scope boundary) — the only
-    valid value today is {}."""
+def test_nonempty_stt_options_rejected_for_gladia(conn):
     with pytest.raises(ProviderValidationError) as exc:
         _call(conn, stt_options={"anything": "at all"})
+    assert exc.value.code == "invalid_stt_options"
+
+
+def test_deepgram_stt_options_accepted_for_english(conn):
+    resolved = _call(
+        conn,
+        agent_language="en",
+        stt_provider="deepgram",
+        stt_model="nova-3",
+        stt_options={"endpointing_ms": 200, "stt_mode": "nova"},
+        llm_provider="gemini",
+        llm_model="gemini-3.6-flash",
+        tts_provider="cartesia",
+        tts_voice_id="cartesia-sonic-default",
+        voice_id=None,
+    )
+    assert resolved["stt_provider"] == "deepgram"
+    assert resolved["stt_options"] == {"endpointing_ms": 200, "stt_mode": "nova"}
+
+
+def test_deepgram_unknown_stt_options_rejected(conn):
+    with pytest.raises(ProviderValidationError) as exc:
+        _call(
+            conn,
+            agent_language="en",
+            stt_provider="deepgram",
+            stt_model="nova-3",
+            stt_options={"unknown_key": True},
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            tts_provider="cartesia",
+            tts_voice_id="cartesia-sonic-default",
+            voice_id=None,
+        )
     assert exc.value.code == "invalid_stt_options"
 
 

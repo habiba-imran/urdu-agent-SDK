@@ -126,4 +126,6 @@ export function CallButton({ agentId }: { agentId: string }) {
 ## After you connect
 
 Verify the call in **[Sessions](/sessions)**. Inspect agent config on **[Agents](/agents)** (read-only; edit via the agents SDK).
+
+Mint through **your** \`sessionEndpoint\` — [Test Studio](/test-studio) is an operator smoke path only ([Security](/docs/security)).
 `;

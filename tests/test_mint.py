@@ -186,6 +186,38 @@ def test_wrong_origin_403(env):
     assert e.value.status == 403
 
 
+def test_empty_origins_allowed_when_not_hosted(env):
+    """Local/dev: empty allowlist still skips the Origin gate."""
+    res = mint_session(
+        **_req(
+            env,
+            tenant=env["b"],
+            agent=env["agent_b"],
+            secret="b-secret",
+            origin="https://anywhere.example",
+        )
+    )
+    assert res["token"]
+
+
+def test_empty_origins_rejected_when_hosted(env, monkeypatch):
+    """P1-H2: hosted mint fails closed if allowed_origins is empty."""
+    monkeypatch.setattr("control_plane.runtime_env.is_hosted", lambda: True)
+
+    with pytest.raises(MintError) as e:
+        mint_session(
+            **_req(
+                env,
+                tenant=env["b"],
+                agent=env["agent_b"],
+                secret="b-secret",
+                origin="https://anywhere.example",
+            )
+        )
+    assert e.value.status == 403
+    assert "allowlist" in e.value.reason.lower()
+
+
 def test_token_expires_at_120s(env):
     claims = _decode(mint_session(**_req(env))["token"])
     start = claims.get("nbf", claims.get("iat"))

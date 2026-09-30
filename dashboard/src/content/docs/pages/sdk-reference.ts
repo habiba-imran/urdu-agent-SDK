@@ -45,9 +45,16 @@ const agents = new AwaazLabsUvaAgentsClient({
   tenantId: process.env.UVA_TENANT_ID!,
   tenantSecret: process.env.UVA_HMAC_SECRET!,
 });
+
+await agents.createAgent({
+  name: 'Support',
+  prompt: '…',
+  voiceId: 'cartesia-sonic-default', // required — or pick from getProviderCapabilities()
+  agentLanguage: 'en',
+});
 \`\`\`
 
-Console: **[Agents](/agents)** (read-only inspection).
+Console: **[Agents](/agents)** (read-only inspection). Providers: [Providers](/docs/providers).
 
 ## Telephony (backend)
 
@@ -71,10 +78,11 @@ Not an npm package — your backend implements \`POST /api/voice/session\` (+ re
 
 | Need | Prefer |
 |------|--------|
-| Copy env / rotate keys | [API Keys](/credentials) |
-| Inspect agent config & numbers | [Agents](/agents) |
-| Create / edit agents | \`@awaazlabs-uva/agents\` |
-| Numbers & Telnyx | \`@awaazlabs-uva/telephony\` |
+| Copy env / set origins | [API Keys](/credentials) (HMAC visible to owners) |
+| Inspect agent config & numbers | [Agents](/agents) (**read-only**) |
+| Create / edit agents | \`@awaazlabs-uva/agents\` on your backend |
+| Numbers & Telnyx | \`@awaazlabs-uva/telephony\` on your backend |
+| STT / LLM / TTS matrix | [Providers](/docs/providers) |
 | Debug a call | [Sessions](/sessions) |
 | Automate provisioning | agents / telephony SDKs |
 `;

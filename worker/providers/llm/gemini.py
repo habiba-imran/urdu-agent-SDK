@@ -9,9 +9,8 @@ LiveKit's default generateContent timeout is 10s and 504'd in the client demo, s
 30s request timeout and disable thinking on the voice path.
 
 Gemini 3 does **not** honor ``thinking_budget`` — LiveKit logs a warning and ignores it
-unless ``thinking_level`` is set (``minimal`` / ``low`` / …). English PSTN additionally
-remaps Gemini → Groq (see ``force_groq_for_telephony``) because 3.6 Flash TTFT stays
-multi-second even with minimal thinking.
+unless ``thinking_level`` is set (``minimal`` / ``low`` / …). Configured LLM providers always
+stick at runtime (no automatic Gemini→Groq remap).
 
 Phase 5E A/B (defaults unchanged until TTFT + listening pass):
   - ``GEMINI_LLM_MODEL`` — remaps deprecated IDs and fills empty model (existing)
@@ -83,10 +82,9 @@ def build(model: str) -> Any:
         # livekit-plugins-google copies this onto generateContent; LiveKit's default
         # conn_options.timeout is 10s and produced DEADLINE_EXCEEDED in the demo.
         "http_options": types.HttpOptions(timeout=30_000),
-        # Voice turns: shorter, more deterministic completions reduce TTFT variance.
-        # Phase 5E: keep these fixed when A/B'ing thinking_level or 3.8 model ids.
-        "temperature": 0.4,
-        "max_output_tokens": 256,
+        # Voice turns: short, decisive completions cut TTFT variance and dead air.
+        "temperature": 0.35,
+        "max_output_tokens": 180,
     }
     # Gemini 3: only thinking_level is honored (budget is ignored with a plugin warning).
     # Gemini 2.5 and earlier: thinking_budget=0 disables thinking.

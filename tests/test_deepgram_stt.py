@@ -73,14 +73,12 @@ def test_deepgram_stt_layer_validates_successfully_now_enabled(conn):
             llm_provider="gemini",
             llm_model="gemini-2.5-flash",
             llm_options=None,
-            # Updated 2026-08-02 (Phase 6d): elevenlabs is now enabled — swapped to fish_audio,
-            # still genuinely `planned`. uplift would instead fail with
-            # unsupported_provider_for_language (not listed for en at all).
-            tts_provider="fish_audio",
+            # uplift is not listed for en — proves STT+LLM validated and failure is TTS-layer.
+            tts_provider="uplift",
             tts_voice_id=None,
             tts_options=None,
             voice_id="v_meklc281",
             current=None,
         )
-    assert exc.value.code == "provider_not_enabled"
+    assert exc.value.code == "unsupported_provider_for_language"
     assert "tts" in exc.value.reason

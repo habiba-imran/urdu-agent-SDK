@@ -1,0 +1,28 @@
+# Offline / mocked unit suite for CI when SUPABASE_DB_URL is unset (P4-H1).
+# One path per line. DB-backed / integration suites run in pytest-integration when the
+# SUPABASE_DB_URL secret is present. Never shrink this to test_phase0.py alone.
+
+tests/test_phase0.py
+tests/test_write_tool_gate.py
+tests/test_injection_write_gate.py
+tests/test_wave3_security_spine.py
+tests/test_wave5_residuals.py
+tests/test_tools_webhook.py
+tests/test_wave2_ssrf.py
+tests/test_wave2_portal_hardening.py
+tests/test_portal_rbac_wave1.py
+tests/test_recording_policy.py
+tests/test_prompt_compact.py
+tests/test_session_close.py
+tests/test_reconcile_sessions.py
+tests/test_provider_retries.py
+tests/test_humanization_phase1.py
+tests/test_humanization_phase2.py
+tests/test_humanization_phase3.py
+tests/test_humanization_phase4.py
+tests/test_humanization_phase5.py
+tests/test_humanization_phase6.py
+tests/test_humanization_phase7.py
+tests/test_humanization_gap_fixes_e2e.py
+tests/test_provider_capabilities.py
+tests/test_provider_validation.py

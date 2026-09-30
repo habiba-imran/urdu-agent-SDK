@@ -58,10 +58,8 @@ def test_fish_audio_tts_constructs_for_english():
     assert tts._opts.voice_id == _FISH_AUDIO_REAL_VOICE_ID
 
 
-def test_fish_audio_still_rejected_via_tenant_routes_while_testing(conn):
-    """`testing` behaves exactly like `planned` for every tenant-facing route today (no
-    internal/admin bypass exists) — must still be cleanly rejected, not silently allowed through
-    just because rollout_state advanced past `planned`."""
+def test_fish_audio_rejected_via_tenant_routes(conn):
+    """Fish Audio is not in CAPABILITIES — tenant routes reject it."""
     with pytest.raises(ProviderValidationError) as exc:
         resolve_agent_provider_fields(
             conn,
@@ -78,4 +76,4 @@ def test_fish_audio_still_rejected_via_tenant_routes_while_testing(conn):
             voice_id=None,
             current=None,
         )
-    assert exc.value.code == "provider_not_enabled"
+    assert exc.value.code == "unsupported_provider_for_language"

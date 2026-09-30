@@ -20,9 +20,10 @@ from worker.providers.llm import gemini as gemini_mod
 
 
 def test_phase2_endpointing_tighter_than_phase1_defaults():
-    assert TURN_HANDLING_OPTIONS["endpointing"]["min_delay"] == 0.15
-    assert TURN_HANDLING_OPTIONS["endpointing"]["max_delay"] == 1.5
+    assert TURN_HANDLING_OPTIONS["endpointing"]["min_delay"] == 0.12
+    assert TURN_HANDLING_OPTIONS["endpointing"]["max_delay"] == 1.2
     assert TURN_HANDLING_OPTIONS["preemptive_generation"]["preemptive_tts"] is True
+    assert TURN_HANDLING_OPTIONS["interruption"]["min_duration"] == 0.65
 
 
 def test_vad_silence_gate_tuned_for_eou():
@@ -55,8 +56,8 @@ def test_gemini_voice_path_disables_thinking(monkeypatch):
     gemini_mod.build("gemini-2.5-flash")
     assert captured["model"] == gemini_mod._DEFAULT_GEMINI_MODEL
     assert captured["thinking_config"] == {"thinking_level": "minimal"}
-    assert captured["temperature"] == 0.4
-    assert captured["max_output_tokens"] == 256
+    assert captured["temperature"] == 0.35
+    assert captured["max_output_tokens"] == 180
 
 
 def test_gemini_25_path_uses_thinking_budget(monkeypatch):
@@ -92,10 +93,11 @@ def test_deepgram_stt_voice_options(monkeypatch):
 
     fake_deepgram = SimpleNamespace(STT=FakeSTT)
     monkeypatch.setitem(sys.modules, "livekit.plugins.deepgram", fake_deepgram)
+    monkeypatch.delenv("UVA_DEEPGRAM_ENDPOINTING_MS", raising=False)
     dg.build("en")
     assert created["model"] == "nova-3"
     assert created["no_delay"] is True
-    assert created["endpointing_ms"] == 200
+    assert created["endpointing_ms"] == 100
 
 
 @pytest.mark.asyncio

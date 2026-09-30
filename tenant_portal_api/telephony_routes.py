@@ -92,32 +92,35 @@ def assert_mock_switches_disabled() -> None:
 assert_mock_switches_disabled()
 
 
-def get_current_tenant_id(
-    authorization: str | None = Header(None, alias="Authorization"),
-) -> str:
-    """Extract tenant_id from a required bearer tenant-portal JWT.
+def _portal_claims_from_authorization(
+    authorization: str | None, request: Request | None = None
+) -> dict:
+    """Verify portal JWT (Bearer or cookie) + live membership; return claims."""
+    from tenant_portal_api.portal_access import enrich_claims_with_live_membership
+    from tenant_portal_api.session_cookie import portal_token_from_request
 
-    Missing/invalid tokens are rejected (401). Explicit mock portal auth is only
-    available when TELEPHONY_ALLOW_MOCK_PORTAL_AUTH=1 for offline unit tests.
-    """
-    if not authorization or not authorization.startswith("Bearer "):
+    token: str | None = None
+    if request is not None:
+        token = portal_token_from_request(request, authorization)
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer ") :].strip()
+
+    if not token:
         if _mock_switch_enabled("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH") and not is_hosted():
-            return "tenant_test_123"
+            return {"sub": "tenant_test_123", "role": "owner"}
         raise HTTPException(
             status_code=401,
             detail={
                 "error": {
                     "code": "telephony_auth_failed",
-                    "message": "Authorization Bearer token is required",
+                    "message": "Authorization Bearer token or portal session cookie is required",
                     "status": 401,
                 }
             },
         )
-    token = authorization[len("Bearer ") :].strip()
     try:
         claims = verify_tenant_jwt(token, portal_jwt_secret())
-        tenant_id = claims.get("sub")
-        if not tenant_id:
+        if not claims.get("sub"):
             raise HTTPException(
                 status_code=401,
                 detail={
@@ -128,18 +131,52 @@ def get_current_tenant_id(
                     }
                 },
             )
-        return str(tenant_id)
+        # Mock path for offline unit tests may skip DB membership.
+        if _mock_switch_enabled("TELEPHONY_ALLOW_MOCK_PORTAL_AUTH") and not is_hosted():
+            claims.setdefault("role", "owner")
+            return claims
+        with _open_db() as conn:
+            return enrich_claims_with_live_membership(conn, claims)
     except TenantAuthError as e:
         raise HTTPException(
-            status_code=401,
+            status_code=e.status if e.status in (401, 403) else 401,
             detail={
                 "error": {
                     "code": "telephony_auth_failed",
                     "message": e.reason,
-                    "status": 401,
+                    "status": e.status if e.status in (401, 403) else 401,
                 }
             },
         ) from e
+
+
+def get_current_tenant_id(
+    request: Request,
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> str:
+    """Extract tenant_id from portal JWT (Bearer or cookie) with live membership."""
+    claims = _portal_claims_from_authorization(authorization, request)
+    return str(claims["sub"])
+
+
+def require_owner_tenant_id(
+    request: Request,
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> str:
+    """P3-H3 / P1-C1: telephony mutations require live owner role."""
+    claims = _portal_claims_from_authorization(authorization, request)
+    if claims.get("role") != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": "telephony_forbidden",
+                    "message": "owner role required",
+                    "status": 403,
+                }
+            },
+        )
+    return str(claims["sub"])
 
 
 def get_db():
@@ -291,7 +328,7 @@ def portal_get_connection_status(tenant_id: str = Depends(get_current_tenant_id)
 
 @router.post("/portal/telephony/telnyx/connect")
 def portal_connect_telnyx(
-    body: ConnectTelnyxBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: ConnectTelnyxBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Verify and connect Telnyx API key for portal tenant."""
     try:
@@ -302,7 +339,7 @@ def portal_connect_telnyx(
 
 @router.post("/portal/telephony/telnyx/rotate")
 def portal_rotate_telnyx(
-    body: RotateTelnyxBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: RotateTelnyxBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Rotate Telnyx API key for portal tenant."""
     try:
@@ -312,7 +349,7 @@ def portal_rotate_telnyx(
 
 
 @router.post("/portal/telephony/telnyx/reverify")
-def portal_reverify_telnyx(tenant_id: str = Depends(get_current_tenant_id)):
+def portal_reverify_telnyx(tenant_id: str = Depends(require_owner_tenant_id)):
     """Re-verify permissions and platform status of existing connection."""
     try:
         return _service.reverify_telnyx_account(tenant_id)
@@ -321,7 +358,7 @@ def portal_reverify_telnyx(tenant_id: str = Depends(get_current_tenant_id)):
 
 
 @router.delete("/portal/telephony/telnyx/connection")
-def portal_disconnect_telnyx(tenant_id: str = Depends(get_current_tenant_id)):
+def portal_disconnect_telnyx(tenant_id: str = Depends(require_owner_tenant_id)):
     """Disconnect active Telnyx connection for portal tenant."""
     try:
         return _service.disconnect_telnyx_account(tenant_id)
@@ -354,7 +391,7 @@ def portal_list_numbers(
 
 @router.post("/portal/telephony/numbers/import")
 def portal_import_number(
-    body: ImportTelnyxNumberBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: ImportTelnyxNumberBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Import existing Telnyx-owned number into managed inventory."""
     try:
@@ -366,7 +403,7 @@ def portal_import_number(
 
 
 @router.post("/portal/telephony/numbers/sync")
-def portal_sync_numbers(tenant_id: str = Depends(get_current_tenant_id)):
+def portal_sync_numbers(tenant_id: str = Depends(require_owner_tenant_id)):
     """Sync managed numbers with provider inventory."""
     try:
         return _service.sync_telnyx_owned_numbers(tenant_id)
@@ -396,7 +433,7 @@ def portal_get_number(
 
 @router.post("/portal/telephony/available-numbers/search")
 def portal_search_available_numbers(
-    body: SearchAvailableNumbersBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: SearchAvailableNumbersBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Search available Telnyx numbers for purchase."""
     try:
@@ -409,7 +446,7 @@ def portal_search_available_numbers(
 
 @router.post("/portal/telephony/number-reservations")
 def portal_reserve_number(
-    body: ReserveNumberBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: ReserveNumberBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Reserve number temporarily before purchase."""
     try:
@@ -422,7 +459,7 @@ def portal_reserve_number(
 
 @router.post("/portal/telephony/number-orders")
 def portal_purchase_number(
-    body: PurchaseNumberBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: PurchaseNumberBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Idempotently purchase exact selected phone number."""
     try:
@@ -451,7 +488,7 @@ def portal_get_number_order(
 def portal_assign_agent(
     number_id: str,
     body: AssignAgentBody,
-    tenant_id: str = Depends(get_current_tenant_id),
+    tenant_id: str = Depends(require_owner_tenant_id),
 ):
     """Assign or unassign agent to phone number."""
     try:
@@ -462,7 +499,7 @@ def portal_assign_agent(
 
 @router.post("/portal/telephony/telnyx/sip-connection")
 def portal_upsert_sip_connection(
-    body: UpsertSipConnectionBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: UpsertSipConnectionBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Upsert Telnyx SIP/FQDN connection."""
     try:
@@ -474,7 +511,7 @@ def portal_upsert_sip_connection(
 
 
 @router.post("/portal/telephony/telnyx/sip-connection/test")
-def portal_verify_sip_connection(tenant_id: str = Depends(get_current_tenant_id)):
+def portal_verify_sip_connection(tenant_id: str = Depends(require_owner_tenant_id)):
     """Test and verify SIP connection readiness."""
     try:
         return _service.verify_telnyx_sip_connection(tenant_id)
@@ -485,7 +522,7 @@ def portal_verify_sip_connection(tenant_id: str = Depends(get_current_tenant_id)
 @router.post("/portal/telephony/telnyx/outbound-voice-profile")
 def portal_upsert_outbound_profile(
     body: UpsertOutboundVoiceProfileBody,
-    tenant_id: str = Depends(get_current_tenant_id),
+    tenant_id: str = Depends(require_owner_tenant_id),
 ):
     """Upsert Outbound Voice Profile."""
     try:
@@ -500,7 +537,7 @@ def portal_upsert_outbound_profile(
 
 
 @router.post("/portal/telephony/telnyx/outbound-voice-profile/reverify")
-def portal_verify_outbound_profile(tenant_id: str = Depends(get_current_tenant_id)):
+def portal_verify_outbound_profile(tenant_id: str = Depends(require_owner_tenant_id)):
     """Re-verify outbound voice profile readiness."""
     try:
         return _service.verify_telnyx_outbound_voice_profile(tenant_id)
@@ -512,7 +549,7 @@ def portal_verify_outbound_profile(tenant_id: str = Depends(get_current_tenant_i
 def portal_configure_routing(
     number_id: str,
     body: ConfigureNumberRoutingBody,
-    tenant_id: str = Depends(get_current_tenant_id),
+    tenant_id: str = Depends(require_owner_tenant_id),
 ):
     """Configure inbound trunk and dispatch rule for phone number."""
     try:
@@ -525,7 +562,7 @@ def portal_configure_routing(
 
 @router.post("/portal/telephony/telnyx/outbound-trunk/configure")
 def portal_configure_outbound_trunk(
-    body: ConfigureOutboundTrunkBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: ConfigureOutboundTrunkBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Configure long-lived outbound trunk."""
     try:
@@ -547,7 +584,7 @@ def portal_get_outbound_readiness(tenant_id: str = Depends(get_current_tenant_id
 
 @router.post("/portal/telephony/outbound-calls")
 def portal_create_outbound_call(
-    body: CreateOutboundCallBody, tenant_id: str = Depends(get_current_tenant_id)
+    body: CreateOutboundCallBody, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Initiate outbound PSTN call."""
     try:
@@ -604,7 +641,7 @@ def portal_get_call_detail(
 
 @router.post("/portal/telephony/numbers/{number_id}/disable")
 def portal_disable_number(
-    number_id: str, tenant_id: str = Depends(get_current_tenant_id)
+    number_id: str, tenant_id: str = Depends(require_owner_tenant_id)
 ):
     """Soft-disable managed phone number."""
     try:

@@ -21,22 +21,31 @@ def test_turn_profile_webrtc_defaults_match_legacy():
     assert opts == legacy
     assert opts["preemptive_generation"]["enabled"] is True
     assert opts["turn_detection"] == "stt"
-    assert opts["endpointing"]["min_delay"] == 0.15
+    assert opts["endpointing"]["min_delay"] == 0.12
+    assert opts["interruption"]["min_duration"] == 0.65
 
 
-def test_turn_profile_telephony_and_groq_disable_preemptive(monkeypatch):
+def test_turn_profile_telephony_gemini_preemptive_groq_off(monkeypatch):
     monkeypatch.setenv("UVA_INTERRUPTION_MODE", "vad")
     tel = turn_profile_to_livekit_options(
         build_turn_profile(audio_channel="telephony", llm_provider="gemini")
     )
-    assert tel["preemptive_generation"]["enabled"] is False
+    # Non-Groq PSTN: preemptive on to hide Gemini TTFT.
+    assert tel["preemptive_generation"]["enabled"] is True
+    assert tel["preemptive_generation"]["preemptive_tts"] is True
     assert tel["interruption"]["resume_false_interruption"] is False
+    assert tel["interruption"]["min_duration"] == 0.55
 
     groq_web = turn_profile_to_livekit_options(
         build_turn_profile(audio_channel="webrtc", llm_provider="groq")
     )
     assert groq_web["preemptive_generation"]["enabled"] is False
     assert groq_web["preemptive_generation"]["preemptive_tts"] is False
+
+    groq_tel = turn_profile_to_livekit_options(
+        build_turn_profile(audio_channel="telephony", llm_provider="groq")
+    )
+    assert groq_tel["preemptive_generation"]["enabled"] is False
 
 
 def test_turn_profile_urdu_does_not_change_options():
@@ -59,10 +68,10 @@ def test_turn_profile_urdu_does_not_change_options():
     assert en == ur
 
 
-def test_deepgram_endpointing_default_200(monkeypatch):
+def test_deepgram_endpointing_default_100(monkeypatch):
     monkeypatch.delenv("UVA_DEEPGRAM_ENDPOINTING_MS", raising=False)
-    assert resolve_deepgram_endpointing_ms(None) == 200
-    assert resolve_deepgram_endpointing_ms({}) == 200
+    assert resolve_deepgram_endpointing_ms(None) == 100
+    assert resolve_deepgram_endpointing_ms({}) == 100
 
 
 def test_deepgram_endpointing_env_override(monkeypatch):
@@ -82,12 +91,12 @@ def test_deepgram_build_uses_resolved_endpointing(monkeypatch):
         def __init__(self, **kwargs):
             created.update(kwargs)
 
-    monkeypatch.setenv("UVA_DEEPGRAM_ENDPOINTING_MS", "200")
+    monkeypatch.setenv("UVA_DEEPGRAM_ENDPOINTING_MS", "100")
     monkeypatch.setitem(sys.modules, "livekit.plugins.deepgram", SimpleNamespace(STT=FakeSTT))
     import worker.providers.stt.deepgram as dg
 
     dg.build("en")
-    assert created["endpointing_ms"] == 200
+    assert created["endpointing_ms"] == 100
     assert created["model"] == "nova-3"
 
 

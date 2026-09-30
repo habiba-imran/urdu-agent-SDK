@@ -25,8 +25,9 @@ import datetime
 import hashlib
 import hmac
 import json
+import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
 import psycopg
 
@@ -34,6 +35,14 @@ from control_plane.mint import REPLAY_WINDOW_SEC
 from control_plane.secrets import SecretProvider
 
 MACHINE_RATE_LIMIT_PER_MIN = 30
+# Pre-auth damper keyed on client IP (P1-H3) — junk must not burn a tenant bucket.
+MACHINE_RATE_LIMIT_IP_PER_MIN = 120
+_MAX_TRACKED_KEYS = 10_000
+_PRUNE_INTERVAL_SEC = 60.0
+
+_hits: OrderedDict[str, list[float]] = OrderedDict()
+_hits_lock = threading.Lock()
+_last_prune = 0.0
 
 
 class MachineAuthError(Exception):
@@ -67,17 +76,36 @@ def expected_signature(
     return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
 
 
-_hits: dict[str, list[float]] = defaultdict(list)
+def _prune_locked(now: float) -> None:
+    global _last_prune
+    while len(_hits) > _MAX_TRACKED_KEYS:
+        _hits.popitem(last=False)
+    if now - _last_prune < _PRUNE_INTERVAL_SEC:
+        return
+    _last_prune = now
+    for key in [k for k, window in _hits.items() if not window or now - window[-1] >= 60]:
+        del _hits[key]
 
 
-def _rate_limited(tenant_id: str) -> bool:
+def _rate_limit_exceeded(key: str, limit: int) -> bool:
+    """True when ``key`` is already at its limit. Does not count this request (P1-H3)."""
     now = time.time()
-    window = _hits[tenant_id]
-    window[:] = [t for t in window if now - t < 60]
-    if len(window) >= MACHINE_RATE_LIMIT_PER_MIN:
-        return True
-    window.append(now)
-    return False
+    with _hits_lock:
+        window = _hits.get(key)
+        if window is None:
+            return False
+        window[:] = [t for t in window if now - t < 60]
+        return len(window) >= limit
+
+
+def _rate_limit_record(key: str) -> None:
+    now = time.time()
+    with _hits_lock:
+        window = _hits.setdefault(key, [])
+        window[:] = [t for t in window if now - t < 60]
+        window.append(now)
+        _hits.move_to_end(key)
+        _prune_locked(now)
 
 
 def verify_machine_request(
@@ -91,15 +119,26 @@ def verify_machine_request(
     body: dict,
     signature: str,
     now: int | None = None,
+    client_ip: str | None = None,
 ) -> None:
     """Run every machine-auth gate. Raises MachineAuthError on any failure.
+
+    P1-H3: tenant rate-limit hits are recorded **only after** signature verification
+    succeeds. Unauthenticated junk with a guessed ``tenant_id`` cannot burn that
+    tenant's machine API budget. Optional ``client_ip`` gets a pre-auth damper.
 
     Does not commit — runs on the caller's connection, alongside the caller's own subsequent
     queries.create_agent/update_agent/list_agents call, so a single conn.commit() (or the
     connection context manager's implicit commit) makes the nonce-burn and the agent mutation
     atomic together, matching this file's existing route style.
     """
-    if _rate_limited(tenant_id):
+    if client_ip:
+        ip_key = f"ip:{client_ip}"
+        if _rate_limit_exceeded(ip_key, MACHINE_RATE_LIMIT_IP_PER_MIN):
+            raise MachineAuthError(429, "rate limited")
+        _rate_limit_record(ip_key)
+
+    if _rate_limit_exceeded(tenant_id, MACHINE_RATE_LIMIT_PER_MIN):
         raise MachineAuthError(429, "rate limited")
 
     row = conn.execute(
@@ -141,3 +180,6 @@ def verify_machine_request(
 
     if status != "active":
         raise MachineAuthError(403, "tenant not active")
+
+    # Authenticated request only (P1-H3 / F-H4 class).
+    _rate_limit_record(tenant_id)

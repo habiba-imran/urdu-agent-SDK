@@ -36,7 +36,10 @@ from tenant_portal_api.telephony_status import (
     NumberProvisioningStatus,
     NumberRoutingStatus,
 )
-from tenant_portal_api.telnyx_destinations import default_telnyx_outbound_destinations
+from tenant_portal_api.telnyx_destinations import (
+    assert_outbound_destination_allowed,
+    default_telnyx_outbound_destinations,
+)
 
 from tenant_portal_api import telephony_queries as queries
 from tenant_portal_api.telnyx_client import TelnyxClient
@@ -1089,6 +1092,24 @@ class TelephonyService:
             )
 
         with self._connection() as conn:
+            # Fail closed against the tenant OVP allowlist (or platform default) before dialing.
+            allowed_destinations = default_telnyx_outbound_destinations()
+            if conn is not None:
+                profile_row = conn.execute(
+                    """
+                    select allowed_destinations
+                    from telnyx_outbound_voice_profiles
+                    where tenant_id = %s and disabled_at is null
+                      and platform_status = 'active'
+                    order by created_at desc
+                    limit 1
+                    """,
+                    (tenant_id,),
+                ).fetchone()
+                if profile_row and profile_row[0]:
+                    allowed_destinations = list(profile_row[0])
+            assert_outbound_destination_allowed(to_number, allowed_destinations)
+
             if conn is None and idemp_id in self._idempotency:
                 return self._idempotency[idemp_id]
 

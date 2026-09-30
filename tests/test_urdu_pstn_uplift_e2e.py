@@ -85,8 +85,8 @@ def test_urdu_pstn_build_agent_matches_uplift_path(monkeypatch):
     assert "EMOTION (required" not in agent.instructions
 
 
-def test_english_rime_pstn_still_remaps_to_cartesia(monkeypatch):
-    """Regression: English Rime PSTN must still force Cartesia."""
+def test_english_rime_pstn_keeps_rime_and_gemini(monkeypatch):
+    """Configured English Rime + Gemini stick on PSTN (no Cartesia/Groq force)."""
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     cfg = AgentConfig(
         agent_id="en",
@@ -101,9 +101,10 @@ def test_english_rime_pstn_still_remaps_to_cartesia(monkeypatch):
         tts_voice_id="rime-arcana-astra",
     )
     effective = resolve_effective_providers(cfg, "astra", audio_channel="telephony")
-    assert effective.cartesia_forced is True
-    assert effective.tts_provider == "cartesia"
-    assert effective.groq_forced is True
-    assert effective.llm_provider == "groq"
+    assert effective.cartesia_forced is False
+    assert effective.tts_provider == "rime"
+    assert effective.groq_forced is False
+    assert effective.llm_provider == "gemini"
     text = compose_system_instructions(effective.cfg)
-    assert "EMOTION (required" in text
+    assert "Rime accepts NO SSML" in text
+    assert "EMOTION (required" not in text

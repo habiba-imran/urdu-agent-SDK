@@ -43,7 +43,11 @@ function normalizeSessionFailure(upstreamStatus, payload) {
 
 function addCorsHeaders(res, origin, config) {
   if (!origin) return;
-  if (config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin)) {
+  // P2-H2: empty allowlist must not reflect arbitrary Origins.
+  if (config.allowedOrigins.length === 0) {
+    return;
+  }
+  if (config.allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
@@ -78,7 +82,8 @@ export function createApp(config, options = {}) {
   });
 
   app.post('/api/voice/session', async (req, res) => {
-    const { publishableKey, agentId } = req.body ?? {};
+    const { publishableKey, agentId, verifiedCallerPhone, verified_caller_phone } =
+      req.body ?? {};
     if (!publishableKey || !agentId) {
       res.status(400).json({ error: 'publishableKey and agentId are required' });
       return;
@@ -95,13 +100,19 @@ export function createApp(config, options = {}) {
       origin: req.get('origin'),
     });
 
+    const mintBody = { agent_id: agentId };
+    const phone = String(verifiedCallerPhone || verified_caller_phone || '').trim();
+    if (phone) {
+      mintBody.verified_caller_phone = phone;
+    }
+
     let upstream;
     let payload;
     try {
       upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ agent_id: agentId }),
+        body: JSON.stringify(mintBody),
       });
       payload = await readJsonSafely(upstream);
     } catch (err) {

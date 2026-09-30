@@ -32,8 +32,9 @@ voice.on('error', (error) => {});
 | \`speaking\` | \`boolean\` caller / room speaking |
 | \`agent_speaking\` | \`boolean\` agent active speaker |
 | \`audio_blocked\` | \`boolean\` — call \`startAudio()\` from a click when \`true\` |
-| \`metrics_updated\` | metrics object from the worker |
-| \`turn_latency\` | per-turn timing from the worker |
+| \`metrics_updated\` | metrics object from the runtime |
+| \`turn_latency\` | per-turn timing from the runtime |
+| \`connect_timing\` | session-mint vs LiveKit-join ms (diagnostics) |
 | \`error\` | \`AwaazLabsUvaVoiceError\` with a public \`code\` |
 
 A throwing listener does not stop other listeners.
@@ -45,7 +46,7 @@ A throwing listener does not stop other listeners.
 | \`quota_exceeded\` | Plan concurrency or monthly minutes (or opaque \`429\`) |
 | \`rate_limit\` | Platform rate limit — back off |
 | \`provider_limit\` | Upstream voice/LLM provider limit |
-| \`worker_not_ready\` | Worker not ready yet |
+| \`worker_not_ready\` | Session not ready yet — retry shortly |
 | \`agent_not_found\` | Wrong or missing \`agentId\` |
 | \`timeout\` | Host session endpoint exceeded \`fetchTimeoutMs\` |
 | \`token_refresh_failed\` | Refresh rejected or retries exhausted |
@@ -53,7 +54,7 @@ A throwing listener does not stop other listeners.
 
 ## Mapping to Sessions
 
-Successful connects that reach the worker appear under **[Sessions](/sessions)**. Use Sessions when UI events and the console disagree.
+Successful connects appear under **[Sessions](/sessions)**. Use Sessions when UI events and the console disagree.
 
 ## Related
 

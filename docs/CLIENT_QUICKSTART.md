@@ -1,149 +1,22 @@
 # Client Quickstart
 
-This guide is the fastest supported path for a client team integrating the AwaazLabs-UVA-Voice SDK.
+> **Superseded (P2-C1).** This file previously pointed at deleted demo-app and
+> examples trees. Do not follow those paths.
 
-For the full client handoff package, including what AwaazLabs-UVA provides, which values go where, and the
-exact onboarding checklist, see `docs/CLIENT_HANDOFF_GUIDE.md`.
+## Where to go instead
 
-It assumes you are using the reference materials already present in this repo:
-
-- browser app: `demo-app/frontend/`
-- host-owned backend: `demo-app/backend/`
-- browser SDK package: `sdk/` (`@awaazlabs-uva/voice`)
-- server SDK package: `sdk-server/` (`@awaazlabs-uva/agents`, optional — agent management from your backend)
-
-## What the client receives
-
-A client integration needs these values from the AwaazLabs-UVA team:
-
-- `publishableKey`
-- `tenantId`
-- raw tenant HMAC secret
-- `agentId`
-- backend-only session upstream configuration
-
-The HMAC secret belongs on the client's backend only. Never put it in browser code.
+1. **In-dashboard guide (canonical for clients):** open the tenant dashboard → `/docs`
+   (Quickstart, Backend setup, Going live, Security).
+2. **Repo starter pack:** `client-deliverables-final/` — especially
+   `client-deliverables-final/host-backend-starter/` and
+   `client-deliverables-final/01-INTEGRATION_GUIDE.md`.
+3. **Public SDKs** (pin these — match `package.json` / `/docs`):
+   - `@awaazlabs-uva/voice@1.1.0` (browser)
+   - `@awaazlabs-uva/agents@0.1.0` (backend)
+   - `@awaazlabs-uva/telephony@0.1.0` (backend)
 
 ## Architecture in one sentence
 
-Browser SDK -> host backend -> AwaazLabs-UVA session service -> LiveKit worker.
+Browser SDK → **your** host backend (HMAC) → AwaazLabs-UVA session service → LiveKit worker.
 
-The browser never signs requests or calls AwaazLabs-UVA upstream services itself.
-
-## Step 1: install the SDKs
-
-Browser app:
-
-```bash
-npm install @awaazlabs-uva/voice
-```
-
-Host backend (agent list / capabilities / pipeline helpers):
-
-```bash
-npm install @awaazlabs-uva/agents
-```
-
-## Step 2: run the host backend
-
-Use `demo-app/backend/` as the reference. From `demo-app/` run once:
-
-```bash
-npm run bootstrap   # npm-installs @awaazlabs-uva/voice + @awaazlabs-uva/agents
-npm run install:all
-```
-
-Copy `backend/.env.example` → `backend/.env` and set:
-
-- `UVA_CONTROL_PLANE_URL` — the session upstream, supplied through the secure onboarding channel
-- `UVA_API_BASE_URL` — tenant API base URL (needed for the demo provider picker)
-- `UVA_TENANT_ID`
-- `UVA_HMAC_SECRET`
-- `UVA_PUBLISHABLE_KEY`
-- `HOST_ALLOWED_ORIGINS`
-- optional `HOST_PUBLIC_BASE_URL`
-- optional `PORT`
-
-Start it:
-
-```bash
-npm run dev:backend
-```
-
-By default it listens on `http://localhost:3000`.
-
-## Step 3: configure the browser example or your own app
-
-If you are using `demo-app/frontend/`, copy `frontend/.env.example` to `frontend/.env` and set:
-
-- `VITE_UVA_PUBLISHABLE_KEY`
-- `VITE_UVA_SESSION_ENDPOINT=http://localhost:3000/api/voice/session`
-- `VITE_UVA_REFRESH_ENDPOINT=http://localhost:3000/api/voice/session/refresh`
-- `VITE_UVA_AGENT_ID`
-- optional `VITE_UVA_FETCH_TIMEOUT_MS` (default `15000`)
-
-Run it:
-
-```bash
-npm run dev:frontend
-```
-
-## Step 4: minimal integration code
-
-```ts
-import { AwaazLabsUvaVoice } from '@awaazlabs-uva/voice';
-
-const agent = new AwaazLabsUvaVoice({
-  publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY,
-  sessionEndpoint: 'http://localhost:3000/api/voice/session',
-  refreshEndpoint: 'http://localhost:3000/api/voice/session/refresh',
-});
-
-agent.on('connected', () => console.log('connected'));
-agent.on('transcript', (entry) => console.log(entry));
-agent.on('error', (error) => console.error(error.code, error.message));
-
-await agent.connect({ agentId: import.meta.env.VITE_UVA_AGENT_ID });
-```
-
-## Step 5: verify the integration
-
-Successful integration means:
-
-- the browser calls the host backend, not AwaazLabs-UVA upstream services directly
-- `POST /api/voice/session` returns `token`, `wsUrl`, and `roomName`
-- the browser connects to LiveKit
-- voice transcript events appear
-- refresh happens through `/api/voice/session/refresh`
-
-## Common mistakes
-
-- putting the raw HMAC secret in frontend code
-- calling the AwaazLabs-UVA session service directly from the browser
-- forgetting to forward the browser `Origin` header from the host backend to the session upstream
-- exposing backend-only upstream URLs or signing details in frontend docs/code
-- setting different session and refresh routes than the SDK expects
-
-## Browser-facing error meanings
-
-| Error | What it usually means |
-|---|---|
-| `quota_exceeded` | tenant cap reached |
-| `rate_limit` | too many session requests for this tenant in the last minute — back off |
-| `provider_limit` | upstream voice/LLM provider limit, not your plan quota |
-| `worker_not_ready` | voice worker not ready to take the call yet |
-| `agent_not_found` | wrong `agentId` or wrong tenant |
-| `timeout` | host backend did not answer within `fetchTimeoutMs` (default 15s) |
-| `token_refresh_failed` | refresh rejected, or retries ran out before the token expired |
-| `session_failed` | host backend misconfiguration or upstream failure |
-
-The full taxonomy is in `sdk/README.md`.
-
-## Files to hand to a client team
-
-For a real onboarding handoff, send:
-
-- `sdk/README.md`
-- `docs/CLIENT_QUICKSTART.md`
-- `docs/HOST_BACKEND_CONTRACT.md`
-- `demo-app/` (reference host backend + browser client)
+The browser never signs requests or calls AwaazLabs-UVA upstream with the tenant secret.

@@ -25,6 +25,23 @@ _WRITE_TOOLS = frozenset(
     {"book_appointment", "reschedule_appointment", "cancel_appointment"}
 )
 
+# Explicit caller affirmations (P1-H5) — any user turn is not enough.
+_AFFIRM_RE = re.compile(
+    r"(?i)(?<![a-z])("
+    r"yes|yeah|yep|yup|ok|okay|sure|confirm|confirmed|affirmative|"
+    r"go\s*ahead|do\s*it|please\s*do|book\s*it|cancel\s*it|reschedule|"
+    r"haan|haanji|ji\s*haan|theek\s*hai|sahi\s*hai|bilkul"
+    r")(?![a-z])"
+)
+
+
+def is_affirmative_utterance(text: str | None) -> bool:
+    """True when the caller text looks like an explicit yes/confirm."""
+    s = (text or "").strip()
+    if not s:
+        return False
+    return _AFFIRM_RE.search(s) is not None
+
 
 def max_write_tool_calls() -> int:
     raw = (os.environ.get("UVA_MAX_WRITE_TOOL_CALLS") or "").strip()
@@ -171,23 +188,23 @@ def validate_write_args(tool_name: str, args: dict[str, Any]) -> tuple[dict[str,
 
 
 def check_ownership(tool_name: str, args: dict[str, Any], verified_caller_phone: str | None) -> str | None:
-    """Return error message or None if ownership OK."""
+    """Return error message or None if ownership OK.
+
+    P1-H5: book/cancel/reschedule all require host- or PSTN-verified caller phone.
+    """
     verified = normalize_phone(verified_caller_phone)
     phone = str(args.get("customer_phone") or "")
 
-    if tool_name in ("cancel_appointment", "reschedule_appointment"):
+    if tool_name in ("book_appointment", "cancel_appointment", "reschedule_appointment"):
         if not verified:
             return (
-                "verified_caller_phone is required for cancel/reschedule — "
+                "verified_caller_phone is required for booking/cancel/reschedule — "
                 "host must pass it at mint (browser) or PSTN ANI must be available"
             )
         if not phones_match(phone, verified):
             return "customer_phone does not match verified caller identity"
         return None
 
-    if tool_name == "book_appointment" and verified:
-        if not phones_match(phone, verified):
-            return "customer_phone does not match verified caller identity"
     return None
 
 
@@ -254,6 +271,8 @@ class WriteGateState:
     write_tool_calls: int = 0
     user_turn_count: int = 0
     verified_caller_phone: str | None = None
+    # P1-H5: set only when a post-propose user utterance matches an affirmation.
+    heard_affirmative: bool = False
     last_idempotency_key: str | None = None
     last_write_result: dict[str, Any] | None = None
     # confirmation_id → {tool, args_hash, result, idempotency_key}
@@ -275,10 +294,13 @@ def get_write_gate_state(userdata: Any) -> WriteGateState:
     return state
 
 
-def note_user_turn(userdata: Any) -> None:
+def note_user_turn(userdata: Any, text: str | None = None) -> None:
+    """Advance the user-turn barrier; mark affirmation when text is an explicit yes (P1-H5)."""
     state = get_write_gate_state(userdata)
     state.user_turn_count += 1
     userdata.user_turn_count = state.user_turn_count
+    if state.pending_write is not None and is_affirmative_utterance(text):
+        state.heard_affirmative = True
 
 
 def set_verified_caller_phone(userdata: Any, phone: str | None) -> None:
@@ -371,6 +393,16 @@ def propose_or_confirm_write(
                 "needs_confirmation": True,
                 "confirmation_id": pending.confirmation_id,
             }
+        if not state.heard_affirmative:
+            return "reject", {
+                "error": (
+                    "caller has not given an explicit yes — wait for confirmation "
+                    "(yes / ok / haan / …), then call again with confirmation_id"
+                ),
+                "success": False,
+                "needs_confirmation": True,
+                "confirmation_id": pending.confirmation_id,
+            }
         if (time.monotonic() - pending.created_at) > _PENDING_TTL_SEC:
             state.pending_write = None
             return "reject", {"error": "confirmation expired — propose again", "success": False}
@@ -412,6 +444,7 @@ def propose_or_confirm_write(
         propose_user_turn_id=state.user_turn_count,
         path=path,
     )
+    state.heard_affirmative = False
     return "propose", {
         "needs_confirmation": True,
         "confirmation_id": new_id,

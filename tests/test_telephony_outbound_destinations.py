@@ -1,21 +1,18 @@
+import os
+
 import pytest
 
+from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 from tenant_portal_api.telephony_service import TelephonyService
 from tenant_portal_api.telnyx_destinations import (
     TELNYX_DEFAULT_OUTBOUND_DESTINATION_COUNTRIES,
+    assert_outbound_destination_allowed,
+    e164_destination_countries,
 )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known product gap, surfaced when F-H1 turned this file back on: the shipped default "
-        "is US+CA (trial-account compatible), so outbound PSTN to PK - the product's primary "
-        "market - is refused. Set TELNYX_OUTBOUND_DESTINATIONS=all (or a country list) once "
-        "the Telnyx account is enabled for those destinations, and drop this xfail."
-    ),
-    strict=False,
-)
-def test_ensure_telephony_infrastructure_uses_full_telnyx_destination_list(monkeypatch):
+def test_ensure_telephony_infrastructure_uses_env_destination_list(monkeypatch):
+    monkeypatch.setenv("TELNYX_OUTBOUND_DESTINATIONS", "all")
     service = TelephonyService()
     captured: dict[str, list[str]] = {}
 
@@ -53,3 +50,32 @@ def test_ensure_telephony_infrastructure_uses_full_telnyx_destination_list(monke
     )
     assert "PK" in captured["allowed_destinations"]
     assert result["status"] == "ready"
+
+
+def test_default_destinations_without_env_are_us_ca(monkeypatch):
+    monkeypatch.delenv("TELNYX_OUTBOUND_DESTINATIONS", raising=False)
+    from tenant_portal_api.telnyx_destinations import default_telnyx_outbound_destinations
+
+    assert default_telnyx_outbound_destinations() == ["US", "CA"]
+
+
+def test_e164_pakistan_and_nanp():
+    assert "PK" in e164_destination_countries("+923001234567")
+    assert "US" in e164_destination_countries("+14155550123")
+    assert "CA" in e164_destination_countries("+14155550123")
+
+
+def test_assert_outbound_destination_allows_pk_when_listed():
+    assert assert_outbound_destination_allowed("+923001234567", ["US", "CA", "PK"]) == "PK"
+
+
+def test_assert_outbound_destination_blocks_pk_when_us_ca_only():
+    with pytest.raises(TelephonyError) as exc:
+        assert_outbound_destination_allowed("+923001234567", ["US", "CA"])
+    assert exc.value.code == TelephonyErrorCode.OUTBOUND_DESTINATION_DISABLED
+
+
+def test_assert_outbound_destination_unknown_fails_closed():
+    with pytest.raises(TelephonyError) as exc:
+        assert_outbound_destination_allowed("+9991234567", ["US", "CA"])
+    assert exc.value.code == TelephonyErrorCode.OUTBOUND_DESTINATION_DISABLED

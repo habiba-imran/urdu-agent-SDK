@@ -15,7 +15,7 @@ Rollout states (guide's own definition):
   enabled  — selectable by tenant-facing routes
 
 `en` combos are listed here documenting the confirmed target scope (2026-08-01: Gladia+Deepgram
-STT, Gemini+Groq LLM, ElevenLabs+Fish Audio+Cartesia+Rime TTS). `en.stt.gladia` and `en.llm.gemini`
+STT, Gemini+Groq LLM, ElevenLabs+Cartesia+Rime TTS). `en.stt.gladia` and `en.llm.gemini`
 are `enabled` as of Phase 5 (2026-08-01) — both adapters needed zero new code (the Gladia adapter
 was already language-parameterized in Phase 2; Gemini is prompt-driven, not language-specific).
 `en.stt.deepgram` is `enabled` as of Phase 6a (2026-08-01) — package verified against PyPI +
@@ -59,15 +59,7 @@ produced real audio the human confirmed sounded clear and correct; the call ende
 own end-of-conversation tool (`end_reason: agent_ended`), a normal clean close. See
 tests/test_elevenlabs_tts.py and the plan's Phase 6d changelog entry for the full account.
 
-`en.tts.fish_audio` is `testing` as of Phase 6e (2026-08-02) — package
-(`livekit-plugins-fishaudio==1.6.5`) and constructor verified against the installed package via
-inspect.signature before any code was written. Unlike Cartesia/ElevenLabs, this plugin's
-constructor has NO `language` parameter at all — `worker/providers/tts/fish_audio.py::build()`
-intentionally takes only `voice_id`, a real (not assumed) difference in this vendor's API shape.
-One voice seeded (migration `0020_seed_fish_audio_voice.sql`), using the plugin's own baked-in
-default voice ID (`933563129e564b19a115bedd57b7406a`, `DEFAULT_VOICE_ID` in the package's own
-tts.py), not an invented one. Awaiting its own human-approved live smoke test before `enabled` —
-see tests/test_fish_audio_tts.py.
+Fish Audio TTS and Soniox STT are intentionally absent from this matrix (not offered to tenants).
 
 `en.tts.rime` is `enabled` as of Phase 6f (2026-08-02) — package (`livekit-plugins-rime==1.6.5`)
 and constructor verified against the installed package via inspect.signature before any code was
@@ -173,7 +165,6 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
         },
         "tts": {
             "elevenlabs": {"state": "enabled"},
-            "fish_audio": {"state": "testing"},
             "cartesia": {"state": "enabled"},
             "rime": {"state": "enabled"},
         },

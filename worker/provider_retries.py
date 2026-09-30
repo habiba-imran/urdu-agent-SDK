@@ -14,8 +14,8 @@ from typing import Any
 
 logger = logging.getLogger("worker.provider_retries")
 
-_DEFAULT_MAX_RETRY = 2
-_DEFAULT_RETRY_INTERVAL = 2.0
+_DEFAULT_MAX_RETRY = 1
+_DEFAULT_RETRY_INTERVAL = 1.0
 _DEFAULT_TIMEOUT = 30.0
 
 

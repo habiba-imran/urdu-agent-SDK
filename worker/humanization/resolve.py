@@ -1,8 +1,7 @@
-"""Resolve effective providers after telephony remaps (Phase 0).
+"""Resolve effective providers for the session pipeline (Phase 0).
 
-Humanization must use the *effective* LLM/TTS providers, not the pre-remap DB config.
-This module is the single wrap around ``force_cartesia_for_telephony`` /
-``force_groq_for_telephony`` so later profile builders never forget remaps.
+Configured STT/LLM/TTS always stick — no automatic telephony or WebRTC remaps.
+Humanization and pipeline build use the same providers as the agent row.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from worker.telephony_tts import (
 
 @dataclass(frozen=True)
 class EffectiveProviders:
-    """Post-remap session identity for humanization + pipeline build."""
+    """Session identity for humanization + pipeline build (matches agent config)."""
 
     cfg: AgentConfig
     provider_voice_id: str | None
@@ -50,11 +49,7 @@ def resolve_effective_providers(
     *,
     audio_channel: str,
 ) -> EffectiveProviders:
-    """Apply telephony remaps; return effective cfg + voice for downstream build.
-
-    Behavior is intentionally identical to calling the two force_* helpers in sequence
-    (Cartesia TTS remap, then Groq LLM remap).
-    """
+    """Return effective cfg + voice; force_* helpers are no-ops (sticky providers)."""
     channel = (audio_channel or "webrtc").strip().lower()
     cfg, voice, cartesia_forced = force_cartesia_for_telephony(
         cfg, provider_voice_id, audio_channel=channel

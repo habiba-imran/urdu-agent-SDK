@@ -1,16 +1,16 @@
 name: Reconcile Sessions and Telephony
 
-# F-H18: session close, quota release and usage_events happen in LiveKit shutdown callbacks,
-# so a crash/OOM/eviction leaves sessions open, concurrency slots consumed and calls unbilled.
-# Both reconcile scripts existed but nothing scheduled them. This is that schedule.
-# Runbook: docs/WAVE2-SESSION-RECONCILE.md
+# F-H18 / P3-H4: session close, quota release and usage_events happen in LiveKit shutdown
+# callbacks, so a crash/OOM/eviction leaves sessions open, concurrency slots consumed and
+# calls under-billed. Both reconcile scripts existed but nothing scheduled them. This is
+# that schedule. Runbook: docs/WAVE2-SESSION-RECONCILE.md
 #
-# Mode: dry-run by default. Set the repository variable RECONCILE_APPLY to "true" once the
-# dry-run counts in the logs look right — no code change needed to switch, and no accidental
-# writes before someone has read a week of output.
+# Mode: scheduled runs APPLY by default (mandatory in prod). Set repository variable
+# RECONCILE_APPLY to "false" only for a temporary observe-only window. Manual
+# workflow_dispatch still defaults to dry-run unless apply=true is checked.
 #
-# A missing SUPABASE_DB_URL fails the run instead of skipping it: a green run that reconciled
-# nothing is how F-H18 stayed invisible in the first place.
+# A missing SUPABASE_DB_URL fails the run instead of skipping it: a green run that
+# reconciled nothing is how F-H18 stayed invisible in the first place.
 
 on:
   schedule:
@@ -62,8 +62,13 @@ jobs:
           apply=false
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             if [ "$INPUT_APPLY" = "true" ]; then apply=true; fi
-          elif [ "${VAR_APPLY,,}" = "true" ]; then
-            apply=true
+          else
+            # Scheduled: apply unless explicitly opted out (P3-H4).
+            if [ "${VAR_APPLY,,}" = "false" ] || [ "${VAR_APPLY,,}" = "0" ]; then
+              apply=false
+            else
+              apply=true
+            fi
           fi
           max_age="${INPUT_MAX_AGE:-30}"
           case "$max_age" in ''|*[!0-9]*) echo "::error::max_age_minutes must be a number"; exit 1 ;; esac

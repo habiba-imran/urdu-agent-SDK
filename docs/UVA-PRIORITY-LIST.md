@@ -62,10 +62,10 @@ Parked / residual after Habiba Medium+Low Phase H + 2026-09-27 Wave 2 **close**:
 |---|---|---|
 | F-H2 | Red CI blocks merging to `main`; published SDK README has dead links | `.github/workflows/ci.yml`, `sdk/README.md`, `README.md`, `docs/CLIENT_QUICKSTART.md`; restore `examples/` **or** delete the job and every reference |
 | F-L1, F-L2 | Same `README.md` as F-H2 — fix in that PR, do not come back later | `README.md:60–63`, `:45–46` |
-| F-M21 (voice + agents only), F-L14 | Integrator cannot trust the release path; `release-sdk.yml` `if:` is in the same file | `sdk/package.json`, `.github/workflows/release-sdk.yml`. Telephony package publish is Wave 2 |
-| F-M23 (sdk + sdk-server only) | Published metadata points at a personal repo | `sdk/package.json`, `sdk-server/package.json`. `telephony/package.json` is Wave 2 |
+| F-M21 (voice + agents only), F-L14 | **Mitigated** — all three packages on `release-sdk.yml` with provenance + changelogs; docs pins guarded by `test_sdk_docs_contract.py` | `sdk/`, `sdk-server/`, `telephony/`, `.github/workflows/release-sdk.yml` |
+| F-M23 (sdk + sdk-server only) | **Mitigated** — all three `repository.url` → `Finova-Solutions/urdu-voice-agent-SDK` | `sdk/package.json`, `sdk-server/package.json`, `telephony/package.json` |
 | §2 item 26 | Server SDK `@awaazlabs-uva/agents` has no test script | `sdk-server/` |
-| Per-session LiveKit dispatch handshake (**not `F-*`**; §3.1) | New `LiveKitAPI` + TLS per session on the path to first audio | `control_plane/app.py` **only** `_run_dispatch_background` (~`:419–445`). No drive-by CORS / `dev-mint` edits |
+| Per-session LiveKit dispatch handshake (**not `F-*`**; §3.1) | **Mitigated (2026-09-30)** — singleton loop + keep-alive LiveKitAPI; `_schedule_dispatch` starts `create_dispatch` before mint response flush; lifespan warms TLS; watcher rolls back on failure. Was: BackgroundTasks-after-flush + (earlier) per-call `asyncio.run` | `control_plane/app.py` `_schedule_dispatch` / `_with_dispatch` |
 | Groq + Cartesia accounts live (**not `F-*`**; §6 Q1) | Audit already records Cartesia in a payment-failure state; Wave 1 TTS/TTFT is Cartesia + Groq | No code. Confirm Render/env keys and billing with whoever holds the accounts |
 
 Ehsan Wave 2 code gates (C1–C3, C5–C6, H1, H3+, M7–M8, …) closed on `staging` through 2026-09-27. Habiba closed remaining portal recording toggle / re-sign with Wave 2 wrap (`docs/WAVE2-CLOSED.md`). Residual product: legal / §6 inventory; kill-switch/rollback; dashboard signup; Render worker.
@@ -84,8 +84,8 @@ These were narrative in the audit / CTO brief and were previously omitted or bur
 ### Worker cold start / time-to-first-greeting
 - **Owner:** Habiba (worker greeting path) · **Ehsan** (CP dispatch handshake — §3.1)
 - **Wave:** 1
-- **Where:** `worker/greeting_cache.py`, `worker/session_opening.py`, `worker/main.py` (opening gate); remaining mint→job latency in `control_plane/app.py` `_run_dispatch_background`
-- **Why it matters:** Setup latency after the room exists is time-to-first-greeting, distinct from per-turn stop→audio. Worker path now caches static greeting PCM and skips the 5s prewarm gate on hit; CP still constructs a fresh event loop + LiveKitAPI per dispatch.
+- **Where:** `worker/greeting_cache.py`, `worker/session_opening.py`, `worker/main.py` (opening gate); CP mint→job path in `control_plane/app.py` `_schedule_dispatch` (**Mitigated** — overlaps dispatch with mint response + client join; singleton LiveKitAPI)
+- **Why it matters:** Setup latency after the room exists is time-to-first-greeting, distinct from per-turn stop→audio. Worker path caches static greeting PCM; CP no longer waits for BackgroundTasks-after-flush before job assign.
 - **Full write-up:** audit §3.2; CTO brief §6 (mint/provision/cold worker)
 
 ### Control-plane per-session LiveKit dispatch handshake
@@ -460,6 +460,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Where:** `.github/workflows/release-sdk.yml:11–41`; no `CHANGELOG*` in any package; all three at `version: 0.1.0` while the handover documents 1.0.1
 - **Why it matters:** No provenance attestation, no changelogs, and `@awaazlabs-uva/agents` and `@awaazlabs-uva/telephony` have no release path. §2 item 27 notes the telephony SDK is not published by CI (voice only).
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-M21** (§9)
+- **Status (2026-09-30):** **Mitigated** — `release-sdk.yml` publishes voice / agents / telephony with provenance; each package has `CHANGELOG.md` + `## [version]`; telephony has `prepublishOnly`. Docs/READMEs pin `voice@1.1.0`, `agents@0.1.0`, `telephony@0.1.0` (`tests/test_sdk_docs_contract.py`).
 
 ### F-M22 — `make secrets` silently depends on an uninstalled tool
 - **Owner:** Ehsan
@@ -475,6 +476,7 @@ This is the detail layer. IDs in the Wave 1 tables above are fully written up he
 - **Why it matters:** Published packages point at `github.com/habiba-imran/urdu-agent-SDK` while origin is `Finova-Solutions/urdu-voice-agent-SDK`. Supply-chain and bus-factor risk: who can push to that repo?
 - **Full write-up:** `docs/AwaazLabs UVA Audit.md` → **F-M23** (§9; also §4 Bus factor)
 - **Note:** `telephony/` is frozen in Wave 1. `README.md:4` can be the same Ehsan Wave 1 README PR as F-H2.
+- **Status (2026-09-30):** **Mitigated** — all three `package.json` `repository.url` values point at `Finova-Solutions/urdu-voice-agent-SDK` (required for npm provenance in `release-sdk.yml`).
 
 ### F-M24 — Full prompts and transcripts written to logs and to a file on disk by default
 - **Owner:** Habiba

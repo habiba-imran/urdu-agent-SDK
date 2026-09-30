@@ -15,12 +15,12 @@ const navItems = [
   {
     href: '/',
     label: 'Overview',
-    prefetch: ['agents', 'credentials', 'usage', 'telephonyNumbers', 'telephonyReadiness', 'providerCapabilities'] as const,
+    prefetch: ['overview'] as const,
   },
   {
     href: '/agents',
     label: 'Agents',
-    prefetch: ['agents', 'providerCapabilities', 'telephonyNumbers'] as const,
+    prefetch: ['agents', 'telephonyNumbers'] as const,
   },
   { href: '/sessions', label: 'Sessions', prefetch: ['sessions'] as const },
   { href: '/usage', label: 'Usage', prefetch: ['usage'] as const },

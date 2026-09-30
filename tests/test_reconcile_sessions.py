@@ -45,7 +45,33 @@ class FakeCursor:
             self.db.open_sessions = [
                 s for s in self.db.open_sessions if s["id"] not in closed_ids
             ]
-            self.db.stale_sessions = []
+            # Keep stale_sessions until usage billing loop finishes; reconcile iterates
+            # the local stale_rows snapshot, not this list.
+            self._result = []
+            return
+
+        if "from usage_events" in low and "agent_sec" in low:
+            session_id = params[0] if params else None
+            if session_id in self.db.sessions_with_agent_sec:
+                self._result = [(1,)]
+            else:
+                self._result = []
+            return
+
+        if "insert into usage_events" in low:
+            if self.db.dry_run_guard:
+                raise AssertionError("INSERT usage_events must not run in dry-run")
+            session_id = params[1] if len(params) > 1 else None
+            if session_id:
+                self.db.sessions_with_agent_sec.add(session_id)
+            self.db.usage_writes += 1
+            self._result = []
+            return
+
+        if "update quota_state" in low and "minutes_this_month" in low:
+            if self.db.dry_run_guard:
+                raise AssertionError("UPDATE minutes_this_month must not run in dry-run")
+            self.db.minutes_writes += 1
             self._result = []
             return
 
@@ -78,9 +104,12 @@ class FakeCursor:
     def fetchall(self) -> list[tuple]:
         return list(self._result)
 
+    def fetchone(self) -> tuple | None:
+        return self._result[0] if self._result else None
+
 
 class FakeReconcileDb:
-    """In-memory stand-in for the two queries reconcile_sessions issues."""
+    """In-memory stand-in for the queries reconcile_sessions issues."""
 
     def __init__(
         self,
@@ -89,6 +118,7 @@ class FakeReconcileDb:
         open_sessions: list[dict[str, Any]],
         stale_sessions: list[tuple],
         quota: dict[str, int | None],
+        sessions_with_agent_sec: set[str] | None = None,
     ) -> None:
         self.tenants = tenants
         self.open_sessions = list(open_sessions)
@@ -96,6 +126,9 @@ class FakeReconcileDb:
         self.quota = dict(quota)
         self.executed: list[tuple[str, tuple | None]] = []
         self.quota_writes = 0
+        self.usage_writes = 0
+        self.minutes_writes = 0
+        self.sessions_with_agent_sec: set[str] = set(sessions_with_agent_sec or ())
         self.dry_run_guard = False
 
     def cursor(self) -> FakeCursor:
@@ -121,8 +154,10 @@ def test_reconcile_closes_stale_and_fixes_concurrent_now() -> None:
     assert stats["stale_sessions_closed"] == 1
     assert stats["tenants_reconciled"] == 1
     assert stats["total_open_sessions_remaining"] == 1  # only sess-live
+    assert stats["usage_events_written"] == 1
     assert db.quota[tenant] == 1
     assert db.quota_writes == 1
+    assert db.usage_writes == 1
     assert any("reconciled_stale" in sql.lower() for sql, _ in db.executed)
 
 

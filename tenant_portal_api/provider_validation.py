@@ -7,10 +7,9 @@ but not another — a broad provider-level check is not enough). Returns fully-r
 ready to write; callers must not write anything this function didn't return, so there is exactly
 one place these rules can be bypassed from (nowhere).
 
-Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, ElevenLabs,
-and Fish Audio TTS consume ``tts_options`` (humanization — model/speed/spoken_style and
-related keys). STT/LLM options remain unconsumed; the only valid value for those layers
-is ``{}``.
+Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, and ElevenLabs TTS
+consume ``tts_options``. Deepgram STT accepts a small allowlist of ``stt_options`` keys.
+``llm_options`` remain unused (must be ``{}``).
 """
 
 from __future__ import annotations
@@ -36,10 +35,6 @@ from worker.providers.tts.elevenlabs_options import (  # noqa: E402
     ElevenLabsTtsOptionsError,
     validate_elevenlabs_tts_options,
 )
-from worker.providers.tts.fish_audio_options import (  # noqa: E402
-    FishTtsOptionsError,
-    validate_fish_tts_options,
-)
 from worker.providers.tts.rime_options import (  # noqa: E402
     RimeTtsOptionsError,
     validate_rime_tts_options,
@@ -47,8 +42,9 @@ from worker.providers.tts.rime_options import (  # noqa: E402
 
 # Mirrors Phase 1's own DB backfill defaults (0016_agents_provider_fields.sql) — the values a
 # CREATE gets when the caller supplies nothing beyond the legacy voice_id/llm_model fields.
-# English CREATE (agent_language=en) overlays voice defaults below so new EN agents match
-# the self-serve test-agent stack (Deepgram + Groq + Cartesia).
+# English CREATE (agent_language=en) overlays STT/LLM/TTS defaults so new EN agents match
+# the self-serve test-agent stack (Deepgram + Groq + Cartesia). Caller must still supply an
+# enabled Cartesia (or other EN) voice when tts_provider is cartesia.
 _CREATE_DEFAULTS = {
     "agent_language": "ur",
     "stt_provider": "gladia",
@@ -62,9 +58,21 @@ _CREATE_DEFAULTS = {
 }
 
 _EN_CREATE_DEFAULTS = {
+    "stt_provider": "deepgram",
+    "stt_model": "nova-3",
     "llm_provider": "groq",
     "llm_model": "openai/gpt-oss-20b",
+    "tts_provider": "cartesia",
 }
+
+_ALLOWED_DEEPGRAM_STT_OPTION_KEYS = frozenset(
+    {
+        "endpointing_ms",
+        "stt_mode",
+        "flux_eager_eot",
+        "eager_eot_threshold",
+    }
+)
 
 
 class ProviderValidationError(Exception):
@@ -77,6 +85,46 @@ class ProviderValidationError(Exception):
         self.status = 422
         self.code = code
         self.reason = reason
+
+
+def _validate_stt_options(provider: str, options: dict) -> dict:
+    """Allowlisted Deepgram knobs; Gladia (and any other STT) must be ``{}``."""
+    if not isinstance(options, dict):
+        raise ProviderValidationError("invalid_stt_options", "stt_options must be an object")
+    if provider == "deepgram":
+        unknown = sorted(set(options) - _ALLOWED_DEEPGRAM_STT_OPTION_KEYS)
+        if unknown:
+            raise ProviderValidationError(
+                "invalid_stt_options",
+                f"unsupported deepgram stt_options keys: {', '.join(unknown)}",
+            )
+        if "stt_mode" in options:
+            mode = str(options["stt_mode"]).strip().lower()
+            if mode not in ("nova", "flux"):
+                raise ProviderValidationError(
+                    "invalid_stt_options",
+                    "deepgram stt_options.stt_mode must be 'nova' or 'flux'",
+                )
+        if "endpointing_ms" in options:
+            try:
+                ms = int(options["endpointing_ms"])
+            except (TypeError, ValueError) as exc:
+                raise ProviderValidationError(
+                    "invalid_stt_options",
+                    "deepgram stt_options.endpointing_ms must be an integer",
+                ) from exc
+            if ms < 0 or ms > 5000:
+                raise ProviderValidationError(
+                    "invalid_stt_options",
+                    "deepgram stt_options.endpointing_ms must be between 0 and 5000",
+                )
+        return dict(options)
+    if options != {}:
+        raise ProviderValidationError(
+            "invalid_stt_options",
+            f"stt provider {provider!r} does not accept stt_options",
+        )
+    return {}
 
 
 def resolve_agent_provider_fields(
@@ -109,9 +157,9 @@ def resolve_agent_provider_fields(
             "unsupported_language", f"language {language!r} is not supported"
         )
 
-    # English CREATE: prefer Groq when caller omits llm_provider. CreateAgentBody still
-    # defaults llm_model to a Gemini ID — treat that legacy Field default as unset
-    # when the resolved provider is Groq so validation does not reject the pair.
+    # English CREATE: prefer Deepgram + Groq + Cartesia when caller omits those layers.
+    # CreateAgentBody still defaults llm_model to a Gemini ID — treat that legacy Field
+    # default as unset when the resolved provider is Groq so validation does not reject the pair.
     _legacy_gemini_field_defaults = frozenset(
         {
             "gemini-2.5-flash",
@@ -121,8 +169,14 @@ def resolve_agent_provider_fields(
     )
     effective_llm_model = llm_model
     if current is None and str(language).lower().startswith("en"):
+        if stt_provider is None:
+            base["stt_provider"] = _EN_CREATE_DEFAULTS["stt_provider"]
+            if stt_model is None:
+                base["stt_model"] = _EN_CREATE_DEFAULTS["stt_model"]
         if llm_provider is None:
             base["llm_provider"] = _EN_CREATE_DEFAULTS["llm_provider"]
+        if tts_provider is None:
+            base["tts_provider"] = _EN_CREATE_DEFAULTS["tts_provider"]
         provider_preview = llm_provider if llm_provider is not None else base["llm_provider"]
         if provider_preview == "groq" and (
             llm_model is None or llm_model in _legacy_gemini_field_defaults
@@ -152,13 +206,10 @@ def resolve_agent_provider_fields(
             f"stt model {resolved_stt_model!r} is not supported by provider "
             f"{resolved_stt_provider!r}",
         )
-    resolved_stt_options = (
-        stt_options if stt_options is not None else base["stt_options"]
+    resolved_stt_options = _validate_stt_options(
+        resolved_stt_provider,
+        stt_options if stt_options is not None else base["stt_options"],
     )
-    if resolved_stt_options != {}:
-        raise ProviderValidationError(
-            "invalid_stt_options", "no stt provider accepts options yet"
-        )
 
     resolved_llm_provider = (
         llm_provider if llm_provider is not None else base["llm_provider"]
@@ -228,11 +279,6 @@ def resolve_agent_provider_fields(
         try:
             resolved_tts_options = validate_elevenlabs_tts_options(resolved_tts_options)
         except ElevenLabsTtsOptionsError as exc:
-            raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
-    elif resolved_tts_provider == "fish_audio":
-        try:
-            resolved_tts_options = validate_fish_tts_options(resolved_tts_options)
-        except FishTtsOptionsError as exc:
             raise ProviderValidationError("invalid_tts_options", str(exc)) from exc
     elif resolved_tts_options != {}:
         raise ProviderValidationError(

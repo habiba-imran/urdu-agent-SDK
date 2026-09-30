@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation';
 import {
   PortalAuthError,
   claimExistingTenant,
-  setStoredTenantToken,
 } from '@/lib/portalAuth';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -44,7 +43,7 @@ export default function ClaimTenantPage() {
         tenantId,
         tenantSecret,
       });
-      setStoredTenantToken(claimed.token);
+      void claimed;
       router.replace('/credentials');
     } catch (err) {
       setError(

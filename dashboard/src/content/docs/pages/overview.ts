@@ -20,6 +20,18 @@ You integrate with three npm packages:
 
 Never put \`agents\` or \`telephony\` in a frontend bundle — they need your tenant HMAC secret.
 
+## What AwaazLabs runs vs what you build
+
+| AwaazLabs (platform) | You (host product) |
+|----------------------|--------------------|
+| Voice runtime (STT → LLM → TTS) | UX, auth, business logic |
+| Control plane \`/v1/session\` mint + refresh | \`POST /api/voice/session\` (+ refresh) that HMAC-signs to us |
+| Tenant HMAC, publishable key, quotas | Secret store + env; never ship HMAC to browsers |
+| Agent / telephony **APIs** | Call \`@awaazlabs-uva/agents\` and \`@awaazlabs-uva/telephony\` from **your backend** |
+| This console (read-only) | Inspect agents, sessions, keys; follow **/docs** to integrate |
+
+Agents and phone routing are **not** edited in this console. Empty Agents / no numbers means configure via your host SDKs (or ask AwaazLabs to provision), then refresh [Agents](/agents).
+
 ## Architecture (one picture)
 
 \`\`\`text
@@ -32,7 +44,7 @@ Your host backend  ←── holds HMAC secret, mints sessions
 AwaazLabs control plane  (/v1/session)
         │
         ▼
-Voice agent runtime (LiveKit room + worker)
+Voice agent runtime (LiveKit)
         │
         ▼
 Telnyx (optional PSTN)
@@ -42,23 +54,25 @@ The browser talks only to **your** session endpoints. Your backend signs request
 
 ## Where to work in this console
 
-This console is **read-only** for agents and phone routing. Create and change configuration from your host codebase.
-
 | Task | Where |
 |------|--------|
-| Inspect agents & assigned numbers | [Agents](/agents) |
-| Create / update agents | \`@awaazlabs-uva/agents\` (backend) |
-| Connect Telnyx, numbers, routing | \`@awaazlabs-uva/telephony\` (backend) |
-| Copy env / keys | [API Keys](/credentials) |
+| Inspect agents & assigned numbers | [Agents](/agents) (**read-only**) |
+| Create / update agents | \`@awaazlabs-uva/agents\` on your backend |
+| Connect Telnyx, numbers, routing | \`@awaazlabs-uva/telephony\` on your backend |
+| Copy env / HMAC / set origins | [API Keys](/credentials) (HMAC visible to owners; rotate disabled) |
 | Inspect calls | [Sessions](/sessions) |
-| This guide | Docs (you are here) |
+| STT / LLM / TTS matrix | [Providers](/docs/providers) |
+| Operator smoke call | [Test Studio](/test-studio) — **not** your customers' mint path |
+| This guide | **/docs** (you are here) |
 
 ## Suggested reading order
 
 1. [How integration works](/docs/how-integration-works) — trust boundary and who does what  
 2. [Quickstart](/docs/quickstart) — first call in five steps  
 3. [What to expect](/docs/what-to-expect) — lifecycle, limits, end reasons  
-4. Backend → Frontend → Telephony → Going live  
+4. [Providers](/docs/providers) — English and Urdu STT / LLM / TTS (configured providers stick)  
+5. [Backend setup](/docs/backend-setup) → [Frontend setup](/docs/frontend-setup) → [Telephony](/docs/telephony) → [Going live](/docs/going-live)  
+6. [Security](/docs/security) · [Errors](/docs/errors-and-troubleshooting) · [Legal and trust](/docs/legal-and-trust)
 
 ## Version note
 

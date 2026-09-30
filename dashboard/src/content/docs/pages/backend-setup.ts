@@ -56,20 +56,45 @@ Your backend calls \`POST {UVA_CONTROL_PLANE_URL}/v1/session\` with:
 - \`X-Signature\` (hex digest)
 - Forward browser \`Origin\` when present
 
-**Body:** \`{ "agent_id": "<agentId>" }\`
+**Body:** \`{ "agent_id": "<agentId>", "verified_caller_phone"?: "+92300…" }\`
 
-This matches \`host-backend-starter/src/signing.js\`. Prefer copying that starter rather than re-deriving the algorithm.
+When scheduling write tools (book / cancel / reschedule) are enabled, your host **must** assert \`verified_caller_phone\` from a trusted identity (logged-in account, OTP, carrier ANI) — never from an untrusted browser field alone. Without it, ownership-bound writes are rejected.
 
 ## NestJS example
 
 \`\`\`ts title=voice-session.controller.ts
 import {
-  Body, Controller, Headers, Post, Req, UnauthorizedException, BadRequestException,
+  Body, Controller, Headers, HttpException, Post, Req, UnauthorizedException, BadRequestException,
 } from '@nestjs/common';
 import { createHmac, randomUUID } from 'crypto';
 import type { Request } from 'express';
 
-type SessionBody = { publishableKey?: string; agentId?: string };
+type SessionBody = {
+  publishableKey?: string;
+  agentId?: string;
+  /** Host-asserted caller phone for write-tool ownership. */
+  verifiedCallerPhone?: string;
+  verified_caller_phone?: string;
+};
+
+function mapMintFailure(upstreamStatus: number, payload: Record<string, unknown>) {
+  // Preserve status + short reason so @awaazlabs-uva/voice can map agent_not_found / quota / rate_limit.
+  const detail = String(payload?.detail || payload?.error || payload?.code || '');
+  const lower = detail.toLowerCase();
+  if (upstreamStatus === 429) {
+    return { status: 429, body: { error: detail || 'quota_exceeded' } };
+  }
+  if (upstreamStatus === 404 || lower.includes('agent') || lower.includes('not found')) {
+    return { status: 404, body: { error: 'agent_not_found' } };
+  }
+  if (lower.includes('worker_not_ready') || lower.includes('worker not ready')) {
+    return { status: 503, body: { error: detail || 'worker_not_ready' } };
+  }
+  if (lower.includes('provider_limit') || lower.includes('provider limit')) {
+    return { status: 429, body: { error: detail || 'provider_limit' } };
+  }
+  return { status: 502, body: { error: 'session_failed', detail: detail || undefined } };
+}
 
 @Controller('api/voice')
 export class VoiceSessionController {
@@ -105,14 +130,67 @@ export class VoiceSessionController {
     };
     if (origin) headers.Origin = origin;
 
+    const mintBody: Record<string, string> = { agent_id: agentId };
+    const phone = (body.verifiedCallerPhone || body.verified_caller_phone || '').trim();
+    if (phone) mintBody.verified_caller_phone = phone;
+
     const upstream = await fetch(\`\${controlPlane}/v1/session\`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ agent_id: agentId }),
+      body: JSON.stringify(mintBody),
     });
     const payload = await upstream.json().catch(() => ({}));
     if (!upstream.ok) {
-      throw new UnauthorizedException(payload?.detail || payload?.error || 'session_failed');
+      const failure = mapMintFailure(upstream.status, payload);
+      throw new HttpException(failure.body, failure.status);
+    }
+
+    const publicBase =
+      process.env.HOST_PUBLIC_BASE_URL ||
+      \`\${req.protocol}://\${req.get('host')}\`;
+
+    return {
+      token: payload.token,
+      wsUrl: payload.wsUrl,
+      roomName: payload.roomName,
+      refreshUrl: \`\${publicBase}/api/voice/session/refresh\`,
+      expiresIn: payload.expiresIn ?? 120,
+    };
+  }
+
+  @Post('session/refresh')
+  async refreshSession(
+    @Body() body: { token?: string },
+    @Headers('authorization') authorization: string | undefined,
+    @Req() req: Request,
+  ) {
+    const bearer = authorization?.startsWith('Bearer ')
+      ? authorization.slice(7).trim()
+      : '';
+    const token = bearer || (body.token || '').trim();
+    if (!token) {
+      throw new UnauthorizedException('missing bearer token');
+    }
+
+    const controlPlane = process.env.UVA_CONTROL_PLANE_URL!;
+    const headers: Record<string, string> = {};
+    if (bearer) {
+      headers.Authorization = \`Bearer \${bearer}\`;
+    } else {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const upstream = await fetch(\`\${controlPlane}/v1/session/refresh\`, {
+      method: 'POST',
+      headers,
+      body: bearer ? undefined : JSON.stringify({ token }),
+    });
+    const payload = await upstream.json().catch(() => ({}));
+    if (!upstream.ok || !payload?.token || !payload?.wsUrl || !payload?.roomName) {
+      throw new HttpException(
+        { error: payload?.detail || payload?.error || 'token_refresh_failed' },
+        upstream.status >= 400 ? upstream.status : 502,
+      );
     }
 
     const publicBase =
@@ -130,13 +208,11 @@ export class VoiceSessionController {
 }
 \`\`\`
 
-Add a matching \`POST session/refresh\` that proxies to the control plane refresh path (see \`host-backend-starter\`).
+Forward \`verifiedCallerPhone\` when write tools are enabled. Set \`HOST_ALLOWED_ORIGINS\` on your host (an empty allowlist must not reflect arbitrary Origins).
 
-## Express starter
+## Agents SDK
 
-Runnable reference: \`host-backend-starter\` in the deliverables (\`createApp\` + \`signing.js\`). Same contract as above.
-
-## Agents SDK (optional)
+Create and update agents from your **backend** (this console does not edit agents):
 
 \`\`\`ts title=agents.ts
 import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
@@ -150,11 +226,16 @@ const agents = new AwaazLabsUvaAgentsClient({
 const agent = await agents.createAgent({
   name: 'Support Agent',
   prompt: 'Answer customer questions concisely.',
+  voiceId: 'cartesia-sonic-default', // required — or pick from getProviderCapabilities()
+  agentLanguage: 'en', // or 'ur'
+  // Optional: sttProvider, llmProvider, ttsProvider, ttsVoiceId — see Providers
   firstSpeaker: 'agent',
   greeting: 'Hi, thanks for calling. How can I help?',
 });
 // Use agent.id as VITE_UVA_AGENT_ID / connect({ agentId })
 \`\`\`
 
-Day-to-day edits stay in your codebase via this SDK. Inspect the result on **[Agents](/agents)** (read-only).
+Configured STT / LLM / TTS **stick at runtime** (no silent vendor remap). Matrix: [Providers](/docs/providers).
+
+Inspect the result on **[Agents](/agents)** (read-only).
 `;

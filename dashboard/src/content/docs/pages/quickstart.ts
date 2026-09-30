@@ -12,7 +12,7 @@ Open **[API Keys](/credentials)** and copy:
 
 - \`UVA_CONTROL_PLANE_URL\`
 - \`UVA_TENANT_ID\`
-- \`UVA_HMAC_SECRET\` (reveal once — backend only)
+- \`UVA_HMAC_SECRET\` (copy from [API Keys](/credentials) — owners; backend only)
 - \`UVA_PUBLISHABLE_KEY\` / \`NEXT_PUBLIC_UVA_PUBLISHABLE_KEY\` (or \`VITE_UVA_PUBLISHABLE_KEY\`)
 
 Create an agent with \`@awaazlabs-uva/agents\` on your backend, then open **[Agents](/agents)** to copy its \`agentId\`.
@@ -22,9 +22,7 @@ Create an agent with \`@awaazlabs-uva/agents\` on your backend, then open **[Age
 :::tabs
 === Backend
 \`\`\`bash title=terminal
-npm install
-# Use host-backend-starter, or add agents/telephony when you need them:
-# npm install @awaazlabs-uva/agents@0.1.0 @awaazlabs-uva/telephony@0.1.0
+npm install @awaazlabs-uva/agents@0.1.0 @awaazlabs-uva/telephony@0.1.0
 \`\`\`
 === Frontend
 \`\`\`bash title=terminal
@@ -38,7 +36,7 @@ Expose \`POST /api/voice/session\` on **your** host. It validates the publishabl
 
 Also expose \`POST /api/voice/session/refresh\` for mid-call refresh.
 
-Full NestJS walkthrough + signing: [Backend setup](/docs/backend-setup). Or run the included \`host-backend-starter\`.
+Full NestJS walkthrough + signing: [Backend setup](/docs/backend-setup).
 
 ## 4. Connect from the frontend
 

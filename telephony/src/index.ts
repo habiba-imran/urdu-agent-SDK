@@ -32,7 +32,6 @@ import type {
   NumberOrderResponse,
   OutboundCallResponse,
   PurchaseNumberParams,
-  ReserveNumberParams,
   RotateTelnyxAccountKeyParams,
   SearchAvailableNumbersParams,
   TelephonyClientOptions,
@@ -131,12 +130,6 @@ export class TelephonyClient {
   searchAvailableNumbers(params: SearchAvailableNumbersParams): Promise<AvailableNumber[]> {
     assertNonEmpty(params.country, 'country');
     return this.request<AvailableNumber[]>('searchAvailableNumbers', toSnakeCaseBody(params));
-  }
-
-  reserveNumber(params: ReserveNumberParams): Promise<JsonObject> {
-    assertNonEmpty(params.e164Number, 'e164Number');
-    assertNonEmpty(params.idempotencyKey, 'idempotencyKey');
-    return this.request('reserveNumber', toSnakeCaseBody(params));
   }
 
   purchaseNumber(params: PurchaseNumberParams): Promise<NumberOrderResponse> {

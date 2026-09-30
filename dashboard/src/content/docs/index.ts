@@ -22,6 +22,14 @@ import {
   markdown as errorsMd,
 } from './pages/errors-and-troubleshooting';
 import { meta as securityMeta, markdown as securityMd } from './pages/security';
+import {
+  meta as providersMeta,
+  markdown as providersMd,
+} from './pages/providers';
+import {
+  meta as legalMeta,
+  markdown as legalMd,
+} from './pages/legal-and-trust';
 import { DOCS_PAGE_ORDER, docsHref } from './nav';
 
 export type DocsPage = {
@@ -41,10 +49,12 @@ const PAGES: DocsPage[] = [
   { ...frontendMeta, markdown: frontendMd },
   { ...telMeta, markdown: telMd },
   { ...liveMeta, markdown: liveMd },
+  { ...providersMeta, markdown: providersMd },
   { ...sdkMeta, markdown: sdkMd },
   { ...eventsMeta, markdown: eventsMd },
   { ...errorsMeta, markdown: errorsMd },
   { ...securityMeta, markdown: securityMd },
+  { ...legalMeta, markdown: legalMd },
 ];
 
 const bySlug = new Map(PAGES.map((p) => [p.slug, p]));

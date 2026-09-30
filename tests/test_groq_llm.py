@@ -65,10 +65,7 @@ def test_groq_llm_constructs_for_english():
 
 
 def test_groq_llm_layer_validates_successfully_now_enabled(conn):
-    """Updated 2026-08-01: groq is now `enabled` for en, confirmed by a real live call. The llm
-    layer must no longer be what rejects this combination — the function should get past it and
-    fail (if at all) only at a later layer (tts). Updated 2026-08-02 (Phase 6d): elevenlabs is now
-    enabled too, so this uses fish_audio (still genuinely `planned`) to keep exercising the gap."""
+    """Groq validates for en; failure is forced at TTS with an unsupported EN TTS vendor."""
     with pytest.raises(ProviderValidationError) as exc:
         resolve_agent_provider_fields(
             conn,
@@ -79,15 +76,13 @@ def test_groq_llm_layer_validates_successfully_now_enabled(conn):
             llm_provider="groq",
             llm_model="llama-3.3-70b-versatile",
             llm_options=None,
-            # uplift would instead fail with unsupported_provider_for_language (not listed for en
-            # at all).
-            tts_provider="fish_audio",
+            tts_provider="uplift",
             tts_voice_id=None,
             tts_options=None,
             voice_id="v_meklc281",
             current=None,
         )
-    assert exc.value.code == "provider_not_enabled"
+    assert exc.value.code == "unsupported_provider_for_language"
     assert "tts" in exc.value.reason
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import time
 import sys
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, Iterator
@@ -21,6 +21,7 @@ import psycopg
 from dotenv import dotenv_values, load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Body, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .auth import TenantAuthError, login as tenant_login, verify_tenant_jwt
@@ -31,7 +32,7 @@ from .membership import (
     list_members,
 )
 from .supabase_auth import verify_supabase_access_token
-from .db_pool import portal_db_connection
+from .db_pool import portal_db_connection, warm_portal_db_pool
 from .jwt_secret import portal_jwt_secret
 from .machine_auth import MachineAuthError, verify_machine_request
 from .provider_capabilities import get_public_capabilities
@@ -39,6 +40,7 @@ from .provider_validation import ProviderValidationError, resolve_agent_provider
 from .greeting_fields import GreetingConfigError, normalize_first_speaker, normalize_greeting
 from .tools_webhook import (
     ToolsWebhookError,
+    assert_tools_webhook_pair,
     normalize_tools_auth_secret,
     normalize_tools_base_url,
 )
@@ -80,7 +82,16 @@ TENANT_PORTAL_ORIGINS = [
 
 _machine_secrets = DbSecretProvider(env_fallback=EnvSecretProvider())
 
-app = FastAPI(title="UVA tenant portal API")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Best-effort: open the first pooled socket at boot so the first dashboard
+    # request is not paying full Supabase TLS cost on a cold worker.
+    warm_portal_db_pool()
+    yield
+
+
+app = FastAPI(title="UVA tenant portal API", lifespan=_lifespan)
 # F-M10: baseline security headers (CSP is the main mitigation for the F-C6 XSS chain).
 app.add_middleware(
     SecurityHeadersMiddleware,
@@ -284,12 +295,18 @@ def _recording_enabled_from_body(
 def _tools_webhook_from_body(
     body: CreateAgentBody | UpdateAgentBody, current: dict | None
 ) -> dict:
-    """Resolve tools_base_url / tools_auth_secret. Omit keeps current on PATCH; blank clears."""
+    """Resolve tools_base_url / tools_auth_secret. Omit keeps current on PATCH; blank clears.
+
+    P1-M4: effective tools_base_url always requires an effective tools_auth_secret.
+    """
     try:
         if current is None:
+            tools_base_url = normalize_tools_base_url(body.tools_base_url)
+            tools_auth_secret = normalize_tools_auth_secret(body.tools_auth_secret)
+            assert_tools_webhook_pair(tools_base_url, tools_auth_secret)
             return {
-                "tools_base_url": normalize_tools_base_url(body.tools_base_url),
-                "tools_auth_secret": normalize_tools_auth_secret(body.tools_auth_secret),
+                "tools_base_url": tools_base_url,
+                "tools_auth_secret": tools_auth_secret,
             }
         tools_base_url = (
             normalize_tools_base_url(body.tools_base_url)
@@ -301,6 +318,17 @@ def _tools_webhook_from_body(
             if body.tools_auth_secret is not None
             else queries._UNSET
         )
+        effective_url = (
+            current.get("tools_base_url")
+            if tools_base_url is queries._UNSET
+            else tools_base_url
+        )
+        effective_secret = (
+            current.get("tools_auth_secret")
+            if tools_auth_secret is queries._UNSET
+            else tools_auth_secret
+        )
+        assert_tools_webhook_pair(effective_url, effective_secret)
         return {
             "tools_base_url": tools_base_url,
             "tools_auth_secret": tools_auth_secret,
@@ -311,14 +339,57 @@ def _tools_webhook_from_body(
         ) from e
 
 
-def _require_tenant(authorization: str | None) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
-    token = authorization[len("Bearer ") :].strip()
-    try:
-        return verify_tenant_jwt(token, TENANT_PORTAL_JWT_SECRET)
-    except TenantAuthError as e:
-        raise HTTPException(status_code=e.status, detail=e.reason) from e
+def _require_tenant(
+    authorization: str | None, request: Request | None = None
+) -> dict:
+    """Verify portal JWT (Bearer or HttpOnly cookie) and live membership (MISS-1 / P1-H6)."""
+    from .portal_access import http_require_portal
+    from .session_cookie import portal_token_from_request
+
+    token = None
+    if request is not None:
+        token = portal_token_from_request(request, authorization)
+
+    with _conn() as conn:
+        if token:
+            return http_require_portal(
+                conn, token=token, jwt_secret=TENANT_PORTAL_JWT_SECRET
+            )
+        return http_require_portal(
+            conn, authorization=authorization, jwt_secret=TENANT_PORTAL_JWT_SECRET
+        )
+
+
+def _require_owner(
+    authorization: str | None, request: Request | None = None
+) -> dict:
+    """Like ``_require_tenant`` but requires live owner role (P1-C1)."""
+    from .portal_access import http_require_owner
+    from .session_cookie import portal_token_from_request
+
+    token = None
+    if request is not None:
+        token = portal_token_from_request(request, authorization)
+
+    with _conn() as conn:
+        if token:
+            return http_require_owner(
+                conn, token=token, jwt_secret=TENANT_PORTAL_JWT_SECRET
+            )
+        return http_require_owner(
+            conn, authorization=authorization, jwt_secret=TENANT_PORTAL_JWT_SECRET
+        )
+
+
+def _portal_session_response(result: dict) -> JSONResponse:
+    """Return session JSON and set HttpOnly cookie (P1-H6)."""
+    from .session_cookie import set_portal_session_cookie
+
+    response = JSONResponse(result)
+    token = result.get("token")
+    if isinstance(token, str) and token:
+        set_portal_session_cookie(response, token)
+    return response
 
 
 def _require_machine(
@@ -330,6 +401,7 @@ def _require_machine(
     x_signature: str | None,
     action: str,
     body: dict,
+    client_ip: str | None = None,
 ) -> None:
     if not x_tenant_id or not x_timestamp or not x_nonce or not x_signature:
         raise HTTPException(status_code=401, detail="missing signature headers")
@@ -343,6 +415,7 @@ def _require_machine(
             action=action,
             body=body,
             signature=x_signature,
+            client_ip=client_ip,
         )
     except MachineAuthError as e:
         raise HTTPException(status_code=e.status, detail=e.reason) from e
@@ -398,7 +471,7 @@ def portal_login(body: TenantLoginBody, request: Request):
             successful=True,
         )
         conn.commit()
-        return result
+        return _portal_session_response(result)
 
 
 @app.post("/portal/auth/supabase")
@@ -469,7 +542,7 @@ def portal_auth_supabase(body: SupabaseExchangeBody, request: Request):
             successful=True,
         )
         conn.commit()
-        return result
+        return _portal_session_response(result)
 
 
 @app.post("/portal/auth/claim-tenant")
@@ -531,7 +604,31 @@ def portal_claim_tenant(body: ClaimTenantBody, request: Request):
             reason="claimed existing tenant",
         )
         conn.commit()
-        return result
+        return _portal_session_response(result)
+
+
+@app.post("/portal/auth/logout")
+def portal_auth_logout():
+    """Clear the HttpOnly portal session cookie."""
+    from .session_cookie import clear_portal_session_cookie
+
+    response = JSONResponse({"ok": True})
+    clear_portal_session_cookie(response)
+    return response
+
+
+@app.get("/portal/whoami")
+def portal_whoami(
+    request: Request, authorization: str | None = Header(default=None)
+):
+    """Session probe for cookie-auth dashboards (role without reading JWT in JS)."""
+    claims = _require_tenant(authorization, request)
+    return {
+        "tenant_id": claims["sub"],
+        "role": claims.get("role"),
+        "auth_user_id": claims.get("auth_user_id"),
+        "tenant_name": claims.get("tenant_name"),
+    }
 
 
 def _auth_user_id_from_claims(claims: dict) -> str:
@@ -545,18 +642,20 @@ def _auth_user_id_from_claims(claims: dict) -> str:
 
 
 @app.get("/portal/members")
-def portal_list_members(authorization: str | None = Header(default=None)):
-    claims = _require_tenant(authorization)
+def portal_list_members(request: Request, authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         return list_members(conn, claims["sub"])
 
 
 @app.post("/portal/members/invite")
 def portal_invite_member(
-    body: InviteMemberBody, authorization: str | None = Header(default=None)
+    request: Request,
+    body: InviteMemberBody,
+    authorization: str | None = Header(default=None),
 ):
     """Owner invites a human to THIS tenant. Tenant id comes only from JWT ``sub``."""
-    claims = _require_tenant(authorization)
+    claims = _require_owner(authorization, request)
     inviter = _auth_user_id_from_claims(claims)
     # Ignore any tenant_id the client might try to smuggle — body has email only.
     with _conn() as conn:
@@ -575,17 +674,19 @@ def portal_invite_member(
 
 
 @app.get("/portal/agents")
-def list_agents_route(authorization: str | None = Header(default=None)):
-    claims = _require_tenant(authorization)
+def list_agents_route(request: Request, authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         return queries.list_agents(conn, claims["sub"])
 
 
 @app.post("/portal/agents")
 def create_agent_route(
-    body: CreateAgentBody, authorization: str | None = Header(default=None)
+    request: Request,
+    body: CreateAgentBody,
+    authorization: str | None = Header(default=None),
 ):
-    claims = _require_tenant(authorization)
+    claims = _require_owner(authorization, request)
     with _conn() as conn:
         # F-M26: nothing limited how many agents a tenant could create.
         existing = conn.execute(
@@ -627,11 +728,12 @@ def create_agent_route(
 
 @app.patch("/portal/agents/{agent_id}")
 def update_agent_route(
+    request: Request,
     agent_id: str,
     body: UpdateAgentBody,
     authorization: str | None = Header(default=None),
 ):
-    claims = _require_tenant(authorization)
+    claims = _require_owner(authorization, request)
     with _conn() as conn:
         current = queries.get_agent(conn, claims["sub"], agent_id)
         if current is None:
@@ -670,11 +772,11 @@ def update_agent_route(
 
 
 @app.get("/portal/provider-capabilities")
-def provider_capabilities_route(authorization: str | None = Header(default=None)):
+def provider_capabilities_route(request: Request, authorization: str | None = Header(default=None)):
     """Phase 4, ADR-036. Tenant JWT required (Phase 0's decision: matches the existing dual-route
     auth pattern for /portal + /machine rather than a new unauthenticated route). Only `enabled`
     combinations are ever returned — see provider_capabilities.py's own docstring."""
-    _require_tenant(authorization)
+    _require_tenant(authorization, request)
     with _conn() as conn:
         return get_public_capabilities(conn)
 
@@ -682,14 +784,14 @@ def provider_capabilities_route(authorization: str | None = Header(default=None)
 class AllowedOriginsBody(BaseModel):
     """Browser origins allowed to start sessions for this tenant.
 
-    An empty list keeps the pre-existing behaviour (not enforced), which is what every tenant
-    has today — the column defaults to '{}' and nothing could ever change it.
+    Hosted mint rejects an empty allowlist (P1-H2). Local/dev still permits empty for
+    convenience. Always set production dashboard + app origins before go-live.
     """
 
     allowed_origins: list[str] = Field(default_factory=list)
 
 
-def _normalize_origin(raw: str) -> str:
+def _normalize_origin(request: Request, raw: str) -> str:
     """An Origin header is scheme://host[:port] with no path - match that exactly, or the
     mint's `origin not in allowed_origins` comparison silently never matches."""
     text = (raw or "").strip().rstrip("/")
@@ -711,12 +813,14 @@ def _normalize_origin(raw: str) -> str:
 
 @app.put("/portal/credentials/allowed-origins")
 def set_allowed_origins_route(
-    body: AllowedOriginsBody, authorization: str | None = Header(default=None)
+    request: Request,
+    body: AllowedOriginsBody,
+    authorization: str | None = Header(default=None),
 ):
     """Audit §3.1 / §7: the allowlist was displayed read-only and nothing could set it, so
     the mint's origin check ('if allowed_origins and origin not in allowed_origins') was
     dead code for every tenant."""
-    claims = _require_tenant(authorization)
+    claims = _require_owner(authorization, request)
     if len(body.allowed_origins) > queries.MAX_ALLOWED_ORIGINS:
         raise HTTPException(
             status_code=422,
@@ -734,27 +838,53 @@ def set_allowed_origins_route(
         "allowed_origins": origins,
         "enforced": bool(origins),
         "note": (
-            "An empty list is not enforced: any browser origin may start a session for this "
-            "tenant."
+            "Origins are enforced on every browser mint. Hosted mint rejects an empty allowlist."
+            if origins
+            else (
+                "Empty allowlist: hosted mint will reject browser sessions until you add "
+                "origins. Local/dev still permits empty."
+            )
         ),
     }
 
 
 @app.get("/portal/credentials")
-def credentials_route(authorization: str | None = Header(default=None)):
-    claims = _require_tenant(authorization)
+def credentials_route(request: Request, authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         try:
-            return queries.get_credentials(conn, claims["sub"])
+            creds = queries.get_credentials(conn, claims["sub"])
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    # Owners see the raw HMAC on API Keys (always visible). Members stay masked.
+    # Console rotation stays disabled separately (see rotate-secret).
+    from .session_cookie import browser_secret_reveal_enabled
+
+    if (
+        browser_secret_reveal_enabled()
+        and str(claims.get("role") or "").lower() == "owner"
+    ):
+        with _conn() as conn:
+            try:
+                creds["hmac_secret"] = queries.get_raw_secret(conn, claims["sub"])
+            except ValueError:
+                creds["hmac_secret"] = None
+    return creds
+
+
+@app.get("/portal/overview")
+def overview_route(request: Request, authorization: str | None = Header(default=None)):
+    """Aggregated Overview payload — one DB checkout instead of five browser round-trips."""
+    claims = _require_tenant(authorization, request)
+    with _conn() as conn:
+        try:
+            return queries.get_overview_snapshot(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
 
-# F-C6: revealing the permanent signing credential to any holder of an 8-hour token stored
-# in localStorage is the last link in the XSS chain. A stolen token is usually used later
-# than it was issued, so the reveal now requires a token minted in the last few minutes —
-# the legitimate flow (log in, open the credentials tab) is inside that window, replaying a
-# harvested token generally is not.
+# Console rotate is age-gated when break-glass is enabled. Standing HMAC visibility is not.
 REVEAL_MAX_TOKEN_AGE_SEC = 300
 
 
@@ -767,7 +897,7 @@ def _require_fresh_tenant_token(claims: dict) -> None:
         raise HTTPException(
             status_code=401,
             detail=(
-                "log in again to reveal or rotate the signing secret "
+                "log in again to rotate the signing secret "
                 f"(token older than {REVEAL_MAX_TOKEN_AGE_SEC // 60} minutes)"
             ),
         )
@@ -777,16 +907,25 @@ def _require_fresh_tenant_token(claims: dict) -> None:
 def credentials_secret_route(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    claims = _require_tenant(authorization)
-    _require_fresh_tenant_token(claims)
+    """Return raw HMAC for owners (default on). Opt out: ``PORTAL_ALLOW_BROWSER_SECRET_REVEAL=0``."""
+    from .session_cookie import browser_secret_reveal_enabled
+
+    if not browser_secret_reveal_enabled():
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Browser secret reveal is disabled for this deployment. "
+                "Ask an operator for the HMAC via a secure channel."
+            ),
+        )
+
+    claims = _require_owner(authorization, request)
     client_ip = request.client.host if request.client else None
     with _conn() as conn:
         try:
             secret = queries.get_raw_secret(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        # Every reveal is recorded: the audit noted one XSS yields the permanent credential,
-        # and until now nothing would show that it had happened.
         record_attempt(
             conn,
             realm="portal-secret-reveal",
@@ -803,13 +942,23 @@ def credentials_secret_route(
 def rotate_secret_route(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    """F-C6: there was no self-service rotation — only an admin route — so a tenant who
-    believed their secret was exposed could not do anything about it themselves.
+    """Console HMAC rotate — **disabled by default**.
 
-    The new secret is returned ONCE. Every host backend signing with the old one must be
-    updated; there is no grace period, by design.
+    Owners can view the current secret on API Keys; rotating is admin / break-glass only
+    (``PORTAL_ALLOW_BROWSER_SECRET_ROTATE=1``). When disabled this route does not rotate.
     """
-    claims = _require_tenant(authorization)
+    from .session_cookie import browser_secret_rotate_enabled
+
+    if not browser_secret_rotate_enabled():
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Browser HMAC rotate is disabled. Copy the current secret from API Keys, "
+                "or ask an AwaazLabs operator to rotate via admin."
+            ),
+        )
+
+    claims = _require_owner(authorization, request)
     _require_fresh_tenant_token(claims)
     client_ip = request.client.host if request.client else None
     with _conn() as conn:
@@ -823,7 +972,7 @@ def rotate_secret_route(
             identity=claims["sub"],
             client_ip=client_ip,
             successful=True,
-            reason="hmac secret rotated",
+            reason="hmac secret rotated (break-glass browser)",
         )
         conn.commit()
     return {
@@ -836,7 +985,7 @@ def rotate_secret_route(
 
 
 @app.delete("/portal/agents/{agent_id}")
-def archive_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+def archive_agent_route(request: Request, agent_id: str, authorization: str | None = Header(default=None)):
     """F-M13: retire an agent.
 
     Archive, not delete: sessions.agent_id cascades on delete, so removing the row would take
@@ -844,7 +993,7 @@ def archive_agent_route(agent_id: str, authorization: str | None = Header(defaul
     release any phone number assigned to them, and free a slot against MAX_AGENTS_PER_TENANT.
     Erasure of the personal data in those sessions is the retention job's job (F-C4).
     """
-    claims = _require_tenant(authorization)
+    claims = _require_owner(authorization, request)
     with _conn() as conn:
         live = queries.count_live_sessions_for_agent(conn, claims["sub"], agent_id)
         if live:
@@ -859,20 +1008,20 @@ def archive_agent_route(agent_id: str, authorization: str | None = Header(defaul
 
 
 @app.get("/portal/escalations")
-def list_escalations_route(
+def list_escalations_route(request: Request, 
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
     authorization: str | None = Header(default=None),
 ):
     """F-M12: escalations was write-only. worker/tools.py::escalate_to_human inserted rows
     that no API, UI or query could read back, so the feature produced records nobody could
     act on while caller phone numbers accumulated unseen."""
-    claims = _require_tenant(authorization)
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         return queries.list_escalations(conn, claims["sub"], limit=limit)
 
 
 @app.get("/portal/sessions")
-def sessions_route(
+def sessions_route(request: Request, 
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
     authorization: str | None = Header(default=None),
 ):
@@ -880,7 +1029,7 @@ def sessions_route(
 
     Full transcript/recording are loaded via ``GET /portal/sessions/{session_id}``.
     """
-    claims = _require_tenant(authorization)
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         return queries.list_recent_sessions(
             conn, claims["sub"], limit=limit, include_transcript=False
@@ -888,10 +1037,10 @@ def sessions_route(
 
 
 @app.get("/portal/sessions/{session_id}")
-def session_detail_route(
+def session_detail_route(request: Request, 
     session_id: str, authorization: str | None = Header(default=None)
 ):
-    claims = _require_tenant(authorization)
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         session = queries.get_session(conn, claims["sub"], session_id)
         if not session:
@@ -929,7 +1078,7 @@ def machine_get_session_route(
 
 
 @app.get("/portal/usage-summary")
-def usage_summary_route(
+def usage_summary_route(request: Request, 
     authorization: str | None = Header(default=None),
     month: str | None = Query(
         default=None,
@@ -938,7 +1087,7 @@ def usage_summary_route(
     ),
 ):
     """Calendar-month usage (1st through end of month). Optional `month=YYYY-MM` for history."""
-    claims = _require_tenant(authorization)
+    claims = _require_tenant(authorization, request)
     with _conn() as conn:
         try:
             return queries.usage_summary(conn, claims["sub"], month=month)
@@ -1107,3 +1256,7 @@ def machine_update_agent_route(
 
 app.include_router(telephony_router)
 app.include_router(telephony_webhook_router)
+
+from .test_studio import register_test_studio_routes  # noqa: E402
+
+register_test_studio_routes(app, conn_factory=_conn)

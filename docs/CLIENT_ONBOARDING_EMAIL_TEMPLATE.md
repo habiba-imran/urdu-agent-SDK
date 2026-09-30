@@ -1,6 +1,7 @@
 # Client Onboarding Email Template
 
-Use this when manually onboarding a client before a full self-serve portal exists.
+Use this when manually onboarding a client. Prefer pointing them at the **tenant
+dashboard `/docs`** once they have console access.
 
 ## Subject
 
@@ -27,17 +28,17 @@ Important security note:
 
 Recommended integration path:
 
-1. start from the host backend starter
-2. wire the browser SDK to your host backend routes
-3. verify session mint, connect, transcript, refresh, and reconnect
+1. Open the tenant dashboard → **Docs** (Quickstart + Backend setup), **or** start from
+   `client-deliverables-final/host-backend-starter/`
+2. Wire the browser SDK (`@awaazlabs-uva/voice`) to your host backend routes
+3. Verify session mint, connect, transcript, refresh, and reconnect
 
-Package contents:
+Package contents (current):
 
-- `sdk/README.md`
-- `docs/CLIENT_QUICKSTART.md`
+- Dashboard `/docs` (canonical client guide)
+- `client-deliverables-final/` (+ `host-backend-starter/`)
 - `docs/HOST_BACKEND_CONTRACT.md`
-- `examples/host-backend/`
-- `examples/web-client/`
+- Public npm: `@awaazlabs-uva/voice`, `@awaazlabs-uva/agents`
 
 Expected backend routes:
 

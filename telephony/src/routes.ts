@@ -13,7 +13,6 @@ export const TELEPHONY_MACHINE_OPERATIONS = {
   syncTelnyxOwnedNumbers: route('POST', '/machine/telephony/numbers/sync', 'telephony.managed_numbers.sync'),
   getTelnyxNumberDrift: route('POST', '/machine/telephony/numbers/drift', 'telephony.managed_numbers.drift'),
   searchAvailableNumbers: route('POST', '/machine/telephony/available-numbers/search', 'telephony.available_numbers.search'),
-  reserveNumber: route('POST', '/machine/telephony/number-reservations', 'telephony.number_reservations.create'),
   purchaseNumber: route('POST', '/machine/telephony/number-orders', 'telephony.number_orders.create'),
   getNumberOrderStatus: route('POST', '/machine/telephony/number-orders/get', 'telephony.number_orders.get'),
   assignAgentToNumber: route('PATCH', '/machine/telephony/numbers/{number_id}/assignment', 'telephony.numbers.assign_agent'),

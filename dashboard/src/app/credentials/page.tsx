@@ -3,11 +3,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import useSWR, { useSWRConfig } from 'swr';
-import { Copy, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Copy } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
-import { getCredentialSecret, rotateCredentialSecret, setAllowedOrigins } from '@/lib/portalApi';
-import { isPortalAuthFailure } from '@/lib/portalAuth';
+import { setAllowedOrigins } from '@/lib/portalApi';
+import { isPortalAuthFailure, isPortalOwner } from '@/lib/portalAuth';
 import {
   PLATFORM_CONTROL_PLANE_URL,
   PLATFORM_TENANT_PORTAL_URL,
@@ -63,18 +63,12 @@ function CopyField({
 export default function CredentialsPage() {
   const { mutate } = useSWRConfig();
   const { message: toastMessage, showToast } = useToast();
+  const isOwner = isPortalOwner();
   const { data: credentials, isLoading: loading, error } = useSWR(
     swrKeys.credentials,
     swrFetchers.credentials,
   );
   const { data: agents } = useSWR(swrKeys.agents, swrFetchers.agents);
-
-  const [hmacSecret, setHmacSecret] = useState<string | null>(null);
-  const [hmacNotProvisioned, setHmacNotProvisioned] = useState(false);
-  const [hmacVisible, setHmacVisible] = useState(false);
-  const [hmacLoading, setHmacLoading] = useState(false);
-  const [hmacError, setHmacError] = useState<string | null>(null);
-  const [rotating, setRotating] = useState(false);
 
   const [originsText, setOriginsText] = useState('');
   const [originsSaving, setOriginsSaving] = useState(false);
@@ -90,6 +84,8 @@ export default function CredentialsPage() {
     }
   }, [credentials?.allowed_origins]);
 
+  const originsEmpty = (credentials?.allowed_origins?.length ?? 0) === 0;
+
   useEffect(() => {
     if (!selectedAgentId && agents?.length) {
       setSelectedAgentId(agents[0].id);
@@ -103,52 +99,6 @@ export default function CredentialsPage() {
     if (fromTenant.length) return fromTenant.join(',');
     return 'http://localhost:5173,http://localhost:3000';
   }, [credentials?.allowed_origins]);
-
-  const revealHmacSecret = async (): Promise<{
-    secret: string | null;
-    notProvisioned: boolean;
-  }> => {
-    if (hmacSecret) {
-      return { secret: hmacSecret, notProvisioned: false };
-    }
-    if (hmacNotProvisioned) {
-      return { secret: null, notProvisioned: true };
-    }
-    setHmacLoading(true);
-    setHmacError(null);
-    try {
-      const { hmac_secret } = await getCredentialSecret();
-      setHmacSecret(hmac_secret);
-      return { secret: hmac_secret, notProvisioned: false };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to load secret';
-      if (/not found|not provisioned/i.test(msg)) {
-        setHmacNotProvisioned(true);
-        return { secret: null, notProvisioned: true };
-      }
-      if (/log in again|older than|age-checked/i.test(msg)) {
-        setHmacError(
-          'For security, revealing the signing secret needs a fresh sign-in. Log out and back in, then try again.',
-        );
-        return { secret: null, notProvisioned: false };
-      }
-      setHmacError(msg);
-      return { secret: null, notProvisioned: false };
-    } finally {
-      setHmacLoading(false);
-    }
-  };
-
-  const handleToggleHmacVisibility = async () => {
-    if (hmacVisible) {
-      setHmacVisible(false);
-      return;
-    }
-    const { secret, notProvisioned } = await revealHmacSecret();
-    if (secret || notProvisioned) {
-      setHmacVisible(true);
-    }
-  };
 
   const copyText = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -165,44 +115,11 @@ export default function CredentialsPage() {
     void copyText(credentials.tenant_id, 'Tenant ID');
   };
 
-  const handleCopyHmacSecret = async () => {
-    const { secret } = await revealHmacSecret();
-    if (!secret) return;
-    void copyText(secret, 'HMAC secret');
-  };
-
-  const handleRotate = async () => {
-    if (
-      !window.confirm(
-        'Rotate the HMAC secret? Every host backend using the old secret will stop working immediately. The new value is shown once.',
-      )
-    ) {
+  const handleSaveOrigins = async () => {
+    if (!isOwner) {
+      setOriginsError('Only the workspace owner can change allowed origins.');
       return;
     }
-    setRotating(true);
-    setHmacError(null);
-    try {
-      const result = await rotateCredentialSecret();
-      setHmacSecret(result.hmac_secret);
-      setHmacVisible(true);
-      setHmacNotProvisioned(false);
-      showToast('Secret rotated — copy it now');
-      void mutate(swrKeys.credentials);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Rotate failed';
-      if (/log in again|older than|age-checked/i.test(msg)) {
-        setHmacError(
-          'For security, rotating the signing secret needs a fresh sign-in. Log out and back in, then try again.',
-        );
-      } else {
-        setHmacError(msg);
-      }
-    } finally {
-      setRotating(false);
-    }
-  };
-
-  const handleSaveOrigins = async () => {
     setOriginsSaving(true);
     setOriginsError(null);
     setOriginsNote(null);
@@ -226,7 +143,9 @@ export default function CredentialsPage() {
   const backendEnv = useMemo(() => {
     const tenantId = credentials?.tenant_id ?? '<TENANT_UUID>';
     const pub = credentials?.publishable_key ?? '<PUBLISHABLE_KEY>';
-    const hmac = hmacSecret ?? '<UVA_HMAC_SECRET — click Reveal secret above>';
+    const hmac =
+      credentials?.hmac_secret ||
+      '<UVA_HMAC_SECRET — visible to owners on this page>';
     const hostBase = hostPublicUrl.replace(/\/$/, '') || 'http://localhost:3000';
     return [
       '# --- AwaazLabs tenant (from this page) ---',
@@ -248,11 +167,11 @@ export default function CredentialsPage() {
       'TELNYX_API_KEY=',
       'TELNYX_OUTBOUND_ALLOWED_DESTINATIONS=US',
     ].join('\n');
-  }, [credentials, hmacSecret, hostPublicUrl, hostOriginsCsv]);
+  }, [credentials, hostPublicUrl, hostOriginsCsv]);
 
   const frontendEnv = useMemo(() => {
     const pub = credentials?.publishable_key ?? '<PUBLISHABLE_KEY>';
-    const agent = selectedAgentId || '<AGENT_UUID — create one under Agents>';
+    const agent = selectedAgentId || '<AGENT_UUID — create via @awaazlabs-uva/agents>';
     const base = hostPublicUrl.replace(/\/$/, '') || 'http://localhost:3000';
     return [
       '# Browser only — never put UVA_HMAC_SECRET or Telnyx keys here',
@@ -270,28 +189,22 @@ export default function CredentialsPage() {
     ].join('\n');
   }, [credentials, selectedAgentId, hostPublicUrl]);
 
-  const handleCopyBackendEnv = async () => {
-    const { secret } = await revealHmacSecret();
-    const text = backendEnv.replace(
-      /UVA_HMAC_SECRET=.*/,
-      `UVA_HMAC_SECRET=${secret ?? '<reveal failed — sign in again>'}`,
-    );
-    await copyText(text, 'Backend .env');
-  };
-
-  const hmacDisplay = hmacLoading
-    ? 'Loading…'
-    : hmacVisible && hmacSecret
-      ? hmacSecret
-      : hmacVisible && hmacNotProvisioned
-        ? 'Not provisioned'
-        : credentials?.secret_provisioned === false
-          ? 'Not provisioned'
-          : (credentials?.secret_masked && credentials.secret_masked !== 'masked'
-              ? credentials.secret_masked
-              : '••••••••••••••••••••••••••••••••');
+  const hmacSecret = credentials?.hmac_secret ?? null;
+  const hmacDisplay =
+    !isOwner && !hmacSecret
+      ? '•••••••••••••••••••••••••••••••• (owners only)'
+      : credentials?.secret_provisioned === false && !hmacSecret
+        ? 'Not provisioned yet'
+        : hmacSecret ||
+          credentials?.secret_masked ||
+          '••••••••••••••••••••••••••••••••';
 
   const keysReady = Boolean(credentials?.tenant_id && credentials?.publishable_key);
+
+  const handleCopyHmacSecret = () => {
+    if (!hmacSecret) return;
+    void copyText(hmacSecret, 'HMAC secret');
+  };
 
   return (
     <div>
@@ -310,6 +223,10 @@ export default function CredentialsPage() {
         <Link href="/docs/backend-setup" className="font-medium text-text underline-offset-4 hover:underline">
           Backend setup
         </Link>
+        {' · '}
+        <Link href="/docs/security" className="font-medium text-text underline-offset-4 hover:underline">
+          Security
+        </Link>
         .
       </p>
 
@@ -320,12 +237,27 @@ export default function CredentialsPage() {
         </div>
       ) : null}
 
+      {originsEmpty && !loading ? (
+        <div className="mb-6 rounded-md border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <strong>Allowed origins are empty.</strong> On hosted deployments the control plane
+          rejects browser mint until you save at least one frontend origin below (and the
+          dashboard origin if you use Test Studio).
+        </div>
+      ) : null}
+
+      {!isOwner ? (
+        <div className="mb-6 rounded-md border border-border bg-surface-muted px-4 py-3 text-sm text-text-body">
+          You are signed in as a <strong>member</strong> (read-mostly). Only the workspace{' '}
+          <strong>owner</strong> can change allowed origins or invite members.
+        </div>
+      ) : null}
+
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Platform URLs</CardTitle>
           <CardDescription>
             Render staging endpoints for session mint and portal APIs. Paste these into your host
-            backend. The voice worker runs locally for now — no worker URL needed here.
+            backend.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -350,8 +282,8 @@ export default function CredentialsPage() {
         <CardHeader>
           <CardTitle>Tenant keys</CardTitle>
           <CardDescription>
-            Publishable key is safe in the browser. HMAC secret and tenant id stay on your host
-            server only.
+            Publishable key is safe in the browser. HMAC secret is shown to workspace owners for
+            host backend setup — keep it out of frontend bundles. Console rotation is disabled.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -391,40 +323,27 @@ export default function CredentialsPage() {
                 </label>
                 <div className="flex items-center justify-between gap-3 rounded-input border border-border bg-surface-muted px-4 py-3 font-mono text-[13px] text-text">
                   <span className="min-w-0 flex-1 break-all">{hmacDisplay}</span>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={handleToggleHmacVisibility}
-                      disabled={hmacLoading}
-                      aria-label={hmacVisible ? 'Hide HMAC secret' : 'Reveal HMAC secret'}
-                    >
-                      {hmacVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={handleCopyHmacSecret}
-                      disabled={hmacLoading}
-                      aria-label="Copy HMAC secret"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={handleRotate}
-                      disabled={hmacLoading || rotating}
-                      aria-label="Rotate HMAC secret"
-                      title="Rotate secret"
-                    >
-                      <RefreshCw className={`h-4 w-4 ${rotating ? 'animate-spin' : ''}`} />
-                    </Button>
-                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleCopyHmacSecret}
+                    disabled={!hmacSecret}
+                    aria-label="Copy HMAC secret"
+                    title={
+                      !isOwner
+                        ? 'Owner role required'
+                        : hmacSecret
+                          ? 'Copy HMAC secret'
+                          : 'Secret not available'
+                    }
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
                 </div>
-                <p className={hmacError ? 'text-[13px] text-destructive' : 'text-[13px] text-text-muted'}>
-                  {hmacError ??
-                    'UVA_HMAC_SECRET — reveal needs a fresh sign-in (≤5 min). Rotate invalidates the previous secret immediately.'}
+                <p className="text-[13px] text-text-muted">
+                  <code className="font-mono text-[12px]">UVA_HMAC_SECRET</code> — copy into your
+                  host secret store. Rotation from this console is disabled; ask an operator if you
+                  need a new secret.
                 </p>
               </div>
             </>
@@ -437,8 +356,10 @@ export default function CredentialsPage() {
           <CardTitle>Browser allowed origins</CardTitle>
           <CardDescription>
             Origins allowed to mint voice sessions for this tenant (control-plane check). One per
-            line. Also prefilled into <code className="font-mono text-[12px]">HOST_ALLOWED_ORIGINS</code>{' '}
-            in the backend env block below.
+            line. Hosted mint rejects an empty list — set production frontend (and dashboard, if you
+            use Test Studio) origins before go-live. Also prefilled into{' '}
+            <code className="font-mono text-[12px]">HOST_ALLOWED_ORIGINS</code> in the backend env
+            block below.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -447,13 +368,17 @@ export default function CredentialsPage() {
             onChange={(e) => setOriginsText(e.target.value)}
             rows={4}
             spellCheck={false}
-            className="w-full rounded-input border border-border bg-surface px-3 py-2 font-mono text-[13px] text-text outline-none transition-colors duration-console focus:border-accent focus:ring-2 focus:ring-accent-soft"
+            disabled={!isOwner}
+            className="w-full rounded-input border border-border bg-surface px-3 py-2 font-mono text-[13px] text-text outline-none transition-colors duration-console focus:border-accent focus:ring-2 focus:ring-accent-soft disabled:opacity-60"
             placeholder={'http://localhost:5173\nhttps://your-app.example.com'}
           />
           {originsError ? <p className="text-[13px] text-destructive">{originsError}</p> : null}
           {originsNote ? <p className="text-[13px] text-text-muted">{originsNote}</p> : null}
+          {!isOwner ? (
+            <p className="text-[13px] text-text-muted">Only the workspace owner can change allowed origins.</p>
+          ) : null}
           <div>
-            <Button onClick={handleSaveOrigins} disabled={originsSaving || loading}>
+            <Button onClick={handleSaveOrigins} disabled={!isOwner || originsSaving || loading}>
               {originsSaving ? 'Saving…' : 'Save origins'}
             </Button>
           </div>
@@ -492,10 +417,11 @@ export default function CredentialsPage() {
 
             <TabsContent value="backend" className="mt-4 flex flex-col gap-3">
               <p className="text-[15px] text-text-body">
-                Paste into <code className="font-mono text-[13px]">host-backend-starter/.env</code> (or
-                your own API). Use “Copy with secret” after a fresh sign-in so HMAC is filled. Leave{' '}
+                Paste into your host backend <code className="font-mono text-[13px]">.env</code>.
+                Owners get <code className="font-mono text-[13px]">UVA_HMAC_SECRET</code> filled from
+                this page. Leave{' '}
                 <code className="font-mono text-[13px]">TELNYX_API_KEY</code> empty until you connect
-                Telnyx from your backend with{' '}
+                Telnyx with{' '}
                 <code className="font-mono text-[13px]">@awaazlabs-uva/telephony</code>. Assigned
                 numbers appear on{' '}
                 <Link href="/agents" className="font-medium text-text underline-offset-4 hover:underline">
@@ -505,8 +431,11 @@ export default function CredentialsPage() {
               </p>
               <CodeBlock label="Backend .env" code={backendEnv} />
               <div>
-                <Button onClick={handleCopyBackendEnv} disabled={loading || hmacLoading}>
-                  Copy with secret
+                <Button
+                  onClick={() => void copyText(backendEnv, 'Backend .env')}
+                  disabled={loading || (!hmacSecret && Boolean(credentials))}
+                >
+                  Copy backend env
                 </Button>
               </div>
             </TabsContent>
@@ -520,7 +449,7 @@ export default function CredentialsPage() {
                   className="h-11 w-full rounded-input border border-border bg-surface px-3 text-sm text-text outline-none transition-colors duration-console focus:border-accent focus:ring-2 focus:ring-accent-soft"
                 >
                   {!agents?.length ? (
-                    <option value="">No agents yet — create one under Agents</option>
+                    <option value="">No agents yet — create via agents SDK</option>
                   ) : (
                     agents.map((a) => (
                       <option key={a.id} value={a.id}>

@@ -173,8 +173,19 @@ def build_turn_profile(
     elif td_version == "v1":
         detector = "turn_detector_v1"
 
-    # Groq free-tier TPM: disable preemptive generation (web and phone).
-    if (llm_provider or "").strip().lower() == "groq":
+    llm = (llm_provider or "").strip().lower()
+
+    # Hide Gemini (and other non-Groq) TTFT on PSTN by starting generation early.
+    # Groq stays preemptive-off on every channel — cancelled turns burn free-tier TPM.
+    if channel == "telephony" and llm and llm != "groq":
+        preemptive = {
+            "enabled": True,
+            "preemptive_tts": True,
+            "max_speech_duration": 12.0,
+            "max_retries": 2,
+        }
+
+    if llm == "groq":
         preemptive = {
             "enabled": False,
             "preemptive_tts": False,
@@ -185,10 +196,10 @@ def build_turn_profile(
     return TurnProfile(
         channel=channel,
         stt_provider=(stt_provider or "").strip().lower(),
-        llm_provider=(llm_provider or "").strip().lower(),
+        llm_provider=llm,
         detector=detector,
-        endpointing_min_delay=float(endpointing.get("min_delay", 0.15)),
-        endpointing_max_delay=float(endpointing.get("max_delay", 1.5)),
+        endpointing_min_delay=float(endpointing.get("min_delay", 0.12)),
+        endpointing_max_delay=float(endpointing.get("max_delay", 1.2)),
         preemptive_generation_enabled=bool(preemptive.get("enabled", False)),
         preemptive_tts=bool(preemptive.get("preemptive_tts", False)),
         interruption_enabled=bool(interruption.get("enabled", True)),
@@ -197,12 +208,12 @@ def build_turn_profile(
             interruption.get("resume_false_interruption", False)
         ),
         false_interruption_timeout=float(
-            interruption.get("false_interruption_timeout", 1.5)
+            interruption.get("false_interruption_timeout", 0.6)
         ),
         discard_audio_if_uninterruptible=bool(
             interruption.get("discard_audio_if_uninterruptible", True)
         ),
-        interruption_min_duration=float(interruption.get("min_duration", 0.55)),
+        interruption_min_duration=float(interruption.get("min_duration", 0.65)),
         preemptive_max_speech_duration=float(
             preemptive.get("max_speech_duration", 12.0)
         ),
@@ -251,26 +262,25 @@ def turn_profile_to_livekit_options(profile: TurnProfile) -> dict[str, Any]:
 def resolve_deepgram_endpointing_ms(
     stt_options: dict | None = None,
 ) -> int:
-    """Deepgram Nova endpointing in ms (human-turn default 200).
+    """Deepgram Nova endpointing in ms (voice default 100).
 
     Resolution order:
       1. ``stt_options[\"endpointing_ms\"]`` when present
       2. ``UVA_DEEPGRAM_ENDPOINTING_MS`` env
-      3. default ``200`` (more natural EOU than the old latency-first 10ms)
+      3. default ``100`` (snappy EOU; use ``200``/``300`` via env for more natural pauses)
 
-    Allowed A/B values (research): 10, 100, 200, 300, 500. Use env ``10`` when
-    chasing minimum EOU→first-audio latency.
+    Allowed A/B values (research): 10, 100, 200, 300, 500.
     """
     options = stt_options or {}
     raw: Any = options.get("endpointing_ms")
     if raw is None or raw == "":
         raw = (os.getenv("UVA_DEEPGRAM_ENDPOINTING_MS") or "").strip() or None
     if raw is None or raw == "":
-        return 200
+        return 100
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return 200
+        return 100
     if value <= 0:
-        return 200
+        return 100
     return value

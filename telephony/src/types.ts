@@ -148,11 +148,6 @@ export interface AvailableNumber extends JsonObject {
   currency: string;
 }
 
-export interface ReserveNumberParams extends JsonInputObject {
-  e164Number: string;
-  idempotencyKey: string;
-}
-
 export interface PurchaseNumberParams extends JsonInputObject {
   e164Number: string;
   externalCustomerRef?: string;

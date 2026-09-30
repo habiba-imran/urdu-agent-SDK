@@ -137,6 +137,10 @@ def test_unsupported_provider_raises_typed_error_not_silent_fallback():
         build_components(_default_runtime_cfg(stt_provider="not-a-real-provider"))
     with pytest.raises(UnsupportedProviderError):
         build_components(_default_runtime_cfg(llm_provider="not-a-real-provider"))
+    with pytest.raises(UnsupportedProviderError):
+        build_components(_default_runtime_cfg(stt_provider="soniox"))
+    with pytest.raises(UnsupportedProviderError):
+        build_components(_default_runtime_cfg(tts_provider="fish_audio", agent_language="en"))
 
 
 @pytest.fixture

@@ -17,17 +17,17 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("UVA_PROVIDER_RETRY_INTERVAL", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_CONNECT_TIMEOUT", raising=False)
     s = read_provider_retry_settings()
-    assert s.max_retry == 2
-    assert s.retry_interval == 2.0
+    assert s.max_retry == 1
+    assert s.retry_interval == 1.0
     assert s.timeout == 30.0
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("UVA_PROVIDER_MAX_RETRY", "1")
+    monkeypatch.setenv("UVA_PROVIDER_MAX_RETRY", "2")
     monkeypatch.setenv("UVA_PROVIDER_RETRY_INTERVAL", "0.5")
     monkeypatch.setenv("UVA_PROVIDER_CONNECT_TIMEOUT", "15")
     s = read_provider_retry_settings()
-    assert s.max_retry == 1
+    assert s.max_retry == 2
     assert s.retry_interval == 0.5
     assert s.timeout == 15.0
 
@@ -37,8 +37,8 @@ def test_invalid_and_out_of_range_fall_back(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("UVA_PROVIDER_RETRY_INTERVAL", "999")
     monkeypatch.setenv("UVA_PROVIDER_CONNECT_TIMEOUT", "-1")
     s = read_provider_retry_settings()
-    assert s.max_retry == 2
-    assert s.retry_interval == 2.0
+    assert s.max_retry == 1
+    assert s.retry_interval == 1.0
     assert s.timeout == 30.0
 
 

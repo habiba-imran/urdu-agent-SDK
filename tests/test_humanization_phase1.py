@@ -11,7 +11,6 @@ from worker.humanization import (
     compose_system_instructions,
     resolve_effective_providers,
 )
-from worker.telephony_tts import TELEPHONY_CARTESIA_VOICE_ID, TELEPHONY_GROQ_MODEL
 
 
 def _cfg(**overrides) -> AgentConfig:
@@ -30,36 +29,35 @@ def _cfg(**overrides) -> AgentConfig:
     return AgentConfig(**base)
 
 
-def test_resolve_effective_providers_webrtc_english_groq(monkeypatch):
+def test_resolve_effective_providers_webrtc_english_keeps_gemini(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     cfg = _cfg(tts_provider="rime", llm_provider="gemini")
     effective = resolve_effective_providers(cfg, "andromeda", audio_channel="webrtc")
     assert effective.cartesia_forced is False
-    assert effective.groq_forced is True
+    assert effective.groq_forced is False
     assert effective.tts_provider == "rime"
-    assert effective.llm_provider == "groq"
+    assert effective.llm_provider == "gemini"
     assert effective.provider_voice_id == "andromeda"
 
 
-def test_resolve_effective_providers_webrtc_gemini_when_groq_disabled(monkeypatch):
+def test_resolve_effective_providers_webrtc_explicit_groq_sticks(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
-    monkeypatch.setenv("UVA_FORCE_GROQ_ENGLISH", "0")
-    cfg = _cfg(tts_provider="rime", llm_provider="gemini")
+    cfg = _cfg(tts_provider="rime", llm_provider="groq", llm_model="openai/gpt-oss-20b")
     effective = resolve_effective_providers(cfg, "andromeda", audio_channel="webrtc")
     assert effective.groq_forced is False
-    assert effective.llm_provider == "gemini"
+    assert effective.llm_provider == "groq"
 
 
-def test_resolve_effective_providers_telephony_remaps(monkeypatch):
+def test_resolve_effective_providers_telephony_keeps_configured(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     cfg = _cfg(tts_provider="rime", llm_provider="gemini", tts_voice_id="rime-arcana-astra")
     effective = resolve_effective_providers(cfg, "astra", audio_channel="telephony")
-    assert effective.cartesia_forced is True
-    assert effective.groq_forced is True
-    assert effective.tts_provider == "cartesia"
-    assert effective.llm_provider == "groq"
-    assert effective.cfg.tts_voice_id == TELEPHONY_CARTESIA_VOICE_ID
-    assert effective.cfg.llm_model == TELEPHONY_GROQ_MODEL
+    assert effective.cartesia_forced is False
+    assert effective.groq_forced is False
+    assert effective.tts_provider == "rime"
+    assert effective.llm_provider == "gemini"
+    assert effective.cfg.tts_voice_id == "rime-arcana-astra"
+    assert effective.provider_voice_id == "astra"
 
 
 def test_universal_rules_have_no_provider_markup():
@@ -129,12 +127,11 @@ def test_compose_elevenlabs_gets_universal_and_llm_without_tts_overlay():
     assert "<break" not in text
 
 
-def test_compose_fish_and_uplift_get_universal_and_gemini_overlay():
-    for tts in ("fish_audio", "uplift"):
-        text = compose_system_instructions(_cfg(tts_provider=tts, llm_provider="gemini"))
-        assert UNIVERSAL_SPOKEN_RULES in text
-        assert GEMINI_LLM_OVERLAY in text
-        assert "<emotion" not in text
+def test_compose_uplift_gets_universal_and_gemini_overlay():
+    text = compose_system_instructions(_cfg(tts_provider="uplift", llm_provider="gemini"))
+    assert UNIVERSAL_SPOKEN_RULES in text
+    assert GEMINI_LLM_OVERLAY in text
+    assert "<emotion" not in text
 
 
 def test_groq_overlay_char_budget_is_small():
@@ -143,13 +140,15 @@ def test_groq_overlay_char_budget_is_small():
     # Keep Groq overlay tiny relative to free-tier prompt pressure.
     assert len(GROQ_LLM_OVERLAY) < 400
     assert len(GROQ_LLM_OVERLAY_TTS_MARKUP) < 400
-    assert len(GEMINI_LLM_OVERLAY) < 400
+    assert len(GEMINI_LLM_OVERLAY) < 450
     profile = build_spoken_output_profile(
         _cfg(tts_provider="elevenlabs", llm_provider="groq")
     )
-    # No TTS overlay: universal + groq only.
     rendered = profile.render()
-    assert len(rendered) < len(UNIVERSAL_SPOKEN_RULES) + 450
+    # Universal + groq + ElevenLabs delivery overlay (plain-text humanization).
+    assert len(rendered) < len(UNIVERSAL_SPOKEN_RULES) + 900
+    assert GROQ_LLM_OVERLAY in rendered
+    assert "ElevenLabs delivery" in rendered
 
 
 def test_cartesia_path_system_chars_do_not_explode_vs_overlay_alone():

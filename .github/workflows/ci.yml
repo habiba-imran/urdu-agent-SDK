@@ -7,9 +7,9 @@ on:
     branches: [main, staging, dev]
 
 jobs:
-  # --- Job 1: Python Test Suite ---
-  pytest:
-    name: Python Test Suite
+  # --- Job 1a: Offline / mocked Python unit suite (always — P4-H1) ---
+  pytest-unit:
+    name: Python Unit Suite (offline)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -25,21 +25,49 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
 
-      - name: Run Test Suite
+      - name: Run offline unit suite
+        env:
+          CI_UNIT_FORCE_OFFLINE: "1"
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL || 'wss://test.livekit.cloud' }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY || 'test-key' }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
+          CP_TENANT_SECRETS: "{}"
+          # Explicitly empty — do not substitute a fake postgres URL.
+          SUPABASE_DB_URL: ""
+        run: python scripts/run_ci_unit.py
+
+  # --- Job 1b: Full suite including DB-backed tests (when secret present) ---
+  pytest-integration:
+    name: Python Integration Suite (DB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run full test suite (requires SUPABASE_DB_URL)
         env:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL || 'wss://test.livekit.cloud' }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY || 'test-key' }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL || 'postgresql://test:test@localhost:5432/test' }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           CP_TENANT_SECRETS: "{}"
         run: |
-          if [ -n "${{ secrets.SUPABASE_DB_URL }}" ]; then
-            echo "SUPABASE_DB_URL secret provided. Running full live test suite..."
-            python -m pytest tests/ -v --tb=short
-          else
-            echo "SUPABASE_DB_URL secret not set. Running unit test suite..."
-            python -m pytest tests/test_phase0.py -v --tb=short
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::warning::SUPABASE_DB_URL secret not set — integration suite skipped (unit job still required)."
+            echo "Never treat a missing DB secret as 'full CI passed'."
+            exit 0
           fi
+          python -m pytest tests/ -v --tb=short
 
   # --- Job 2: SDK Packages Build, Lint & Test ---
   sdk-build:
@@ -82,10 +110,46 @@ jobs:
           name: sdk-dist
           path: sdk/dist/
 
+  # --- Job 2b: Tenant dashboard typecheck + build (P4-H3) ---
+  dashboard:
+    name: Dashboard Lint & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build voice SDK (dashboard file: dependency)
+        working-directory: sdk
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install dashboard deps
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Typecheck dashboard
+        working-directory: dashboard
+        run: npm run typecheck
+
+      - name: Build dashboard
+        working-directory: dashboard
+        env:
+          NEXT_PUBLIC_TENANT_PORTAL_API_URL: https://portal.example.test
+          NEXT_PUBLIC_CONTROL_PLANE_URL: https://cp.example.test
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+          NEXT_PUBLIC_LEGAL_TERMS_URL: https://example.com/legal/terms
+          NEXT_PUBLIC_LEGAL_PRIVACY_URL: https://example.com/legal/privacy
+          NEXT_PUBLIC_LEGAL_DPA_URL: https://example.com/legal/dpa
+        run: npx next build
+
   # --- Job 3: Dependency, Secret and Bundle Scanning (F-M20) ---
-  # F-C5 and F-H15 were both findable automatically; nothing in CI looked. The repo already
-  # had gitleaks and a bundle check in `make gate`, but only on a developer's machine, and
-  # `make secrets` fails silently when gitleaks is not installed (F-M22).
   security-scan:
     name: Dependency and Secret Scan
     runs-on: ubuntu-latest
@@ -157,3 +221,6 @@ jobs:
 
       - name: Build Admin Docker Image
         run: docker build -f docker/admin.Dockerfile -t uva-admin:test .
+
+      - name: Build Tenant Portal Docker Image
+        run: docker build -f docker/tenant-portal-api.Dockerfile -t uva-tenant-portal:test .

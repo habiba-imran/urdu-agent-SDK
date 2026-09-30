@@ -47,18 +47,16 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
     # resume_false_interruption is OFF for WebRTC too: laptop speakers → mic echo still
     # trips Silero; pause/resume then flickers audio and can wedge playout
     # (``SegmentSynchronizerImpl.on_playback_started called after start_fut is set``).
-    # Raise min_duration so brief echo blips do not cancel a real reply.
-    # 0.75s: laptop speakers→mic still trips Silero under ElevenLabs/slow TTS; 0.55
-    # was chopping mid-sentence and felt like flicker/stuck when callers said "hello?".
+    # min_duration balances snappy barge-in vs echo chops (was 0.75 — felt sluggish).
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": True,
-        "min_duration": 0.75,
+        "min_duration": 0.65,
         "resume_false_interruption": False,
-        "false_interruption_timeout": 0.7,
+        "false_interruption_timeout": 0.6,
     },
     "turn_detection": "stt",
-    "endpointing": {"min_delay": 0.15, "max_delay": 1.5},
+    "endpointing": {"min_delay": 0.12, "max_delay": 1.2},
     "preemptive_generation": {
         "enabled": True,
         "preemptive_tts": True,
@@ -69,16 +67,17 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
 
 # PSTN/SIP: no browser AEC — same false-interruption resume hazard as WebRTC speakers.
 # Keep barge-in enabled; do not discard caller audio after an intentional interrupt.
-# Disable preemptive LLM on telephony: cancelled preemptives still burn Groq free-tier TPM
-# (8k/min) and were the main source of 429s mid-call with ~3–5k-token front-desk prompts.
+# Slightly lower min_duration than WebRTC (force barge flush helps on PSTN).
+# Preemptive on telephony is re-enabled for non-Groq LLMs in build_turn_profile
+# (hides Gemini TTFT); Groq stays off to protect free-tier TPM.
 TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
     **TURN_HANDLING_OPTIONS,
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": False,
-        "min_duration": 0.75,
+        "min_duration": 0.55,
         "resume_false_interruption": False,
-        "false_interruption_timeout": 0.7,
+        "false_interruption_timeout": 0.6,
     },
     "preemptive_generation": {
         "enabled": False,
@@ -161,8 +160,8 @@ def is_telephony_job(
 # so agent TTS leaking into the mic does not register as barge-in.
 VAD_OPTIONS: dict[str, float] = {
     "min_speech_duration": 0.12,
-    "min_silence_duration": 0.35,
-    "prefix_padding_duration": 0.35,
+    "min_silence_duration": 0.32,
+    "prefix_padding_duration": 0.32,
     "activation_threshold": 0.45,
 }
 

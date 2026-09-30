@@ -134,12 +134,9 @@ def test_portal_login_and_scoped_routes():
         _cleanup_portal_tenant(tenant_id, voice_id)
 
 
-def test_portal_credentials_secret_reveal():
-    """The credentials-tab 'view/copy HMAC secret' action returns the tenant's OWN raw secret.
-
-    Scoped by claims["sub"] from the caller's own verified portal JWT — same boundary as every
-    other /portal/* route, just returning the real value instead of get_credentials' masked one.
-    """
+def test_portal_credentials_secret_reveal(monkeypatch):
+    """Owners can fetch raw HMAC (reveal default on; explicit REVEAL=1 still works)."""
+    monkeypatch.setenv("PORTAL_ALLOW_BROWSER_SECRET_REVEAL", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
     client = TestClient(app)
 
@@ -155,7 +152,8 @@ def test_portal_credentials_secret_reveal():
         assert revealed.status_code == 200
         assert revealed.json()["hmac_secret"] == secret
 
-        no_auth = client.get("/portal/credentials/secret")
+        # Fresh client — no Bearer and no session cookie.
+        no_auth = TestClient(app).get("/portal/credentials/secret")
         assert no_auth.status_code == 401
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)

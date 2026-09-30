@@ -86,14 +86,12 @@ def test_capabilities_api_shows_english_stt_llm_and_tts_enabled(conn):
     assert en["tts"]["elevenlabs"]["state"] == "enabled"
     # Updated 2026-08-02 (Phase 6f): rime is now enabled too. See tests/test_rime_tts.py.
     assert en["tts"]["rime"]["state"] == "enabled"
+    assert "fish_audio" not in en["tts"]
+    assert "soniox" not in en["stt"]
 
 
-def test_english_agent_with_still_planned_tts_vendor_rejected_cleanly(conn):
-    """Proves stt+llm validate successfully for en (no error raised at those layers) and the
-    function only stops at tts when the chosen TTS vendor (fish_audio) is still `planned` — not a
-    generic failure, the exact documented gap. Updated 2026-08-02 (Phase 6c/6d): cartesia and
-    elevenlabs are both enabled now, see the tests above — swapped to fish_audio, still
-    genuinely `planned`."""
+def test_english_agent_with_unsupported_tts_vendor_rejected_cleanly(conn):
+    """STT+LLM validate for en; Fish Audio is not offered (unsupported_provider_for_language)."""
     with pytest.raises(ProviderValidationError) as exc:
         resolve_agent_provider_fields(
             conn,
@@ -104,15 +102,11 @@ def test_english_agent_with_still_planned_tts_vendor_rejected_cleanly(conn):
             llm_provider="gemini",
             llm_model="gemini-2.5-flash",
             llm_options=None,
-            # fish_audio EXISTS in en's capability table (documents the confirmed target scope)
-            # but is still `planned` — the real case this test targets. `uplift` would instead
-            # hit unsupported_provider_for_language (it isn't listed for en at all), a different,
-            # already-covered case.
             tts_provider="fish_audio",
             tts_voice_id=None,
             tts_options=None,
             voice_id="v_meklc281",
             current=None,
         )
-    assert exc.value.code == "provider_not_enabled"
+    assert exc.value.code == "unsupported_provider_for_language"
     assert "tts" in exc.value.reason

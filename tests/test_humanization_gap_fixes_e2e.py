@@ -108,12 +108,12 @@ def test_groq_compact_keeps_accuracy_security_final_authority(monkeypatch):
     assert "Never invent appointments" in out
 
 
-def test_deepgram_default_is_human_200(monkeypatch):
+def test_deepgram_default_is_snappy_100(monkeypatch):
     monkeypatch.delenv("UVA_DEEPGRAM_ENDPOINTING_MS", raising=False)
-    assert resolve_deepgram_endpointing_ms(None) == 200
+    assert resolve_deepgram_endpointing_ms(None) == 100
 
 
-def test_english_elevenlabs_pstn_not_forced_to_cartesia(monkeypatch):
+def test_english_elevenlabs_pstn_keeps_gemini(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     cfg = AgentConfig(
         agent_id="a",
@@ -128,18 +128,19 @@ def test_english_elevenlabs_pstn_not_forced_to_cartesia(monkeypatch):
     )
     eff = resolve_effective_providers(cfg, "ev", audio_channel="telephony")
     assert eff.cartesia_forced is False
-    assert eff.groq_forced is True
-
+    assert eff.groq_forced is False
+    assert eff.llm_provider == "gemini"
+    assert eff.tts_provider == "elevenlabs"
 
 def test_build_session_connect_options_bounded_provider_retries(monkeypatch):
-    """F-H10 Phase D: default max_retry=2 (env-tunable); Wave 1 fail-fast via env=0."""
+    """F-H10 Phase D: default max_retry=1 (env-tunable); fail-fast via env=0."""
     monkeypatch.delenv("UVA_PROVIDER_MAX_RETRY", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_RETRY_INTERVAL", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_CONNECT_TIMEOUT", raising=False)
     from worker.main import build_session_connect_options
 
     opts = build_session_connect_options()
-    assert opts.llm_conn_options.max_retry == 2
-    assert opts.tts_conn_options.max_retry == 2
-    assert opts.stt_conn_options.max_retry == 2
+    assert opts.llm_conn_options.max_retry == 1
+    assert opts.tts_conn_options.max_retry == 1
+    assert opts.stt_conn_options.max_retry == 1
     assert opts.llm_conn_options.timeout == 30.0

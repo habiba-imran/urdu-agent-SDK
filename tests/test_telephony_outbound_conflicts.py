@@ -74,6 +74,8 @@ class ConflictQuotaDb:
                     "active",
                 )
             )
+        if "from telnyx_outbound_voice_profiles" in sql and "allowed_destinations" in sql:
+            return FakeCursor((["US", "CA"],))
         if "from tenants where id = %s" in sql:
             # F-H17: (max_concurrent, max_minutes_month, status) - PSTN spend is now gated
             # on the monthly cap and tenant status as well as concurrency.

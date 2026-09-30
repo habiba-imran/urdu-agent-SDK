@@ -6,8 +6,9 @@ Usage:
 
 What it does:
 1. Identifies open sessions (ended_at is null) older than --max-age-minutes (default: 30m).
-2. Closes stale sessions with end_reason='reconciled_stale' and calculates duration_sec.
-3. Re-calculates actual open sessions per tenant and updates quota_state.concurrent_now to match.
+2. Closes stale sessions with end_reason='reconciled_stale' (duration_sec stays 0).
+3. P3-H4: writes capped agent_sec usage_events for closed sessions that never flushed usage.
+4. Re-calculates actual open sessions per tenant and updates quota_state.concurrent_now to match.
 
 Runbook: docs/WAVE2-SESSION-RECONCILE.md
 """
@@ -40,6 +41,7 @@ def reconcile_sessions(
     """
     stats = {
         "stale_sessions_closed": 0,
+        "usage_events_written": 0,
         "tenants_reconciled": 0,
         "total_open_sessions_remaining": 0,
     }
@@ -94,8 +96,8 @@ def _reconcile_on_conn(
                     """
                     UPDATE sessions
                     SET ended_at = NOW(),
-                        -- Not billable: no usage_events row. Do NOT store wall-clock age as
-                        -- duration_sec (that inflated Sessions UI into multi-day "calls").
+                        -- duration_sec stays 0: Sessions UI must not show multi-day
+                        -- wall-clock ages. Billing truth is usage_events.agent_sec below.
                         duration_sec = 0,
                         end_reason = 'reconciled_stale'
                     WHERE ended_at IS NULL
@@ -106,6 +108,59 @@ def _reconcile_on_conn(
                 print(
                     f"[reconcile] Marked {cur.rowcount} session(s) as closed ('reconciled_stale')."
                 )
+                # P3-H4: crash/kill never reached shutdown usage flush. Cap estimate at
+                # max_age so a long-orphaned row cannot bill days of wall clock.
+                cap_sec = float(max_age_minutes * 60)
+                for s_id, t_id, _r_name, s_at in stale_rows:
+                    if not t_id:
+                        continue
+                    cur.execute(
+                        """
+                        SELECT 1 FROM usage_events
+                        WHERE session_id = %s AND kind = 'agent_sec'
+                        LIMIT 1
+                        """,
+                        (s_id,),
+                    )
+                    if cur.fetchone():
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO usage_events (tenant_id, session_id, kind, qty)
+                        VALUES (
+                            %s,
+                            %s,
+                            'agent_sec',
+                            LEAST(
+                                %s,
+                                GREATEST(
+                                    EXTRACT(EPOCH FROM (NOW() - %s::timestamptz)),
+                                    0
+                                )
+                            )
+                        )
+                        """,
+                        (t_id, s_id, cap_sec, s_at),
+                    )
+                    minutes = cap_sec / 60.0
+                    # Prefer true elapsed when we can; fall back to cap minutes.
+                    cur.execute(
+                        """
+                        UPDATE quota_state
+                        SET minutes_this_month = minutes_this_month + LEAST(
+                            %s,
+                            GREATEST(EXTRACT(EPOCH FROM (NOW() - %s::timestamptz)) / 60.0, 0)
+                        )
+                        WHERE tenant_id = %s
+                        """,
+                        (minutes, s_at, t_id),
+                    )
+                    stats["usage_events_written"] += 1
+                if stats["usage_events_written"]:
+                    print(
+                        f"[reconcile] Wrote {stats['usage_events_written']} "
+                        "estimated agent_sec usage event(s) for crash recovery."
+                    )
         else:
             print(f"[reconcile] No stale sessions > {max_age_minutes}m old found.")
 

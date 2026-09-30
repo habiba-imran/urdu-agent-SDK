@@ -1,10 +1,12 @@
 # Urdu Voice-Agent-as-a-Service (VaaS) Platform
-## Enterprise Production Infrastructure & Browser SDK
+## Multi-tenant voice platform & integration console
 
 [![CI Pipeline](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/actions/workflows/ci.yml/badge.svg)](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@awaazlabs-uva/voice.svg)](https://www.npmjs.com/package/@awaazlabs-uva/voice)
 
-An enterprise-grade, multi-tenant Voice-Agent-as-a-Service (VaaS) platform built specifically for low-latency Urdu voice interaction. Powered by LiveKit WebRTC, Gladia STT, Gemini LLM, and Uplift TTS.
+A multi-tenant Voice-Agent-as-a-Service (VaaS) platform for low-latency Urdu (and English) voice interaction. The **dashboard** is a read-only integration console for operators; agent/telephony writes belong on the client host backend via public npm SDKs. Powered by LiveKit WebRTC with pluggable STT/LLM/TTS providers.
+
+**Not claimed here:** full enterprise IAM/SSO, a complete legal pack in-repo, or “enterprise-grade” ops until Terms / Privacy / DPA are published for your deployment (see dashboard Legal links and `docs/legal/`).
 
 ---
 
@@ -31,7 +33,7 @@ The platform follows an **SDK-First, Explicit Dispatch** multi-tenant architectu
 | **Server SDK** | `sdk-server/` | `@awaazlabs-uva/agents` npm package — server-side agent management, holds the tenant HMAC secret. |
 | **Telephony SDK** | `telephony/` | `@awaazlabs-uva/telephony` npm package — backend-only Telnyx connection, numbers, routing, and PSTN calls. |
 | **Demo App** | `demo-app/` | Reference Express host backend (signs HMAC session requests) + Vite browser client. |
-| **Tenant Dashboard** | `dashboard/` | Next.js self-service portal for managing agents, voices, and credentials. |
+| **Tenant Dashboard** | `dashboard/` | Next.js read-only integration console (agents/sessions/usage/docs) + credentials for operators. |
 | **Super-Admin Portal** | `admin/` | Separate administrative backend for TOTP auth, audit logging, and usage metrics. |
 
 ---

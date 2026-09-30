@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import psycopg
@@ -246,6 +247,12 @@ async def _post_client_tool(
         return {"error": f"{tool_name} is not configured for this agent"}
 
     secret = resolve_tools_auth_secret(ud.tools_auth_secret)
+    # P1-M4: never POST tenant/agent IDs to a tools URL without a shared secret.
+    if not secret:
+        return {
+            "error": f"{tool_name} is not configured: tools_auth_secret required",
+            "success": False,
+        }
     tracker = getattr(ud, "latency_tracker", None)
     t0 = time.monotonic()
     url = f"{base}{path}"
@@ -259,11 +266,25 @@ async def _post_client_tool(
         body["idempotency_key"] = idempotency_key
         headers["Idempotency-Key"] = idempotency_key
     try:
+        from worker.ssrf_guard import ToolsSsrfError, prepare_tools_post_url
+
+        try:
+            request_url, ssrf_headers = prepare_tools_post_url(url)
+        except ToolsSsrfError as ssrf_exc:
+            return {"error": f"{tool_name} blocked: {ssrf_exc.reason}", "success": False}
+        headers.update(ssrf_headers)
+        original_host = urlparse(url).hostname
+        extensions: dict[str, Any] = {}
+        if (urlparse(request_url).scheme or "").lower() == "https" and original_host:
+            # Pin connect IP while keeping TLS SNI / cert name as the hostname.
+            extensions["sni_hostname"] = original_host
+
         client = await _shared_http_client()
         response = await client.post(
-            url,
+            request_url,
             headers=headers,
             json=body,
+            extensions=extensions or None,
         )
         response.raise_for_status()
         raw = response.json()

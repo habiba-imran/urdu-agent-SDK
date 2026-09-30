@@ -772,3 +772,132 @@ def set_allowed_origins(
         (origins, tenant_id),
     )
     return origins
+
+
+def get_overview_snapshot(conn: psycopg.Connection, tenant_id: str) -> dict:
+    """Single-round-trip payload for the dashboard Overview page.
+
+    Reuses the same credential / usage shapes as the dedicated routes so the UI can
+    keep one cache entry instead of five parallel GETs on first paint.
+    """
+    from datetime import datetime, timezone
+
+    from tenant_portal_api import telephony_queries as tq
+
+    agents_count = conn.execute(
+        """
+        select count(*)::int
+        from agents
+        where tenant_id = %s and archived_at is null
+        """,
+        (tenant_id,),
+    ).fetchone()[0]
+
+    credentials = get_credentials(conn, tenant_id)
+    usage = usage_summary(conn, tenant_id)
+
+    try:
+        numbers = tq.list_managed_numbers(conn, tenant_id)
+    except Exception:
+        # Telephony tables may be absent in tightly scoped test DBs.
+        conn.rollback()
+        numbers = []
+
+    assigned = [n for n in numbers if n.get("assigned_agent_id")]
+    numbers_count = len(numbers)
+    assigned_numbers_count = len(assigned)
+
+    readiness: dict = {
+        "is_ready": False,
+        "ready": False,
+        "connection_status": "not_connected",
+        "sip_status": "not_configured",
+        "outbound_profile_status": "not_configured",
+        "active_numbers_count": 0,
+        "reasons": ["Tenant does not have an active Telnyx connection."],
+        "has_connection": False,
+        "has_managed_numbers": False,
+        "has_sip_connection": False,
+        "has_outbound_profile": False,
+    }
+
+    try:
+        conn_data = tq.get_active_telnyx_connection(conn, tenant_id)
+        is_conn_active = bool(
+            conn_data and conn_data.get("platform_status") == "active"
+        )
+        assigned_ready = [
+            n
+            for n in numbers
+            if n.get("routing_status") == "ready" and n.get("assigned_agent_id")
+        ]
+        sip_active = False
+        profile_active = False
+        if conn_data:
+            sip_active = (
+                conn.execute(
+                    """
+                    select id from telnyx_sip_connections
+                    where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
+                      and platform_status in ('pending_verification', 'testing', 'active')
+                    limit 1
+                    """,
+                    (tenant_id, conn_data["id"]),
+                ).fetchone()
+                is not None
+            )
+            profile_active = (
+                conn.execute(
+                    """
+                    select id from telnyx_outbound_voice_profiles
+                    where tenant_id = %s and telnyx_connection_id = %s and disabled_at is null
+                      and platform_status = 'active'
+                    limit 1
+                    """,
+                    (tenant_id, conn_data["id"]),
+                ).fetchone()
+                is not None
+            )
+
+        reasons: list[str] = []
+        if not is_conn_active:
+            reasons.append("Tenant does not have an active Telnyx connection.")
+        if not numbers:
+            reasons.append("Tenant has no active assigned phone numbers.")
+        if numbers and not assigned_ready:
+            reasons.append("Tenant has no routed phone number assigned to an agent.")
+        if is_conn_active and not sip_active:
+            reasons.append("Tenant Telnyx SIP connection is not active.")
+        if is_conn_active and not profile_active:
+            reasons.append("Tenant outbound voice profile is not active.")
+
+        is_ready = (
+            is_conn_active and bool(assigned_ready) and sip_active and profile_active
+        )
+        readiness = {
+            "is_ready": is_ready,
+            "ready": is_ready,
+            "connection_status": (
+                conn_data.get("platform_status") if conn_data else "not_connected"
+            ),
+            "sip_status": "active" if sip_active else "not_configured",
+            "outbound_profile_status": "active" if profile_active else "not_configured",
+            "active_numbers_count": len(assigned_ready),
+            "reasons": reasons,
+            "has_connection": is_conn_active,
+            "has_managed_numbers": bool(numbers),
+            "has_sip_connection": sip_active,
+            "has_outbound_profile": profile_active,
+        }
+    except Exception:
+        conn.rollback()
+
+    return {
+        "agents_count": int(agents_count or 0),
+        "numbers_count": numbers_count,
+        "assigned_numbers_count": assigned_numbers_count,
+        "credentials": credentials,
+        "usage": usage,
+        "readiness": readiness,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }

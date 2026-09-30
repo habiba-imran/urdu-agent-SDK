@@ -176,3 +176,14 @@ def normalize_tools_auth_secret(raw: str | None) -> str | None:
             "invalid_tools_auth_secret", "tools_auth_secret is too long"
         )
     return text
+
+
+def assert_tools_webhook_pair(
+    tools_base_url: str | None, tools_auth_secret: str | None
+) -> None:
+    """P1-M4: a tools base URL without a shared secret is refused at save time."""
+    if tools_base_url and not tools_auth_secret:
+        raise ToolsWebhookError(
+            "tools_auth_secret_required",
+            "tools_auth_secret is required when tools_base_url is set",
+        )

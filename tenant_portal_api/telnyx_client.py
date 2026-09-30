@@ -949,44 +949,37 @@ class TelnyxClient:
             provider_msg = (
                 _telnyx_error_message(response, "") if response is not None else str(e)
             )
+            requested = [
+                str(item).strip().upper()
+                for item in (allowed_destinations or [])
+                if str(item).strip()
+            ]
             if (
                 "countries" in provider_msg.lower()
                 or "whitelisted_destinations" in provider_msg.lower()
                 or "upgrade" in provider_msg.lower()
                 or getattr(response, "status_code", None) == 403
             ):
-                payload["whitelisted_destinations"] = ["US", "CA"]
-                try:
-                    resp = self.client.patch(
-                        f"{TELNYX_API_BASE_URL}/outbound_voice_profiles/{provider_outbound_voice_profile_id}",
-                        headers=self._headers(),
-                        json=payload,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json().get("data", {})
-                    return {
-                        "provider_outbound_voice_profile_id": data.get("id") or provider_outbound_voice_profile_id,
-                        "name": data.get("name") or name,
-                        "status": "active" if data.get("enabled", data.get("active", True)) else "disabled",
-                        "allowed_destinations": data.get("whitelisted_destinations") or ["US", "CA"],
-                        "concurrency_limit": data.get("concurrent_call_limit"),
-                        "daily_spending_limit": data.get("daily_spend_limit"),
-                    }
-                except Exception:
-                    # F-M1: log which provider stage failed before falling back to create.
-                    logger.warning(
-                        "telnyx stage=update_outbound_voice_profile failed id=%s name=%s "
-                        "— falling back to create_or_get",
-                        provider_outbound_voice_profile_id,
-                        name,
-                        exc_info=True,
-                    )
+                raise TelephonyError(
+                    status=403,
+                    code=TelephonyErrorCode.OUTBOUND_DESTINATION_DISABLED,
+                    message=(
+                        "Telnyx rejected the outbound destination country list. Enable those "
+                        "destinations on the Telnyx account (Mission Control), or set "
+                        "TELNYX_OUTBOUND_DESTINATIONS to a subset the account allows. "
+                        "The platform will not silently narrow the list to US/CA."
+                    ),
+                    detail={
+                        "provider_message": provider_msg,
+                        "requested_destinations": requested,
+                    },
+                ) from e
 
             if getattr(response, "status_code", None) in (404, 400, 422):
                 return self.create_or_get_outbound_voice_profile(
                     name=name,
                     fqdn_connection_id=fqdn_connection_id,
-                    allowed_destinations=["US", "CA"],
+                    allowed_destinations=allowed_destinations,
                     concurrency_limit=concurrency_limit,
                     daily_spending_limit=daily_spending_limit,
                 )
@@ -994,6 +987,7 @@ class TelnyxClient:
                 status=502,
                 code=TelephonyErrorCode.TELNYX_API_ERROR,
                 message="Failed to update Telnyx Outbound Voice Profile.",
+                detail={"provider_message": provider_msg},
             ) from e
 
     def get_outbound_voice_profile(

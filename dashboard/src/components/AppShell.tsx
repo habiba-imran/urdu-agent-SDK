@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
 import ConsoleNav from '@/components/ConsoleNav';
-import { ensurePortalSession, getStoredValidTenantToken } from '@/lib/portalAuth';
+import { ensurePortalSession } from '@/lib/portalAuth';
 
 const PUBLIC_AUTH_ROUTES = new Set(['/login', '/invite', '/claim']);
 
@@ -15,8 +15,8 @@ export default function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [checkedAuth, setCheckedAuth] = useState(false);
   const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.has(pathname);
+  const [checkedAuth, setCheckedAuth] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && pathname !== '/invite') {
@@ -39,9 +39,13 @@ export default function AppShell({
 
     (async () => {
       if (isPublicAuthRoute) {
-        if (pathname === '/login' && getStoredValidTenantToken()) {
-          router.replace('/');
-          return;
+        if (pathname === '/login') {
+          const session = await ensurePortalSession();
+          if (cancelled) return;
+          if (session) {
+            router.replace('/');
+            return;
+          }
         }
         if (!cancelled) {
           setCheckedAuth(true);
@@ -49,11 +53,11 @@ export default function AppShell({
         return;
       }
 
-      const token = await ensurePortalSession();
+      const session = await ensurePortalSession();
       if (cancelled) {
         return;
       }
-      if (!token) {
+      if (!session) {
         router.replace('/login');
         return;
       }

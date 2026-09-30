@@ -24,7 +24,7 @@ We do not publish hard SLAs here. Expect:
 - **Connection** (click → \`connected\`): usually a few seconds (network + region)  
 - **First agent audio**: follows your agent greeting settings  
 
-Use **[Sessions](/sessions)** on test calls to set your own baselines before launch. The SDK also emits \`turn_latency\` / \`metrics_updated\` when the worker provides them.
+Use **[Sessions](/sessions)** on test calls to set your own baselines before launch. The SDK also emits \`turn_latency\` / \`metrics_updated\` when the runtime provides them.
 
 ## What you handle vs. what the SDK handles
 
@@ -49,7 +49,7 @@ Open **[Sessions](/sessions)** after a call. Common meanings:
 | Status / reason | Meaning |
 |-----------------|---------|
 | Completed / ended normally | Clean hangup |
-| Error / failed | Mint, media, or worker failure |
+| Error / failed | Mint, media, or runtime failure |
 | Timeout / silence | Idle or max-length policy |
 | Cancelled / early disconnect | Client left early |
 
@@ -59,5 +59,5 @@ Treat Sessions as source of truth for a given call.
 
 - Pin npm versions in lockfiles.  
 - Breaking API changes ship as major bumps with changelog notes.  
-- After upgrading voice or your host starter, re-run Quickstart mint + connect.
+- After upgrading voice or your host session endpoints, re-run Quickstart mint + connect.
 `;

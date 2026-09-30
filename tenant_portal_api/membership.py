@@ -292,6 +292,13 @@ def resolve_or_bootstrap_membership(
 ) -> dict:
     membership = get_membership_by_auth_user(conn, auth_user_id)
     if membership is None:
+        from .portal_access import auto_bootstrap_enabled
+
+        if not auto_bootstrap_enabled():
+            raise TenantAuthError(
+                403,
+                "no tenant membership — ask an owner to invite you, or use claim flow",
+            )
         membership = bootstrap_owner_for_auth_user(
             conn, auth_user_id=auth_user_id, email=email
         )

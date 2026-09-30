@@ -78,7 +78,6 @@ const routeCases = [
   ['syncTelnyxOwnedNumbers', 'POST', '/machine/telephony/numbers/sync', 'telephony.managed_numbers.sync', (c) => c.syncTelnyxOwnedNumbers(), {}],
   ['getTelnyxNumberDrift', 'POST', '/machine/telephony/numbers/drift', 'telephony.managed_numbers.drift', (c) => c.getTelnyxNumberDrift(), {}],
   ['searchAvailableNumbers', 'POST', '/machine/telephony/available-numbers/search', 'telephony.available_numbers.search', (c) => c.searchAvailableNumbers({ country: 'US', areaCode: '555', numberType: 'local', features: ['voice'] }), { area_code: '555', country: 'US', features: ['voice'], number_type: 'local' }],
-  ['reserveNumber', 'POST', '/machine/telephony/number-reservations', 'telephony.number_reservations.create', (c) => c.reserveNumber({ e164Number, idempotencyKey: '<IDEMPOTENCY_KEY>' }), { e164_number: e164Number, idempotency_key: '<IDEMPOTENCY_KEY>' }],
   ['purchaseNumber', 'POST', '/machine/telephony/number-orders', 'telephony.number_orders.create', (c) => c.purchaseNumber({ e164Number, externalCustomerRef: '<OPAQUE_CUSTOMER_REF>', idempotencyKey: '<IDEMPOTENCY_KEY>' }), { e164_number: e164Number, external_customer_ref: '<OPAQUE_CUSTOMER_REF>', idempotency_key: '<IDEMPOTENCY_KEY>' }],
   ['getNumberOrderStatus', 'POST', '/machine/telephony/number-orders/get', 'telephony.number_orders.get', (c) => c.getNumberOrderStatus(orderId), { order_id: orderId }],
   ['assignAgentToNumber', 'PATCH', `/machine/telephony/numbers/${encodedNumberId}/assignment`, 'telephony.numbers.assign_agent', (c) => c.assignAgentToNumber(numberId, agentId), { agent_id: agentId, number_id: numberId }],
@@ -114,8 +113,8 @@ function assertSnakeCase(value) {
 }
 
 async function testAllSdkMethodsMatchFrozenContract() {
-  assert.equal(routeCases.length, 29);
-  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 29);
+  assert.equal(routeCases.length, 28);
+  assert.equal(Object.keys(TELEPHONY_MACHINE_OPERATIONS).length, 28);
   // Every exported operation must have a frozen contract case above.
   assert.deepEqual(
     routeCases.map(([name]) => name).sort(),

@@ -442,7 +442,7 @@ export default function SessionsPage() {
 
             {activeSession.stale ? (
               <p className="rounded-input border border-amber-500/25 bg-[#FDF3E0] px-3.5 py-2.5 text-[13px] text-amber-900">
-                This session was never closed by the voice worker — it most likely exited
+                This session was never closed cleanly — it most likely ended
                 ungracefully. It is not an active call and is not consuming a concurrency slot
                 once reconciliation runs.
               </p>

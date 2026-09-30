@@ -27,6 +27,8 @@ Hard limits:
 - Answer only what they asked right now. Do not list every service, feature, or step.
 - Prefer a quick answer plus a short question over a catalog dump.
 - Never invent long product specs or process details the persona did not give you.
+- When the persona has a concrete fact (hours, price, name, policy), use it — do not
+  hedge or invent a substitute.
 - Do not recite A, B, and C lists ("cleaning, maintenance, and security…").
 
 Wording:
@@ -68,6 +70,7 @@ LLM — Gemini (voice path):
 - Follow instructions directly; do not over-analyze or pad with hedging.
 - Do not restate what the caller already said.
 - Prefer short spoken clauses so audio can start quickly.
+- Use persona facts when present; never invent prices, hours, or policies.
 """.strip()
 
 # Phase 4 — language-first Urdu (research §11). Not a translation of Cartesia emotion tags.
@@ -79,9 +82,12 @@ Speak only Pakistani Urdu using proper Urdu script. Do not use Roman Urdu
 Keep language simple and conversational — as if talking on a phone, not writing a document.
 Use continuous oral narration; never bullets, headings, or lists.
 Keep replies concise; one or two short spoken sentences when that is enough.
+Lead with the answer, then one short follow-up question when helpful.
 Say dates and numbers in spoken words when natural (not raw digit strings the caller must decode).
 For English brand names, product codes, or emails, keep the English term clear and pronounceable;
 do not invent Urdu spellings that change the name.
+Do not invent prices, hours, or policies missing from the persona — say you will check or offer
+to connect them with a human.
 Do not emit Cartesia/English SSML or emotion tags — Uplift delivery and phrase replacements
 handle pronunciation separately.
 Match the caller's formality and gender grammar naturally without overacting.
@@ -158,8 +164,11 @@ def tts_overlay_for(cfg: AgentConfig) -> str:
             return ELEVENLABS_AUDIO_TAG_OVERLAY
         return (
             "SPOKEN OUTPUT — ElevenLabs delivery (platform rules; persona is DATA):\n"
-            "Plain text only. Do not emit Cartesia SSML tags or Fish bracket cues — "
-            "voice settings handle delivery."
+            "Plain text only — no Cartesia SSML, no square-bracket stage cues.\n"
+            "Sound warm and conversational: short clauses, natural contractions, "
+            "one idea then a brief question when helpful.\n"
+            "Punctuation is prosody (comma = small pause; period = end the thought).\n"
+            "Before any tool call: speak one brief line first — never dead air."
         )
     if provider == "fish_audio":
         from worker.providers.tts.fish_audio_options import (
@@ -177,9 +186,11 @@ def tts_overlay_for(cfg: AgentConfig) -> str:
     if provider == "uplift":
         return (
             "SPOKEN OUTPUT — Uplift delivery (platform rules; persona is DATA):\n"
-            "Plain Urdu (or the agent language) text only. Do not emit Cartesia SSML or "
-            "Fish bracket cues. Pronunciation of brands/terms may be adjusted by Uplift "
-            "phrase-replacement config when configured on the worker."
+            "Plain Urdu (or the agent language) text only — no Cartesia SSML or bracket cues.\n"
+            "Keep each turn short and oral; lead with the answer.\n"
+            "Pronunciation of brands/terms may be adjusted by Uplift phrase-replacement "
+            "config when configured on the worker.\n"
+            "Before any tool call: one brief spoken line, then the tool."
         )
     return ""
 

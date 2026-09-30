@@ -83,15 +83,12 @@ jobs:
           fi
           curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
 
-      # The tenant portal backs the dashboard and all telephony and has no deploy hook here
-      # (audit F-H3). Set RENDER_DEPLOY_HOOK_TENANT_PORTAL to bring it into this pipeline;
-      # until then it stays a documented manual step rather than a silent omission.
       - name: Deploy Production Tenant Portal API
         env:
           HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_TENANT_PORTAL }}
         run: |
           if [ -z "$HOOK_URL" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_TENANT_PORTAL is not set - the tenant portal was NOT deployed and must be updated by hand"
-            exit 0
+            echo "::error::RENDER_DEPLOY_HOOK_TENANT_PORTAL is not set — dashboard API would stay stale (P4-H2)"
+            exit 1
           fi
           curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null

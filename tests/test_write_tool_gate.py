@@ -37,6 +37,7 @@ def _ud(**kwargs) -> AgentUserdata:
 
 def test_first_book_call_proposes_no_pending_http_fields():
     ud = _ud()
+    set_verified_caller_phone(ud, '+923001234567')
     action, payload = propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -56,6 +57,7 @@ def test_first_book_call_proposes_no_pending_http_fields():
 
 def test_confirm_bad_id_rejects():
     ud = _ud()
+    set_verified_caller_phone(ud, '+923001234567')
     propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -67,7 +69,7 @@ def test_confirm_bad_id_rejects():
         },
         confirmation_id=None,
     )
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     action, payload = propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -85,6 +87,7 @@ def test_confirm_bad_id_rejects():
 
 def test_confirm_same_turn_rejects():
     ud = _ud()
+    set_verified_caller_phone(ud, '+923001234567')
     action, propose = propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -114,6 +117,7 @@ def test_confirm_same_turn_rejects():
 
 def test_confirm_after_user_turn_allows_post():
     ud = _ud()
+    set_verified_caller_phone(ud, '+923001234567')
     _, propose = propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -125,7 +129,7 @@ def test_confirm_after_user_turn_allows_post():
         },
         confirmation_id=None,
     )
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     action, payload = propose_or_confirm_write(
         ud,
         tool_name="book_appointment",
@@ -180,7 +184,7 @@ def test_cancel_matching_phone_proposes_then_confirms():
         confirmation_id=None,
     )
     assert action == "propose"
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     action2, payload = propose_or_confirm_write(
         ud,
         tool_name="cancel_appointment",
@@ -291,7 +295,7 @@ def test_budget_exceeded_rejects(monkeypatch):
         raw_args={"customer_phone": "+923001234567"},
         confirmation_id=None,
     )
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     action, payload = propose_or_confirm_write(
         ud,
         tool_name="cancel_appointment",
@@ -329,7 +333,7 @@ def test_idempotent_second_confirm_replays_without_new_key_change():
         raw_args={"customer_phone": "+923001234567"},
         confirmation_id=None,
     )
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     _, conf = propose_or_confirm_write(
         ud,
         tool_name="cancel_appointment",
@@ -422,6 +426,7 @@ async def test_gated_write_posts_once(monkeypatch):
     monkeypatch.setattr(tools_mod, "_post_client_tool", fake_post)
 
     ud = _ud(tools_base_url="http://example.test")
+    set_verified_caller_phone(ud, "+923001234567")
     ctx = SimpleNamespace(userdata=ud)
 
     r1 = await tools_mod.book_appointment.__wrapped__(
@@ -433,7 +438,7 @@ async def test_gated_write_posts_once(monkeypatch):
     assert r1.get("needs_confirmation") is True
     assert posts == []
 
-    note_user_turn(ud)
+    note_user_turn(ud, text='yes')
     r2 = await tools_mod.book_appointment.__wrapped__(
         ctx,
         customer_name="Ali",
@@ -466,3 +471,51 @@ def test_parse_dispatch_preserves_verified_caller_phone():
     assert md is not None
     assert md["verified_caller_phone"] == "+923001234567"
     assert "e164_number" not in md
+
+
+def test_book_without_verified_phone_rejects():
+    ud = _ud()
+    action, payload = propose_or_confirm_write(
+        ud,
+        tool_name="book_appointment",
+        path="/api/tools/book_slot",
+        raw_args={
+            "customer_name": "Ali",
+            "customer_phone": "+923001234567",
+            "slot_start_time": "2026-09-18T10:00:00",
+        },
+        confirmation_id=None,
+    )
+    assert action == "reject"
+    assert "verified_caller_phone" in payload["error"]
+
+
+def test_noise_user_turn_does_not_unlock_confirm():
+    ud = _ud()
+    set_verified_caller_phone(ud, "+923001234567")
+    _, propose = propose_or_confirm_write(
+        ud,
+        tool_name="book_appointment",
+        path="/api/tools/book_slot",
+        raw_args={
+            "customer_name": "Ali",
+            "customer_phone": "+923001234567",
+            "slot_start_time": "2026-09-18T10:00:00",
+        },
+        confirmation_id=None,
+    )
+    note_user_turn(ud, text="what time is it")
+    action, payload = propose_or_confirm_write(
+        ud,
+        tool_name="book_appointment",
+        path="/api/tools/book_slot",
+        raw_args={
+            "customer_name": "Ali",
+            "customer_phone": "+923001234567",
+            "slot_start_time": "2026-09-18T10:00:00",
+        },
+        confirmation_id=propose["confirmation_id"],
+    )
+    assert action == "reject"
+    assert "explicit yes" in payload["error"]
+

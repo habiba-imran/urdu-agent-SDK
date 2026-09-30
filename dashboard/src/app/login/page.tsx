@@ -7,7 +7,6 @@ import {
   PortalAuthError,
   PORTAL_SESSION_TTL_HOURS,
   loginWithEmailPassword,
-  setStoredTenantToken,
 } from '@/lib/portalAuth';
 import { preload } from 'swr';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
@@ -28,24 +27,22 @@ export default function LoginPage() {
 
     try {
       const result = await loginWithEmailPassword(email, password);
-      setStoredTenantToken(result.token);
-      // Warm Overview cache before first paint.
-      for (const key of [
-        'agents',
-        'credentials',
-        'usage',
-        'telephonyNumbers',
-        'telephonyReadiness',
-      ] as const) {
-        void preload(swrKeys[key], swrFetchers[key]);
-      }
+      void result;
+      // Warm Overview cache before first paint (single aggregate endpoint).
+      void preload(swrKeys.overview, swrFetchers.overview);
       router.replace('/');
     } catch (err) {
-      setError(
+      const raw =
         err instanceof PortalAuthError || err instanceof Error
           ? err.message
-          : 'Login failed',
-      );
+          : 'Login failed';
+      if (/no tenant membership|invite you|claim flow/i.test(raw)) {
+        setError(
+          'No workspace membership for this account. Ask an owner to invite you, or use Claim tenant if you were provisioned offline.',
+        );
+      } else {
+        setError(raw);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -104,6 +101,15 @@ export default function LoginPage() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          <p className="mt-6 text-[13px] text-text-muted">
+            Hosted access is invite-only (no self-serve tenant creation). Have an invite link?{' '}
+            <a href="/invite" className="font-medium text-text underline-offset-4 hover:underline">
+              Open invite
+            </a>
+            . After sign-in, copy your HMAC from API Keys — Claim is only for attaching a legacy
+            offline-provisioned tenant, not for viewing secrets.
+          </p>
         </CardContent>
       </Card>
     </div>

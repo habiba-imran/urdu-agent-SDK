@@ -1,23 +1,23 @@
 # @awaazlabs-uva/agents
 
-**Server-side only. Never import this package in browser code — it holds your tenant secret.**
+**Server-side only. Never import this package in a browser bundle — it holds your tenant HMAC secret.**
 
-Programmatic agent management for an **existing** AwaazLabs-UVA tenant. If you don't have a
-`tenantId` + `tenantSecret` yet, this package can't help you get them — that's a platform/tenant
-provisioning step outside this package's scope.
+Published as `@awaazlabs-uva/agents@0.1.0`. Pin this version. Client integration guide: tenant dashboard → `/docs` (Backend setup, Providers, Security).
 
-This is a different package from [`@awaazlabs-uva/voice`](https://www.npmjs.com/package/@awaazlabs-uva/voice) on purpose: `@awaazlabs-uva/voice` is the
-public browser bundle that connects an end user to an already-created agent and ships with zero
-secrets; `@awaazlabs-uva/agents` is what your own backend uses to create/manage the agents `@awaazlabs-uva/voice` later
-connects to.
+Programmatic agent management for an **existing** AwaazLabs UVA tenant (`tenantId` + `tenantSecret`). Copy those from the dashboard **API Keys** page (owners), or ask your AwaazLabs contact.
+
+Companion packages:
+
+- Browser sessions: [`@awaazlabs-uva/voice@1.1.0`](https://www.npmjs.com/package/@awaazlabs-uva/voice)
+- Telnyx / PSTN: [`@awaazlabs-uva/telephony@0.1.0`](https://www.npmjs.com/package/@awaazlabs-uva/telephony)
 
 ## Install
 
 ```bash
-npm install @awaazlabs-uva/agents
+npm install @awaazlabs-uva/agents@0.1.0
 ```
 
-## Usage (in your backend only)
+## Usage (backend only)
 
 ```ts
 import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
@@ -25,79 +25,60 @@ import { AwaazLabsUvaAgentsClient } from '@awaazlabs-uva/agents';
 const agents = new AwaazLabsUvaAgentsClient({
   tenantId: process.env.UVA_TENANT_ID!,
   tenantSecret: process.env.UVA_HMAC_SECRET!,
-  baseUrl: 'https://portal-api.example.com',
-  extraHeaders: process.env.NODE_ENV === 'development'
-    ? { 'ngrok-skip-browser-warning': 'true' }
-    : undefined,
+  baseUrl: process.env.UVA_API_BASE_URL!, // tenant portal / machine API base
 });
 
+// voiceId is required (API). Prefer a voice from getProviderCapabilities() for the language/TTS you choose.
 const agent = await agents.createAgent({
   name: 'Support Agent',
-  prompt: 'آپ ایک مددگار معاون ہیں...',
-  voiceId: 'helpdesk-agent',
+  prompt: 'Answer customer questions concisely.',
+  voiceId: 'cartesia-sonic-default', // or another catalogue id from getProviderCapabilities()
+  agentLanguage: 'en', // or 'ur'
+  // Optional: sttProvider, llmProvider, ttsProvider, ttsVoiceId, greeting, firstSpeaker
+  firstSpeaker: 'agent',
+  greeting: 'Hi, thanks for calling. How can I help?',
 });
 
-// hand agent.id to your frontend; the frontend uses @awaazlabs-uva/voice + this agentId to connect
+// Hand agent.id to the browser; connect with @awaazlabs-uva/voice
 ```
+
+Configured STT / LLM / TTS **stick at runtime** (no silent vendor remap). Language stacks and defaults: dashboard `/docs/providers`.
 
 ### Methods
 
-- `createAgent({ name, prompt, voiceId, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions?, greeting?, firstSpeaker? })`
+- `createAgent({ name, prompt, voiceId, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions?, greeting?, firstSpeaker?, toolsBaseUrl?, toolsAuthSecret? })`
 - `listAgents()`
-- `updateAgent(agentId, { name?, prompt?, voiceId?, llmModel?, agentLanguage?, sttProvider?, sttModel?, sttOptions?, llmProvider?, llmOptions?, ttsProvider?, ttsVoiceId?, ttsOptions?, greeting?, firstSpeaker? })`
-- `getProviderCapabilities()` — the enabled language/provider/model/voice combinations, for building pickers
+- `updateAgent(agentId, { … })`
+- `getProviderCapabilities()` — enabled language / provider / model / voice combinations
 - `listManagedNumbers({ assignedAgentId? })`
 - `assignAgentToNumber(numberId, agentId | null)` / `unassignAgentFromNumber(numberId)`
 
-Every field beyond `name`/`prompt`/`voiceId` is optional — omit them all and you get the same
-`ur` + Gladia + Gemini + Uplift agent this package has always created. `ttsVoiceId` takes priority
-over `voiceId` when both are given (server-resolved). `firstSpeaker` defaults to `'agent'` (the
-agent greets immediately). Pass `firstSpeaker: 'user'` to wait for the caller. `greeting` is the
-exact opening line when the agent speaks first; omit it to let the worker generate a greeting from
-the persona. On update, `greeting: ''` clears a custom greeting.
+`ttsVoiceId` takes priority over `voiceId` when both are given. `firstSpeaker` defaults to `'agent'`. Omit `greeting` to let the worker generate an opening line; `greeting: ''` on update clears a custom greeting.
 
-English Cartesia and Rime TTS are selected with `agentLanguage: 'en'` and `ttsProvider: 'cartesia' | 'rime'`. Spoken humanization runs on the hosted worker — do not put SSML or `spell()` in `prompt` or `greeting`. See [docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/UKASHA_AGENT_FACING_MULTIPLE_PROVIDERS_PLAN.md) for what's live vs. planned.
+Omitting provider fields keeps platform CREATE defaults for that language (English: Deepgram + Groq + Cartesia; Urdu: Gladia + Gemini + Uplift). Pass providers explicitly to override.
 
-Each call signs its own request with `tenantSecret` (HMAC-SHA256, timestamped, single-use nonce,
-scoped to that one action) — see
-[docs/MACHINE_AGENT_API_CONTRACT.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/MACHINE_AGENT_API_CONTRACT.md) for the wire contract if
-you'd rather implement your own client in another language.
+Each call HMAC-signs with `tenantSecret` — wire format: [docs/MACHINE_AGENT_API_CONTRACT.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/MACHINE_AGENT_API_CONTRACT.md).
 
-`extraHeaders` is only for development tunnels or corporate proxies. It is merged before the SDK's
-auth headers, so it cannot override tenant/signature headers.
+`extraHeaders` is for tunnels/proxies only; it cannot override auth headers.
 
 ## Errors
 
-Failed calls throw `AwaazLabsUvaAgentsError` with a `status` (the HTTP status from `tenant_portal_api`) and
-a `message` (the server's `detail`). Common cases: `401` bad signature/replay/expired
-timestamp, `403` tenant suspended, `404` agent not found (update), `422` unsupported/disabled
-provider-language-model-voice combination, `429` rate limited.
+Throws `AwaazLabsUvaAgentsError` with `status` and `message`. Common: `401` bad signature, `403` suspended, `404` agent missing, `422` unsupported provider/language/model/voice, `429` rate limited.
 
-For provider-validation errors (`422`), `code` carries a stable machine-readable value such as
-`unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider` or
-`unsupported_voice_for_provider`, and `message` is the human-readable reason. Branch on `code`,
-not `message`. `code` is `undefined` for every other error. See
-[docs/MACHINE_AGENT_API_CONTRACT.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/MACHINE_AGENT_API_CONTRACT.md).
+On `422`, `code` is stable (`unsupported_provider_for_language`, `provider_not_enabled`, `unsupported_model_for_provider`, `unsupported_voice_for_provider`). Branch on `code`, not `message`.
 
-## Security notes
+## Security
 
-- `tenantSecret` never leaves your backend process in this client — it's used locally to compute
-  an HMAC signature, never sent as a request body/header value itself.
-- This package intentionally has no browser build target. If your bundler pulls this into a
-  client-side bundle, that's a misconfiguration to fix, not something this package tries to work
-  around.
-- Rotating your tenant secret (via your platform's admin) invalidates every previously-issued
-  signature going forward, same as it already does for session-mint signing.
+- `tenantSecret` never leaves your process as a header value — used only to compute HMAC
+- No browser build target
+- Rotating the tenant secret invalidates prior signatures (same as session mint)
 
 ## Development
 
 ```bash
 npm ci
-npm test   # builds, then runs test/ with Node's built-in test runner
+npm test   # build + Node test runner (signing vectors)
 ```
-
-Request signing is tested against a vector generated by the tenant portal's own verifier, so a
-signing change that would break production fails `npm test` first.
 
 ## Changelog
 

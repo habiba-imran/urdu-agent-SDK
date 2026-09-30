@@ -39,10 +39,12 @@ export const DOCS_NAV: DocsNavGroup[] = [
   {
     title: 'Reference',
     items: [
+      { slug: 'providers', title: 'Providers' },
       { slug: 'sdk-reference', title: 'SDK reference' },
       { slug: 'events-and-lifecycle', title: 'Events and lifecycle' },
       { slug: 'errors-and-troubleshooting', title: 'Errors and troubleshooting' },
       { slug: 'security', title: 'Security' },
+      { slug: 'legal-and-trust', title: 'Legal and trust' },
     ],
   },
 ];

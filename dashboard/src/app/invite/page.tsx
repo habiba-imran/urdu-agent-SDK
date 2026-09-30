@@ -8,7 +8,6 @@ import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 import {
   PortalAuthError,
   exchangeSupabaseAccessToken,
-  setStoredTenantToken,
 } from '@/lib/portalAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -146,7 +145,7 @@ export default function InviteAcceptPage() {
         throw new PortalAuthError('Session missing after setting password');
       }
       const portal = await exchangeSupabaseAccessToken(accessToken);
-      setStoredTenantToken(portal.token);
+      void portal;
       router.replace('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not finish invite');

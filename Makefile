@@ -24,7 +24,7 @@ usage:
 db-sync:
 	@echo "Run db-inspector subagent. Never hand-edit supabase/SCHEMA.md."
 db-reset:
-	@echo "DEV ONLY - this DROPS every table (F-H11). Use 'make db-migrate' for any database with data."
+	@echo "DEV ONLY - this DROPS every table (F-H11 / P4-M3). Requires ALLOW_DB_RESET=1. Use 'make db-migrate' for any database with data."
 	@$(PY) scripts/db_reset.py
 db-migrate:
 	@$(PY) scripts/migrate.py

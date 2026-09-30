@@ -16,7 +16,7 @@ Every browser voice session follows the same path:
 4. Your backend returns that payload to the browser (and a \`refreshUrl\` that points at **you**, not us).
 5. The voice SDK joins the LiveKit room and starts the mic.
 
-Phone (PSTN) skips the browser SDK for the media path: Telnyx → our telephony webhook → same worker runtime. Configure numbers and agents with \`@awaazlabs-uva/agents\` / \`@awaazlabs-uva/telephony\` on your backend; this console is read-only for inspection.
+Phone (PSTN) skips the browser SDK for the media path: Telnyx → our telephony webhook → the same voice runtime. Configure numbers and agents with \`@awaazlabs-uva/agents\` / \`@awaazlabs-uva/telephony\` on your backend; this console is **read-only** for inspection.
 
 \`\`\`text
 ┌─────────────┐     POST /api/voice/session      ┌────────────────┐
@@ -31,7 +31,7 @@ Phone (PSTN) skips the browser SDK for the media path: Telnyx → our telephony 
                                                  └───────┬────────┘
                                                          │
                                                          ▼
-                                                 LiveKit + agent worker
+                                                 LiveKit + voice runtime
 \`\`\`
 
 ## Who does what
@@ -41,22 +41,25 @@ Phone (PSTN) skips the browser SDK for the media path: Telnyx → our telephony 
 | Hold HMAC secret | Yes | Never | Verifies signature |
 | Hold publishable key | Yes (check it) | Yes (identify only) | Maps to tenant |
 | Mint LiveKit token | Via our control plane | No | Issues token |
-| Agent prompt / voice | Optional (agents SDK) | No | Runs agent |
+| Agent prompt / providers / voice | \`@awaazlabs-uva/agents\` | No | Runs agent |
+| Telnyx API key / numbers | \`@awaazlabs-uva/telephony\` | Never | Uses key you connect |
 | UI / business logic | As you need | Yes | No |
-| Telnyx API key | Yes (telephony SDK) | Never | Uses key you connect |
 | Session debug | — | — | [Sessions](/sessions) in console |
 
 ## Trust boundary (plain words)
 
-- **Secret HMAC key** stays on your server (and in [API Keys](/credentials) reveal for operators). If it appears in a browser bundle, the integration is wrong.
+- **HMAC secret** stays on your server. Copy it from [API Keys](/credentials) (owners) into your host secret manager. Console **rotation** is disabled. If HMAC appears in a frontend bundle, the integration is wrong.
 - **Publishable key** is safe to embed. It identifies your tenant; it does not authorize minting by itself.
 - **LiveKit join token** is short-lived. The browser may hold it only after your backend returns it.
 - **Control plane URL** is used by your backend only — not by the voice SDK as a signing target.
+- **Tenant \`allowed_origins\`** (API Keys) must be set on hosted deployments or browser mint fails closed.
 
 ## Console deep links
 
-- Copy ready \`.env\` blocks: [API Keys](/credentials)  
-- Inspect agent ids / assigned numbers: [Agents](/agents) (create via agents SDK)  
-
-- After a test call, open [Sessions](/sessions) for duration, transcript, and end reason  
+| Need | Where |
+|------|--------|
+| Copy \`.env\` / HMAC / set origins | [API Keys](/credentials) (HMAC visible to owners; rotate disabled) |
+| Inspect agent ids / assigned numbers | [Agents](/agents) (create via agents / telephony SDKs) |
+| After a test call | [Sessions](/sessions) |
+| Full guide | [Overview](/docs/overview) |
 `;

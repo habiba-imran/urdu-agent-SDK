@@ -127,7 +127,40 @@ def _ensure_admin_account(kw: dict) -> None:
     )
 
 
+def _assert_reset_allowed() -> None:
+    """P4-M3: refuse accidental wipe of a shared/hosted database.
+
+    Requires ALLOW_DB_RESET=1 and a non-hosted environment. Staging/prod must use
+    `make db-migrate` (forward-only) instead.
+    """
+    allowed = (os.environ.get("ALLOW_DB_RESET") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not allowed:
+        sys.exit(
+            "db-reset: refused — set ALLOW_DB_RESET=1 to rebuild a DEV database. "
+            "Use `make db-migrate` for staging/prod."
+        )
+    hosted_names = {"production", "prod", "staging", "preview"}
+    uva_env = (os.environ.get("UVA_ENV") or "").strip().lower()
+    render = (os.environ.get("RENDER") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    environment = (os.environ.get("ENVIRONMENT") or "").strip().lower()
+    if render or uva_env in hosted_names or environment in hosted_names:
+        sys.exit(
+            "db-reset: refused on hosted/staging/prod — use `make db-migrate` only."
+        )
+
+
 def main() -> int:
+    _assert_reset_allowed()
     files = sorted(MIGRATIONS.glob("*.sql"))
     if not files:
         sys.exit(f"db-reset: no migrations found in {MIGRATIONS}")

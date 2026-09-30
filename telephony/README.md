@@ -1,40 +1,28 @@
 # @awaazlabs-uva/telephony
 
-Backend-only Node SDK for signed AwaazLabs UVA machine telephony API calls.
+Backend-only Node SDK for HMAC-signed AwaazLabs UVA machine telephony API calls.
 
-This package is not a browser SDK. It stores the tenant HMAC secret only on the
-backend client instance for request signing, never sends that secret, and
-accepts Telnyx API keys only as transient method parameters for connection or
-rotation calls.
+Published as `@awaazlabs-uva/telephony@0.1.0`. Pin this version. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
 
-## Package Model
+This package stores the tenant HMAC secret only on the backend client for request signing. Telnyx API keys are transient method parameters for connect/rotate — never cached in SDK state.
+
+## Package model
 
 | Package | Runtime | Purpose | Secret boundary |
 |---|---|---|---|
-| `@awaazlabs-uva/voice` | Browser/WebRTC | Starts voice sessions and receives realtime events | Zero secrets |
-| `@awaazlabs-uva/agents` | Node backend only | Creates and updates AI agents | Uses backend HMAC secret |
-| `@awaazlabs-uva/telephony` | Node backend only | Manages Telnyx connection, numbers, routing, and calls | Uses backend HMAC secret and transient Telnyx keys |
-
-Never import `@awaazlabs-uva/agents` or `@awaazlabs-uva/telephony` in browser
-code. Your frontend should call your own backend routes.
+| `@awaazlabs-uva/voice@1.1.0` | Browser | WebRTC sessions | Zero secrets |
+| `@awaazlabs-uva/agents@0.1.0` | Node backend | Create / update agents | Tenant HMAC |
+| `@awaazlabs-uva/telephony@0.1.0` | Node backend | Telnyx, numbers, routing, PSTN | Tenant HMAC + transient Telnyx keys |
 
 ## Install
 
 ```bash
-npm install @awaazlabs-uva/telephony
+npm install @awaazlabs-uva/telephony@0.1.0
 ```
 
-Releases are published from the canonical repository with npm provenance by pushing a
-`telephony-v<version>` tag. Until the first release lands on the registry, install the client
-handoff tarball instead:
+Releases publish from the canonical repo with npm provenance on a `telephony-v<version>` tag (see `.github/workflows/release-sdk.yml`).
 
-```bash
-npm install ./sdk/@awaazlabs-uva/telephony/awaazlabs-uva-telephony-0.1.0.tgz
-```
-
-## Backend Environment
-
-Load these from your backend environment. Do not hardcode them in source code.
+## Backend environment
 
 ```env
 UVA_TENANT_ID=[YOUR_TENANT_ID]
@@ -44,8 +32,6 @@ TELNYX_API_KEY=[YOUR_TELNYX_API_KEY]
 ```
 
 `TELNYX_API_KEY` is needed only when connecting or rotating a Telnyx account.
-Do not store it in SDK state, browser storage, logs, prompts, transcripts, or
-fixtures.
 
 ## Usage
 
@@ -93,62 +79,55 @@ try {
 }
 ```
 
-## Method Groups
+After purchase (or sync/import), `assignAgentToNumber(managedNumberId, agentId)` routes inbound. Assigned numbers appear read-only on the dashboard **Agents** page. Full flow: dashboard `/docs/telephony`.
+
+## Method groups
 
 - Telnyx account: `connectTelnyxAccount`, `rotateTelnyxAccountKey`,
   `reverifyTelnyxAccount`, `disconnectTelnyxAccount`, `getConnectionStatus`
-- Number inventory and purchase: `listTelnyxOwnedNumbers`,
-  `listManagedPhoneNumbers`, `getManagedPhoneNumber`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
-  `getTelnyxNumberDrift`, `searchAvailableNumbers`,
-  `purchaseNumber`, `getNumberOrderStatus`
-- Routing and trunks: `assignAgentToNumber`, `unassignAgentFromNumber`,
+- Numbers: `listTelnyxOwnedNumbers`, `listManagedPhoneNumbers`,
+  `getManagedPhoneNumber`, `importTelnyxNumber`, `syncTelnyxOwnedNumbers`,
+  `getTelnyxNumberDrift`, `searchAvailableNumbers`, `purchaseNumber`,
+  `getNumberOrderStatus`
+- Routing: `assignAgentToNumber`, `unassignAgentFromNumber`,
   `upsertTelnyxSipConnection`, `verifyTelnyxSipConnection`,
-  `upsertTelnyxOutboundVoiceProfile`,
-  `verifyTelnyxOutboundVoiceProfile`, `configureNumberRouting`,
-  `configureOutboundTrunk`, `getOutboundReadiness`
-- Calls: `createOutboundCall`, `getCallStatus`, `listCallRecords`,
-  `disableNumber`
-- Sessions: `getSessionByRoom` — look up the voice session for a room name, to correlate a
-  call with its session
+  `upsertTelnyxOutboundVoiceProfile`, `verifyTelnyxOutboundVoiceProfile`,
+  `configureNumberRouting`, `configureOutboundTrunk`, `getOutboundReadiness`
+- Calls: `createOutboundCall`, `getCallStatus`, `listCallRecords`, `disableNumber`
+- Sessions: `getSessionByRoom` — correlate a room name with its voice session
 
-## Stable Error Handling
+## Stable error handling
 
 Failed calls throw `AwaazLabsUvaTelephonyError`:
 
 | Code | Typical handling |
 |---|---|
-| `telnyx_connection_missing` | Ask an operator to connect the Telnyx account in a backend/admin flow. |
-| `number_order_action_required` | Surface the provider action requirement to an operator. |
-| `regulatory_action_required` | Stop automated purchase flow until required documents are approved. |
-| `outbound_not_ready` | Check routing, SIP connection, outbound profile, and number assignment. |
-| `idempotency_payload_mismatch` | Reuse the original payload or generate a new idempotency key. |
-| `number_not_available` | Ask the user to choose another exact number. |
-| `unsupported_number_feature` | Treat the requested feature as unavailable for the selected market. |
-| `telnyx_key_permission_failed` | Rotate the Telnyx key or grant the required provider permissions. |
+| `telnyx_connection_missing` | Connect the Telnyx account first |
+| `number_order_action_required` | Surface provider action to an operator |
+| `regulatory_action_required` | Complete Telnyx KYC / docs, then retry |
+| `outbound_not_ready` | Check SIP, OVP, number assignment (`getOutboundReadiness`) |
+| `outbound_destination_disabled` | Destination country not on the platform whitelist |
+| `idempotency_payload_mismatch` | Reuse original payload or new idempotency key |
+| `number_not_available` | Choose another E.164 |
+| `unsupported_number_feature` | Feature unavailable for that market |
+| `telnyx_key_permission_failed` | Rotate key or grant Telnyx permissions |
 
-Public error objects and SDK responses are redacted. Raw provider payloads,
-signatures, Telnyx keys, SIP secrets, and restricted diagnostics are not returned
-by this SDK.
+Responses are redacted — no raw Telnyx keys, SIP secrets, or provider dumps.
 
-## Number Search And Purchase Notes
+## Number search and purchase
 
-- `searchAvailableNumbers()` returns priced Telnyx inventory rows, including
-  `upfront_cost`, `monthly_cost`, and `currency` when the provider supplies them.
-- `purchaseNumber()` returns a typed order payload and attempts a short
-  reconciliation pass so a successful buy can also return `managed_number_id`
-  immediately when Telnyx has already materialized the purchased number.
-- If the provider still reports a true pending order, call
-  `getNumberOrderStatus(orderId)` rather than firing a second purchase request.
+- `searchAvailableNumbers()` returns priced inventory when Telnyx supplies costs
+- `purchaseNumber()` may return `managed_number_id` immediately after short reconciliation
+- Pending orders: poll `getNumberOrderStatus(orderId)` — do not double-purchase
 
-## Security Rules
+Country is required on search (ISO 3166-1 alpha-2). Do not assume US.
 
-- Calls only `/machine/telephony/*` routes.
-- Signs canonical JSON request bodies with fixed action strings from the frozen
-  telephony contract.
-- Sends `X-Tenant-Id`, `X-Timestamp`, `X-Nonce`, and `X-Signature`.
-- Blocks `extraHeaders` from overriding auth or JSON body headers.
-- Does not log, persist, cache, return, or browser-expose raw Telnyx API keys.
-- Does not connect directly to Supabase, Telnyx, LiveKit, or dashboard code.
+## Security
+
+- Calls only `/machine/*` routes
+- Signs with frozen telephony contract action strings
+- Sends `X-Tenant-Id`, `X-Timestamp`, `X-Nonce`, `X-Signature`
+- Does not connect directly to Telnyx, LiveKit, or Supabase from this client
 
 ## Build
 

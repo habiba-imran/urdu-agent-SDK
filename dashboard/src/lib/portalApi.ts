@@ -1,6 +1,7 @@
 import {
   clearStoredTenantToken,
   ensurePortalSession,
+  portalAuthHeaders,
   redirectToLogin,
 } from '@/lib/portalAuth';
 
@@ -66,6 +67,8 @@ export type PortalCredentials = {
   status: string;
   /** True when an HMAC secret hash exists for this tenant. */
   secret_provisioned?: boolean;
+  /** Owner-only: raw HMAC for host backend env (always visible on API Keys). */
+  hmac_secret?: string | null;
 };
 
 export type PortalSession = {
@@ -138,33 +141,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  let token = await ensurePortalSession();
-  if (!token) {
+  const sessionOk = await ensurePortalSession();
+  if (!sessionOk) {
     redirectToLogin();
     throw new PortalApiAuthError("Missing tenant session. Please sign in again.");
   }
 
-  const doFetch = (bearer: string) =>
+  const doFetch = () =>
     fetch(`${API_BASE}${path}`, {
       ...init,
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bearer}`,
+        ...portalAuthHeaders(),
         ...(init?.headers ?? {}),
       },
       cache: "no-store",
     });
 
-  let response = await doFetch(token);
+  let response = await doFetch();
 
   if (response.status === 401) {
-    // Portal JWT expired or rejected — try one silent re-exchange, then login.
     clearStoredTenantToken();
-    token = await ensurePortalSession();
-    if (token) {
-      response = await doFetch(token);
+    const refreshed = await ensurePortalSession();
+    if (refreshed) {
+      response = await doFetch();
     }
-    if (!token || response.status === 401) {
+    if (!refreshed || response.status === 401) {
       redirectToLogin();
       throw new PortalApiAuthError("Session expired. Please sign in again.");
     }
@@ -254,15 +257,32 @@ export function getCredentials() {
   return request<PortalCredentials>("/portal/credentials");
 }
 
-export function getCredentialSecret() {
-  return request<{ hmac_secret: string }>("/portal/credentials/secret");
-}
+export type PortalOverviewSnapshot = {
+  agents_count: number;
+  numbers_count: number;
+  assigned_numbers_count: number;
+  credentials: PortalCredentials;
+  usage: PortalUsageSummary;
+  readiness: {
+    is_ready?: boolean;
+    ready?: boolean;
+    connection_status?: string;
+    sip_status?: string;
+    outbound_profile_status?: string;
+    active_numbers_count?: number;
+    reasons?: string[];
+    missing_steps?: string[];
+    has_connection?: boolean;
+    has_managed_numbers?: boolean;
+    has_sip_connection?: boolean;
+    has_outbound_profile?: boolean;
+  };
+  generated_at: string;
+};
 
-export function rotateCredentialSecret() {
-  return request<{ hmac_secret: string; warning: string }>(
-    "/portal/credentials/rotate-secret",
-    { method: "POST" },
-  );
+/** Aggregated Overview payload (one round-trip). */
+export function getOverview() {
+  return request<PortalOverviewSnapshot>("/portal/overview");
 }
 
 export function setAllowedOrigins(allowed_origins: string[]) {

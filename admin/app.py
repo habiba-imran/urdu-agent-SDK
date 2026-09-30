@@ -110,14 +110,19 @@ ADMIN_PORTAL_ORIGINS = [
 ] or [_DEFAULT_ADMIN_ORIGINS]
 
 app = FastAPI(title="UVA super-admin portal")
-# F-M10: baseline security headers. The admin image (docker/admin.Dockerfile) copies only
-# admin/ + scripts/dbconn.py, so control_plane may not be importable here; the headers are
-# applied when it is, and their absence is logged rather than crashing the service.
+# F-M10 / P1-M2: baseline security headers. docker/admin.Dockerfile vendors
+# control_plane/security_headers.py. Hosted startup refuses to serve without them;
+# local/dev may continue with a warning if the thin tree omits the module.
 try:
     from control_plane.security_headers import SecurityHeadersMiddleware
 
     app.add_middleware(SecurityHeadersMiddleware, hsts=_admin_is_hosted())
 except ImportError:  # pragma: no cover - depends on how the image was built
+    if _admin_is_hosted():
+        raise RuntimeError(
+            "admin: control_plane.security_headers is required when hosted "
+            "(P1-M2). Vendor security_headers.py into the admin image."
+        ) from None
     logging.getLogger("admin").warning(
         "control_plane.security_headers not importable - security headers are NOT set"
     )

@@ -19,15 +19,17 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiohttp
 import psycopg
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, Header, HTTPException, Request, BackgroundTasks
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
+from livekit.protocol.room import ListRoomsRequest
 from pydantic import BaseModel
 
 try:
@@ -151,6 +153,18 @@ _DOCS_ENABLED = (os.environ.get("CP_ENABLE_DOCS") or "").strip().lower() in {
     "on",
 } or not is_hosted()
 
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    # Defined before FastAPI() so lifespan can be wired at construction. Dispatch
+    # helpers are resolved at runtime (after their definitions below).
+    _warm_dispatch_client()
+    try:
+        yield
+    finally:
+        _shutdown_dispatch()
+
+
 app = FastAPI(
     title="UVA Control Plane",
     description="Voice-Agent-as-a-Service token minting, quota enforcement, and LiveKit session management API",
@@ -158,6 +172,7 @@ app = FastAPI(
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
     openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+    lifespan=_app_lifespan,
 )
 
 
@@ -480,9 +495,10 @@ def _next_refresh_count(metadata: dict) -> int:
 def _enforce_refresh_gates(*, tenant_id: str, room: str) -> None:
     """Re-run the mint's tenant/quota/session gates on every refresh.
 
-    Deliberately fails OPEN on an infrastructure error: a database blip must not drop every
-    live call at once. It fails CLOSED on an actual answer — suspended tenant, closed
-    session, monthly cap reached — which is the case F-H7 is about.
+    Fails CLOSED on an actual answer — suspended tenant, closed session, monthly cap
+    (F-H7). On infrastructure errors: fails CLOSED when hosted (P1-M1 — a DB outage
+    must not keep suspended/capped calls alive); fails OPEN only in local development
+    so a laptop blip does not drop every live call.
     """
     try:
         with mint_db_connection(connect_timeout=5) as conn:
@@ -516,8 +532,18 @@ def _enforce_refresh_gates(*, tenant_id: str, room: str) -> None:
     except HTTPException:
         raise
     except Exception:
+        if is_hosted():
+            _mint_log.error(
+                "refresh gate checks unavailable tenant=%s room=%s - refusing refresh",
+                tenant_id,
+                room,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503, detail="refresh gates unavailable"
+            ) from None
         _mint_log.warning(
-            "refresh gate checks unavailable tenant=%s room=%s - allowing refresh",
+            "refresh gate checks unavailable tenant=%s room=%s - allowing refresh (dev)",
             tenant_id,
             room,
             exc_info=True,
@@ -606,10 +632,12 @@ def _dev_reset_concurrency(conn: psycopg.Connection, tenant_id: str) -> None:
     )
 
 
-# Agent dispatch runs on the critical path to first audio (audit §3.1). It used to pay for a new
-# event loop (asyncio.run), a new aiohttp session and a new TCP+TLS handshake to LiveKit on every
-# session. Instead, one long-lived event loop on a daemon thread owns one LiveKitAPI client whose
-# keep-alive connections are reused across dispatches. Both are created lazily, per process.
+# Agent dispatch is on the critical path to first audio (audit §3.1 / client-felt latency).
+# History: each mint used asyncio.run + a fresh LiveKitAPI (TLS every time), then FastAPI
+# BackgroundTasks started dispatch *after* the mint response flushed — so job assign could not
+# overlap the client's LiveKit join. Now: one long-lived loop thread + keep-alive LiveKitAPI,
+# dispatch is scheduled the moment mint succeeds (before the response returns), and a watcher
+# thread only waits for success/rollback. Startup warms the TLS pool so the first call is not cold.
 # livekit-api's own per-attempt timeout is 10 s; allow one region failover.
 _DISPATCH_TIMEOUT_SEC = 20
 # Kept short so an idle pooled connection is rarely stale when reused.
@@ -618,6 +646,7 @@ _dispatch_lock = threading.Lock()
 _dispatch_loop: asyncio.AbstractEventLoop | None = None
 _dispatch_client: api.LiveKitAPI | None = None
 _dispatch_session: aiohttp.ClientSession | None = None
+_dispatch_log = logging.getLogger("control_plane.dispatch")
 
 
 def _get_dispatch_loop() -> asyncio.AbstractEventLoop:
@@ -658,6 +687,38 @@ async def _reset_dispatch_client() -> None:
     _dispatch_session = None
     if session is not None and not session.closed:
         await session.close()
+
+
+async def _ensure_dispatch_client_ready() -> None:
+    """Create the singleton client and open TLS so the first mint is not cold."""
+    client = _get_dispatch_client()
+    await client.room.list_rooms(ListRoomsRequest())
+
+
+def _warm_dispatch_client() -> None:
+    """Best-effort process warmup — must not block control-plane boot on LiveKit outage."""
+    loop = _get_dispatch_loop()
+    future = asyncio.run_coroutine_threadsafe(_ensure_dispatch_client_ready(), loop)
+    try:
+        future.result(timeout=_DISPATCH_TIMEOUT_SEC)
+        _dispatch_log.info("dispatch LiveKit client warmed")
+    except Exception:
+        _dispatch_log.warning(
+            "dispatch LiveKit client warm failed — first mint may pay TLS",
+            exc_info=True,
+        )
+
+
+def _shutdown_dispatch() -> None:
+    loop = _dispatch_loop
+    if loop is None or loop.is_closed():
+        return
+    future = asyncio.run_coroutine_threadsafe(_reset_dispatch_client(), loop)
+    try:
+        future.result(timeout=5)
+    except Exception:
+        _dispatch_log.warning("dispatch client shutdown failed", exc_info=True)
+    loop.call_soon_threadsafe(loop.stop)
 
 
 async def _dispatch_agent(
@@ -716,14 +777,47 @@ def _session_response(payload: dict) -> JSONResponse:
     )
 
 
-def _run_dispatch_background(
+def _watch_dispatch(
+    future: "concurrent.futures.Future[None]",
+    *,
     room_name: str,
     tenant_id: str,
     agent_id: str,
+    started: float,
+) -> None:
+    """Wait off the mint path for LiveKit create_dispatch; roll back quota on failure."""
+    try:
+        future.result(timeout=_DISPATCH_TIMEOUT_SEC)
+        _dispatch_log.info(
+            "agent dispatch ok room=%s tenant=%s agent=%s elapsed_ms=%d",
+            room_name,
+            tenant_id,
+            agent_id,
+            int((time.monotonic() - started) * 1000),
+        )
+    except Exception:
+        future.cancel()
+        _dispatch_log.exception(
+            "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
+            room_name,
+            tenant_id,
+            agent_id,
+        )
+        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+
+
+def _schedule_dispatch(
+    room_name: str,
+    tenant_id: str,
+    agent_id: str,
+    *,
     greeting: str | None = None,
     verified_caller_phone: str | None = None,
-) -> None:
-    log = logging.getLogger("control_plane.dispatch")
+) -> "concurrent.futures.Future[None]":
+    """Kick LiveKit job assign immediately (overlaps mint response + client join).
+
+    Returns the concurrent.futures Future from run_coroutine_threadsafe (for tests).
+    """
     started = time.monotonic()
     future = asyncio.run_coroutine_threadsafe(
         _dispatch_agent(
@@ -735,42 +829,37 @@ def _run_dispatch_background(
         ),
         _get_dispatch_loop(),
     )
-    try:
-        future.result(timeout=_DISPATCH_TIMEOUT_SEC)
-        log.info(
-            "agent dispatch ok room=%s tenant=%s agent=%s elapsed_ms=%d",
-            room_name,
-            tenant_id,
-            agent_id,
-            int((time.monotonic() - started) * 1000),
-        )
-    except Exception:
-        future.cancel()
-        log.exception(
-            "agent dispatch failed room=%s tenant=%s agent=%s — rolling back session",
-            room_name,
-            tenant_id,
-            agent_id,
-        )
-        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+    threading.Thread(
+        target=_watch_dispatch,
+        kwargs={
+            "future": future,
+            "room_name": room_name,
+            "tenant_id": tenant_id,
+            "agent_id": agent_id,
+            "started": started,
+        },
+        name=f"lk-dispatch-watch-{room_name[:8]}",
+        daemon=True,
+    ).start()
+    return future
 
 
 def _with_dispatch(
     res: dict,
     tenant_id: str,
     agent_id: str,
-    background_tasks: BackgroundTasks,
     *,
     greeting: str | None = None,
     verified_caller_phone: str | None = None,
 ) -> dict:
-    background_tasks.add_task(
-        _run_dispatch_background,
+    # Start create_dispatch *before* the HTTP response is built/flushed so worker job
+    # assignment overlaps client LiveKit connect — not after BackgroundTasks.
+    _schedule_dispatch(
         res["roomName"],
         tenant_id,
         agent_id,
-        greeting,
-        verified_caller_phone,
+        greeting=greeting,
+        verified_caller_phone=verified_caller_phone,
     )
     return {**res, "refreshUrl": "/v1/session/refresh", "expiresIn": TTL_SEC}
 
@@ -780,7 +869,6 @@ def _dev_mint_session(
     tenant_id: str,
     agent_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     auto_reset_quota: bool,
     greeting: str | None = None,
     verified_caller_phone: str | None = None,
@@ -861,7 +949,6 @@ def _dev_mint_session(
         res,
         tenant_id,
         agent_id,
-        background_tasks,
         greeting=greeting,
         verified_caller_phone=verified_caller_phone,
     )
@@ -871,7 +958,6 @@ def _dev_mint_session(
 def create_session(
     body: SessionBody,
     request: Request,
-    background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(...),
     x_timestamp: str = Header(...),
     x_nonce: str = Header(...),
@@ -920,7 +1006,6 @@ def create_session(
                     res,
                     x_tenant_id,
                     body.agent_id,
-                    background_tasks,
                     greeting=greeting,
                     verified_caller_phone=verified_caller_phone,
                 )
@@ -959,7 +1044,7 @@ def _dev_mint_reset_quota_allowed() -> bool:
 
 @app.post("/v1/session/dev-mint")
 def create_dev_session(
-    body: DevSessionBody, request: Request, background_tasks: BackgroundTasks
+    body: DevSessionBody, request: Request
 ):
     if not _dev_mint_enabled():
         # 404, not 403: a disabled development endpoint should not advertise that it exists.
@@ -989,7 +1074,6 @@ def create_dev_session(
             tenant_id=tenant_id,
             agent_id=body.agentId,
             request=request,
-            background_tasks=background_tasks,
             auto_reset_quota=_dev_mint_reset_quota_allowed(),
             greeting=greeting,
             verified_caller_phone=verified_caller_phone,

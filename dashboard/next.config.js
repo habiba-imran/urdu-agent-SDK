@@ -16,10 +16,33 @@ const SUPABASE = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
 const isProd = process.env.NODE_ENV === 'production';
 
+/** localhost and 127.0.0.1 are different CSP hosts — allow both for local HTTP APIs. */
+function localHostAliases(url) {
+  const raw = (url || '').trim();
+  if (!raw) return [];
+  const out = [raw];
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return out;
+    if (u.hostname === 'localhost') {
+      const alt = new URL(raw);
+      alt.hostname = '127.0.0.1';
+      out.push(alt.origin);
+    } else if (u.hostname === '127.0.0.1') {
+      const alt = new URL(raw);
+      alt.hostname = 'localhost';
+      out.push(alt.origin);
+    }
+  } catch {
+    /* keep raw */
+  }
+  return out;
+}
+
 const connectSrc = [
   "'self'",
-  CONTROL_PLANE,
-  PORTAL_API,
+  ...localHostAliases(CONTROL_PLANE),
+  ...localHostAliases(PORTAL_API),
   LIVEKIT,
   SUPABASE,
   'https://*.supabase.co',
@@ -28,9 +51,13 @@ const connectSrc = [
   'wss://*.livekit.cloud',
 ]
   .filter(Boolean)
+  .filter((v, i, arr) => arr.indexOf(v) === i)
   .join(' ');
 
 // Next.js injects inline bootstrap scripts, and in development also uses eval for HMR.
+// Wave 2 / P1-H6: block inline event-handler attributes; keep 'unsafe-inline' for Next
+// hydration until a nonce-based CSP is wired. Prefer HttpOnly portal cookies so XSS
+// cannot read the session JWT from storage even if script-src stays imperfect.
 const scriptSrc = isProd
   ? "'self' 'unsafe-inline'"
   : "'self' 'unsafe-inline' 'unsafe-eval'";
@@ -38,6 +65,7 @@ const scriptSrc = isProd
 const csp = [
   "default-src 'self'",
   `script-src ${scriptSrc}`,
+  "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",

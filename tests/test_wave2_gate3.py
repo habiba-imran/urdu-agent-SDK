@@ -196,13 +196,30 @@ def test_refresh_is_refused_for_an_unknown_tenant(cp, monkeypatch):
 
 
 def test_refresh_fails_open_when_the_database_is_unreachable(cp, monkeypatch):
-    """A database blip must not drop every live call at once."""
+    """Local/dev: a database blip must not drop every live call at once."""
+
+    def boom(**kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setenv("UVA_ENV", "development")
+    # is_hosted reads env at call time via runtime_env
+    monkeypatch.setattr(cp, "mint_db_connection", boom)
+    monkeypatch.setattr(cp, "is_hosted", lambda: False)
+    cp._enforce_refresh_gates(tenant_id="t", room="r")  # must not raise
+
+
+def test_refresh_fails_closed_when_hosted_and_db_unreachable(cp, monkeypatch):
+    """P1-M1: hosted refresh must not keep suspended/capped calls alive during outage."""
+    from fastapi import HTTPException
 
     def boom(**kwargs):
         raise RuntimeError("connection refused")
 
     monkeypatch.setattr(cp, "mint_db_connection", boom)
-    cp._enforce_refresh_gates(tenant_id="t", room="r")  # must not raise
+    monkeypatch.setattr(cp, "is_hosted", lambda: True)
+    with pytest.raises(HTTPException) as excinfo:
+        cp._enforce_refresh_gates(tenant_id="t", room="r")
+    assert excinfo.value.status_code == 503
 
 
 def test_refresh_count_is_capped(cp):

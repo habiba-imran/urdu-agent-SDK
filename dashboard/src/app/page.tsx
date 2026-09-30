@@ -1,18 +1,18 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { Check, Copy } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { isPortalAuthFailure } from '@/lib/portalAuth';
+import { readOverviewCache, writeOverviewCache } from '@/lib/overviewCache';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { StatCardSkeleton } from '@/components/ui/skeleton';
-import { TelephonyStatusBadge } from '@/components/TelephonyStatusBadge';
 import { cn } from '@/lib/utils';
 
 function CopyableMono({
@@ -113,54 +113,45 @@ function ChecklistRow({
 }
 
 export default function DashboardPage() {
-  const { data: agents, isLoading: agentsLoading, error: agentsError } = useSWR(
-    swrKeys.agents,
-    swrFetchers.agents,
-  );
-  const { data: credentials, isLoading: credentialsLoading, error: credentialsError } = useSWR(
-    swrKeys.credentials,
-    swrFetchers.credentials,
-  );
-  const { data: usage, isLoading: usageLoading, error: usageError } = useSWR(
-    swrKeys.usage,
-    swrFetchers.usage,
-  );
-  const { data: managedNumbers } = useSWR(
-    swrKeys.telephonyNumbers,
-    swrFetchers.telephonyNumbers,
-  );
-  const { data: readiness } = useSWR(
-    swrKeys.telephonyReadiness,
-    swrFetchers.telephonyReadiness,
-    { refreshInterval: 60_000 },
-  );
+  const cached = useMemo(() => readOverviewCache(), []);
+  const {
+    data: overview,
+    isLoading,
+    error,
+  } = useSWR(swrKeys.overview, swrFetchers.overview, {
+    fallbackData: cached,
+    revalidateOnMount: true,
+    keepPreviousData: true,
+  });
 
-  const error = agentsError ?? credentialsError ?? usageError;
-  const showError = error && !isPortalAuthFailure(error);
+  useEffect(() => {
+    if (overview) writeOverviewCache(overview);
+  }, [overview]);
+
+  const showError = error && !isPortalAuthFailure(error) && !overview;
+  const credentials = overview?.credentials;
+  const usage = overview?.usage;
+  const readiness = overview?.readiness;
 
   const concurrentNow = usage?.quota.concurrent_now ?? 0;
   const usedMinutes = usage?.quota.minutes_this_month ?? 0;
-  const liveCount = concurrentNow;
-  const totalNumbers = managedNumbers?.length ?? 0;
-
-  const assignedNumberCount = useMemo(
-    () => (managedNumbers ?? []).filter((n) => Boolean(n.assigned_agent_id)).length,
-    [managedNumbers],
-  );
+  const agentsCount = overview?.agents_count ?? 0;
+  const totalNumbers = overview?.numbers_count ?? 0;
+  const assignedNumberCount = overview?.assigned_numbers_count ?? 0;
 
   const hmacProvisioned = Boolean(
     credentials?.secret_provisioned ?? credentials?.hmac_secret_hash,
   );
   const originsCount = credentials?.allowed_origins?.filter((o) => o.trim()).length ?? 0;
-  const hasAgents = (agents?.length ?? 0) > 0;
+  const hasAgents = agentsCount > 0;
   const phoneReady = Boolean(readiness?.is_ready ?? readiness?.ready);
+  const showSkeletons = isLoading && !overview;
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Overview"
         description="Workspace status at a glance — agents, phone numbers, live calls, and keys."
-        actions={<TelephonyStatusBadge />}
       />
 
       {showError ? (
@@ -172,45 +163,44 @@ export default function DashboardPage() {
 
       <Card className="console-grid-hero overflow-hidden">
         <CardContent className="grid gap-4 p-6 pt-6 sm:grid-cols-2 lg:grid-cols-4">
-          {agentsLoading ? (
-            <StatCardSkeleton />
+          {showSkeletons ? (
+            <>
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </>
           ) : (
-            <StatCard
-              label="Agents"
-              value={agents?.length ?? 0}
-              href="/agents"
-              linkLabel="View all agents"
-              className="border-0 shadow-none"
-            />
-          )}
-          <StatCard
-            label="Phone numbers"
-            value={totalNumbers}
-            href="/agents"
-            linkLabel="View on agents"
-            className="border-0 shadow-none"
-          />
-          {usageLoading ? (
-            <StatCardSkeleton />
-          ) : (
-            <StatCard
-              label="Live calls"
-              value={liveCount}
-              href="/sessions"
-              linkLabel="View sessions"
-              className="border-0 shadow-none"
-            />
-          )}
-          {usageLoading ? (
-            <StatCardSkeleton />
-          ) : (
-            <StatCard
-              label="Minutes this month"
-              value={Number(usedMinutes.toFixed(1))}
-              href="/usage"
-              linkLabel="View usage"
-              className="border-0 shadow-none"
-            />
+            <>
+              <StatCard
+                label="Agents"
+                value={agentsCount}
+                href="/agents"
+                linkLabel="View all agents"
+                className="border-0 shadow-none"
+              />
+              <StatCard
+                label="Phone numbers"
+                value={totalNumbers}
+                href="/agents"
+                linkLabel="View on agents"
+                className="border-0 shadow-none"
+              />
+              <StatCard
+                label="Live calls"
+                value={concurrentNow}
+                href="/sessions"
+                linkLabel="View sessions"
+                className="border-0 shadow-none"
+              />
+              <StatCard
+                label="Minutes this month"
+                value={Number(usedMinutes.toFixed(1))}
+                href="/usage"
+                linkLabel="View usage"
+                className="border-0 shadow-none"
+              />
+            </>
           )}
         </CardContent>
       </Card>
@@ -231,18 +221,18 @@ export default function DashboardPage() {
             <CopyableMono
               label="Publishable key"
               value={credentials?.publishable_key}
-              loading={credentialsLoading}
+              loading={showSkeletons}
             />
             <CopyableMono
               label="Tenant ID"
               value={credentials?.tenant_id}
-              loading={credentialsLoading}
+              loading={showSkeletons}
             />
 
             <div className="flex flex-col gap-1.5">
               <p className="font-mono-label text-text-muted">HMAC secret</p>
               <div className="flex flex-wrap items-center gap-2">
-                {credentialsLoading ? (
+                {showSkeletons ? (
                   <span className="text-[13px] text-text-muted">Loading…</span>
                 ) : hmacProvisioned ? (
                   <Badge variant="success">Provisioned</Badge>
@@ -256,14 +246,15 @@ export default function DashboardPage() {
                 ) : null}
               </div>
               <p className="text-[13px] text-text-muted">
-                Reveal or rotate only on API Keys — never embed the secret in a frontend.
+                Copy from API Keys (owners). Console rotation is disabled — never embed the secret
+                in a frontend.
               </p>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <p className="font-mono-label text-text-muted">Allowed origins</p>
               <div className="flex flex-wrap items-center gap-2">
-                {credentialsLoading ? (
+                {showSkeletons ? (
                   <span className="text-[13px] text-text-muted">Loading…</span>
                 ) : (
                   <Badge variant="outline" dot={originsCount > 0 ? 'success' : 'muted'}>
@@ -302,7 +293,7 @@ export default function DashboardPage() {
                 label="Agents"
                 detail={
                   hasAgents
-                    ? `${agents?.length ?? 0} agent${(agents?.length ?? 0) === 1 ? '' : 's'} visible`
+                    ? `${agentsCount} agent${agentsCount === 1 ? '' : 's'} visible`
                     : 'Create agents with @awaazlabs-uva/agents'
                 }
                 href="/agents"
@@ -324,8 +315,8 @@ export default function DashboardPage() {
                 label="HMAC secret"
                 detail={
                   hmacProvisioned
-                    ? 'Backend signing secret is provisioned'
-                    : 'Reveal or rotate from API Keys after sign-in'
+                    ? 'Backend signing secret is provisioned — copy on API Keys'
+                    : 'Ask an operator to provision the signing secret'
                 }
                 href="/credentials"
                 linkLabel="Keys"
