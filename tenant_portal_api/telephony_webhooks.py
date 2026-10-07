@@ -156,7 +156,12 @@ def verify_telnyx_webhook_signature(
     configured_public_key = (
         public_key if public_key is not None else telnyx_public_key()
     )
+    # M4-F01: never soft-accept on hosted — defense in depth beyond startup assert.
+    from control_plane.runtime_env import is_hosted
+
     if is_mock_provider_mode() and not configured_public_key:
+        if is_hosted():
+            return False
         return True
     if not configured_public_key or not signature_header or not timestamp_header:
         return False
@@ -280,6 +285,33 @@ def _persist_telnyx_webhook_event(
     data: dict[str, Any],
 ) -> dict[str, Any] | None:
     with psycopg.connect(**conn_kwargs(), connect_timeout=3) as conn:
+        # M4-F02: claim the provider event id in a durable inbox BEFORE side effects,
+        # including when no telephony_calls row matches yet.
+        try:
+            claimed = conn.execute(
+                """
+                insert into telephony_webhook_claims (provider_event_id, event_type, payload)
+                values (%s, %s, %s::jsonb)
+                on conflict (provider_event_id) do nothing
+                returning provider_event_id
+                """,
+                (str(event_id), event_type, json.dumps(data)),
+            ).fetchone()
+            if not claimed:
+                conn.commit()
+                return {
+                    "status": "duplicate",
+                    "event_id": event_id,
+                    "event_type": event_type,
+                }
+        except psycopg.errors.UndefinedTable:
+            # Migration 0038 not applied yet — fall through to call_events-only path.
+            conn.rollback()
+            logger.warning(
+                "telephony_webhook_claims missing — apply migration 0038; "
+                "using legacy call_events dedupe only"
+            )
+
         existing = conn.execute(
             """
             select 1 from telephony_call_events
@@ -296,8 +328,6 @@ def _persist_telnyx_webhook_event(
                 "event_type": event_type,
             }
 
-        # Attach to a matching call when possible; otherwise skip event insert
-        # (provider_event_id uniqueness still guarded by process-local set).
         matched = conn.execute(
             """
             select id, tenant_id from telephony_calls
@@ -339,9 +369,17 @@ def _persist_telnyx_webhook_event(
                     ),
                 ).fetchone()
                 if not inserted:
-                    logger.info("Skipping duplicate webhook event %s for tenant %s", event_id, tenant_id)
+                    logger.info(
+                        "Skipping duplicate webhook event %s for tenant %s",
+                        event_id,
+                        tenant_id,
+                    )
                     conn.commit()
-                    return None
+                    return {
+                        "status": "duplicate",
+                        "event_id": event_id,
+                        "event_type": event_type,
+                    }
             except Exception:
                 # P3-H2 / F-H6: abort side effects and let the outer endpoint return 500
                 # so Telnyx retries. Never mutate call status/quota without a durable row.

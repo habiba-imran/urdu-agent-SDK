@@ -91,6 +91,17 @@ def _require_env() -> None:
             "control_plane startup blocked: missing required env var(s): "
             + ", ".join(missing)
         )
+    # M1-F01: hosted must encrypt tenant HMAC secrets at rest — refuse plaintext-only deploys.
+    if is_hosted():
+        from .secret_crypto import ENV_VAR as _TENANT_SECRET_KEY_ENV
+        from .secret_crypto import is_enabled as _tenant_secret_encryption_enabled
+
+        if not _tenant_secret_encryption_enabled():
+            raise RuntimeError(
+                "control_plane startup blocked: "
+                f"{_TENANT_SECRET_KEY_ENV} is required when hosted "
+                "(tenant HMAC secrets must not live in plaintext)"
+            )
 
 
 _require_env()
@@ -130,10 +141,13 @@ if _CORS_ORIGINS == _DEV_DEFAULT_ORIGINS and not _CORS_ORIGINS_RAW.strip():
 _SENTRY_DSN = os.environ.get("SENTRY_DSN") or _ENV.get("SENTRY_DSN", "")
 if _SENTRY_DSN and sentry_sdk is not None:
     try:
+        from .sentry_scrub import before_send as _sentry_before_send
+
         sentry_sdk.init(
             dsn=_SENTRY_DSN,
             traces_sample_rate=0.1,
             environment=os.environ.get("ENVIRONMENT", "production"),
+            before_send=_sentry_before_send,
         )
     except Exception:
         # F-M1: a swallowed failure here means error reporting is off for the whole

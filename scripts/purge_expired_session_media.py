@@ -348,9 +348,28 @@ def main(argv: list[str] | None = None) -> int:
         default=200,
         help="Max rows per table per run (default 200)",
     )
+    parser.add_argument(
+        "--fail-if-pending",
+        action="store_true",
+        help=(
+            "M7-F02: exit 1 on dry-run when any expired session/telephony rows "
+            "would be purged (forces ops to set PURGE_APPLY=true)"
+        ),
+    )
     args = parser.parse_args(argv)
     stats = run_purge(dry_run=args.dry_run, limit=max(1, args.limit))
     if stats.storage_failed > 0:
+        return 1
+    if (
+        args.fail_if_pending
+        and args.dry_run
+        and (stats.sessions_scanned + stats.telephony_scanned) > 0
+    ):
+        print(
+            "[purge] FAIL: expired media is pending but this run is dry-run — "
+            "set GitHub variable PURGE_APPLY=true (or workflow_dispatch apply=true)",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

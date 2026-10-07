@@ -222,17 +222,15 @@ def test_stale_open_session_is_not_reported_live():
         _cleanup_portal_tenant(tenant_id, voice_id)
 
 
-def test_portal_create_and_update_agent():
+def test_portal_create_agent_forbidden_by_default():
+    """M11 interim: portal JWT must not create agents (use /machine/agents)."""
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
     client = TestClient(app)
-
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
         )
-        token = login.json()["token"]
-        headers = {"Authorization": f"Bearer {token}"}
-
+        headers = {"Authorization": f"Bearer {login.json()['token']}"}
         created = client.post(
             "/portal/agents",
             headers=headers,
@@ -243,12 +241,26 @@ def test_portal_create_and_update_agent():
                 "llm_model": "gemini-2.5-flash",
             },
         )
-        assert created.status_code == 200
-        created_json = created.json()
-        assert created_json["name"] == "Support Agent"
+        assert created.status_code == 403
+        assert "machine/agents" in created.json()["detail"]
+    finally:
+        _cleanup_portal_tenant(tenant_id, voice_id)
+
+
+def test_portal_update_agent():
+    """Portal may still edit agents; create is machine-only under M11 interim."""
+    tenant_id, secret, voice_id, agent_id = _seed_portal_tenant()
+    client = TestClient(app)
+
+    try:
+        login = client.post(
+            "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
+        )
+        token = login.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
 
         updated = client.patch(
-            f"/portal/agents/{created_json['id']}",
+            f"/portal/agents/{agent_id}",
             headers=headers,
             json={"name": "Updated Support Agent"},
         )
@@ -258,11 +270,13 @@ def test_portal_create_and_update_agent():
         _cleanup_portal_tenant(tenant_id, voice_id)
 
 
-def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields():
-    """Backward compat (Phase 3, ADR-036): a payload with ONLY voice_id/llm_model — exactly what
-    every pre-Phase-3 integration still sends — must keep working unchanged AND now also populate
-    every new field to the ur+gladia+gemini+uplift defaults, with tts_voice_id synced to voice_id
-    (closing the gap Phase 1/2 flagged: a plain old-style create used to leave tts_voice_id NULL)."""
+def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields(monkeypatch):
+    """Backward compat (Phase 3, ADR-036) under break-glass PORTAL_ALLOW_AGENT_CREATE.
+
+    Default portal create is 403 (M11); provider backfill for host backends is covered by
+    machine create tests — this keeps the portal path exercised when explicitly re-enabled.
+    """
+    monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
     client = TestClient(app)
     try:
@@ -292,9 +306,10 @@ def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields():
         _cleanup_portal_tenant(tenant_id, voice_id)
 
 
-def test_portal_create_agent_rejects_unsupported_provider_combo():
+def test_portal_create_agent_rejects_unsupported_provider_combo(monkeypatch):
     """Guide's explicit example: ur+groq must be rejected with a stable, typed error code, before
     any DB write — not a generic 500 or a silent fallback to a supported provider."""
+    monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
     client = TestClient(app)
     try:
@@ -353,7 +368,8 @@ def test_portal_provider_capabilities_requires_auth_and_returns_ur():
         _cleanup_portal_tenant(tenant_id, voice_id)
 
 
-def test_portal_create_agent_with_explicit_new_fields():
+def test_portal_create_agent_with_explicit_new_fields(monkeypatch):
+    monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
     client = TestClient(app)
     try:

@@ -70,6 +70,16 @@ load_dotenv(_ENV_PATH, override=False)
 # no secret configured fails to start instead of generating a fresh one into .env.local
 # on every deploy (which silently invalidated every issued session).
 TENANT_PORTAL_JWT_SECRET = portal_jwt_secret()
+# M1-F01: portal rotates/stores HMAC secrets — hosted must have encryption key.
+if is_hosted():
+    from control_plane.secret_crypto import ENV_VAR as _TENANT_SECRET_KEY_ENV
+    from control_plane.secret_crypto import is_enabled as _tenant_secret_encryption_enabled
+
+    if not _tenant_secret_encryption_enabled():
+        raise RuntimeError(
+            "tenant_portal_api startup blocked: "
+            f"{_TENANT_SECRET_KEY_ENV} is required when hosted"
+        )
 DEFAULT_PORTAL_ORIGINS = "http://localhost:3000,http://localhost:5173"
 TENANT_PORTAL_ORIGINS = [
     o.strip()
@@ -686,7 +696,18 @@ def create_agent_route(
     body: CreateAgentBody,
     authorization: str | None = Header(default=None),
 ):
+    # M11 interim: dashboard/portal JWT must not create agents. Host backends use
+    # POST /machine/agents (HMAC). Opt-in break-glass: PORTAL_ALLOW_AGENT_CREATE=1.
     claims = _require_owner(authorization, request)
+    flag = (os.environ.get("PORTAL_ALLOW_AGENT_CREATE") or "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "agent create via portal is disabled — use POST /machine/agents "
+                "with HMAC (set PORTAL_ALLOW_AGENT_CREATE=1 only for break-glass)"
+            ),
+        )
     with _conn() as conn:
         # F-M26: nothing limited how many agents a tenant could create.
         existing = conn.execute(
@@ -1129,6 +1150,15 @@ def machine_create_agent_route(
             # the existing machine-auth test suite, not assumed safe.
             body=body.model_dump(exclude_none=True),
         )
+        # M5-F01: machine create must honor the same per-tenant agent cap as portal.
+        existing = conn.execute(
+            "select count(*) from agents where tenant_id = %s", (x_tenant_id,)
+        ).fetchone()
+        if existing and existing[0] >= MAX_AGENTS_PER_TENANT:
+            raise HTTPException(
+                status_code=409,
+                detail=f"agent limit reached ({MAX_AGENTS_PER_TENANT}) - delete an agent first",
+            )
         resolved = _resolve_provider_fields(conn, body, current=None)
         opening = _opening_from_body(body, None)
         tools = _tools_webhook_from_body(body, None)

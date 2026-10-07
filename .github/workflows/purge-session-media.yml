@@ -101,5 +101,6 @@ jobs:
           if [ "$APPLY" = "true" ]; then
             python scripts/purge_expired_session_media.py --limit "$LIMIT"
           else
-            python scripts/purge_expired_session_media.py --limit "$LIMIT" --dry-run
+            # M7-F02: dry-run must not silently succeed while expired media piles up.
+            python scripts/purge_expired_session_media.py --limit "$LIMIT" --dry-run --fail-if-pending
           fi

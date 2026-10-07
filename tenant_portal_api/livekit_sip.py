@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# M4-F03: LiveKit control-plane calls must not hang forever under provider outage.
+_DEFAULT_HTTP_TIMEOUT_SEC = 10.0
+
 
 class LiveKitSipClient:
     """Adapter for LiveKit Server SIP APIs."""
@@ -38,6 +41,24 @@ class LiveKitSipClient:
         self.api_key = api_key or os.getenv("LIVEKIT_API_KEY", "")
         self.api_secret = api_secret or os.getenv("LIVEKIT_API_SECRET", "")
         self.mock_mode = is_mock_provider_mode() if mock_mode is None else mock_mode
+        try:
+            self.http_timeout_sec = float(
+                os.getenv("LIVEKIT_HTTP_TIMEOUT_SEC", str(_DEFAULT_HTTP_TIMEOUT_SEC))
+            )
+        except ValueError:
+            self.http_timeout_sec = _DEFAULT_HTTP_TIMEOUT_SEC
+
+    def _livekit_api(self):
+        """Build a LiveKitAPI with an explicit HTTP timeout (M4-F03)."""
+        import aiohttp
+        import livekit.api as lk
+
+        return lk.LiveKitAPI(
+            url=self.url,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            timeout=aiohttp.ClientTimeout(total=self.http_timeout_sec),
+        )
 
     def create_or_get_inbound_trunk(
         self, phone_number_id: str, e164_number: str
@@ -54,9 +75,7 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
+            api = self._livekit_api()
             try:
                 listed = await api.sip.list_sip_inbound_trunk(
                     lk.ListSIPInboundTrunkRequest(numbers=[e164_number])
@@ -123,9 +142,7 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
+            api = self._livekit_api()
             try:
                 listed = await api.sip.list_sip_outbound_trunk(
                     lk.ListSIPOutboundTrunkRequest()
@@ -262,9 +279,7 @@ class LiveKitSipClient:
                     ]
                 )
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
+            api = self._livekit_api()
             try:
                 name = f"uva-dispatch-{phone_number_id}"
                 dispatch_metadata = _desired_dispatch_metadata()
@@ -404,9 +419,7 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
+            api = self._livekit_api()
             try:
                 created = await api.agent_dispatch.create_dispatch(
                     lk.CreateAgentDispatchRequest(
@@ -452,9 +465,7 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(
-                url=self.url, api_key=self.api_key, api_secret=self.api_secret
-            )
+            api = self._livekit_api()
             try:
                 created = await api.sip.create_sip_participant(
                     lk.CreateSIPParticipantRequest(
@@ -491,7 +502,7 @@ class LiveKitSipClient:
         async def op():
             import livekit.api as lk
 
-            api = lk.LiveKitAPI(url=self.url, api_key=self.api_key, api_secret=self.api_secret)
+            api = self._livekit_api()
             try:
                 await api.sip.delete_sip_dispatch_rule(
                     lk.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=dispatch_rule_id)

@@ -94,24 +94,38 @@ class DbSecretProvider(SecretProvider):
                 elif plaintext:
                     secret = plaintext
                     if is_encryption_enabled():
+                        # Startup requires the key on hosted (M1-F01); plaintext rows must be
+                        # migrated via encrypt_tenant_secrets.py --finalize.
                         _log.warning(
                             "tenant %s still stores a PLAINTEXT signing secret - run "
-                            "scripts/encrypt_tenant_secrets.py (F-C6)",
+                            "scripts/encrypt_tenant_secrets.py --finalize (F-C6/M1-F01)",
                             tenant_id,
                         )
                 if secret:
                     self._write_cache(tenant_id, secret)
                     return secret
         except Exception:
-            # F-M1: silently falling back to the env map hides a DB outage AND means
+            # F-M1 / M1-F02: silently falling back to the env map hides a DB outage AND means
             # authentication quietly runs on a possibly stale secret set (see F-M29).
+            # Hosted: fail closed — do not authenticate from CP_TENANT_SECRETS after DB errors.
+            from .runtime_env import is_hosted
+
+            if is_hosted():
+                _log.error(
+                    "tenant secret DB lookup failed for %s — refusing env fallback (hosted)",
+                    tenant_id,
+                    exc_info=True,
+                )
+                return None
             _log.warning(
                 "tenant secret DB lookup failed for %s — using env fallback",
                 tenant_id,
                 exc_info=True,
             )
 
-        # 2. Fallback to EnvSecretProvider if provided
+        # 2. Fallback to EnvSecretProvider if provided (DB miss / pre-migration tenants).
+        # Hosted DB *errors* already returned None above; a clean miss may still use env
+        # during secret-column migration.
         if self._fallback:
             secret = self._fallback.get(tenant_id)
             if secret is not None:

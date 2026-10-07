@@ -419,3 +419,27 @@ def test_missing_headers_401(env):
     client = TestClient(app)
     res = client.get("/machine/agents")
     assert res.status_code == 401
+
+
+def test_create_agent_enforces_max_agents_per_tenant(env, monkeypatch):
+    """M5-F01: machine create must hit the same per-tenant agent cap as portal."""
+    import tenant_portal_api.app as portal_app
+
+    # Seed already inserted one agent; cap at 1 so the next create must 409.
+    monkeypatch.setattr(portal_app, "MAX_AGENTS_PER_TENANT", 1)
+    client = TestClient(app)
+    body = {
+        "name": "Over Cap Agent",
+        "prompt": "x",
+        "voice_id": env["voice_id"],
+        "llm_model": "gemini-2.5-flash",
+    }
+    headers = _headers(
+        tenant_id=env["tenant_id"],
+        secret=env["secret"],
+        action="agent.create",
+        body=body,
+    )
+    res = client.post("/machine/agents", json=body, headers=headers)
+    assert res.status_code == 409
+    assert "agent limit reached" in res.json()["detail"]
