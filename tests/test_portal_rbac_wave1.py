@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -42,9 +43,11 @@ def _table_exists(conn: psycopg.Connection, name: str) -> bool:
 
 @pytest.fixture
 def db():
+    if not (os.environ.get("SUPABASE_DB_URL") or "").strip():
+        pytest.skip("SUPABASE_DB_URL not configured")
     try:
         conn = psycopg.connect(**conn_kwargs())
-    except Exception as exc:  # pragma: no cover
+    except (Exception, SystemExit) as exc:  # pragma: no cover — dbconn sys.exits if unset
         pytest.skip(f"database unavailable: {exc}")
     if not _table_exists(conn, "tenant_members"):
         conn.close()
