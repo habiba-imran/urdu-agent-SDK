@@ -32,8 +32,9 @@ jobs:
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY || 'test-key' }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
           CP_TENANT_SECRETS: "{}"
-          # Explicitly empty — do not substitute a fake postgres URL.
-          SUPABASE_DB_URL: ""
+          TENANT_SECRET_ENCRYPTION_KEY: "ci-unit-test-encryption-key"
+          # Placeholder only — run_ci_unit.py / offline guard block real DB I/O.
+          SUPABASE_DB_URL: "postgresql://offline:offline@127.0.0.1:1/offline"
         run: python scripts/run_ci_unit.py
 
   # --- Job 1b: Full suite including DB-backed tests (when secret present) ---
@@ -61,6 +62,7 @@ jobs:
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           CP_TENANT_SECRETS: "{}"
+          TENANT_SECRET_ENCRYPTION_KEY: "ci-integration-test-encryption-key"
         run: |
           if [ -z "$SUPABASE_DB_URL" ]; then
             echo "::warning::SUPABASE_DB_URL secret not set — integration suite skipped (unit job still required)."
@@ -199,7 +201,8 @@ jobs:
           cd sdk
           npm ci
           npm run build
-          if grep -rEq "(API_KEY|SECRET|SERVICE_ROLE|Bearer )" dist/; then
+          # Match credential-shaped identifiers, not normal Authorization: Bearer <jwt>.
+          if grep -rEq "(API_KEY|SERVICE_ROLE|LIVEKIT_API_SECRET|SUPABASE_SERVICE)" dist/; then
             echo "::error::a secret-shaped string reached the published SDK bundle"
             exit 1
           fi

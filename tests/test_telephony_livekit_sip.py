@@ -232,7 +232,8 @@ class _FakeDispatchService:
 class _FakeLiveKitAPI:
     dispatch_service = None
 
-    def __init__(self, url, api_key, api_secret):  # noqa: ARG002
+    def __init__(self, url=None, api_key=None, api_secret=None, **kwargs):  # noqa: ARG002
+        # Accept timeout= and other LiveKitAPI kwargs (M4-F03).
         self.sip = self.__class__.dispatch_service
 
     async def aclose(self):

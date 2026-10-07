@@ -812,7 +812,7 @@ class AllowedOriginsBody(BaseModel):
     allowed_origins: list[str] = Field(default_factory=list)
 
 
-def _normalize_origin(request: Request, raw: str) -> str:
+def _normalize_origin(raw: str) -> str:
     """An Origin header is scheme://host[:port] with no path - match that exactly, or the
     mint's `origin not in allowed_origins` comparison silently never matches."""
     text = (raw or "").strip().rstrip("/")

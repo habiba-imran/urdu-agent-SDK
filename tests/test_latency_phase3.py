@@ -144,6 +144,7 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
     import worker.tools as tools_mod
 
     monkeypatch.setenv("UVA_TOOLS_BASE_URL", "https://self-serve.example.com")
+    monkeypatch.setenv("TOOL_GATEWAY_SECRET", "test-gateway-secret")
 
     class FakeResponse:
         def raise_for_status(self):
@@ -163,11 +164,12 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
         async def aclose(self):
             return None
 
-        async def post(self, url, json=None, headers=None):
+        async def post(self, url, json=None, headers=None, extensions=None):
             assert url == "https://self-serve.example.com/api/tools/lookup_business_info"
             assert json["query"] == "hours?"
             assert json["agent_id"] == "a1"
             assert json["tenant_id"] == "t1"
+            assert headers.get("x-tool-gateway-secret") == "test-gateway-secret"
             return FakeResponse()
 
     async def fake_shared():
@@ -189,6 +191,8 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
 async def test_check_availability_posts_slim_payload(monkeypatch):
     import worker.tools as tools_mod
 
+    monkeypatch.setenv("TOOL_GATEWAY_SECRET", "test-gateway-secret")
+
     class FakeResponse:
         def raise_for_status(self):
             return None
@@ -206,10 +210,11 @@ async def test_check_availability_posts_slim_payload(monkeypatch):
         def is_closed(self):
             return False
 
-        async def post(self, url, json=None, headers=None):
+        async def post(self, url, json=None, headers=None, extensions=None):
             assert url.endswith("/api/tools/check_availability")
             assert json["date"] == "2026-09-05"
             assert json["hold_offered_slots"] is True
+            assert headers.get("x-tool-gateway-secret") == "test-gateway-secret"
             return FakeResponse()
 
     async def fake_shared():
@@ -221,6 +226,7 @@ async def test_check_availability_posts_slim_payload(monkeypatch):
         agent_id="a1",
         room_name="r1",
         tools_base_url="https://client.example.com",
+        tools_auth_secret="test-gateway-secret",
     )
     ctx = SimpleNamespace(userdata=ud)
     result = await tools_mod.check_availability(ctx, "2026-09-05", "morning")

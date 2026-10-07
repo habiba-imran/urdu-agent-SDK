@@ -100,6 +100,13 @@ def test_webhook_insert_failure_aborts_side_effects(monkeypatch):
     class _BoomConn:
         def execute(self, sql, params=None):
             low = " ".join(sql.lower().split())
+            if "insert into telephony_webhook_claims" in low:
+
+                class _Claimed:
+                    def fetchone(self):
+                        return ("evt-1",)
+
+                return _Claimed()
             if "from telephony_call_events" in low and "provider_event_id" in low:
 
                 class _Empty:

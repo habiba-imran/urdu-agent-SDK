@@ -198,6 +198,7 @@ def cp_app(monkeypatch):
         "SUPABASE_DB_URL": "postgresql://test:test@127.0.0.1:5432/test",
         "CP_TENANT_SECRETS": "{}",
         "CP_ALLOWED_ORIGINS": "https://app.example.com",
+        "TENANT_SECRET_ENCRYPTION_KEY": "test-encryption-key-for-ci",
     }.items():
         monkeypatch.setenv(var, value)
     module = importlib.import_module("control_plane.app")
@@ -295,6 +296,8 @@ def _docs_urls(**env) -> dict:
         "SUPABASE_DB_URL": "postgresql://test:test@127.0.0.1:5432/test",
         "CP_TENANT_SECRETS": "{}",
         "CP_ALLOWED_ORIGINS": "https://app.example.com",
+        # M1-F01: hosted import requires encryption key even in subprocess gates.
+        "TENANT_SECRET_ENCRYPTION_KEY": "test-encryption-key-for-ci",
     }
     child_env.pop("CP_ENABLE_DOCS", None)
     child_env.update(env)
@@ -344,8 +347,10 @@ def test_hosted_control_plane_without_cors_allowlist_refuses_to_start():
         "LIVEKIT_API_SECRET": "test-secret",
         "SUPABASE_DB_URL": "postgresql://test:test@127.0.0.1:5432/test",
         "CP_TENANT_SECRETS": "{}",
+        "TENANT_SECRET_ENCRYPTION_KEY": "test-encryption-key-for-ci",
         "UVA_ENV": "production",
-        "CP_ALLOWED_ORIGINS": "",
+        # Whitespace-only: still empty after strip, but truthy so .env.local cannot fill in.
+        "CP_ALLOWED_ORIGINS": " ",
     }
     code = (
         "import sys;"
