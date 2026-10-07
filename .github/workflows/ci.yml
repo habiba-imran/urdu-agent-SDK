@@ -123,7 +123,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build voice SDK (dashboard file: dependency)
+      - name: "Build voice SDK (dashboard file dependency)"
         working-directory: sdk
         run: |
           npm ci
