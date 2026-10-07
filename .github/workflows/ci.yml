@@ -33,8 +33,8 @@ jobs:
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET || 'test-secret' }}
           CP_TENANT_SECRETS: "{}"
           TENANT_SECRET_ENCRYPTION_KEY: "ci-unit-test-encryption-key"
-          # Placeholder only — run_ci_unit.py / offline guard block real DB I/O.
-          SUPABASE_DB_URL: "postgresql://offline:offline@127.0.0.1:1/offline"
+          # Explicitly empty — run_ci_unit.py keeps it empty; DB fixtures skip.
+          SUPABASE_DB_URL: ""
         run: python scripts/run_ci_unit.py
 
   # --- Job 1b: Full suite including DB-backed tests (when secret present) ---

@@ -76,7 +76,8 @@ def _extra_allowed_hosts():
     hosts = set()
     cfg = _dv(os.path.join(_PROJECT_ROOT, ".env.local"))
     for key in ("SUPABASE_URL", "SUPABASE_DB_URL"):
-        val = cfg.get(key)
+        # Prefer process env (CI secrets) then .env.local — CI has no checked-in dotenv.
+        val = os.environ.get(key) or cfg.get(key)
         if val:
             host = _up.urlparse(val).hostname
             if host:

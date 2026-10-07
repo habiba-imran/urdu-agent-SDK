@@ -12,12 +12,10 @@ MANIFEST = ROOT / "tests" / "ci_unit_manifest.txt"
 
 
 def main() -> int:
-    # Prefer no real DB. Offline guard blocks outbound; keep a placeholder URL so
-    # modules that validate env at import (control_plane.app) still load. Always
-    # replace — even when CI.yml already set a URL — so .env.local cannot leak in.
-    os.environ["SUPABASE_DB_URL"] = (
-        "postgresql://offline:offline@127.0.0.1:1/offline"
-    )
+    # Force-empty DB URL so DB fixtures skip (not hang). control_plane.app allows
+    # missing SUPABASE_DB_URL when CI_UNIT_FORCE_OFFLINE=1.
+    os.environ["CI_UNIT_FORCE_OFFLINE"] = "1"
+    os.environ["SUPABASE_DB_URL"] = ""
     if not (os.environ.get("TENANT_SECRET_ENCRYPTION_KEY") or "").strip():
         # Harmless test key — production must set a real one (M1-F01).
         os.environ["TENANT_SECRET_ENCRYPTION_KEY"] = "ci-unit-test-encryption-key"

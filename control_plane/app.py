@@ -75,17 +75,18 @@ _voices_log = logging.getLogger("control_plane.voices")
 
 
 def _require_env() -> None:
-    missing = [
-        key
-        for key, value in {
-            "LIVEKIT_URL": _LK_URL,
-            "LIVEKIT_API_KEY": _LK_KEY,
-            "LIVEKIT_API_SECRET": _LK_SECRET,
-            "SUPABASE_DB_URL": os.environ.get("SUPABASE_DB_URL")
-            or _ENV.get("SUPABASE_DB_URL", ""),
-        }.items()
-        if not value
-    ]
+    required = {
+        "LIVEKIT_URL": _LK_URL,
+        "LIVEKIT_API_KEY": _LK_KEY,
+        "LIVEKIT_API_SECRET": _LK_SECRET,
+        "SUPABASE_DB_URL": os.environ.get("SUPABASE_DB_URL")
+        or _ENV.get("SUPABASE_DB_URL", ""),
+    }
+    # Offline unit CI intentionally clears SUPABASE_DB_URL so DB fixtures skip; do not
+    # block import of this module during that suite (scripts/run_ci_unit.py).
+    if os.environ.get("CI_UNIT_FORCE_OFFLINE") == "1":
+        required.pop("SUPABASE_DB_URL", None)
+    missing = [key for key, value in required.items() if not value]
     if missing:
         raise RuntimeError(
             "control_plane startup blocked: missing required env var(s): "
