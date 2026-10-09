@@ -59,6 +59,7 @@ from control_plane.runtime_env import is_hosted  # noqa: E402
 from control_plane.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from control_plane.secrets import EnvSecretProvider  # noqa: E402
 from control_plane.secrets_db import DbSecretProvider  # noqa: E402
+from tenant_portal_api.csrf import PortalCsrfMiddleware  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _ROOT / ".env.local"
@@ -108,6 +109,10 @@ app.add_middleware(
     hsts=is_hosted(),
 )
 
+# A-02: cookie is SameSite=None on hosted — require Origin allowlist or X-UVA-Portal
+# on every mutating /portal/* request so cross-site form POSTs cannot fire body-less
+# routes (reverify / sync / disable / rotate).
+app.add_middleware(PortalCsrfMiddleware, allowed_origins=TENANT_PORTAL_ORIGINS)
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,6 +126,7 @@ app.add_middleware(
         "X-Timestamp",
         "X-Nonce",
         "X-Signature",
+        "X-UVA-Portal",
     ],
 )
 
@@ -871,26 +877,20 @@ def set_allowed_origins_route(
 
 @app.get("/portal/credentials")
 def credentials_route(request: Request, authorization: str | None = Header(default=None)):
+    """Credentials metadata only — never the raw HMAC (A-03).
+
+    Raw secret is returned solely by ``GET /portal/credentials/secret``, which
+    writes an audit row. Embedding it on every page load made one XSS equal to
+    the tenant signing secret when ``script-src`` allows ``'unsafe-inline'``.
+    """
     claims = _require_tenant(authorization, request)
     with _conn() as conn:
         try:
             creds = queries.get_credentials(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-
-    # Owners see the raw HMAC on API Keys (always visible). Members stay masked.
-    # Console rotation stays disabled separately (see rotate-secret).
-    from .session_cookie import browser_secret_reveal_enabled
-
-    if (
-        browser_secret_reveal_enabled()
-        and str(claims.get("role") or "").lower() == "owner"
-    ):
-        with _conn() as conn:
-            try:
-                creds["hmac_secret"] = queries.get_raw_secret(conn, claims["sub"])
-            except ValueError:
-                creds["hmac_secret"] = None
+    # Belt-and-braces: never leak even if a future get_credentials change adds it.
+    creds.pop("hmac_secret", None)
     return creds
 
 
@@ -928,7 +928,10 @@ def _require_fresh_tenant_token(claims: dict) -> None:
 def credentials_secret_route(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    """Return raw HMAC for owners (default on). Opt out: ``PORTAL_ALLOW_BROWSER_SECRET_REVEAL=0``."""
+    """Return raw HMAC for owners via the audited path only (A-03).
+
+    Hosted defaults ``PORTAL_ALLOW_BROWSER_SECRET_REVEAL`` off; local defaults on.
+    """
     from .session_cookie import browser_secret_reveal_enabled
 
     if not browser_secret_reveal_enabled():
@@ -936,7 +939,8 @@ def credentials_secret_route(
             status_code=410,
             detail=(
                 "Browser secret reveal is disabled for this deployment. "
-                "Ask an operator for the HMAC via a secure channel."
+                "Ask an operator for the HMAC via a secure channel, "
+                "or set PORTAL_ALLOW_BROWSER_SECRET_REVEAL=1."
             ),
         )
 

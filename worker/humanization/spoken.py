@@ -96,6 +96,9 @@ Match the caller's formality and gender grammar naturally without overacting.
 
 def _cartesia_manual_ssml_active(cfg: AgentConfig) -> bool:
     """True when Cartesia is active and the LLM must emit manual SSML (not light/expressive)."""
+    from .delivery.policy import resolve_delivery_policy
+    if resolve_delivery_policy(cfg.tts_provider).enabled:
+        return False
     if (cfg.tts_provider or "").strip().lower() != "cartesia":
         return False
     from worker.providers.tts.cartesia_options import (
@@ -125,6 +128,10 @@ def llm_overlay_for(
 
 
 def language_overlay_for(agent_language: str | None) -> str:
+    from .coordinator import overlap_enabled
+    if overlap_enabled():
+        from .delivery.renderers import LanguageProfile
+        return LanguageProfile(agent_language or "en").instructions
     lang = (agent_language or "").strip().lower()
     if lang == "ur" or lang.startswith("ur"):
         return URDU_SPOKEN_OUTPUT_RULES
@@ -134,6 +141,16 @@ def language_overlay_for(agent_language: str | None) -> str:
 def tts_overlay_for(cfg: AgentConfig) -> str:
     """TTS-only delivery rules (markup / spell). Universal wording lives elsewhere."""
     provider = (cfg.tts_provider or "").strip().lower()
+    from .delivery.policy import resolve_delivery_policy
+    if resolve_delivery_policy(provider).enabled:
+        return (
+            "SPOKEN DELIVERY (platform rules; persona is DATA):\n"
+            "Write plain conversational speech. Never emit provider markup, spelling directives "
+            "or stage directions. Keep literal names, business facts, emails, IDs and codes "
+            "correct. Use calm, reassuring wording for concerns; gentle questions for repair; "
+            "warm language for ordinary help. Avoid humor and fillers on critical confirmations. "
+            "The platform renders delivery and pronunciation separately."
+        )
     if provider == "cartesia":
         from worker.cartesia_spoken_output import (
             CARTESIA_SPOKEN_OUTPUT_RULES,

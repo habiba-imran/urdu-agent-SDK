@@ -87,6 +87,7 @@ export type AwaazLabsUvaVoiceEvent =
   | 'agent_speaking'
   | 'metrics_updated'
   | 'audio_blocked'
+  | 'audio_ready'
   | 'turn_latency';
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
@@ -103,6 +104,24 @@ export interface TranscriptEvent {
 
 export interface MetricsEvent {
   type: 'metrics_updated' | 'turn_latency';
+  /** Stable structural correlation, added by Phase 1 workers. Older workers omit it. */
+  session_id?: string;
+  user_turn_id?: string | null;
+  assistant_turn_id?: string;
+  generation_id?: string;
+  humanization_policy_version?: string;
+  outcome?: 'completed' | 'interrupted' | 'cancelled' | 'cancelled_speculation'
+    | 'provider_error' | 'tool_error' | 'tool_timeout' | 'tool_outcome_unknown'
+    | 'false_interruption' | 'stale';
+  sequence?: number;
+  monotonicAt?: number;
+  latencyKind?: 'server_diagnostic_proxy';
+  stages?: Record<string, number | null>;
+  providerSnapshot?: Record<string, unknown>;
+  tools?: Array<Record<string, unknown>>;
+  generations?: Array<Record<string, unknown>>;
+  sampleCounts?: Record<string, number>;
+  percentiles?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -133,6 +152,8 @@ export interface AwaazLabsUvaVoiceEventMap {
    * button and call agent.startAudio() inside its click handler.
    */
   audio_blocked: [boolean];
+  /** Playback permission, independent of room connection; not proof a phrase was heard. */
+  audio_ready: [boolean];
 }
 
 export type UvaEventMap = AwaazLabsUvaVoiceEventMap;
@@ -163,6 +184,8 @@ export class AwaazLabsUvaVoice {
   private lastCallerSpeaking: boolean | null = null;
   private lastAgentSpeaking: boolean | null = null;
   private lastConnectTiming: ConnectTiming | null = null;
+  private playbackReady = false;
+  private readonly blockedRemoteAudio = new Set<string>();
 
   static async listVoices(endpointUrl: string, timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS): Promise<Voice[]> {
     if (!endpointUrl.trim()) {
@@ -215,6 +238,10 @@ export class AwaazLabsUvaVoice {
 
   get connectionState(): ConnectionState {
     return this.state;
+  }
+
+  get isAudioReady(): boolean {
+    return this.state === 'connected' && this.playbackReady;
   }
 
   get isConnected(): boolean {
@@ -328,6 +355,7 @@ export class AwaazLabsUvaVoice {
     this.emit('connect_timing', this.lastConnectTiming);
     // Emit after timings so hosts can read connectTiming inside connected handlers.
     this.state = 'connected';
+    this.room = room;
     this.emit('connected');
 
     await micPromise;
@@ -346,6 +374,7 @@ export class AwaazLabsUvaVoice {
     }
 
     this.room = room;
+    this.updatePlaybackReady(room);
     this.session = body;
     this.sessionReceivedAt = Date.now();
     this.scheduleTokenRefresh(body);
@@ -366,6 +395,7 @@ export class AwaazLabsUvaVoice {
 
   async disconnect(reason?: unknown): Promise<void> {
     this.clearRefreshTimer();
+    this.playbackReady = false;
     const room = this.room;
     if (!room) {
       this.session = null;
@@ -406,6 +436,11 @@ export class AwaazLabsUvaVoice {
   async startAudio(): Promise<void> {
     if (this.room) {
       await this.room.startAudio();
+      await Promise.all([...this.remoteAudioElements].map(async ([sid, element]) => {
+        try { await element.play(); this.blockedRemoteAudio.delete(sid); }
+        catch { this.blockedRemoteAudio.add(sid); }
+      }));
+      this.updatePlaybackReady(this.room);
     }
   }
 
@@ -417,6 +452,21 @@ export class AwaazLabsUvaVoice {
         // F-L8: one throwing host listener must not block later listeners for the same event.
         console.error(`[AwaazLabsUvaVoice] listener for "${event}" threw:`, err);
       }
+    }
+  }
+
+  private updatePlaybackReady(room: Room): void {
+    const ready = this.state === 'connected' && room.canPlaybackAudio === true && this.blockedRemoteAudio.size === 0;
+    if (this.playbackReady !== ready) {
+      this.playbackReady = ready;
+      this.emit('audio_ready', ready);
+    }
+    // A host may manually attach media elements; a rejected play() below also
+    // reports blocked readiness. This packet contains no provider/policy controls.
+    if (typeof room.localParticipant.publishData === 'function') {
+      void room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({
+        type: 'awaaz_playback_state', ready,
+      })), { reliable: true }).catch(() => {});
     }
   }
 
@@ -435,6 +485,8 @@ export class AwaazLabsUvaVoice {
       this.lastCallerSpeaking = null;
       this.lastAgentSpeaking = null;
       this.state = 'idle';
+      this.playbackReady = false;
+      this.emit('audio_ready', false);
       this.emit('disconnected', reason);
       this.emit('ended', reason);
     });
@@ -507,7 +559,15 @@ export class AwaazLabsUvaVoice {
       if (metrics) this.emitLatencyEvents(metrics);
     });
 
-    room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+    room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: Participant) => {
+      const text = this.decodePayload(payload);
+      try {
+        const packet = JSON.parse(text);
+        if (packet?.type === 'awaaz_playback_request') this.updatePlaybackReady(room);
+        if (packet?.type === 'awaaz_session_failure' && participant?.isAgent) {
+          this.emit('error', new AwaazLabsUvaVoiceError('session_failed', `Voice session unavailable: ${String(packet.stage)}`));
+        }
+      } catch { /* Other room messages are parsed by the existing metrics path. */ }
       const metrics = this.tryParseMetrics(this.decodePayload(payload));
       if (metrics) this.emitLatencyEvents(metrics);
     });
@@ -520,6 +580,7 @@ export class AwaazLabsUvaVoice {
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
       const blocked = !room.canPlaybackAudio;
       this.emit('audio_blocked', blocked);
+      this.updatePlaybackReady(room);
     });
   }
 
@@ -536,12 +597,23 @@ export class AwaazLabsUvaVoice {
     }
     // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
     // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
-    void element.play().catch(() => {
-      // Silently ignore — AudioPlaybackStatusChanged will handle the blocked state.
+    void element.play().then(() => {
+      this.blockedRemoteAudio.delete(trackSid);
+      if (this.room) this.updatePlaybackReady(this.room);
+    }).catch(() => {
+      this.blockedRemoteAudio.add(trackSid);
+      this.playbackReady = false;
+      this.emit('audio_ready', false);
+      this.emit('audio_blocked', true);
+      if (this.room) {
+        void this.room.localParticipant.publishData(new TextEncoder().encode(
+          '{"type":"awaaz_playback_state","ready":false}'), { reliable: true }).catch(() => {});
+      }
     });
   }
 
   private detachRemoteAudio(trackSid: string): void {
+    this.blockedRemoteAudio.delete(trackSid);
     const element = this.remoteAudioElements.get(trackSid);
     if (!element) return;
     try {
@@ -711,6 +783,9 @@ export class AwaazLabsUvaVoice {
   }
 
   private emitLatencyEvents(metrics: MetricsEvent): void {
+    // Historical compatibility: per-turn events also reach metrics_updated.
+    // Consumers subscribing to both should process turns only on turn_latency,
+    // and accept only type=metrics_updated on the aggregate subscription.
     if (metrics.type === 'turn_latency') {
       this.emit('turn_latency', metrics);
     }

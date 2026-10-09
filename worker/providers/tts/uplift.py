@@ -56,7 +56,7 @@ def resolve_uplift_phrase_config_id() -> str | None:
 _phrase_config_id = resolve_uplift_phrase_config_id
 
 
-def build(voice_id: str) -> Any:
+def build(voice_id: str, *, rendered_identity: str | None = None) -> Any:
     """Uplift TTS. UPLIFT_MODE=fixture (default) replays committed fixtures; record/live call Uplift.
 
     Fixture mode delegates to FixtureTTS, which reads from services/tts_cache.py.  A cache miss
@@ -116,7 +116,10 @@ def build(voice_id: str) -> Any:
                 self._voice_id = voice_id
 
             async def _run(self, output_emitter):
-                wav = _require(self._voice_id, self._input_text)
+                wav = (
+                    _require(self._voice_id, self._input_text, rendered_identity=rendered_identity)
+                    if rendered_identity is not None else _require(self._voice_id, self._input_text)
+                )
                 sample_rate = 22050
                 num_channels = 1
                 pcm = wav[44:]

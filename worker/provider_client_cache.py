@@ -32,6 +32,11 @@ def _options_fingerprint(options: dict | None) -> str:
 
 
 def make_provider_client_cache_key(cfg: AgentRuntimeConfig) -> tuple[str, ...]:
+    from .humanization.delivery.cache import rendered_audio_identity
+    effective_tts = rendered_audio_identity(
+        cfg.tts_provider, cfg.tts_voice_id, cfg.agent_language,
+        cfg.tts_options, cfg.audio_channel,
+    )
     return (
         (cfg.agent_language or "").strip().lower(),
         (cfg.stt_provider or "").strip().lower(),
@@ -42,7 +47,7 @@ def make_provider_client_cache_key(cfg: AgentRuntimeConfig) -> tuple[str, ...]:
         _options_fingerprint(cfg.llm_options),
         (cfg.tts_provider or "").strip().lower(),
         (cfg.tts_voice_id or "").strip(),
-        _options_fingerprint(cfg.tts_options),
+        effective_tts,
         (cfg.audio_channel or "webrtc").strip().lower(),
     )
 

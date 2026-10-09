@@ -33,6 +33,7 @@ export const DOCS_NAV: DocsNavGroup[] = [
       { slug: 'backend-setup', title: 'Backend setup' },
       { slug: 'frontend-setup', title: 'Frontend setup' },
       { slug: 'telephony', title: 'Telephony' },
+      { slug: 'humanization-testing', title: 'Humanization testing' },
       { slug: 'going-live', title: 'Going live' },
     ],
   },

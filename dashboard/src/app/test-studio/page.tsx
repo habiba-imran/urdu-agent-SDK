@@ -45,6 +45,7 @@ export default function TestStudioPage() {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [agentSpeaking, setAgentSpeaking] = useState<boolean>(false);
   const [audioBlocked, setAudioBlocked] = useState<boolean>(false);
+  const [audioReady, setAudioReady] = useState<boolean>(false);
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -90,7 +91,7 @@ export default function TestStudioPage() {
         {
           id: `sys-connected-${Date.now()}`,
           role: 'system',
-          text: 'Voice session connected — start talking.',
+          text: 'Voice room connected. Check playback readiness before evaluating the opening.',
           timestamp: new Date().toLocaleTimeString(),
         },
       ]);
@@ -99,6 +100,7 @@ export default function TestStudioPage() {
       setConnectionState('idle');
       setAgentSpeaking(false);
       setAudioBlocked(false);
+      setAudioReady(false);
       setTranscripts((prev) => [
         ...prev,
         {
@@ -133,7 +135,11 @@ export default function TestStudioPage() {
       void final;
     };
     const onAgentSpeaking = (speaking: boolean) => setAgentSpeaking(speaking);
-    const onAudioBlocked = (blocked: boolean) => setAudioBlocked(blocked);
+    const onAudioBlocked = (blocked: boolean) => {
+      setAudioBlocked(blocked);
+      if (blocked) setAudioReady(false);
+    };
+    const onAudioReady = (ready: boolean) => setAudioReady(ready);
     const onError = (err: AwaazLabsUvaVoiceError) => {
       setErrorMsg(friendlyError(err.code, err.message));
     };
@@ -143,6 +149,7 @@ export default function TestStudioPage() {
     client.on('transcript', onTranscript);
     client.on('agent_speaking', onAgentSpeaking);
     client.on('audio_blocked', onAudioBlocked);
+    client.on('audio_ready', onAudioReady);
     client.on('error', onError);
 
     return () => {
@@ -151,6 +158,7 @@ export default function TestStudioPage() {
       client.off('transcript', onTranscript);
       client.off('agent_speaking', onAgentSpeaking);
       client.off('audio_blocked', onAudioBlocked);
+      client.off('audio_ready', onAudioReady);
       client.off('error', onError);
     };
   }, [client]);
@@ -175,6 +183,9 @@ export default function TestStudioPage() {
     setErrorMsg(null);
     setConnectionState('connecting');
     setTranscripts([]);
+    setAudioReady(false);
+    setAudioBlocked(false);
+    setIsMuted(false);
     try {
       await client.connect({ agentId: selectedAgentId });
     } catch (err) {
@@ -211,7 +222,9 @@ export default function TestStudioPage() {
       : connectionState === 'disconnecting'
         ? 'Ending session...'
         : connectionState === 'connected'
-          ? agentSpeaking
+          ? !audioReady
+            ? audioBlocked ? 'Playback blocked — enable audio' : 'Connected — waiting for playback readiness'
+            : agentSpeaking
             ? 'Agent speaking...'
             : 'Session Active (Listening...)'
           : 'Disconnected';
@@ -258,6 +271,11 @@ export default function TestStudioPage() {
             (include this dashboard origin for Test Studio).
           </div>
         ) : null}
+
+        <p className="text-sm text-muted-foreground" role="status" aria-atomic="true">
+          {isConnected ? (audioReady ? 'Browser playback ready. Confirm the opening by listening.' : 'Room connected; browser playback is not ready yet.') : 'Start a session to check browser playback readiness.'}
+          {' '}<a href="/docs/humanization-testing" className="underline underline-offset-2">Humanization testing checklist</a>
+        </p>
 
         {errorMsg && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2">

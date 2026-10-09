@@ -1,0 +1,23 @@
+{
+  "package": "@awaazlabs-uva/voice",
+  "version": "1.1.1-humanization.0",
+  "distribution": "unpublished test snapshot; not an npm registry release",
+  "artifact": "awaazlabs-uva-voice-1.1.1-humanization.0.tgz",
+  "sha256": "d466c552feec92697cd9b5626fe5ad86eaf8b533918fca0493b2cdde35542745",
+  "integrity": "sha512-uYWUBo1eDp+56j190/sufsB+Kmi75GMXmFM3CaLd0sFfGTpcI+SEg+BNQGpO6aaxyO5exYjRMJx7I4aGGh4rmA==",
+  "source_head": "c37fd73fd7bce0766496d7068c49d400f1c36e17",
+  "source_sha256": {
+    "sdk/package.json": "b7417ae60a915c18af249572ead4561c3e3d7b1ec1306f7c3c3d1e05adc9efb6",
+    "sdk/tsconfig.json": "b55cb5f74e8a4dc85b43dba9e7875dd7a04a0be8e857a6dd59e977855da82246",
+    "sdk/src/index.test.ts": "2c094f4b06b2d27e0a82f05ec00296969a70ba1d05dad3327357c11050f5e9a5",
+    "sdk/src/index.ts": "5e31799b95f8264b3c50bcefa96b8094d702d998d6572b2f3c5d5fffb29a8a78",
+    "sdk/src/internal/errors.test.ts": "b41d2cede46a882d9604a72021557d3a64029ea078a41db5770810ec6495969d",
+    "sdk/src/internal/errors.ts": "0afed031ebfd39f5c55f0a980b2c9a2eb60e98fb6e8cb7c1e853452d1878b9a8",
+    "sdk/src/internal/http.test.ts": "4238575e5856363935c222931af170a5b1f1db6aec00f06b82b7be06211fc351",
+    "sdk/src/internal/http.ts": "d2229e90a707991fb3fb7ef5e8a03c7dee278e655887e4856ce166aaeb05a1b3",
+    "sdk/src/internal/livekitToken.test.ts": "2ce3763e5514f00def012eaabe0eeece7099f8d2bfc52e79a689e443290b059f",
+    "sdk/src/internal/livekitToken.ts": "0ca764aa36acf4a32132ba03222176d68cf4e92ee83fbceffac1c3f3c91a5173",
+    "sdk/src/metrics.test.ts": "c901f4a10c838442c76eaad3c3051754792d02b39e62599ea73ad3615aada59a",
+    "sdk/src/playback.test.ts": "fe94f3dc517d752d5ef50d67ef3d92aadf5fb2e2e2446237180a45a92a0721c8"
+  }
+}

@@ -6,7 +6,7 @@ import useSWR, { useSWRConfig } from 'swr';
 import { Copy } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
-import { setAllowedOrigins } from '@/lib/portalApi';
+import { revealCredentialSecret, setAllowedOrigins } from '@/lib/portalApi';
 import { isPortalAuthFailure, isPortalOwner } from '@/lib/portalAuth';
 import {
   PLATFORM_CONTROL_PLANE_URL,
@@ -74,6 +74,16 @@ export default function CredentialsPage() {
   const [originsSaving, setOriginsSaving] = useState(false);
   const [originsError, setOriginsError] = useState<string | null>(null);
   const [originsNote, setOriginsNote] = useState<string | null>(null);
+  // Explicit reveal stays in this page's tenant-scoped state, never the SWR metadata cache.
+  const [revealedSecret, setRevealedSecret] = useState<{ tenantId: string; secret: string } | null>(null);
+  const [revealingSecret, setRevealingSecret] = useState(false);
+  const [secretError, setSecretError] = useState<string | null>(null);
+  const hmacSecret = isOwner && revealedSecret?.tenantId === credentials?.tenant_id
+    ? revealedSecret?.secret ?? null : null;
+  useEffect(() => {
+    setRevealedSecret(null);
+    setSecretError(null);
+  }, [credentials?.tenant_id, isOwner]);
 
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [hostPublicUrl, setHostPublicUrl] = useState('http://localhost:3000');
@@ -97,7 +107,7 @@ export default function CredentialsPage() {
       .map((o) => o.trim())
       .filter(Boolean);
     if (fromTenant.length) return fromTenant.join(',');
-    return 'http://localhost:5173,http://localhost:3000';
+    return 'http://localhost:5174,http://localhost:3000';
   }, [credentials?.allowed_origins]);
 
   const copyText = async (text: string, label: string) => {
@@ -144,8 +154,8 @@ export default function CredentialsPage() {
     const tenantId = credentials?.tenant_id ?? '<TENANT_UUID>';
     const pub = credentials?.publishable_key ?? '<PUBLISHABLE_KEY>';
     const hmac =
-      credentials?.hmac_secret ||
-      '<UVA_HMAC_SECRET — visible to owners on this page>';
+      hmacSecret ||
+      '<UVA_HMAC_SECRET — request securely from an operator, or use permitted owner reveal>';
     const hostBase = hostPublicUrl.replace(/\/$/, '') || 'http://localhost:3000';
     return [
       '# --- AwaazLabs tenant (from this page) ---',
@@ -167,7 +177,7 @@ export default function CredentialsPage() {
       'TELNYX_API_KEY=',
       'TELNYX_OUTBOUND_ALLOWED_DESTINATIONS=US',
     ].join('\n');
-  }, [credentials, hostPublicUrl, hostOriginsCsv]);
+  }, [credentials, hmacSecret, hostPublicUrl, hostOriginsCsv]);
 
   const frontendEnv = useMemo(() => {
     const pub = credentials?.publishable_key ?? '<PUBLISHABLE_KEY>';
@@ -189,7 +199,6 @@ export default function CredentialsPage() {
     ].join('\n');
   }, [credentials, selectedAgentId, hostPublicUrl]);
 
-  const hmacSecret = credentials?.hmac_secret ?? null;
   const hmacDisplay =
     !isOwner && !hmacSecret
       ? '•••••••••••••••••••••••••••••••• (owners only)'
@@ -200,6 +209,21 @@ export default function CredentialsPage() {
           '••••••••••••••••••••••••••••••••';
 
   const keysReady = Boolean(credentials?.tenant_id && credentials?.publishable_key);
+
+  const handleRevealSecret = async () => {
+    const tenantId = credentials?.tenant_id;
+    if (!isOwner || !tenantId || revealingSecret) return;
+    setRevealingSecret(true);
+    setSecretError(null);
+    try {
+      const result = await revealCredentialSecret();
+      setRevealedSecret({ tenantId, secret: result.hmac_secret });
+    } catch (err) {
+      setSecretError(err instanceof Error ? err.message : 'Could not reveal the secret. Ask an operator for secure delivery.');
+    } finally {
+      setRevealingSecret(false);
+    }
+  };
 
   const handleCopyHmacSecret = () => {
     if (!hmacSecret) return;
@@ -282,8 +306,9 @@ export default function CredentialsPage() {
         <CardHeader>
           <CardTitle>Tenant keys</CardTitle>
           <CardDescription>
-            Publishable key is safe in the browser. HMAC secret is shown to workspace owners for
-            host backend setup — keep it out of frontend bundles. Console rotation is disabled.
+            Publishable key is safe in the browser. HMAC metadata is masked; permitted owners can
+            explicitly reveal it for host setup. Hosted reveal may be disabled — request secure
+            delivery from an operator. Console rotation is disabled.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -323,6 +348,13 @@ export default function CredentialsPage() {
                 </label>
                 <div className="flex items-center justify-between gap-3 rounded-input border border-border bg-surface-muted px-4 py-3 font-mono text-[13px] text-text">
                   <span className="min-w-0 flex-1 break-all">{hmacDisplay}</span>
+                  {isOwner ? (
+                    <Button size="sm" variant="secondary"
+                      disabled={revealingSecret || !keysReady || credentials?.secret_provisioned === false}
+                      onClick={hmacSecret ? () => setRevealedSecret(null) : () => void handleRevealSecret()}>
+                      {revealingSecret ? 'Revealing…' : hmacSecret ? 'Hide HMAC' : 'Reveal HMAC'}
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="secondary"
@@ -342,9 +374,11 @@ export default function CredentialsPage() {
                 </div>
                 <p className="text-[13px] text-text-muted">
                   <code className="font-mono text-[12px]">UVA_HMAC_SECRET</code> — copy into your
-                  host secret store. Rotation from this console is disabled; ask an operator if you
-                  need a new secret.
+                  host secret store after an explicit permitted reveal. Hosted deployments disable
+                  reveal by default; ask an operator to deliver the secret securely. Hiding it also
+                  removes it from the generated env snippet. Console rotation is disabled.
                 </p>
+                {secretError ? <p role="alert" className="text-[13px] text-destructive">{secretError}</p> : null}
               </div>
             </>
           )}

@@ -158,6 +158,9 @@ def build_system_instructions(cfg: AgentConfig) -> str:
 
 def greeting_instructions(cfg: AgentConfig) -> str:
     """One-shot greeting instruction for session.generate_reply()."""
+    from .humanization.delivery.policy import resolve_delivery_policy
+    if resolve_delivery_policy(cfg.tts_provider).enabled:
+        return _DEFAULT_GREETING_INSTRUCTIONS
     if cfg.tts_provider == "cartesia":
         from .providers.tts.cartesia_options import (
             cartesia_expressive_enabled,

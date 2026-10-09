@@ -40,7 +40,7 @@ def is_affirmative_utterance(text: str | None) -> bool:
     s = (text or "").strip()
     if not s:
         return False
-    return _AFFIRM_RE.search(s) is not None
+    return _AFFIRM_RE.search(s) is not None or re.search(r"(?:ہاں|جی ہاں|ٹھیک ہے|بالکل)", s) is not None
 
 
 def max_write_tool_calls() -> int:
@@ -277,6 +277,8 @@ class WriteGateState:
     last_write_result: dict[str, Any] | None = None
     # confirmation_id → {tool, args_hash, result, idempotency_key}
     completed_writes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # In-flight and uncertain dispatched writes are tombstones until reconciliation.
+    dispatched_writes: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def get_write_gate_state(userdata: Any) -> WriteGateState:
@@ -299,8 +301,12 @@ def note_user_turn(userdata: Any, text: str | None = None) -> None:
     state = get_write_gate_state(userdata)
     state.user_turn_count += 1
     userdata.user_turn_count = state.user_turn_count
-    if state.pending_write is not None and is_affirmative_utterance(text):
-        state.heard_affirmative = True
+    if state.pending_write is not None:
+        from worker.humanization.understanding import CORRECTION, AMBIGUOUS
+        invalidates = bool(CORRECTION.search(text or "") or AMBIGUOUS.search(text or ""))
+        state.heard_affirmative = is_affirmative_utterance(text) and not invalidates
+        if invalidates:
+            state.pending_write = None
 
 
 def set_verified_caller_phone(userdata: Any, phone: str | None) -> None:
@@ -361,7 +367,7 @@ def propose_or_confirm_write(
 
     if conf:
         # Replay completed confirmation (idempotent) — only for same tool+args.
-        prior = state.completed_writes.get(conf)
+        prior = state.completed_writes.get(conf) or state.dispatched_writes.get(conf)
         if prior is not None:
             if prior.get("tool") == tool_name and prior.get("args_hash") == digest:
                 return "replay", dict(prior["result"])
@@ -370,6 +376,15 @@ def propose_or_confirm_write(
                 "success": False,
             }
 
+        runtime = getattr(userdata, "humanization_runtime", None)
+        if runtime:
+            from worker.humanization.understanding import write_uncertainties
+            missing = write_uncertainties(runtime, tool_name, normalized, state.verified_caller_phone)
+            if missing:
+                runtime.require_clarification(missing)
+                return "reject", {"success": False, "outcome": "VALIDATION_ERROR",
+                                  "needs_clarification": list(missing),
+                                  "error": "Clarify the current details before proceeding. Do not guess."}
         pending = state.pending_write
         if pending is None:
             return "reject", {
@@ -412,6 +427,22 @@ def propose_or_confirm_write(
                 "success": False,
             }
 
+        if runtime:
+            # Only the validated fields of this separately confirmed proposal become
+            # CONFIRMED. Business commitment still waits for the backend outcome.
+            names = {"phone"}
+            if tool_name == "book_appointment":
+                names |= {"name", "date", "time"}
+            elif tool_name == "reschedule_appointment":
+                names |= {"date", "time"}
+            if normalized.get("existing_date"):
+                names.add("existing_date")
+            for name in names:
+                values = runtime.state.task_state.critical_values.get(name, [])
+                current = next((value for value in reversed(values) if value.status == "heard"), None)
+                if current:
+                    runtime.observe("ground_value", field_name=name, value=current.value,
+                                    observation_id=current.observation_id, status="confirmed")
         idem = make_idempotency_key(
             tenant_id=str(getattr(userdata, "tenant_id", "")),
             agent_id=str(getattr(userdata, "agent_id", "")),
@@ -434,6 +465,19 @@ def propose_or_confirm_write(
             "success": False,
         }
 
+    # Do not create a fresh proposal to work around an uncertain dispatched write.
+    if state.dispatched_writes:
+        return "reject", {"success": False, "outcome": "OUTCOME_UNKNOWN",
+                          "error": "This action may already have completed. Reconcile before repeating it."}
+    runtime = getattr(userdata, "humanization_runtime", None)
+    if runtime:
+        from worker.humanization.understanding import write_uncertainties
+        missing = write_uncertainties(runtime, tool_name, normalized, state.verified_caller_phone)
+        if missing:
+            runtime.require_clarification(missing)
+            return "reject", {"success": False, "outcome": "VALIDATION_ERROR",
+                              "needs_clarification": list(missing),
+                              "error": "Clarify the current details before proceeding. Do not guess."}
     new_id = make_confirmation_id()
     state.pending_write = PendingWrite(
         tool=tool_name,
@@ -468,6 +512,7 @@ def mark_write_success(
     args_hash: str,
 ) -> None:
     state = get_write_gate_state(userdata)
+    state.dispatched_writes.pop(confirmation_id, None)
     state.write_tool_calls += 1
     state.pending_write = None
     state.last_idempotency_key = idempotency_key

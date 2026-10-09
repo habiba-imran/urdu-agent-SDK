@@ -268,7 +268,9 @@ def test_cartesia_tts_constructs_for_english():
     assert tts._opts.language == "en"
     assert tts._opts.model == "sonic-3.5"
     assert tts._opts.speed == 0.95
-    assert tts._opts.emotion == ["calm", "content"]
+    # Current manual_ssml baseline delegates per-turn tone to tags and omits
+    # constructor emotion. Light mode is covered separately in option tests.
+    assert tts._opts.emotion is None
     assert tts._opts.sample_rate == 16000
 
 

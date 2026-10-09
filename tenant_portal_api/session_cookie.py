@@ -27,17 +27,18 @@ PORTAL_SESSION_COOKIE = "uva_portal_session"
 
 
 def browser_secret_reveal_enabled() -> bool:
-    """Whether the dashboard may show the raw HMAC (credentials + ``GET …/secret``).
+    """Whether owners may fetch the raw HMAC via audited ``GET …/credentials/secret``.
 
-    Default **on** — owners need the signing secret visible to wire a host backend.
-    Disable with ``PORTAL_ALLOW_BROWSER_SECRET_REVEAL=0`` if you only hand secrets out-of-band.
+    A-03: hosted defaults **off** (one XSS must not equal the signing secret). Local
+    defaults **on** for host-backend wiring. Explicit env always wins.
+    ``GET /portal/credentials`` never returns the raw secret regardless of this flag.
     """
     flag = (os.environ.get("PORTAL_ALLOW_BROWSER_SECRET_REVEAL") or "").strip().lower()
     if flag in {"0", "false", "no", "off"}:
         return False
     if flag in {"1", "true", "yes", "on"}:
         return True
-    return True
+    return not is_hosted()
 
 
 def browser_secret_rotate_enabled() -> bool:

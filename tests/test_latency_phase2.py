@@ -168,4 +168,5 @@ def test_turn_latency_tracker_skips_greeting_only_tts():
 def test_wire_turn_latency_registers_handlers():
     session = MagicMock()
     wire_turn_latency(session, MagicMock(), MagicMock())
-    assert session.on.call_count == 3
+    handlers = {call.args[0] for call in session.on.call_args_list}
+    assert {"metrics_collected", "user_state_changed", "tool_execution_updated", "speech_created", "close"} <= handlers

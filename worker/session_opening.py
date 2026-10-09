@@ -24,6 +24,107 @@ from .greeting_cache import (
 
 OpeningMode = Literal["wait", "say", "generate_reply"]
 
+
+@dataclass
+class OpeningState:
+    phase: str = "PLAYBACK_NOT_READY"
+    playback_ready: bool | None = None
+    server_playout_complete: bool = False
+    # Permission/readiness is separate from delivery completion and caller hearing.
+    caller_heard: bool | None = None
+
+
+def opening_state(session: Any) -> OpeningState:
+    userdata = getattr(session, "userdata", None)
+    state = getattr(userdata, "opening_state", None)
+    if state is None:
+        state = OpeningState()
+        if userdata is not None:
+            userdata.opening_state = state
+    return state
+
+
+def opening_gate_enabled() -> bool:
+    return os.getenv("UVA_OPENING_POLICY", "baseline") == "opening_v1"
+
+
+def bind_opening_transport(session: Any, room: Any, channel: str) -> None:
+    import asyncio
+    import json
+    state = opening_state(session)
+    ready = asyncio.Event()
+    session._awaaz_playback_event = ready
+    runtime = getattr(getattr(session, "userdata", None), "humanization_runtime", None)
+    def mark(value):
+        state.playback_ready = value
+        if runtime is not None:
+            runtime.playback_ready = value
+            transport = runtime.provider_snapshot.get("transport")
+            if transport is not None:
+                transport["playback_ready"] = value
+        if value:
+            ready.set()
+        else:
+            ready.clear()
+    def on_data(packet):
+        # Only authenticated caller participants can report their own readiness.
+        participant = getattr(packet, "participant", None)
+        if channel != "webrtc" or participant is None or getattr(participant, "kind", None) == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT or "agent" in str(getattr(participant, "kind", "")).lower():
+            return
+        remotes = getattr(room, "remote_participants", {})
+        if remotes and getattr(participant, "identity", None) not in {p.identity for p in remotes.values()}:
+            return
+        try:
+            data = json.loads(packet.data)
+        except (ValueError, TypeError, UnicodeDecodeError):
+            return
+        if isinstance(data, dict) and data.get("type") == "awaaz_playback_state" and isinstance(data.get("ready"), bool):
+            mark(data["ready"])
+    def sip_ready(participant):
+        status = (getattr(participant, "attributes", None) or {}).get("sip.callStatus")
+        if channel == "telephony" and status == "active":
+            mark(True)
+    def attrs_changed(_attrs, participant):
+        sip_ready(participant)
+    room.on("data_received", on_data)
+    room.on("participant_attributes_changed", attrs_changed)
+    room.on("participant_connected", sip_ready)
+    for participant in (getattr(room, "remote_participants", None) or {}).values():
+        sip_ready(participant)
+    # Late workers request a fresh snapshot instead of relying on a packet sent
+    # before dispatch. Public SDK responds even when the browser is blocked.
+    async def request():
+        if channel == "webrtc":
+            try:
+                await room.local_participant.publish_data(b'{"type":"awaaz_playback_request"}', reliable=True)
+            except Exception:
+                pass
+    task = asyncio.create_task(request())
+    def close(_ev):
+        task.cancel()
+        state.phase = "CLOSED"
+        mark(False)
+        room.off("data_received", on_data)
+        room.off("participant_attributes_changed", attrs_changed)
+        room.off("participant_connected", sip_ready)
+        ready.set()  # unblock the waiter; close is checked before speaking
+    session.on("close", close)
+
+
+async def await_playback_ready(session: Any, *, timeout: float = 10.0) -> bool:
+    import asyncio
+    state = opening_state(session)
+    if state.playback_ready is True:
+        return True
+    event = getattr(session, "_awaaz_playback_event", None)
+    if event is None:
+        return False
+    try:
+        await asyncio.wait_for(event.wait(), timeout)
+    except TimeoutError:
+        return False
+    return state.playback_ready is True
+
 # Opening-path prewarm / synthesis budgets (seconds).
 # Cache hits skip the wait entirely. Say-miss awaits single-flight TTS (not STT).
 _SAY_SYNTHESIS_AWAIT_SEC = 5.0
@@ -58,6 +159,10 @@ class GreetingPrewarmPlan:
 
 
 def _spoken_greeting(cfg: AgentConfig, text: str) -> str:
+    from .humanization.delivery.policy import resolve_delivery_policy
+    if resolve_delivery_policy(cfg.tts_provider).enabled:
+        from .humanization.delivery.canonical import canonical_spoken_text
+        return canonical_spoken_text(text)
     from .cartesia_spoken_output import enrich_static_greeting_for_tts
     from .spoken_sanitize import sanitizer_for_provider
 
@@ -121,6 +226,8 @@ def plan_greeting_prewarm(
             greeting_text=opening.text,
             audio_channel=audio_channel,
             tts_options=cfg.tts_options,
+            language=cfg.agent_language,
+            tenant_id=cfg.tenant_id,
         )
         frames = get_greeting_cache().get(key)
         if frames is not None:
@@ -168,16 +275,23 @@ async def apply_session_opening(
     opening = resolve_session_opening(cfg)
     interruptible = greeting_allow_interruptions(allow_interruptions)
     userdata = getattr(session, "userdata", None)
+    state = opening_state(session)
 
     def _clear_opening_flag(_handle: Any = None) -> None:
+        state.phase = "INTERACTIVE"
+        failed = callable(getattr(_handle, "exception", None)) and _handle.exception() is not None
+        state.server_playout_complete = _handle is not None and not getattr(_handle, "interrupted", False) and not failed
         if userdata is not None:
             userdata.opening_active = False
 
     def _arm_opening_flag() -> None:
+        state.phase = "GREETING_PLAYING"
         if userdata is not None:
             userdata.opening_active = True
 
+    state.phase = "GREETING_PENDING"
     if opening.mode == "wait":
+        state.phase = "INTERACTIVE"
         logger.info("session opening first_speaker=user — waiting for caller")
         return opening
     if opening.mode == "say":

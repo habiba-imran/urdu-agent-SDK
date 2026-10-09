@@ -133,14 +133,14 @@ def test_english_elevenlabs_pstn_keeps_gemini(monkeypatch):
     assert eff.tts_provider == "elevenlabs"
 
 def test_build_session_connect_options_bounded_provider_retries(monkeypatch):
-    """F-H10 Phase D: default max_retry=1 (env-tunable); fail-fast via env=0."""
+    """P0: fail-fast defaults with a bounded conversational timeout."""
     monkeypatch.delenv("UVA_PROVIDER_MAX_RETRY", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_RETRY_INTERVAL", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_CONNECT_TIMEOUT", raising=False)
     from worker.main import build_session_connect_options
 
     opts = build_session_connect_options()
-    assert opts.llm_conn_options.max_retry == 1
-    assert opts.tts_conn_options.max_retry == 1
-    assert opts.stt_conn_options.max_retry == 1
-    assert opts.llm_conn_options.timeout == 30.0
+    assert opts.llm_conn_options.max_retry == 0
+    assert opts.tts_conn_options.max_retry == 0
+    assert opts.stt_conn_options.max_retry == 0
+    assert opts.llm_conn_options.timeout == 5.0

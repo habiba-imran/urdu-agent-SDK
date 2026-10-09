@@ -46,11 +46,23 @@ class ClientCallingSimulationDb:
             "disabled_at": None,
         }]
         self.calls: list[dict[str, Any]] = []
+        self.sessions: list[dict[str, Any]] = []
         self.idempotency: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.quota: dict[str, int] = {"tenant_client_1": 0}
 
     def execute(self, query: str, params: tuple[Any, ...] = ()):
         sql = " ".join(query.lower().split())
+
+        # A-01.3: outbound calls get a sessions row in the same transaction.
+        if "insert into sessions" in sql:
+            self.sessions.append({
+                "id": params[0],
+                "tenant_id": params[1],
+                "agent_id": params[2],
+                "room_name": params[3],
+                "ended_at": None,
+            })
+            return FakeCursor(None)
 
         # F-H17: reserve_call_quota now reads the monthly cap and tenant status too, so
         # PSTN spend is gated the same way browser sessions always were.
@@ -110,6 +122,54 @@ class ClientCallingSimulationDb:
                 def fetchone(self): return (self._rows[0]["id"], self._rows[0]["livekit_sip_dispatch_rule_id"]) if self._rows else None
             return MultiCursor(matching)
 
+        # --- A-01.1 Telnyx ↔ telephony_calls correlation (telephony_call_correlation.py) ---
+        if "from information_schema.columns" in sql:
+            return FakeCursor((1,))
+
+        if "from telnyx_sip_connections" in sql and "provider_sip_connection_id = %s" in sql:
+            return FakeCursor(None)
+
+        if "select id, tenant_id from telephony_calls" in sql and "provider_call_control_id = %s" in sql:
+            c = next((x for x in self.calls if x.get("provider_call_control_id") == params[0]), None)
+            return FakeCursor((c["id"], c["tenant_id"]) if c else None)
+
+        if "select id, tenant_id from telephony_calls" in sql and "provider_call_session_id = %s" in sql:
+            c = next((x for x in self.calls if x.get("provider_call_session_id") == params[0]), None)
+            return FakeCursor((c["id"], c["tenant_id"]) if c else None)
+
+        if "select id, tenant_id from telephony_calls" in sql and "livekit_sip_call_id = %s" in sql:
+            c = next(
+                (x for x in self.calls if x.get("livekit_sip_call_id") == params[0] or x.get("livekit_sip_call_id_full") == params[1]),
+                None,
+            )
+            return FakeCursor((c["id"], c["tenant_id"]) if c else None)
+
+        if "select id, tenant_id, created_at" in sql and "provider_call_control_id is null" in sql:
+            digits = lambda s: "".join(ch for ch in str(s or "") if ch.isdigit())  # noqa: E731
+            matching = [
+                c for c in self.calls
+                if c.get("provider_call_control_id") is None
+                and c.get("platform_status") in ("queued", "dialing", "ringing", "in_progress")
+                and digits(c.get("from_number")) == params[1]
+                and digits(c.get("to_number")) == params[2]
+            ]
+            if "and direction = %s" in sql:
+                matching = [c for c in matching if c.get("direction") == params[3]]
+            class MultiCursor:
+                def __init__(self, r_list): self._rows = r_list
+                def fetchall(self): return [(c["id"], c["tenant_id"], None) for c in self._rows]
+                def fetchone(self): return (self._rows[0]["id"], self._rows[0]["tenant_id"], None) if self._rows else None
+            return MultiCursor(matching)
+
+        if "update telephony_calls" in sql and "set provider_call_control_id = %s" in sql:
+            for c in self.calls:
+                if c["id"] == params[-1] and c.get("provider_call_control_id") is None:
+                    c["provider_call_control_id"] = params[0]
+                    c["provider_call_session_id"] = params[1]
+                    c["provider_call_leg_id"] = params[2]
+                    return FakeCursor((c["id"],))
+            return FakeCursor(None)
+
         if "select count(*) from telephony_calls" in sql:
             matching = [
                 c for c in self.calls
@@ -123,14 +183,35 @@ class ClientCallingSimulationDb:
             c = next((x for x in self.calls if x["id"] == params[0]), None)
             return FakeCursor((c["phone_number_id"], c["tenant_id"], c["agent_id"]) if c else None)
 
-        if "select quota_released_at from telephony_calls" in sql:
-            c = next((x for x in self.calls if x["id"] == params[0]), None)
-            return FakeCursor((c.get("quota_released_at"),) if c else None)
-
         if "update telephony_calls set quota_released_at" in sql:
             for c in self.calls:
-                if c["id"] == params[0]:
+                if c["id"] == params[0] and c.get("quota_released_at") is None:
                     c["quota_released_at"] = "2026-08-19T12:00:00Z"
+                    return FakeCursor((c["id"],))
+            return FakeCursor(None)
+
+        if "insert into telephony_calls" in sql and "'inbound'" in sql:
+            # A-01.4: worker-side inbound persistence (worker/telephony_runtime.py)
+            self.calls.append({
+                "id": params[0],
+                "tenant_id": params[1],
+                "session_id": params[2],
+                "agent_id": params[3],
+                "phone_number_id": params[4],
+                "room_name": params[5],
+                "from_number": params[6],
+                "to_number": params[7],
+                "inbound_trunk_record_id": params[8],
+                "sip_dispatch_rule_record_id": params[9],
+                "livekit_sip_call_id": params[10],
+                "livekit_sip_call_id_full": params[11],
+                "sip_trunk_phone_number": params[12],
+                "quota_reserved_at": "2026-08-19T12:00:00Z" if params[13] else None,
+                "quota_released_at": None,
+                "platform_status": "in_progress",
+                "direction": "inbound",
+                "provider_call_control_id": None,
+            })
             return FakeCursor(None)
 
         if "insert into telephony_calls" in sql:
@@ -146,14 +227,18 @@ class ClientCallingSimulationDb:
                 "quota_released_at": None,
                 "livekit_sip_call_id": params[12],
                 "livekit_sip_call_id_full": params[13],
+                "direction": "outbound",
+                "provider_call_control_id": None,
+                "session_id": params[-1],
             })
             return FakeCursor(None)
 
         if "update telephony_calls" in sql:
-            call_control_id = params[-1]
+            # A-01.1: status updates target the resolved row by id, never by provider id.
+            target_call_id = params[-1]
             mapped = params[0]
             for c in self.calls:
-                if c.get("livekit_sip_call_id") == call_control_id or c.get("livekit_sip_call_id_full") == call_control_id:
+                if c["id"] == target_call_id:
                     existing_status = c.get("platform_status")
                     terminal_states = {"completed", "busy", "no_answer", "failed", "cancelled"}
                     if existing_status in terminal_states and mapped not in terminal_states:
@@ -293,6 +378,16 @@ def test_agent_calling_client_outbound_and_idempotency_flow():
     assert res1["platform_status"] == "dialing"
     assert res1["room_name"].startswith("telephony-outbound-")
     assert db.quota["tenant_client_1"] == 1
+    # A-01.3: a real sessions row is written and linked so the worker can bill/transcribe.
+    assert res1["session_id"] is not None
+    assert db.sessions == [{
+        "id": res1["session_id"],
+        "tenant_id": "tenant_client_1",
+        "agent_id": "agent_voice_1",
+        "room_name": res1["room_name"],
+        "ended_at": None,
+    }]
+    assert db.calls[-1]["session_id"] == res1["session_id"]
 
     # Re-sent outbound call request with matching idempotency key returns cached response
     res2 = service.create_outbound_call(
@@ -345,19 +440,39 @@ def test_webhook_lifecycle_and_out_of_order_protection():
 
     call_id = call_res["telephony_call_id"]
     call_row = db.calls[-1]
-    sip_id = call_row["livekit_sip_call_id"]
+    assert call_row["provider_call_control_id"] is None
+    assert db.quota["tenant_client_1"] == 1  # reservation taken at dial
 
-    # 2. Webhook call.answered arrives -> platform_status becomes in_progress
-    _apply_webhook_side_effects(db, "call.answered", {"data": {"payload": {"call_control_id": sip_id, "status": "answered"}}})
+    # A-01.1: Telnyx sends ITS OWN ids — never LiveKit's sip_call_id. The first event
+    # must bind by direction + from/to, later events match the bound provider id exactly.
+    telnyx_cc = "v3:telnyx-call-control-abc"
+    assert telnyx_cc != call_row["livekit_sip_call_id"]
+
+    # 2. Webhook call.answered arrives (first contact, carries from/to) -> in_progress + bind
+    _apply_webhook_side_effects(db, "call.answered", {"data": {"payload": {
+        "call_control_id": telnyx_cc,
+        "call_session_id": "sess-1",
+        "call_leg_id": "leg-1",
+        "direction": "outgoing",
+        "from": "+18005550199",
+        "to": "+14155550777",
+        "status": "answered",
+    }}})
     assert db.calls[-1]["platform_status"] == "in_progress"
+    assert db.calls[-1]["provider_call_control_id"] == telnyx_cc
+    assert db.calls[-1]["provider_call_session_id"] == "sess-1"
 
-    # 3. Webhook call.hangup arrives -> platform_status becomes completed
-    _apply_webhook_side_effects(db, "call.hangup", {"data": {"payload": {"call_control_id": sip_id, "status": "completed"}}})
+    # 3. Webhook call.hangup arrives (ids only) -> exact match -> completed + quota released once
+    _apply_webhook_side_effects(db, "call.hangup", {"data": {"payload": {"call_control_id": telnyx_cc, "status": "completed"}}})
     assert db.calls[-1]["platform_status"] == "completed"
+    assert db.calls[-1]["quota_released_at"] is not None
+    assert db.quota["tenant_client_1"] == 0
 
-    # 4. Out-of-order delayed call.initiated webhook arrives late -> platform_status remains completed
-    _apply_webhook_side_effects(db, "call.initiated", {"data": {"payload": {"call_control_id": sip_id, "status": "initiated"}}})
+    # 4. Out-of-order delayed call.initiated webhook arrives late -> remains completed, no double release
+    _apply_webhook_side_effects(db, "call.initiated", {"data": {"payload": {"call_control_id": telnyx_cc, "status": "initiated"}}})
     assert db.calls[-1]["platform_status"] == "completed"
+    _apply_webhook_side_effects(db, "call.hangup", {"data": {"payload": {"call_control_id": telnyx_cc, "status": "completed"}}})
+    assert db.quota["tenant_client_1"] == 0
 
 
 def test_disable_number_active_calls_drain_guardrail():

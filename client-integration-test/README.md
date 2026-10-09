@@ -1,80 +1,65 @@
-# Client integration test (fresh start)
+# Independent client integration test
 
-Simulates a **new client** integrating from `client-deliverables-final/` only:
+This folder is a standalone client: copy the **entire folder**, including `packages/`, outside the platform repository and run it there. It imports installed SDK packages, calls public platform endpoints through its own host backend, and does not import worker, dashboard, database, or SDK source files.
 
-- Installs `@awaazlabs-uva/voice`, `@awaazlabs-uva/agents`, `@awaazlabs-uva/telephony` from **public npm** (no monorepo `file:` packs)
-- Host backend follows `host-backend-starter/` (session mint + refresh + HMAC)
-- Browser uses the voice SDK against **this** host, not the control plane directly
+## SDK distribution
 
-## Ports (avoid clashing with `demo-app`)
+- Browser: included `@awaazlabs-uva/voice@1.1.1-humanization.0` **unpublished test snapshot**, packed from current SDK source. Includes playback-readiness handshake, provider-failure events, and humanization metrics. This is not an npm release.
+- Backend: published `@awaazlabs-uva/agents@0.1.0` and `@awaazlabs-uva/telephony@0.1.0`, pinned in lockfiles.
+- `packages/voice-manifest.json` records archive SHA-256, npm integrity and SDK source hashes. `npm run verify` checks installed package identity and independence.
+- Published voice `1.1.0` remains the baseline client release. Installing it again does not test the new readiness handshake. GitHub pushes do not publish npm packages.
 
-| Service | Port |
-|---------|------|
-| Host backend | `3100` |
-| Frontend | `5174` |
+## Setup (PowerShell, Node 20+)
 
-## Setup
+From this folder:
 
-```bash
-cd client-integration-test
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-# Fill secrets + URLs in backend/.env and frontend/.env
-
+```powershell
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/.env.example frontend/.env
+# Fill your test tenant's URLs/credentials and agent ID. Never put secrets in frontend/.env.
 npm run install:all
+npm run verify
 ```
+
+Do not overwrite existing `.env` files when updating this app. `install:all` uses `npm ci` and the checked-in lockfiles. `verify` runs synthetic host-contract tests, TypeScript, production frontend build, and installed-package/hash checks; it does not place calls.
+
+The backend requires `UVA_TENANT_ID`, `UVA_HMAC_SECRET`, `UVA_PUBLISHABLE_KEY`, and `UVA_CONTROL_PLANE_URL`. Set `UVA_API_BASE_URL` for the agent/provider picker. Telephony additionally requires the appropriate API URL, backend-only Telnyx credentials, and an existing test route/number.
+
+The platform control plane, tenant API, worker, LiveKit and chosen provider credentials must already be available. This client does not launch or configure them. Default local URLs: control plane `http://localhost:8000`, tenant API `http://localhost:8002`.
+
+Allow `http://localhost:5174` in both the tenant's `allowed_origins` and the host's `HOST_ALLOWED_ORIGINS`. If you use `127.0.0.1`, allow that exact origin too. Use the same publishable key on backend and frontend.
 
 ## Run
 
-Terminal 1 — ensure control plane / portal / worker are already up (same as your local platform).
+Two terminals, from this folder:
 
-Terminal 2:
-
-```bash
+```powershell
 npm run dev:backend
 ```
 
-Terminal 3:
-
-```bash
+```powershell
 npm run dev:frontend
 ```
 
-Open http://localhost:5174
+Open `http://localhost:5174`. Host health: `http://localhost:3100/healthz`.
 
-## What to verify
+Choose a **dedicated test agent**: changing language/providers in the picker updates that agent via the agents SDK. The picker uses platform capabilities; it does not hardcode new providers or models. English uses the existing English providers; Pakistani Urdu and Urdu-English mixed tests use the existing Urdu route. There is no separate mixed-language API enum. Gladia's existing single-language limitation remains.
 
-The frontend is the **same Wave 1 UI as `demo-app/frontend`** (metrics, timings, pipeline picker, audio unlock), plus a **Telephony** panel.
+Connect, grant microphone access, and click **Unlock audio** if blocked. The page reports room connection and playback readiness separately. Metrics are worker/SDK diagnostics; active-speaker signals and TTS TTFB do not prove caller-acoustic FUAW.
 
-Packages are from **public npm** only (`voice`, `agents`, `telephony`).
+Read [TESTING.md](TESTING.md) for the humanization interaction matrix and [PLATFORM_TESTING.md](PLATFORM_TESTING.md) for platform-owned candidate settings. New audible candidates remain off until explicitly enabled on an isolated test worker.
 
-1. Open http://localhost:5174  
-2. Browser voice: wait for pickers → Connect → Unlock audio if needed  
-3. Telephony (Telnyx key in `backend/.env` only):
-   - **Connect / refresh Telnyx**
-   - **Sync account numbers** → see managed + owned lists
-   - **Search / Purchase** to buy a number
-   - Select a managed number → **Assign to agent + configure inbound routing**
-   - Inbound: dial that E.164 from a real phone
-   - Outbound: **Prepare outbound** → enter destination → **Place outbound call**
+## Phone testing
 
-### Can’t hear the agent?
+The Telephony panel uses the backend-only telephony SDK. Check connection/readiness and assigned numbers before testing an existing inbound/outbound route. Number purchase and outbound calls incur provider charges; this app performs them only when you use those controls. Verify status and end reason in the dashboard Sessions/Telephony views. GitHub publication does not apply database migrations or provision phone routes.
 
-Usually Chrome autoplay — click **Unlock audio**. Slow `session_mint_ms` is control-plane/DB, not the npm package.
+## Maintainer: refresh the included SDK snapshot
 
-## Prerequisites (local platform)
+From the platform repository root, after SDK source changes:
 
-Your AwaazLabs services must already be running (same as `demo-app`):
-
-- Control plane → `UVA_CONTROL_PLANE_URL` (e.g. `http://localhost:8000`)
-- Tenant portal API → `UVA_API_BASE_URL` (e.g. `http://localhost:8002`)
-- Voice worker / LiveKit for actual audio
-
-Also ensure the tenant `allowed_origins` includes `http://localhost:5174` (control plane origin check).
-
-## Independence checks
-
-```bash
-# Packages resolve from registry.npmjs.org — not file: monorepo packs
-rg "registry.npmjs.org/@awaazlabs-uva" backend/package-lock.json frontend/package-lock.json
+```powershell
+python scripts/package_client_voice.py
+npm install --prefix client-integration-test/frontend
 ```
+
+Commit the refreshed archive, manifest and frontend lockfile together. The packer builds the SDK and assigns a test-only prerelease version to a temporary package; it does not change the registry release or publish to npm. End clients never run this maintainer step.

@@ -7,8 +7,9 @@ Policy (research §21–22; API-safe vs pinned livekit-agents 1.6.5):
 2. **Plain assistant text in history** — when an assistant item is added, strip TTS-only markup
    (Cartesia SSML / Fish brackets / Mist pauses) so later LLM turns are not poisoned by tags.
    TTS already received the tagged stream via ``tts_text_transforms`` / generation path.
-3. **Windowing** — ``ChatContext.truncate(max_items=…)`` default **48** via ``UVA_CHAT_HISTORY_MAX_ITEMS``
-   (set ``0`` / ``off`` to disable).
+3. **Legacy session-history windowing** — the configured limit applies to session.history.
+   Installed LiveKit keeps a separate active Agent.chat_ctx; this does not bound model input.
+   Phase 2 captures a separate full audit transcript. Active projection belongs to Phase 3.
 4. **DB transcript** — same plain-text helper so stored transcripts are readable.
 
 Do not invent AgentSession history APIs that are not on the pinned build — only
@@ -30,12 +31,31 @@ from worker.plain_spoken_sanitize import (
 
 logger = logging.getLogger("worker.humanization.history")
 
-# Wave 1 default: cap ChatContext growth on long calls (disable with UVA_CHAT_HISTORY_MAX_ITEMS=0).
+
+class AuditTranscript:
+    """Full user/assistant transcript, independent of legacy session history windowing."""
+
+    def __init__(self) -> None:
+        self._items: dict[str, dict[str, Any]] = {}
+
+    def record(self, item: Any) -> None:
+        role = getattr(item, "role", None)
+        text = plain_text_for_history(getattr(item, "text_content", None) or "")
+        item_id = getattr(item, "id", None)
+        if role in {"user", "assistant"} and text and item_id:
+            self._items[str(item_id)] = {
+                "role": role, "text": text, "at": getattr(item, "created_at", None),
+            }
+
+    def turns(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._items.values()]
+
+# Legacy session-history cap; the installed agent's active LLM context is separate.
 _DEFAULT_CHAT_HISTORY_MAX_ITEMS = 48
 
 
 def resolve_chat_history_max_items() -> int | None:
-    """Max ChatContext items to retain, or None when windowing is off.
+    """Max session.history items to retain, or None when windowing is off.
 
     Default ``48`` when unset. Set ``UVA_CHAT_HISTORY_MAX_ITEMS=0`` (or ``off``) to disable.
     """
@@ -69,8 +89,45 @@ def plain_text_for_history(text: str) -> str:
     # Unwrap <spell>…</spell> first so inner words survive, then drop all markup.
     out = CARTESIA_SPELL_TAG_RE.sub(r"\1", text)
     out = strip_foreign_tts_markup(out, strip_brackets=True)
+    # Rime pronunciation directives must not poison canonical assistant history.
+    out = re.sub(r"\bspell\s*\(([^()]*)\)", r"\1", out, flags=re.I)
+    # Preserve underscores in literal emails/IDs rather than treating them as markdown.
+    protected = {}
+    def hold_fact(match):
+        token = f"\x00FACT{len(protected)}\x00"
+        protected[token] = match.group(0)
+        return token
+    out = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b\w+_\w+(?:_\w+)*\b", hold_fact, out)
     out = strip_markdown_emoji_bullets(out)
+    for token, value in protected.items():
+        out = out.replace(token, value)
     return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
+def reconcile_interrupted_context(chat_ctx: Any, speech_plans=(), heard_items=None) -> Any:
+    """Ephemeral model input only. Full audit/history and tool records survive."""
+    known = {ref: plan.heard.context_text(plan.canonical_text)
+             for plan in speech_plans for ref in plan.history_references}
+    known.update(heard_items or {})
+    result = chat_ctx.copy()
+    changed = False
+    for index, item in enumerate(result.items):
+        if getattr(item, "role", None) == "assistant" and getattr(item, "interrupted", False):
+            # Installed ChatContext.copy() shares items. Isolate the message before
+            # changing the ephemeral context, preserving audit and framework history.
+            item = item.model_copy(deep=True)
+            result.items[index] = item
+            prefix = known.get(item.id, "")
+            original = getattr(item, "text_content", None) or ""
+            # Even an evidence reference cannot introduce text absent from this item.
+            item.content = [prefix] if original.startswith(prefix) and prefix else []
+            changed = True
+    if changed:
+        result.add_message(role="developer", content=(
+            "Previous interrupted assistant messages contain only known output evidence. "
+            "An omitted suffix must not be assumed understood. Recorded business effects remain authoritative."
+        ))
+    return result
 
 
 def sanitize_transcript_turns(
@@ -98,7 +155,11 @@ def apply_history_hygiene(
     item: Any,
     room_name: str = "",
 ) -> None:
-    """Mutate assistant history text to plain + optionally truncate session history."""
+    """Strip assistant markup and preserve legacy session-history windowing.
+
+    The full audit transcript is captured separately from the item event.
+    This function does not bound the active agent LLM context.
+    """
     role = getattr(item, "role", None)
     if role == "assistant":
         raw = getattr(item, "text_content", None) or ""

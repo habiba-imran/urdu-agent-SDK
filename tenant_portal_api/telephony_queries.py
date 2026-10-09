@@ -335,17 +335,19 @@ def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
 
 
 def release_call_quota_once(conn: DbConnection, call_id: str, tenant_id: str) -> bool:
-    """Release quota for a call exactly once."""
-    row = conn.execute(
-        "select quota_released_at from telephony_calls where id = %s for update",
+    """Release quota for a call exactly once.
+
+    The guard and the stamp are one conditional UPDATE so the function is safe on
+    autocommit connections (worker) as well as inside a transaction (API/reconciler):
+    concurrent callers race on the row, exactly one gets ``returning id``.
+    """
+    claimed = conn.execute(
+        "update telephony_calls set quota_released_at = now() "
+        "where id = %s and quota_released_at is null returning id",
         (call_id,),
     ).fetchone()
-    if not row or row[0] is not None:
+    if not claimed:
         return False  # Already released or invalid call
-    conn.execute(
-        "update telephony_calls set quota_released_at = now() where id = %s",
-        (call_id,),
-    )
     conn.execute(
         "update quota_state set concurrent_now = greatest(0, concurrent_now - 1) where tenant_id = %s",
         (tenant_id,),
@@ -361,6 +363,10 @@ def release_call_quota_unpersisted(conn: DbConnection, tenant_id: str) -> None:
     )
 
 
+TERMINAL_CALL_STATUSES = ("completed", "busy", "no_answer", "failed", "cancelled")
+ACTIVE_CALL_STATUSES = ("queued", "dialing", "ringing", "in_progress")
+
+
 def transition_call_status(
     conn: DbConnection,
     call_id: str,
@@ -368,20 +374,140 @@ def transition_call_status(
     raw_participant_status: str | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
-) -> None:
-    """Update call public platform status."""
-    conn.execute(
-        """
-        update telephony_calls
-        set platform_status = %s,
-            raw_livekit_sip_participant_status = coalesce(%s, raw_livekit_sip_participant_status),
-            error_code = coalesce(%s, error_code),
-            error_message = coalesce(%s, error_message),
-            updated_at = now()
-        where id = %s
-        """,
-        (new_status, raw_participant_status, error_code, error_message, call_id),
+    *,
+    ended: bool = False,
+    answered: bool = False,
+    only_from: tuple[str, ...] | list[str] | None = None,
+) -> int:
+    """Update call public platform status. Returns the number of rows changed.
+
+    ``answered=True`` stamps ``answered_at`` (once). ``ended=True`` stamps ``ended_at``
+    (once) and derives ``duration_sec`` as talk time (``now() - answered_at``; 0 when
+    the call was never answered). ``only_from`` restricts the update to rows currently in
+    one of those statuses so a late/duplicate event can never downgrade a call or
+    overwrite a terminal status.
+    """
+    set_clauses = [
+        "platform_status = %s",
+        "raw_livekit_sip_participant_status = coalesce(%s, raw_livekit_sip_participant_status)",
+        "error_code = coalesce(%s, error_code)",
+        "error_message = coalesce(%s, error_message)",
+        "started_at = coalesce(started_at, now())",
+    ]
+    params: list[Any] = [new_status, raw_participant_status, error_code, error_message]
+    if answered:
+        set_clauses.append("answered_at = coalesce(answered_at, now())")
+    if ended:
+        set_clauses.append("ended_at = coalesce(ended_at, now())")
+        set_clauses.append(
+            "duration_sec = coalesce(duration_sec, case when answered_at is not null "
+            "then greatest(0, extract(epoch from (now() - answered_at)))::int else 0 end)"
+        )
+    set_clauses.append("updated_at = now()")
+
+    where = ""
+    if only_from:
+        where = "platform_status = any(%s) and "
+        params.append(list(only_from))
+    params.append(call_id)
+
+    cur = conn.execute(
+        f"update telephony_calls set {', '.join(set_clauses)} where {where}id = %s",
+        tuple(params),
     )
+    rowcount = getattr(cur, "rowcount", None)
+    return int(rowcount) if isinstance(rowcount, int) and rowcount >= 0 else 1
+
+
+def find_open_call_by_room(conn: DbConnection, room_name: str) -> dict[str, Any] | None:
+    """Most recent telephony_calls row for a LiveKit room (any status)."""
+    if not (room_name or "").strip():
+        return None
+    row = conn.execute(
+        """
+        select id, tenant_id, platform_status, quota_reserved_at, quota_released_at
+        from telephony_calls
+        where room_name = %s
+        order by created_at desc
+        limit 1
+        """,
+        (room_name,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": str(row[0]),
+        "tenant_id": str(row[1]),
+        "platform_status": row[2],
+        "quota_reserved_at": row[3],
+        "quota_released_at": row[4],
+    }
+
+
+def finalize_call(
+    conn: DbConnection,
+    call_id: str,
+    tenant_id: str,
+    status: str,
+    *,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    raw_participant_status: str | None = None,
+) -> dict[str, bool]:
+    """Move a call to a terminal status (never downgrading one) and release its quota once.
+
+    A-01.2: this is the single exit path used by the worker shutdown, the stale-job
+    cleanup and the reconciler. The Telnyx webhook path releases through
+    ``release_call_quota_once`` as well, so whichever lands first wins and the rest are
+    no-ops — ``quota_released_at`` is the ledger.
+    """
+    if status not in TERMINAL_CALL_STATUSES:
+        raise ValueError(f"finalize_call requires a terminal status, got {status!r}")
+    row = conn.execute(
+        "select platform_status from telephony_calls where id = %s for update",
+        (call_id,),
+    ).fetchone()
+    if not row:
+        return {"found": False, "status_changed": False, "quota_released": False}
+    current = row[0]
+    status_changed = False
+    if current not in TERMINAL_CALL_STATUSES:
+        transition_call_status(
+            conn,
+            call_id,
+            status,
+            raw_participant_status=raw_participant_status,
+            error_code=error_code,
+            error_message=error_message,
+            ended=True,
+        )
+        status_changed = True
+    released = release_call_quota_once(conn, call_id, tenant_id)
+    return {"found": True, "status_changed": status_changed, "quota_released": released}
+
+
+def release_leaked_call_quota(conn: DbConnection, batch_size: int = 100) -> int:
+    """Release reservations on calls that are already terminal but never released.
+
+    Returns the number of reservations released. Only rows that recorded a reservation
+    (``quota_reserved_at``) are eligible, so rows that never reserved cannot decrement.
+    """
+    rows = conn.execute(
+        """
+        select id, tenant_id from telephony_calls
+        where platform_status in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
+          and quota_reserved_at is not null
+          and quota_released_at is null
+        order by created_at asc
+        limit %s
+        """,
+        (batch_size,),
+    ).fetchall() or []
+    released = 0
+    for call_id, tenant_id in rows:
+        if release_call_quota_once(conn, str(call_id), str(tenant_id)):
+            released += 1
+    return released
 
 
 def insert_call_event(

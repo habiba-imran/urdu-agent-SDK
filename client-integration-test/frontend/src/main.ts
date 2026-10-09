@@ -75,6 +75,7 @@ type AppState = {
   latestMetrics: MetricsEvent | null;
   errors: string[];
   audioBlocked: boolean;
+  audioReady: boolean;
   pipelineText: string;
   packageLabel: string;
   debugLog: DebugEntry[];
@@ -136,6 +137,7 @@ const state: AppState = {
   latestMetrics: null,
   errors: [],
   audioBlocked: false,
+  audioReady: false,
   pipelineText: 'Loading provider capabilities…',
   packageLabel: '@awaazlabs-uva/voice (resolving…)',
   debugLog: [],
@@ -267,7 +269,7 @@ appRoot.innerHTML = `
 
     <section class="panel debug-panel">
       <div class="debug-header">
-        <h2>First-audio timings</h2>
+        <h2>Connection and turn timings</h2>
         <div class="debug-actions">
           <button id="copy-debug-btn" type="button">Copy</button>
           <button id="clear-debug-btn" type="button">Clear</button>
@@ -276,11 +278,12 @@ appRoot.innerHTML = `
       <p class="hint debug-hint">
         Cold-start cards are from Connect click. <strong>Session mint</strong> vs
         <strong>LiveKit join</strong> split <code>room_connected</code>.
-        <strong>Turn e2e</strong> is the real voice↔voice number from worker
-        <code>turn_latency</code> (EOU → TTS TTFB).
-        A second user final while the agent is still thinking cancels the first reply
-        (watch for back-to-back user finals like “Thank you.”).
+        <strong>Turn e2e</strong> is a worker timing proxy; TTS TTFB and
+        <code>agent_speaking</code> are diagnostics, not caller-acoustic FUAW.
+        Room connection and playback readiness are separate. Back-to-back user finals
+        may revise an in-flight reply; check the outcome and generation IDs.
       </p>
+      <p id="playback-status" class="hint" role="status" aria-atomic="true">Playback not ready</p>
       <div id="timing-summary" class="timing-grid"></div>
       <pre id="debug-log" class="log-box debug-log">Waiting for Connect…</pre>
       <details class="metrics-details">
@@ -581,7 +584,7 @@ unlockAudioBtn.addEventListener('click', async () => {
   }
 });
 
-state.packageLabel = `npm · @awaazlabs-uva/voice@${__UVA_VOICE_VERSION__}`;
+state.packageLabel = `packaged test snapshot · @awaazlabs-uva/voice@${__UVA_VOICE_VERSION__}`;
 void bootstrapPipelineControls();
 mountTelephonyPanel({
   backendOrigin,
@@ -624,6 +627,9 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
     pushDebug('warn', 'Disconnected', reason == null ? undefined : String(reason));
     muteButton.disabled = true;
     state.micMuted = false;
+    state.audioReady = false;
+    state.audioBlocked = false;
+    state.thinking = false;
     setStatus('idle');
   });
   client.on('transcript', (entry) => {
@@ -675,7 +681,7 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
     state.agentSpeaking = Boolean(isSpeaking);
     if (isSpeaking && state.timing.firstAgentSpeakingAt == null) {
       state.timing.firstAgentSpeakingAt = performance.now();
-      pushDebug('metric', `First agent audio (speaking) (+${msSinceClick()}ms)`);
+      pushDebug('metric', `First agent active-speaker signal (+${msSinceClick()}ms)`);
     } else if (
       isSpeaking &&
       state.timing.lastUserFinalAt != null &&
@@ -685,13 +691,16 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
       const gap = Math.round(state.timing.lastAgentReplyAudioAt - state.timing.lastUserFinalAt);
       state.thinking = false;
       if (state.status === 'thinking') setStatus('connected');
-      pushDebug('metric', `User-final → agent audio (perceived) ${gap}ms`);
+      pushDebug('metric', `User-final → agent active-speaker signal (proxy) ${gap}ms`);
     } else {
       pushDebug('info', isSpeaking ? 'Agent speaking: yes' : 'Agent speaking: no');
     }
     render();
   });
   client.on('metrics_updated', (metrics) => {
+    // The SDK forwards turn_latency here for legacy consumers. The dedicated
+    // listener below handles it once; this listener owns aggregates only.
+    if (metrics.type !== 'metrics_updated') return;
     state.latestMetrics = metrics;
     state.timing.lastMetricsAt = performance.now();
     pushDebug('metric', `metrics_updated (+${msSinceClick()}ms)`, summarizeMetrics(metrics));
@@ -699,7 +708,7 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
   });
   client.on('turn_latency', (metrics) => {
     state.latestMetrics = metrics;
-    ingestTurnLatency(metrics);
+    if (metrics.outcome == null || metrics.outcome === 'completed') ingestTurnLatency(metrics);
     if (state.timing.firstTurnLatencyAt == null) {
       state.timing.firstTurnLatencyAt = performance.now();
       pushDebug(
@@ -716,12 +725,23 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
   client.on('ended', (reason) => {
     pushDebug('warn', 'Session ended', reason == null ? undefined : String(reason));
     state.status = `ended${reason ? ` (${String(reason)})` : ''}`;
+    state.thinking = false;
+    state.speaking = false;
+    state.agentSpeaking = false;
+    state.micMuted = false;
     state.audioBlocked = false;
+  state.audioReady = false;
     muteButton.disabled = true;
+    render();
+  });
+  client.on('audio_ready', (ready) => {
+    state.audioReady = ready;
+    pushDebug('info', ready ? 'Playback ready' : 'Playback not ready', 'Browser readiness; does not prove caller hearing');
     render();
   });
   client.on('audio_blocked', (blocked) => {
     state.audioBlocked = Boolean(blocked);
+    if (blocked) state.audioReady = false;
     pushDebug(blocked ? 'warn' : 'info', blocked ? 'Audio blocked by browser' : 'Audio unblocked');
     render();
   });
@@ -988,6 +1008,7 @@ function resetSessionView(): void {
   state.latestMetrics = null;
   state.errors = [];
   state.audioBlocked = false;
+  state.audioReady = false;
   state.timing = emptyTiming();
   state.debugLog = [];
   muteButton.disabled = true;
@@ -1028,6 +1049,9 @@ function render(): void {
   micText.textContent = state.micMuted ? 'Muted' : 'Live';
   muteButton.textContent = state.micMuted ? 'Unmute mic' : 'Mute mic';
   packageBadge.textContent = state.packageLabel;
+  requireEl<HTMLElement>('#playback-status').textContent = state.audioReady
+    ? 'Playback ready — caller hearing still requires listening verification'
+    : state.audioBlocked ? 'Playback blocked — click Unlock audio' : 'Playback not ready';
   metricsOutput.textContent = state.latestMetrics
     ? JSON.stringify(state.latestMetrics, null, 2)
     : 'No metrics received yet.';
@@ -1076,11 +1100,11 @@ function formatTimingCards(timing: TimingSnapshot): string {
       value: timing.livekitConnectMs != null ? `${timing.livekitConnectMs}ms` : '—',
     },
     { label: 'Room connected', value: deltaMs(timing.clickAt, timing.connectedAt) },
-    { label: 'Connect → first audio', value: deltaMs(timing.connectedAt, timing.firstAgentSpeakingAt) },
+    { label: 'Connect → active speaker (proxy)', value: deltaMs(timing.connectedAt, timing.firstAgentSpeakingAt) },
     { label: 'Turn e2e (worker)', value: timing.lastTurnE2eMs != null ? `${timing.lastTurnE2eMs}ms` : '—' },
     { label: 'Turn LLM TTFT', value: timing.lastTurnLlmMs != null ? `${timing.lastTurnLlmMs}ms` : '—' },
     { label: 'Turn TTS TTFB', value: timing.lastTurnTtsTtfbMs != null ? `${timing.lastTurnTtsTtfbMs}ms` : '—' },
-    { label: 'User-final → audio', value: perceived },
+    { label: 'User-final → active speaker (proxy)', value: perceived },
     { label: 'Turn STT', value: timing.lastTurnSttMs != null ? `${timing.lastTurnSttMs}ms` : '—' },
   ];
   return cards
@@ -1101,12 +1125,12 @@ function formatTimingPlain(timing: TimingSnapshot): string {
     `session_mint_ms=${timing.sessionMintMs ?? '—'}`,
     `livekit_connect_ms=${timing.livekitConnectMs ?? '—'}`,
     `room_connected_ms=${deltaMs(timing.clickAt, timing.connectedAt)}`,
-    `connect_to_first_audio_ms=${deltaMs(timing.connectedAt, timing.firstAgentSpeakingAt)}`,
+    `connect_to_active_speaker_proxy_ms=${deltaMs(timing.connectedAt, timing.firstAgentSpeakingAt)}`,
     `turn_e2e_ms=${timing.lastTurnE2eMs ?? '—'}`,
     `turn_llm_ttft_ms=${timing.lastTurnLlmMs ?? '—'}`,
     `turn_tts_ttfb_ms=${timing.lastTurnTtsTtfbMs ?? '—'}`,
     `turn_stt_ms=${timing.lastTurnSttMs ?? '—'}`,
-    `user_final_to_audio_ms=${perceived}`,
+    `user_final_to_active_speaker_proxy_ms=${perceived}`,
   ].join('\n');
 }
 
@@ -1138,6 +1162,15 @@ function formatDebugLine(entry: DebugEntry): string {
 
 function summarizeMetrics(metrics: MetricsEvent): string {
   const keys = [
+    'humanization_policy_version',
+    'component_versions',
+    'session_id',
+    'user_turn_id',
+    'assistant_turn_id',
+    'generation_id',
+    'outcome',
+    'sequence',
+    'latencyKind',
     'e2eMs',
     'e2e_ms',
     'sttMs',
@@ -1158,7 +1191,7 @@ function summarizeMetrics(metrics: MetricsEvent): string {
   ];
   const parts: string[] = [`type=${metrics.type}`];
   for (const key of keys) {
-    if (metrics[key] != null) parts.push(`${key}=${String(metrics[key])}`);
+    if (metrics[key] != null) parts.push(`${key}=${typeof metrics[key] === 'object' ? JSON.stringify(metrics[key]) : String(metrics[key])}`);
   }
   if (parts.length === 1) {
     const preview = JSON.stringify(metrics);

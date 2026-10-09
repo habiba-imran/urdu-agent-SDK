@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5174 --strictPort",
-    "build": "vite build",
-    "preview": "vite preview --port 5174 --strictPort"
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5174 --strictPort",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@awaazlabs-uva/voice": "1.1.0"
+    "@awaazlabs-uva/voice": "file:../packages/awaazlabs-uva-voice-1.1.1-humanization.0.tgz"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

@@ -68,7 +68,9 @@ def test_end_conversation_summary_offloads_db_via_to_thread(monkeypatch, userdat
         end_conversation_summary(ctx, summary="caller asked about pricing")
     )
 
-    assert result == {"status": "saved"}
+    assert result["status"] == "saved"
+    assert result["outcome"] == "SUCCESS"
+    assert result["businessEffect"] == "committed"
     assert to_thread_fns == [fake_save]
     assert save_calls == [
         {
@@ -100,7 +102,9 @@ def test_escalate_to_human_offloads_db_via_to_thread(monkeypatch, userdata):
         escalate_to_human(ctx, reason="wants a callback", contact_info="0300-1234567")
     )
 
-    assert result == {"status": "escalated"}
+    assert result["status"] == "escalated"
+    assert result["businessEffect"] == "escalation_recorded"
+    assert result["liveTransfer"] is False
     assert to_thread_fns == [fake_insert]
     assert insert_calls == [
         {

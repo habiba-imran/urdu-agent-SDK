@@ -553,6 +553,7 @@ class OutboundCallDb(ActiveConnectionDb):
     def __init__(self):
         super().__init__(encrypted_ref=encrypt_provider_secret(RAW_TELNYX_KEY))
         self.inserted_call_params: tuple[Any, ...] | None = None
+        self.inserted_session_params: tuple[Any, ...] | None = None
 
     def execute(self, query: str, params: tuple[Any, ...] = ()):  # noqa: C901 - focused SQL fake
         self.calls.append((query, params))
@@ -589,6 +590,9 @@ class OutboundCallDb(ActiveConnectionDb):
             )
         if "from quota_state" in sql:
             return FakeCursor(row=None)
+        if "insert into sessions" in sql:
+            self.inserted_session_params = params
+            return FakeCursor()
         if "insert into telephony_calls" in sql:
             self.inserted_call_params = params
             return FakeCursor()
@@ -635,7 +639,7 @@ class OutboundLiveKitClient:
         }
 
 
-def test_outbound_call_uses_uuid_database_id_and_no_fake_session_id():
+def test_outbound_call_uses_uuid_database_ids_and_links_a_real_session():
     db = OutboundCallDb()
     livekit = OutboundLiveKitClient(mock_mode=False)
     service = TelephonyService(
@@ -651,9 +655,18 @@ def test_outbound_call_uses_uuid_database_id_and_no_fake_session_id():
     )
 
     uuid.UUID(result["telephony_call_id"])
-    assert result["session_id"] is None
+    # A-01.3: the session id is a real sessions row written in the same transaction,
+    # not a fabricated value and not None.
+    uuid.UUID(result["session_id"])
+    assert db.inserted_session_params == (
+        result["session_id"],
+        TENANT_ID,
+        "agent_real_123",
+        result["room_name"],
+    )
     assert db.inserted_call_params is not None
     assert db.inserted_call_params[0] == result["telephony_call_id"]
+    assert db.inserted_call_params[-1] == result["session_id"]
     uuid.UUID(db.inserted_call_params[0])
     assert livekit.sip_participant_calls == [
         (result["room_name"], "lk_tr_out_real_123", "+14155550199")

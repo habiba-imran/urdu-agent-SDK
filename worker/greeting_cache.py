@@ -56,14 +56,26 @@ def make_greeting_cache_key(
     greeting_text: str,
     audio_channel: str,
     tts_options: dict | None = None,
+    language: str = "ur",
+    tenant_id: str = "",
+    policy_version: str | None = None,
+    renderer_version: str | None = None,
+    pronunciation_version: str | None = None,
 ) -> GreetingCacheKey:
+    from .humanization.delivery.cache import rendered_audio_identity
+    identity = rendered_audio_identity(
+        tts_provider.strip().lower(), provider_voice_id, language,
+        tts_options or {}, audio_channel, tenant_id=tenant_id,
+        policy_version=policy_version, renderer_version=renderer_version,
+        pronunciation_version=pronunciation_version,
+    )
     return (
         agent_id,
         (tts_provider or "").strip().lower(),
         (provider_voice_id or "").strip(),
         hash_greeting_text(greeting_text),
         (audio_channel or "webrtc").strip().lower(),
-        _tts_options_fingerprint(tts_options),
+        identity,
     )
 
 
@@ -78,9 +90,15 @@ def clone_audio_frame(frame: rtc.AudioFrame) -> rtc.AudioFrame:
     )
 
 
-async def synthesize_greeting_frames(tts: Any, text: str) -> list[rtc.AudioFrame]:
+async def synthesize_greeting_frames(tts: Any, text: str, *, delivery_context: Any = None) -> list[rtc.AudioFrame]:
     """Run the session TTS instance once and collect cloned PCM frames."""
     frames: list[rtc.AudioFrame] = []
+    if delivery_context is not None:
+        async for frame in delivery_context.audio(text, greeting=True):
+            frames.append(clone_audio_frame(frame))
+        if not frames:
+            raise RuntimeError("TTS returned no audio frames for greeting")
+        return frames
     stream = tts.synthesize(text)
     try:
         async with stream:
@@ -108,17 +126,30 @@ async def frames_to_async_iterable(
         yield clone_audio_frame(frame)
 
 
+def _locked(method):
+    from functools import wraps
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return call
+
+
 class GreetingAudioCache:
     """Process-local LRU of pre-rendered greeting PCM."""
 
     def __init__(self, *, max_entries: int = _DEFAULT_MAX_ENTRIES) -> None:
+        from threading import RLock
+        self._lock = RLock()
         self._max_entries = max(1, int(max_entries))
         self._entries: OrderedDict[GreetingCacheKey, GreetingCacheEntry] = OrderedDict()
 
+    @_locked
     def has(self, key: GreetingCacheKey) -> bool:
         """True if PCM is cached — no clone (cheap gate for skip_tts prewarm)."""
         return key in self._entries
 
+    @_locked
     def get(self, key: GreetingCacheKey) -> list[rtc.AudioFrame] | None:
         entry = self._entries.get(key)
         if entry is None:
@@ -126,6 +157,7 @@ class GreetingAudioCache:
         self._entries.move_to_end(key)
         return [clone_audio_frame(f) for f in entry.frames]
 
+    @_locked
     def put(self, key: GreetingCacheKey, frames: list[rtc.AudioFrame]) -> None:
         if not frames:
             return
@@ -135,22 +167,25 @@ class GreetingAudioCache:
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)
 
+    @_locked
     def invalidate_agent(self, agent_id: str) -> int:
         doomed = [k for k in self._entries if k[0] == agent_id]
         for key in doomed:
             del self._entries[key]
         return len(doomed)
 
+    @_locked
     def clear(self) -> None:
         self._entries.clear()
 
+    @_locked
     def __len__(self) -> int:
         return len(self._entries)
 
 
 _cache = GreetingAudioCache()
 # Single-flight in-progress synthesis tasks (one TTS request per key).
-_inflight: dict[GreetingCacheKey, asyncio.Task[list[rtc.AudioFrame]]] = {}
+_inflight: dict[tuple[int, GreetingCacheKey], asyncio.Task[list[rtc.AudioFrame]]] = {}
 
 
 def get_greeting_cache() -> GreetingAudioCache:
@@ -169,6 +204,7 @@ def start_greeting_synthesis(
     text: str,
     room_name: str | None = None,
     cache: GreetingAudioCache | None = None,
+    delivery_context: Any = None,
 ) -> asyncio.Task[list[rtc.AudioFrame]]:
     """Start or join single-flight greeting TTS. Never starts a second synth for ``key``."""
     store = cache if cache is not None else _cache
@@ -180,13 +216,16 @@ def start_greeting_synthesis(
 
         return asyncio.create_task(_cached(), name="greeting_synth_cached")
 
-    existing = _inflight.get(key)
+    flight_key = (id(asyncio.get_running_loop()), key)
+    existing = _inflight.get(flight_key)
     if existing is not None and not existing.done():
         return existing
 
     async def _synth() -> list[rtc.AudioFrame]:
         try:
-            frames = await synthesize_greeting_frames(tts, text)
+            # A shared shielded task must have its own finite lifetime.
+            async with asyncio.timeout(6.0):
+                frames = await synthesize_greeting_frames(tts, text, delivery_context=delivery_context)
             store.put(key, frames)
             logger.info(
                 "greeting cache filled agent=%s provider=%s voice=%s channel=%s "
@@ -207,15 +246,18 @@ def start_greeting_synthesis(
                 exc,
             )
             raise
-        finally:
-            current = _inflight.get(key)
-            if current is not None and current.done():
-                _inflight.pop(key, None)
+
 
     task: asyncio.Task[list[rtc.AudioFrame]] = asyncio.create_task(
         _synth(), name="greeting_synth"
     )
-    _inflight[key] = task
+    _inflight[flight_key] = task
+    def done(completed):
+        if _inflight.get(flight_key) is completed:
+            _inflight.pop(flight_key, None)
+        if not completed.cancelled():
+            completed.exception()  # consume failed unawaited cache fills
+    task.add_done_callback(done)
     return task
 
 
@@ -249,14 +291,14 @@ async def await_greeting_frames(
     if hit is not None:
         return hit
 
-    task = _inflight.get(key)
+    task = _inflight.get((id(asyncio.get_running_loop()), key))
     if task is None:
         return None
     try:
         frames = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        return frames
+        return [clone_audio_frame(frame) for frame in frames]
     except Exception:
-        # Timeout or synth failure — opening may fall back to live session.say().
+        # Timeout/failure is an explicit opening outcome; never start duplicate live TTS.
         hit = store.get(key)
         return hit
 
@@ -285,11 +327,12 @@ def seed_greeting_pcm_from_env() -> bool:
     # Match runtime opening: sanitize + Cartesia enrich so the key equals
     # plan_greeting_prewarm / resolve_session_opening (otherwise env seed never hits).
     try:
-        from worker.cartesia_spoken_output import enrich_static_greeting_for_tts
         from worker.config import AgentConfig
         from worker.spoken_sanitize import sanitizer_for_provider
 
-        sanitize = sanitizer_for_provider(provider)
+        from worker.humanization.delivery.policy import resolve_delivery_policy
+        candidate = resolve_delivery_policy(provider).enabled
+        sanitize = sanitizer_for_provider(provider) if not candidate else None
         if sanitize is not None:
             text = sanitize(text).strip()
             if not text:
@@ -302,9 +345,11 @@ def seed_greeting_pcm_from_env() -> bool:
             voice_id=voice_id,
             llm_model="",
             tts_provider=provider,
+            agent_language=language,
             greeting=text,
         )
-        text = enrich_static_greeting_for_tts(seed_cfg, text)
+        from worker.session_opening import _spoken_greeting
+        text = _spoken_greeting(seed_cfg, text)
         if not text:
             return False
     except Exception as exc:
@@ -321,6 +366,8 @@ def seed_greeting_pcm_from_env() -> bool:
         greeting_text=text,
         audio_channel=channel,
         tts_options={},
+        language=language,
+        tenant_id=(os.getenv("UVA_PREWARM_TENANT_ID") or "").strip(),
     )
     if _cache.has(key):
         return True
@@ -338,7 +385,14 @@ def seed_greeting_pcm_from_env() -> bool:
         tts = build_tts(voice_id, language, None, audio_channel=channel)
 
         async def _run() -> list[rtc.AudioFrame]:
-            return await synthesize_greeting_frames(tts, text)
+            context = None
+            if candidate:
+                from worker.humanization.delivery.context import DeliveryContext
+                from worker.providers.types import AgentRuntimeConfig
+                context = DeliveryContext(AgentRuntimeConfig(
+                    language, "", "", {}, "", "", {}, provider, voice_id, {}, channel,
+                ), resolve_delivery_policy(provider))
+            return await synthesize_greeting_frames(tts, text, delivery_context=context)
 
         try:
             asyncio.get_running_loop()

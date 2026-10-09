@@ -102,15 +102,131 @@ def parse_job_telephony_metadata(job_metadata: Any) -> dict[str, Any]:
     }
 
 
+def _commit(db_conn: Any) -> None:
+    """Commit when the connection is transactional (worker opens psycopg without autocommit)."""
+    commit = getattr(db_conn, "commit", None)
+    if callable(commit) and not getattr(db_conn, "autocommit", False):
+        commit()
+
+
+def _rollback(db_conn: Any) -> None:
+    rollback = getattr(db_conn, "rollback", None)
+    if callable(rollback):
+        try:
+            rollback()
+        except Exception as err:  # pragma: no cover - best effort
+            logger.warning("inbound call rollback failed: %s", err)
+
+
+def _find_inbound_call_for_room(db_conn: Any, room_name: str) -> dict[str, Any] | None:
+    row = db_conn.execute(
+        """
+        select id, session_id from telephony_calls
+        where room_name = %s and direction = 'inbound'
+        order by created_at desc limit 1
+        """,
+        (room_name,),
+    ).fetchone()
+    if not row:
+        return None
+    return {"telephony_call_id": str(row[0]), "session_id": str(row[1]) if row[1] else None}
+
+
+def _persist_inbound_call(
+    db_conn: Any,
+    *,
+    tenant_id: str,
+    agent_id: str,
+    phone_number_id: str,
+    e164_number: str,
+    room_name: str,
+    attributes: dict[str, str],
+    quota_reserved: bool,
+) -> dict[str, Any]:
+    """Insert the ``sessions`` + ``telephony_calls`` rows for an answered inbound call.
+
+    A-01.4: without these rows the call is invisible to call history, never billed
+    (``worker/session_close`` keys on ``sessions.room_name``), has no recording link
+    (``persist_recording_urls`` updates both tables by ``room_name``) and its quota slot
+    can never be released (``quota_released_at`` ledger). Mirrors the outbound insert in
+    ``telephony_service.create_outbound_call``.
+    """
+    import uuid
+
+    session_id = str(uuid.uuid4())
+    call_id = str(uuid.uuid4())
+
+    db_conn.execute(
+        "insert into sessions (id, tenant_id, agent_id, room_name) values (%s, %s, %s, %s)",
+        (session_id, tenant_id, agent_id, room_name),
+    )
+
+    inbound_trunk_record_id = None
+    dispatch_rule_record_id = None
+    try:
+        rule_row = db_conn.execute(
+            """
+            select id, inbound_trunk_record_id from livekit_sip_dispatch_rules
+            where tenant_id = %s and phone_number_id = %s and disabled_at is null
+            order by created_at desc limit 1
+            """,
+            (tenant_id, phone_number_id),
+        ).fetchone()
+        if rule_row:
+            dispatch_rule_record_id = str(rule_row[0]) if rule_row[0] else None
+            inbound_trunk_record_id = (
+                str(rule_row[1]) if len(rule_row) > 1 and rule_row[1] else None
+            )
+    except Exception as err:
+        logger.info("inbound call: routing record lookup skipped: %s", err)
+
+    db_conn.execute(
+        """
+        insert into telephony_calls (
+            id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
+            from_number, to_number, inbound_trunk_record_id, sip_dispatch_rule_record_id,
+            livekit_sip_call_id, livekit_sip_call_id_full, sip_trunk_phone_number,
+            platform_status, provider_status, quota_reserved_at, started_at, answered_at
+        ) values (%s, %s, %s, %s, %s, 'inbound', %s,
+                  %s, %s, %s, %s,
+                  %s, %s, %s,
+                  'in_progress', 'answered', case when %s then now() else null end, now(), now())
+        """,
+        (
+            call_id,
+            tenant_id,
+            session_id,
+            agent_id,
+            phone_number_id,
+            room_name,
+            attributes.get("caller_phone_number") or None,
+            e164_number,
+            inbound_trunk_record_id,
+            dispatch_rule_record_id,
+            attributes.get("sip_call_id") or None,
+            attributes.get("sip_call_id_full") or None,
+            e164_number,
+            bool(quota_reserved),
+        ),
+    )
+    return {"telephony_call_id": call_id, "session_id": session_id}
+
+
 def resolve_inbound_sip_call(
     participant_metadata: dict[str, Any] | str | None = None,
     db_conn: Any = None,
     participant_attributes: dict[str, Any] | None = None,
+    *,
+    room_name: str | None = None,
 ) -> dict[str, Any]:
     """Resolve tenant, agent, and number routing from LiveKit SIP participant attributes.
 
-    Returns dict containing tenant_id, agent_id, e164_number, and call_id.
-    Raises ValueError on unknown or unassigned numbers.
+    With ``room_name`` and a DB connection this also reserves the concurrency slot and
+    persists the ``sessions`` / ``telephony_calls`` rows for the call in one committed
+    transaction, returning ``telephony_call_id`` and ``session_id``. Re-resolving a room
+    that already has a call row reuses it (no second reservation).
+
+    Raises ValueError on unknown, unassigned or not-ready numbers and on quota exhaustion.
     """
     attributes = extract_sip_participant_attributes(
         participant_metadata, participant_attributes
@@ -166,26 +282,91 @@ def resolve_inbound_sip_call(
     if routing_status != "ready":
         raise ValueError(f"Number {e164_num} routing is not ready")
 
-    try:
-        from tenant_portal_api import telephony_queries as queries
-        if not queries.reserve_call_quota(db_conn, str(tenant_id)):
-            logger.warning("Rejecting inbound call for tenant %s: concurrency limit reached", tenant_id)
-            raise ValueError(f"Tenant {tenant_id} concurrency limit reached")
-    except Exception as err:
-        if isinstance(err, ValueError):
-            raise
-        logger.warning("Could not verify call quota during inbound resolution: %s", err)
-
-    return {
+    result: dict[str, Any] = {
         "tenant_id": str(tenant_id),
         "agent_id": str(agent_id),
         "e164_number": e164_num,
         "phone_number_id": str(phone_number_id),
         "sip_call_id": attributes["sip_call_id"],
+        "caller_phone_number": attributes["caller_phone_number"],
         "direction": "inbound",
         "status": "resolved",
         "source": "sip_attributes",
+        "room_name": (room_name or "").strip() or None,
+        "telephony_call_id": None,
+        "session_id": None,
     }
+
+    room = result["room_name"]
+    if room:
+        try:
+            existing = _find_inbound_call_for_room(db_conn, room)
+        except Exception as err:
+            existing = None
+            logger.warning("inbound call: existing-row lookup failed room=%s: %s", room, err)
+        if existing:
+            # Worker retry / second participant for a room we already persisted.
+            logger.info(
+                "inbound call: reusing call row room=%s call=%s", room, existing["telephony_call_id"]
+            )
+            result.update(existing)
+            return result
+
+    quota_reserved = False
+    try:
+        from tenant_portal_api import telephony_queries as queries
+        if not queries.reserve_call_quota(db_conn, str(tenant_id)):
+            logger.warning("Rejecting inbound call for tenant %s: concurrency limit reached", tenant_id)
+            _rollback(db_conn)
+            raise ValueError(f"Tenant {tenant_id} concurrency limit reached")
+        quota_reserved = True
+    except Exception as err:
+        if isinstance(err, ValueError):
+            raise
+        logger.warning("Could not verify call quota during inbound resolution: %s", err)
+
+    if room:
+        try:
+            result.update(
+                _persist_inbound_call(
+                    db_conn,
+                    tenant_id=str(tenant_id),
+                    agent_id=str(agent_id),
+                    phone_number_id=str(phone_number_id),
+                    e164_number=e164_num,
+                    room_name=room,
+                    attributes=attributes,
+                    quota_reserved=quota_reserved,
+                )
+            )
+        except Exception as err:
+            # Fail open on persistence: the caller is already connected, dropping them
+            # for a DB blip is worse than an untracked call. Reservation is rolled back
+            # with the rows so nothing leaks.
+            _rollback(db_conn)
+            logger.error(
+                "inbound call: failed to persist sessions/telephony_calls rows room=%s tenant=%s: %s",
+                room,
+                tenant_id,
+                err,
+            )
+            return result
+    else:
+        logger.warning(
+            "inbound call: no room_name supplied — quota reserved for tenant %s but no "
+            "telephony_calls row written; the slot can only be released by reconciliation",
+            tenant_id,
+        )
+
+    try:
+        _commit(db_conn)
+    except Exception as err:
+        _rollback(db_conn)
+        logger.error("inbound call: commit failed room=%s tenant=%s: %s", room, tenant_id, err)
+        result["telephony_call_id"] = None
+        result["session_id"] = None
+
+    return result
 
 
 def session_audio_channel(resolved: dict[str, Any]) -> str:
@@ -206,6 +387,7 @@ def resolve_session_metadata(
     job_metadata: Any = None,
     participant: Any = None,
     db_conn: Any = None,
+    room_name: str | None = None,
 ) -> dict[str, Any]:
     """Resolve tenant/agent session metadata for web or telephony jobs.
 
@@ -268,6 +450,7 @@ def resolve_session_metadata(
             participant_metadata=participant_metadata,
             participant_attributes=participant_attributes,
             db_conn=db_conn,
+            room_name=room_name,
         )
         return {
             "tenant_id": resolved["tenant_id"],
@@ -280,4 +463,18 @@ def resolve_session_metadata(
         "tenant_id": md.get("tenant_id", ""),
         "agent_id": md.get("agent_id", ""),
         "telephony": None,
+    }
+
+
+def transport_diagnostics(resolved: dict[str, Any], *, participant: Any = None) -> dict[str, Any]:
+    meta = resolved.get("telephony") or {}
+    attrs = getattr(participant, "attributes", None) or {}
+    return {
+        "channel": session_audio_channel(resolved).upper(),
+        "direction": meta.get("direction") or "UNKNOWN",
+        "route": meta.get("trunk_id") or attrs.get("sip.trunkID") or "UNKNOWN",
+        "provider": meta.get("provider") or "UNKNOWN",
+        "codec": meta.get("codec") or attrs.get("sip.codec") or "UNKNOWN",
+        "playback_ready": None,
+        "rtt_ms": None, "jitter_ms": None, "loss": None,
     }

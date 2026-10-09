@@ -12,7 +12,6 @@ import asyncio
 import logging
 import os
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,6 +59,15 @@ class AgentUserdata:
     verified_caller_phone: str | None = None
     user_turn_count: int = 0
     write_gate: Any = None
+    # Structural, secret-free Phase 1 diagnostics; never business/policy state.
+    provider_snapshot: Any = None
+    telemetry_session_id: str | None = None
+    telemetry_startup: Any = None
+    # Session-local semantic evidence augments the existing deterministic write gate.
+    humanization_runtime: Any = None
+    audit_transcript: Any = None
+    opening_state: Any = None
+    tool_orchestrator: Any = None
 
 
 @function_tool
@@ -75,18 +83,32 @@ async def end_conversation_summary(
     """
     ud = ctx.userdata
     # F-H9: sync psycopg must not run on the event loop (stalls live audio).
-    await asyncio.to_thread(
-        _save_conversation_summary,
-        summary=summary,
-        room_name=ud.room_name,
-        tenant_id=ud.tenant_id,
+    from worker.humanization.orchestrator import for_userdata
+    orchestrator = for_userdata(ud)
+    result = await orchestrator.run(
+        orchestrator.plan(ctx, "end_conversation_summary"),
+        lambda: _lifecycle_call(_save_conversation_summary, summary=summary,
+                               room_name=ud.room_name, tenant_id=ud.tenant_id),
     )
-
+    if result["outcome"] != "SUCCESS":
+        return result
     ud.ended_by_agent = True
     session = getattr(ctx, "session", None)
     if session is not None:
+        # Public RunContext step-level wait avoids waiting for this tool itself.
+        wait = getattr(ctx, "wait_for_playout", None)
+        if wait is not None:
+            try:
+                await asyncio.wait_for(wait(), timeout=6.0)
+            except (TimeoutError, RuntimeError):
+                logger.warning("final closing playout unavailable; summary remains committed")
+        # At an intentional goodbye with no caller speaking, no final user turn is
+        # pending. Remove the framework's otherwise unconditional 2-second wait.
+        options = getattr(session, "options", None)
+        if options is not None and getattr(session, "user_state", None) != "speaking":
+            options.session_close_transcript_timeout = 0.0
         session.shutdown(drain=True)
-    return {"status": "saved"}
+    return {**result, "status": "saved"}
 
 
 @function_tool
@@ -94,8 +116,8 @@ async def escalate_to_human(
     ctx: RunContext[AgentUserdata], reason: str, contact_info: str | None = None
 ) -> dict:
     """Call this when the caller needs a human to follow up -- they asked for something you
-    cannot resolve yourself, or explicitly asked to speak to a person. Speak a short spoken
-    line first (you are getting them help), THEN call this tool — never sit in silence.
+    cannot resolve yourself, or explicitly asked to speak to a person. This only records
+    a follow-up request. It does not transfer the caller or connect a live human.
 
     Args:
         reason: A short description of what the caller needs.
@@ -103,14 +125,18 @@ async def escalate_to_human(
     """
     ud = ctx.userdata
     # F-H9: sync psycopg must not run on the event loop (stalls live audio).
-    await asyncio.to_thread(
-        _insert_escalation,
-        reason=reason,
-        contact_info=contact_info,
-        room_name=ud.room_name,
-        tenant_id=ud.tenant_id,
+    from worker.humanization.orchestrator import for_userdata
+    orchestrator = for_userdata(ud)
+    return await orchestrator.run(
+        orchestrator.plan(ctx, "escalate_to_human"),
+        lambda: _lifecycle_call(_insert_escalation, reason=reason, contact_info=contact_info,
+                               room_name=ud.room_name, tenant_id=ud.tenant_id),
     )
-    return {"status": "escalated"}
+
+
+async def _lifecycle_call(fn: Any, **kwargs: Any) -> dict:
+    await asyncio.to_thread(fn, **kwargs)
+    return {"status": "escalated" if fn is _insert_escalation else "saved"}
 
 
 def _save_conversation_summary(*, summary: str, room_name: str, tenant_id: str) -> None:
@@ -194,7 +220,7 @@ def _slim_tool_result(body: Any) -> dict:
     out: dict[str, Any] = {}
     if body.get("voiceSummary"):
         out["voiceSummary"] = body["voiceSummary"]
-    for key in ("success", "available", "error", "confirmationCode", "found"):
+    for key in ("success", "available", "error", "confirmationCode", "found", "outcome"):
         if key in body:
             out[key] = body[key]
 
@@ -234,6 +260,20 @@ def _slim_tool_result(body: Any) -> dict:
 
 
 async def _post_client_tool(
+    ctx: RunContext[AgentUserdata], *, path: str, payload: dict[str, Any],
+    tool_name: str, idempotency_key: str | None = None,
+) -> dict:
+    from worker.humanization.orchestrator import for_userdata
+    orchestrator = for_userdata(ctx.userdata)
+    plan = orchestrator.plan(ctx, tool_name)
+    return await orchestrator.run(
+        plan, lambda: _dispatch_client_tool(ctx, path=path, payload=payload,
+                                           tool_name=tool_name, idempotency_key=idempotency_key),
+        idempotency_key=idempotency_key,
+    )
+
+
+async def _dispatch_client_tool(
     ctx: RunContext[AgentUserdata],
     *,
     path: str,
@@ -242,19 +282,28 @@ async def _post_client_tool(
     idempotency_key: str | None = None,
 ) -> dict:
     ud = ctx.userdata
+    tracker = getattr(ud, "latency_tracker", None)
+    call_id = getattr(getattr(ctx, "function_call", None), "call_id", None)
+    speech_id = getattr(getattr(ctx, "speech_handle", None), "id", None)
     base = resolve_tools_base_url(ud.tools_base_url)
     if not base:
-        return {"error": f"{tool_name} is not configured for this agent"}
+        if tracker is not None:
+            tracker.annotate_tool(call_id, outcome="tool_error", speech_id=speech_id)
+        from worker.humanization.orchestrator import ToolResult, MESSAGES
+        return ToolResult("DEPENDENCY_UNAVAILABLE", {"configurationError": "tools_not_configured"},
+                          MESSAGES["DEPENDENCY_UNAVAILABLE"])
 
     secret = resolve_tools_auth_secret(ud.tools_auth_secret)
     # P1-M4: never POST tenant/agent IDs to a tools URL without a shared secret.
     if not secret:
-        return {
-            "error": f"{tool_name} is not configured: tools_auth_secret required",
-            "success": False,
-        }
-    tracker = getattr(ud, "latency_tracker", None)
-    t0 = time.monotonic()
+        if tracker is not None:
+            tracker.annotate_tool(call_id, outcome="tool_error", speech_id=speech_id)
+        from worker.humanization.orchestrator import ToolResult, MESSAGES
+        return ToolResult("DEPENDENCY_UNAVAILABLE", {"configurationError": "tools_auth_secret_required"},
+                          MESSAGES["DEPENDENCY_UNAVAILABLE"])
+    # Framework tool_execution_updated exclusively owns execution duration.
+    # The gateway only annotates the actual dependency outcome on that call ID.
+    telemetry_outcome = "completed"
     url = f"{base}{path}"
     body: dict[str, Any] = {
         "tenant_id": ud.tenant_id,
@@ -265,12 +314,14 @@ async def _post_client_tool(
     if idempotency_key:
         body["idempotency_key"] = idempotency_key
         headers["Idempotency-Key"] = idempotency_key
+    dispatched = False
     try:
         from worker.ssrf_guard import ToolsSsrfError, prepare_tools_post_url
 
         try:
             request_url, ssrf_headers = prepare_tools_post_url(url)
         except ToolsSsrfError as ssrf_exc:
+            telemetry_outcome = "tool_error"
             return {"error": f"{tool_name} blocked: {ssrf_exc.reason}", "success": False}
         headers.update(ssrf_headers)
         original_host = urlparse(url).hostname
@@ -280,6 +331,7 @@ async def _post_client_tool(
             extensions["sni_hostname"] = original_host
 
         client = await _shared_http_client()
+        dispatched = True
         response = await client.post(
             request_url,
             headers=headers,
@@ -288,13 +340,30 @@ async def _post_client_tool(
         )
         response.raise_for_status()
         raw = response.json()
+        if isinstance(raw, dict) and (raw.get("success") is False or raw.get("error") or raw.get("outcome") not in {None, "SUCCESS", "NO_RESULT"}):
+            telemetry_outcome = "tool_outcome_unknown" if raw.get("outcome") == "OUTCOME_UNKNOWN" else "tool_error"
+    except asyncio.CancelledError:
+        # Cancelling speech does not imply this tool cancelled. This label is
+        # emitted only when the actual tool coroutine receives cancellation.
+        telemetry_outcome = "tool_outcome_unknown" if idempotency_key and dispatched else "cancelled"
+        raise
     except Exception as exc:
-        return {"error": f"{tool_name} failed: {exc}", "success": False}
+        from worker.humanization.orchestrator import failure
+        result = failure(exc, write=bool(idempotency_key), dispatched=dispatched,
+                         idempotency_key=idempotency_key)
+        telemetry_outcome = (
+            "tool_outcome_unknown" if result.outcome == "OUTCOME_UNKNOWN" else
+            "tool_timeout" if result.outcome == "DEPENDENCY_TIMEOUT" else "tool_error"
+        )
+        return result
     finally:
         if tracker is not None:
-            duration_ms = int(round((time.monotonic() - t0) * 1000))
-            tracker.record_tool_duration(tool_name, duration_ms)
+            tracker.annotate_tool(call_id, outcome=telemetry_outcome, speech_id=speech_id)
 
+    if isinstance(raw, dict) and (raw.get("success") is False or raw.get("error") or raw.get("outcome") not in {None, "SUCCESS", "NO_RESULT"}):
+        from worker.humanization.orchestrator import execution_plan, normalize
+        return normalize(raw, execution_plan(tool_name, call_id or "gateway", 0),
+                         idempotency_key=idempotency_key)
     return _slim_tool_result(raw)
 
 
@@ -318,23 +387,49 @@ async def _gated_write_client_tool(
         confirmation_id=confirmation_id,
     )
     if action in ("propose", "reject", "replay"):
-        return payload
+        from worker.humanization.orchestrator import for_userdata, ToolResult
+        orchestrator = for_userdata(ud)
+        plan = orchestrator.plan(ctx, tool_name, proposal=action != "replay")
+        outcome = payload.get("outcome") or ("VALIDATION_ERROR" if action == "reject" else "SUCCESS")
+        effect = payload.get("businessEffect", "none")
+        # A replay describes the already-known effect; it does not execute it again.
+        orchestrator.complete(plan, ToolResult(outcome, dict(payload),
+                                              payload.get("voiceSummary") or payload.get("error"),
+                                              business_effect=effect))
+        return {**payload, "outcome": outcome, "businessEffect": effect, "retrySafe": False}
 
     # confirm → single POST
     normalized = payload["normalized_args"]
     idem = payload["idempotency_key"]
     conf = payload["confirmation_id"]
-    result = await _post_client_tool(
-        ctx,
-        path=path,
-        payload=normalized,
-        tool_name=tool_name,
-        idempotency_key=idem,
-    )
-    if result.get("success") is False or result.get("error"):
-        return result
     from worker.write_tool_gate import args_hash as _args_hash
-
+    from worker.write_tool_gate import get_write_gate_state
+    gate = get_write_gate_state(ud)
+    # Reserve synchronously before the first await: concurrent confirms cannot POST twice.
+    gate.dispatched_writes[conf] = {
+        "tool": tool_name, "args_hash": _args_hash(tool_name, normalized),
+        "idempotency_key": idem,
+        "result": {"outcome": "OUTCOME_UNKNOWN", "success": False,
+                   "businessEffect": "unknown", "retrySafe": False,
+                   "voiceSummary": "The action is being verified. Do not repeat it."},
+    }
+    try:
+        result = await _post_client_tool(
+            ctx, path=path, payload=normalized, tool_name=tool_name, idempotency_key=idem,
+        )
+    except BaseException:
+        # A cancelled tool does not prove the dispatched business effect was cancelled.
+        gate.pending_write = None
+        gate.heard_affirmative = False
+        raise
+    if result.get("outcome") == "OUTCOME_UNKNOWN":
+        gate.dispatched_writes[conf]["result"] = dict(result)
+        gate.pending_write = None
+        gate.heard_affirmative = False
+        return result
+    gate.dispatched_writes.pop(conf, None)
+    if result.get("success") is False or result.get("error") or result.get("outcome", "SUCCESS") != "SUCCESS":
+        return result
     mark_write_success(
         ud,
         confirmation_id=conf,

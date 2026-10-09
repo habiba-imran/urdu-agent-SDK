@@ -65,6 +65,17 @@ class MockPhase3Db:
                     p["provisioning_status"] = "owned"
             return FakeCursor(None)
 
+        # A-01.1 correlation lookups (telephony_call_correlation.py)
+        if "from information_schema.columns" in sql:
+            return FakeCursor((1,))
+        if "select id, tenant_id from telephony_calls" in sql and "provider_call_control_id = %s" in sql:
+            c = next((x for x in self.calls if x.get("provider_call_control_id") == params[0]), None)
+            return FakeCursor((c["id"], c["tenant_id"]) if c else None)
+        if "select id, tenant_id from telephony_calls" in sql and "provider_call_session_id = %s" in sql:
+            return FakeCursor(None)
+        if "select id, tenant_id from telephony_calls" in sql and "livekit_sip_call_id = %s" in sql:
+            return FakeCursor(None)
+
         if "select id, tenant_id from telephony_calls" in sql:
             matches = [p for p in self.calls if p.get("platform_status") in ("queued", "dialing", "ringing", "in_progress")]
             limit = params[0] if len(params) > 0 else 100
@@ -76,11 +87,11 @@ class MockPhase3Db:
             return MultiCursor(rows)
 
         if "update telephony_calls" in sql:
-            # Handle out-of-order webhook state guard logic
-            call_control_id = params[-1]
+            # Handle out-of-order webhook state guard logic (row targeted by id, A-01.1)
+            target_call_id = params[-1]
             mapped = params[0]
             for c in self.calls:
-                if c.get("livekit_sip_call_id") == call_control_id or c.get("livekit_sip_call_id_full") == call_control_id:
+                if c["id"] == target_call_id:
                     existing_status = c.get("platform_status")
                     terminal_states = {"completed", "busy", "no_answer", "failed", "cancelled"}
                     if existing_status in terminal_states and mapped not in terminal_states:
@@ -141,17 +152,19 @@ def test_out_of_order_webhook_guard():
     db.calls.append({
         "id": "call_order_123",
         "tenant_id": "tenant_123",
-        "livekit_sip_call_id": "sip_cc_123",
-        "livekit_sip_call_id_full": "sip_cc_123",
+        "livekit_sip_call_id": "SCL_livekit_123",
+        "livekit_sip_call_id_full": "SCL_livekit_123_full",
+        # A-01.1: already bound to the Telnyx id by an earlier correlated event.
+        "provider_call_control_id": "v3:telnyx_cc_123",
         "platform_status": "completed",
     })
 
-    # Simulate late arrival of call.initiated webhook
+    # Simulate late arrival of call.initiated webhook (Telnyx id, not LiveKit id)
     payload = {
         "data": {
             "event_type": "call.initiated",
             "payload": {
-                "call_control_id": "sip_cc_123",
+                "call_control_id": "v3:telnyx_cc_123",
                 "status": "initiated",
             },
         }

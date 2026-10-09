@@ -106,7 +106,7 @@ def _language_directive(agent_language: str | None) -> str:
     )
 
 
-def build_agent(cfg: AgentConfig) -> Any:
+def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
     """Build the Agent: OUR fixed instructions + the tenant persona as framed DATA in chat_ctx +
     the fixed, platform-owned tool set (ADR-013 deferred pass, scope decided ADR-029).
 
@@ -115,9 +115,9 @@ def build_agent(cfg: AgentConfig) -> Any:
     themselves are fixed Python callables imported from worker/tools.py, never derived from or
     influenced by tenant-supplied text. See module docstring / 31-GUIDE §4.
     """
-    from livekit.agents import Agent
     from livekit.agents.llm import ChatContext
     from livekit.agents.log import logger
+    from worker.humanization.agent import AwaazAgent
 
     persona_prompt = cfg.prompt or ""
     compacted = False
@@ -131,6 +131,21 @@ def build_agent(cfg: AgentConfig) -> Any:
                 len(persona_prompt),
             )
 
+    from worker.humanization.delivery.policy import resolve_delivery_policy
+    delivery_policy = resolve_delivery_policy(cfg.tts_provider)
+    delivery_context = getattr(humanization_runtime, "delivery_context", None)
+    if delivery_policy.enabled and delivery_context is None:
+        from worker.humanization.delivery.context import DeliveryContext
+        from worker.config import resolve_provider_voice_id_local
+        from worker.providers.types import AgentRuntimeConfig
+        delivery_context = DeliveryContext(AgentRuntimeConfig(
+            agent_language=cfg.agent_language, stt_provider=cfg.stt_provider,
+            stt_model=cfg.stt_model, stt_options=cfg.stt_options,
+            llm_provider=cfg.llm_provider, llm_model=cfg.llm_model, llm_options=cfg.llm_options,
+            tts_provider=cfg.tts_provider,
+            tts_voice_id=resolve_provider_voice_id_local(cfg.tts_voice_id or cfg.voice_id) or cfg.tts_voice_id or cfg.voice_id,
+            tts_options=cfg.tts_options,
+        ), delivery_policy, runtime=humanization_runtime)
     system_instructions = build_system_instructions(cfg) + _language_directive(
         cfg.agent_language
     )
@@ -155,12 +170,43 @@ def build_agent(cfg: AgentConfig) -> Any:
             ",".join(tool_names),
         )
 
+    if humanization_runtime is not None and humanization_runtime.shadow is not None:
+        try:
+            from worker.humanization.persona_facts import audit_persona_compaction
+            from worker.humanization.prompt_authority import audit_prompt_stack
+
+            fact_audit = audit_persona_compaction(
+                cfg.prompt or "", persona_prompt, compacted=compacted,
+            )
+            authority_audit = audit_prompt_stack(
+                cfg, system_instructions, _PERSONA_FRAME + persona_prompt,
+            )
+            humanization_runtime.persona_fact_audit = fact_audit
+            humanization_runtime.prompt_authority_audit = authority_audit
+            humanization_runtime.shadow.business_facts = tuple(
+                (fact.kind, fact.value) for fact in fact_audit.source_facts
+            )
+            logger.info("humanization_shadow_persona_audit %s", fact_audit.log_fields())
+            logger.info(
+                "humanization_shadow_prompt_audit %s",
+                {
+                    "layers": authority_audit.active_layer_order,
+                    "response_length_conflict": authority_audit.response_length_conflict,
+                    "turn_plan_in_active_prompt": authority_audit.turn_plan_in_active_prompt,
+                    "persona_same_role_as_platform": authority_audit.persona_same_role_as_platform,
+                },
+            )
+        except Exception:
+            logger.exception("humanization shadow prompt audit failed")
+
     persona_ctx = ChatContext.empty()
     persona_ctx.add_message(role="system", content=_PERSONA_FRAME + persona_prompt)
-    return Agent(
+    return AwaazAgent(
         instructions=system_instructions,
         chat_ctx=persona_ctx,
         tools=tools,
+        humanization_runtime=humanization_runtime,
+        delivery_context=delivery_context,
     )
 
 
@@ -308,6 +354,52 @@ async def build_session(
     _comp_t0 = time.monotonic()
     components, components_cache_hit = build_components_cached(runtime_cfg)
     components_ms = int(round((time.monotonic() - _comp_t0) * 1000))
+    from worker.telemetry import provider_snapshot
+
+    diagnostic_snapshot = provider_snapshot(cfg, runtime_cfg, components)
+    from worker.humanization.policy import resolve_humanization_policy
+    from worker.humanization.runtime import HumanizationRuntime
+    from worker.humanization.history import AuditTranscript
+
+    humanization_runtime = HumanizationRuntime(
+        tenant_id=cfg.tenant_id, agent_id=cfg.agent_id,
+        session_id=md.get("session_id") or room_name,
+        language=cfg.agent_language, channel=audio_channel,
+        policy=resolve_humanization_policy(),
+        provider_snapshot=diagnostic_snapshot,
+    )
+    from worker.humanization.delivery.policy import resolve_delivery_policy
+    delivery_policy = resolve_delivery_policy(cfg.tts_provider)
+    humanization_runtime.delivery_context = None
+    if delivery_policy.enabled:
+        from worker.humanization.delivery.context import DeliveryContext
+        humanization_runtime.delivery_context = DeliveryContext(
+            runtime_cfg, delivery_policy, runtime=humanization_runtime, metrics_target=components.tts,
+        )
+    if delivery_policy.enabled:
+        diagnostic_snapshot["delivery"] = {
+            "policy_version": delivery_policy.version,
+            "renderer_version": delivery_policy.renderer_version,
+            "pronunciation_version": delivery_policy.pronunciation_version,
+            "activation_verified": False,
+        }
+        humanization_runtime.provider_snapshot["delivery"] = dict(diagnostic_snapshot["delivery"])
+    # Freeze effective candidate identities for this session's diagnostic events.
+    diagnostic_snapshot["humanization_policy_version"] = humanization_runtime.policy.effective_version
+    diagnostic_snapshot["interaction"] = dict(humanization_runtime.provider_snapshot["interaction"])
+    diagnostic_snapshot["component_versions"] = {
+        "turn": "overlap_v1" if humanization_runtime.overlap_enabled else "baseline",
+        "language": "language_v1" if humanization_runtime.overlap_enabled else "baseline",
+        "channel": "channel_v1" if delivery_policy.enabled else "baseline",
+    }
+    if humanization_runtime.delivery_context is not None:
+        from worker.humanization.streaming import streaming_enabled
+        diagnostic_snapshot["component_versions"]["streaming"] = (
+            "streaming_v1" if streaming_enabled(humanization_runtime.delivery_context) else "baseline"
+        )
+    diagnostic_snapshot["opening_policy_version"] = (
+        "opening_v1" if os.getenv("UVA_OPENING_POLICY", "baseline") == "opening_v1" else "baseline"
+    )
     opening = resolve_session_opening(cfg)
     # Static say: skip TTS websocket prewarm — cache hit replays PCM; miss uses
     # single-flight synthesize (one TTS request shared by cache fill + opening).
@@ -325,6 +417,8 @@ async def build_session(
             greeting_text=opening.text,
             audio_channel=audio_channel,
             tts_options=cfg.tts_options,
+            language=cfg.agent_language,
+            tenant_id=cfg.tenant_id,
         )
         skip_tts_prewarm = True
         if get_greeting_cache().has(cache_key):
@@ -339,6 +433,7 @@ async def build_session(
                 key=cache_key,
                 text=opening.text,
                 room_name=room_name,
+                delivery_context=humanization_runtime.delivery_context,
             )
             logger.info(
                 "greeting synthesis started (single-flight) room=%s provider=%s",
@@ -437,6 +532,11 @@ async def build_session(
             tenant_id=cfg.tenant_id,
             agent_id=cfg.agent_id,
             room_name=room_name,
+            provider_snapshot=diagnostic_snapshot,
+            telemetry_session_id=md.get("session_id"),
+            telemetry_startup={"provider_cache_hit": components_cache_hit, "prewarm_scheduled": True},
+            humanization_runtime=humanization_runtime,
+            audit_transcript=AuditTranscript(),
             tools_base_url=cfg.tools_base_url,
             tools_auth_secret=cfg.tools_auth_secret,
             verified_caller_phone=(
@@ -455,6 +555,7 @@ async def build_session(
     # session.start skips LiveKit Cloud adaptive-detector init. Set adaptive to opt in.
     # See docs/40-ADR.md ADR-008 for barge-in / false-interruption knobs.
     session = AgentSession(**session_kwargs)
+    humanization_runtime.attach_session(session)
     session_ctor_ms = int(round((time.monotonic() - _session_t0) * 1000))
     logger.info(
         "interruption_detection configured=%s mode=%s "
@@ -500,6 +601,10 @@ async def _await_opening_and_speak(
     synth_wait_ms = 0
     greeting_audio = None
 
+    diagnostic_tracker = getattr(getattr(session, "userdata", None), "latency_tracker", None)
+    if diagnostic_tracker is not None and plan.cache_key is not None:
+        diagnostic_tracker.record_activity("cache", cache_hit=plan.cache_hit)
+
     if plan.cache_hit and plan.greeting_frames:
         greeting_audio = frames_to_async_iterable(plan.greeting_frames)
     elif plan.await_synthesis and plan.cache_key is not None:
@@ -518,11 +623,11 @@ async def _await_opening_and_speak(
                 synth_wait_ms,
             )
         else:
-            logger.info(
-                "greeting synth miss/timeout room=%s synth_wait_ms=%s — live say fallback",
-                room_name,
-                synth_wait_ms,
-            )
+            # A shielded, shared synthesis may still be running. Starting live say
+            # here would duplicate paid work. End deterministically without claiming audio.
+            from worker.provider_retries import fail_session
+            fail_session(session, "GREETING_TTS_UNAVAILABLE")
+            return
     elif plan.await_prewarm:
         prewarm_started = time.monotonic()
         await await_greeting_prewarm(
@@ -546,17 +651,29 @@ async def _await_opening_and_speak(
         ms_since_connect,
     )
 
+    runtime = getattr(getattr(session, "userdata", None), "humanization_runtime", None)
+    if runtime is not None and runtime.state.session_closed:
+        return
+    from worker.session_opening import opening_gate_enabled, await_playback_ready
+    if opening_gate_enabled() and not await await_playback_ready(session):
+        from worker.provider_retries import fail_session
+        fail_session(session, "PLAYBACK_NOT_READY")
+        return
     # F-C4 Phase C: non-interruptible disclosure before greeting / wait-for-user.
     # Runs even when first_speaker=user (opening mode wait).
     from worker.recording_disclosure import speak_recording_disclosure_if_needed
 
-    await speak_recording_disclosure_if_needed(
+    disclosure_complete = await speak_recording_disclosure_if_needed(
         session,
         agent_language=cfg.agent_language,
         room_name=room_name,
         logger=logger,
     )
 
+    if getattr(session.userdata, "recording_may_start", False) and not disclosure_complete:
+        from worker.provider_retries import fail_session
+        fail_session(session, "DISCLOSURE_INCOMPLETE")
+        return
     await apply_session_opening(
         session,
         cfg,
@@ -597,6 +714,10 @@ def _tts_agent_session_extra(
     ``inference.TTS``; we still pass it when present so an A/B agent can try it, and log if
     the installed package has no such parameter.
     """
+    from worker.humanization.delivery.policy import resolve_delivery_policy
+    if resolve_delivery_policy(cfg.tts_provider).enabled:
+        # The canonical boundary + common renderer replace all legacy TTS transforms.
+        return {"tts_text_transforms": [], "use_tts_aligned_transcript": False}
     sanitize_fn = sanitizer_for_provider(
         cfg.tts_provider, tts_options=cfg.tts_options
     )
@@ -705,8 +826,13 @@ async def _resolve_session_from_participant(
     *,
     job_metadata: str | None,
     audio_channel: str,
+    room_name: str | None = None,
 ) -> tuple[dict[str, str], str]:
-    """Fallback identity resolution for telephony / legacy JWT metadata paths."""
+    """Fallback identity resolution for telephony / legacy JWT metadata paths.
+
+    ``room_name`` lets inbound SIP resolution persist the call's ``sessions`` and
+    ``telephony_calls`` rows (A-01.4) so shutdown billing / recording / history find it.
+    """
     md: dict[str, Any] = {}
     raw_md: dict[str, Any] = {}
 
@@ -754,6 +880,7 @@ async def _resolve_session_from_participant(
                     job_metadata=job_metadata,
                     participant=participant,
                     db_conn=db_conn,
+                    room_name=room_name,
                 )
                 md = {
                     "tenant_id": resolved.get("tenant_id", ""),
@@ -936,6 +1063,9 @@ def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) ->
             from worker.humanization.history import apply_history_hygiene
 
             apply_history_hygiene(session, item=item, room_name=room_name)
+            audit = getattr(getattr(session, "userdata", None), "audit_transcript", None)
+            if audit is not None:
+                audit.record(item)
         # F-C7 / P1-H5: advance user-turn barrier; only explicit yes unlocks confirm.
         if role == "user":
             ud = getattr(session, "userdata", None)
@@ -1238,6 +1368,19 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         ctx.add_shutdown_callback(_record_agent_minutes)
         ctx.add_shutdown_callback(_persist_session_recording)
 
+        if channel == "telephony":
+            # A-01.6: mirror LiveKit's sip.callStatus / dial-failure disconnect onto
+            # telephony_calls so call history shows ringing/answered/busy/no_answer
+            # without depending on Telnyx webhooks (or the 2h reconciler).
+            from worker.telephony_call_status import attach_call_status_tracker
+
+            attach_call_status_tracker(
+                ctx.room,
+                room_name=ctx.room.name,
+                telephony_call_id=md_obj.get("telephony_call_id"),
+                tenant_id=md_obj.get("tenant_id", ""),
+            )
+
         def _on_session_close(ev: Any) -> None:
             from livekit.agents.log import logger
 
@@ -1263,8 +1406,27 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         _wire_session_diagnostics(session_obj, cfg_obj, ctx.room.name)
         from livekit.agents.log import logger as _opening_logger
 
-        latency_tracker = wire_turn_latency(session_obj, ctx.room, _opening_logger)
+        _diagnostic_ud = getattr(session_obj, "userdata", None)
+        latency_tracker = wire_turn_latency(
+            session_obj, ctx.room, _opening_logger, agent=agent_obj,
+            snapshot=getattr(_diagnostic_ud, "provider_snapshot", None),
+            session_id=getattr(_diagnostic_ud, "telemetry_session_id", None),
+        )
         wire_barge_in_flush(session_obj, _opening_logger, audio_channel=channel)
+        from worker.session_opening import bind_opening_transport
+        from worker.provider_retries import wire_provider_failure
+        bind_opening_transport(session_obj, ctx.room, channel)
+        from worker.telephony_runtime import transport_diagnostics
+        diagnostic_runtime = getattr(session_obj.userdata, "humanization_runtime", None)
+        if diagnostic_runtime is not None:
+            remotes = getattr(ctx.room, "remote_participants", {})
+            diagnostic_runtime.provider_snapshot["transport"] = transport_diagnostics(
+                {"telephony": md_obj if channel == "telephony" else None},
+                participant=next(iter(remotes.values()), None),
+            )
+        wire_provider_failure(session_obj, ctx.room)
+        session_obj.on("agent_false_interruption", agent_obj.recover_false_interruption)
+        # AgentSession output is configured by start(); bind once it exists.
         if getattr(session_obj, "userdata", None) is not None:
             session_obj.userdata.latency_tracker = latency_tracker
 
@@ -1297,6 +1459,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             room_options=session_room_options(audio_channel=channel),
             record=session_start_record_option(may_start=_may_start),
         )
+        agent_obj.bind_playback_evidence()
         _entry_logger.info(
             "entrypoint session.start room=%s start_ms=%s since_connect_ms=%s "
             "interruption_mode=%s record_audio=%s agent_recording_enabled=%s "
@@ -1327,7 +1490,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             session, cfg, greeting_prewarm, provider_voice_id = await build_session(
                 early_md, room_name, audio_channel=audio_channel
             )
-        agent = build_agent(cfg)
+        agent = build_agent(cfg, humanization_runtime=session.userdata.humanization_runtime)
         _entry_logger.info(
             "entrypoint build_session room=%s build_ms=%s since_connect_ms=%s "
             "remote_participant=%s build_overlapped=%s",
@@ -1402,12 +1565,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             participant,
             job_metadata=job_metadata,
             audio_channel=audio_channel,
+            room_name=room_name,
         )
 
         session, cfg, greeting_prewarm, provider_voice_id = await build_session(
             participant_md, room_name, audio_channel=resolved_channel
         )
-        agent = build_agent(cfg)
+        agent = build_agent(cfg, humanization_runtime=session.userdata.humanization_runtime)
         _bind_verified_caller_phone(
             session,
             md=participant_md,

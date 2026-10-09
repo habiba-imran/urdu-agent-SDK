@@ -17,9 +17,9 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("UVA_PROVIDER_RETRY_INTERVAL", raising=False)
     monkeypatch.delenv("UVA_PROVIDER_CONNECT_TIMEOUT", raising=False)
     s = read_provider_retry_settings()
-    assert s.max_retry == 1
+    assert s.max_retry == 0
     assert s.retry_interval == 1.0
-    assert s.timeout == 30.0
+    assert s.timeout == 5.0
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,9 +37,9 @@ def test_invalid_and_out_of_range_fall_back(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("UVA_PROVIDER_RETRY_INTERVAL", "999")
     monkeypatch.setenv("UVA_PROVIDER_CONNECT_TIMEOUT", "-1")
     s = read_provider_retry_settings()
-    assert s.max_retry == 1
+    assert s.max_retry == 0
     assert s.retry_interval == 1.0
-    assert s.timeout == 30.0
+    assert s.timeout == 5.0
 
 
 def test_zero_retry_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,7 +57,8 @@ def test_build_session_connect_options_applies_settings(
         opts = build_session_connect_options()
     assert opts.llm_conn_options.max_retry == 3
     assert opts.tts_conn_options.max_retry == 3
-    assert opts.stt_conn_options.max_retry == 3
+    assert opts.stt_conn_options.max_retry == 0
+    assert opts.stt_conn_options.timeout <= 5.0
     assert opts.llm_conn_options.retry_interval == 1.5
     assert opts.llm_conn_options.timeout == 20.0
     assert any("provider_retries max_retry=3" in r.message for r in caplog.records)
@@ -70,4 +71,4 @@ def test_main_wrapper_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     opts = main_build()
     assert opts.llm_conn_options.max_retry == 1
     assert opts.tts_conn_options.max_retry == 1
-    assert opts.stt_conn_options.max_retry == 1
+    assert opts.stt_conn_options.max_retry == 0

@@ -128,4 +128,8 @@ export function CallButton({ agentId }: { agentId: string }) {
 Verify the call in **[Sessions](/sessions)**. Inspect agent config on **[Agents](/agents)** (read-only; edit via the agents SDK).
 
 Mint through **your** \`sessionEndpoint\` — [Test Studio](/test-studio) is an operator smoke path only ([Security](/docs/security)).
+
+## Testing the current humanization build
+
+The install instructions above describe the published baseline package. For the new playback-readiness handshake, use the packaged test snapshot included in \`client-integration-test/\` and its lockfile. It is not a registry release. See [Humanization testing](/docs/humanization-testing) before comparing baseline and candidate calls; worker policies are platform-owned and default off.
 `;

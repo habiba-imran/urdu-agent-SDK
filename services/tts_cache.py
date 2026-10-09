@@ -12,8 +12,11 @@ SAMPLE_WIDTH = 2
 CHANNELS = 1
 
 
-def key(voice_id: str, text: str) -> str:
-    return hashlib.sha256(f"{voice_id}|{text}".encode("utf-8")).hexdigest()[:32]
+def key(voice_id: str, text: str, *, rendered_identity: str | None = None) -> str:
+    payload = f"{voice_id}|{text}" if rendered_identity is None else json.dumps(
+        [voice_id, text, rendered_identity], ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 def _load_manifest() -> dict:
@@ -25,14 +28,18 @@ def _load_manifest() -> dict:
     return {}
 
 
-def get(voice_id: str, text: str) -> bytes | None:
+def get(voice_id: str, text: str, *, rendered_identity: str | None = None) -> bytes | None:
     manifest = _load_manifest()
-    k = key(voice_id, text)
+    k = key(voice_id, text, rendered_identity=rendered_identity)
     if k in manifest:
         wav_path = FIX_DIR / f"{k}.wav"
         if wav_path.exists():
             return wav_path.read_bytes()
 
+    # Candidate rendered audio must never fall back to an old policy or another voice.
+    if rendered_identity is not None:
+        return None
+    # Legacy synthetic fixture-only compatibility fallback (never a live audio cache).
     # Search by text match fallback
     for k_id, item in manifest.items():
         if item.get("text") == text:
@@ -42,8 +49,8 @@ def get(voice_id: str, text: str) -> bytes | None:
     return None
 
 
-def require(voice_id: str, text: str) -> bytes:
-    data = get(voice_id, text)
+def require(voice_id: str, text: str, *, rendered_identity: str | None = None) -> bytes:
+    data = get(voice_id, text, rendered_identity=rendered_identity)
     if data is not None:
         return data
 

@@ -88,7 +88,8 @@ def test_worker_refuses_tools_call_without_secret(monkeypatch):
         )
     )
     assert result.get("success") is False
-    assert "tools_auth_secret" in result.get("error", "")
+    assert result["configurationError"] == "tools_auth_secret_required"
+    assert result["outcome"] == "DEPENDENCY_UNAVAILABLE"
 
 
 def test_webhook_insert_failure_aborts_side_effects(monkeypatch):

@@ -1223,18 +1223,25 @@ class TelephonyService:
                 call_id = str(uuid.uuid4())
                 room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
                 lk_client = self._get_livekit_sip_client()
-                lk_client.create_agent_dispatch(
-                    room_name,
-                    metadata={
-                        "direction": "outbound",
-                        "tenant_id": tenant_id,
-                        "agent_id": agent_id,
-                        "telephony_call_id": call_id,
-                        "from_number_id": from_number_id,
-                        "from_number": phone_e164,
-                        "to_number": to_number,
-                    },
-                )
+                try:
+                    lk_client.create_agent_dispatch(
+                        room_name,
+                        metadata={
+                            "direction": "outbound",
+                            "tenant_id": tenant_id,
+                            "agent_id": agent_id,
+                            "telephony_call_id": call_id,
+                            "from_number_id": from_number_id,
+                            "from_number": phone_e164,
+                            "to_number": to_number,
+                        },
+                    )
+                except Exception:
+                    # A-01.2: the reservation was taken above but no telephony_calls row
+                    # exists yet, so nothing downstream could ever release it.
+                    if conn is not None:
+                        queries.release_call_quota_unpersisted(conn, tenant_id)
+                    raise
                 try:
                     sip_part = lk_client.create_sip_participant(
                         room_name=room_name,
@@ -1260,9 +1267,13 @@ class TelephonyService:
                         },
                     ) from exc
 
+                # A-01.3: every call gets a ``sessions`` row like browser sessions do, so the
+                # worker's shutdown path (transcript, usage_events, minutes, retention) and
+                # the dashboard rollups that join on sessions see PSTN calls too.
+                session_id = str(uuid.uuid4()) if conn is not None else None
                 res = {
                     "telephony_call_id": call_id,
-                    "session_id": None,
+                    "session_id": session_id,
                     "room_name": room_name,
                     "platform_status": CallPublicStatus.DIALING.value,
                     "direction": "outbound",
@@ -1275,14 +1286,19 @@ class TelephonyService:
                     return res
 
                 conn.execute(
+                    "insert into sessions (id, tenant_id, agent_id, room_name) values (%s, %s, %s, %s)",
+                    (session_id, tenant_id, agent_id, room_name),
+                )
+                conn.execute(
                     """
                     insert into telephony_calls (
-                        id, tenant_id, session_id, agent_id, phone_number_id, direction, room_name,
+                        id, tenant_id, agent_id, phone_number_id, direction, room_name,
                         from_number, to_number, recipient, call_context, external_customer_ref,
                         external_workflow_ref, outbound_trunk_record_id, livekit_sip_call_id,
-                        livekit_sip_call_id_full, platform_status, provider_status
-                    ) values (%s, %s, null, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
-                              %s, %s, %s, %s, %s, %s, %s)
+                        livekit_sip_call_id_full, platform_status, provider_status,
+                        quota_reserved_at, session_id
+                    ) values (%s, %s, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
+                              %s, %s, %s, %s, %s, %s, %s, now(), %s)
                     """,
                     (
                         call_id,
@@ -1301,6 +1317,7 @@ class TelephonyService:
                         sip_part.get("livekit_sip_call_id_full"),
                         CallPublicStatus.DIALING.value,
                         sip_part.get("status"),
+                        session_id,
                     ),
                 )
                 queries.save_idempotency_key(

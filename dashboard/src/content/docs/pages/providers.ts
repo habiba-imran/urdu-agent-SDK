@@ -53,4 +53,8 @@ Urdu currently has a **single provider per layer**. Plan capacity and fallback m
 | Live call inspection | [Sessions](/sessions) |
 
 Provider availability is enforced by the platform; use [Agents](/agents) to confirm what is configured for your tenant.
+
+## Humanization and mixed language
+
+The existing selectable providers participate in the shared runtime. Provider selection does not automatically enable new delivery or streaming policies; those are platform worker controls. Urdu-English mixed tests use the existing Urdu route, not a new language enum. Gladia's current single-language configuration remains a limitation. Follow [Humanization testing](/docs/humanization-testing) for per-provider listening and activation evidence.
 `;

@@ -5,10 +5,17 @@ Usage:
     python scripts/reconcile_sessions.py [--max-age-minutes 30] [--dry-run]
 
 What it does:
-1. Identifies open sessions (ended_at is null) older than --max-age-minutes (default: 30m).
+1. Identifies open sessions (ended_at is null) older than --max-age-minutes (default: 30m),
+   skipping sessions that belong to a telephony call which is still live (A-01.5: the
+   call's own lifecycle — webhook, worker close, telephony_reconcile's 2h sweep — ends it).
 2. Closes stale sessions with end_reason='reconciled_stale' (duration_sec stays 0).
 3. P3-H4: writes capped agent_sec usage_events for closed sessions that never flushed usage.
-4. Re-calculates actual open sessions per tenant and updates quota_state.concurrent_now to match.
+4. Re-calculates the true slot count per tenant and updates quota_state.concurrent_now to
+   match. Browser sessions count while open; telephony calls count through their ledger
+   (telephony_calls.quota_reserved_at set, quota_released_at null) and their linked
+   sessions row is excluded so a call is never counted twice. Terminal-but-unreleased
+   calls stay counted until scripts/reconcile_telephony.py (same workflow, runs after
+   this script) releases them — the ledger is corrected, never bypassed.
 
 Runbook: docs/WAVE2-SESSION-RECONCILE.md
 """
@@ -61,6 +68,23 @@ def reconcile_sessions(
             conn.close()
 
 
+# A-01.5: a sessions row that belongs to a live telephony call is not an orphan — the
+# call's lifetime is governed by telephony_calls (webhook / worker close / the 2h stale
+# sweep in telephony_reconcile.py), not by the browser max-age. Closing it here after
+# 30 minutes made the worker's real close miss the row (transcript lost, usage replaced
+# by the capped estimate). Once the call is terminal or released the predicate is false
+# and the session is reconciled like any other.
+_NOT_LIVE_TELEPHONY_SESSION = """
+              AND NOT EXISTS (
+                  SELECT 1 FROM telephony_calls tc
+                  WHERE tc.session_id = s.id
+                    AND tc.quota_reserved_at IS NOT NULL
+                    AND tc.quota_released_at IS NULL
+                    AND tc.platform_status IN ('queued', 'dialing', 'ringing', 'in_progress')
+              )
+"""
+
+
 def _reconcile_on_conn(
     conn: Any,
     *,
@@ -69,13 +93,15 @@ def _reconcile_on_conn(
     stats: dict[str, int],
 ) -> dict[str, int]:
     with conn.cursor() as cur:
-        # 1. Close stale open sessions
+        # 1. Close stale open sessions (browser sessions, and telephony sessions whose
+        #    call has already ended)
         cur.execute(
-            """
+            f"""
             SELECT id, tenant_id, room_name, started_at
-            FROM sessions
+            FROM sessions s
             WHERE ended_at IS NULL
               AND started_at < NOW() - (INTERVAL '1 minute' * %s)
+              {_NOT_LIVE_TELEPHONY_SESSION}
             """,
             (max_age_minutes,),
         )
@@ -93,8 +119,8 @@ def _reconcile_on_conn(
 
             if not dry_run:
                 cur.execute(
-                    """
-                    UPDATE sessions
+                    f"""
+                    UPDATE sessions s
                     SET ended_at = NOW(),
                         -- duration_sec stays 0: Sessions UI must not show multi-day
                         -- wall-clock ages. Billing truth is usage_events.agent_sec below.
@@ -102,6 +128,7 @@ def _reconcile_on_conn(
                         end_reason = 'reconciled_stale'
                     WHERE ended_at IS NULL
                       AND started_at < NOW() - (INTERVAL '1 minute' * %s)
+                      {_NOT_LIVE_TELEPHONY_SESSION}
                     """,
                     (max_age_minutes,),
                 )
@@ -164,17 +191,36 @@ def _reconcile_on_conn(
         else:
             print(f"[reconcile] No stale sessions > {max_age_minutes}m old found.")
 
-        # 2. Re-align quota_state.concurrent_now to match true open session count
+        # 2. Re-align quota_state.concurrent_now to match true open session count.
+        # A-01.2/3: telephony calls hold their slot on telephony_calls (reserve_call_quota
+        # stamps quota_reserved_at, every exit stamps quota_released_at). Their sessions
+        # row is for transcript/usage only, so count each call once via the ledger and
+        # exclude its linked session. Counting only sessions here used to zero every
+        # live phone call's reservation.
         cur.execute(
             """
-            SELECT t.id, COALESCE(s.open_count, 0) AS true_open_count, q.concurrent_now
+            SELECT t.id,
+                   COALESCE(s.open_count, 0) + COALESCE(c.open_count, 0) AS true_open_count,
+                   q.concurrent_now
             FROM tenants t
             LEFT JOIN (
-                SELECT tenant_id, COUNT(*) AS open_count
-                FROM sessions
-                WHERE ended_at IS NULL
-                GROUP BY tenant_id
+                SELECT s.tenant_id, COUNT(*) AS open_count
+                FROM sessions s
+                WHERE s.ended_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM telephony_calls tc
+                      WHERE tc.session_id = s.id
+                        AND tc.quota_reserved_at IS NOT NULL
+                  )
+                GROUP BY s.tenant_id
             ) s ON t.id = s.tenant_id
+            LEFT JOIN (
+                SELECT tenant_id, COUNT(*) AS open_count
+                FROM telephony_calls
+                WHERE quota_reserved_at IS NOT NULL
+                  AND quota_released_at IS NULL
+                GROUP BY tenant_id
+            ) c ON t.id = c.tenant_id
             LEFT JOIN quota_state q ON t.id = q.tenant_id
             """
         )

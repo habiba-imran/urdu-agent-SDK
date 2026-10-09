@@ -59,7 +59,7 @@ The browser talks only to **your** session endpoints. Your backend signs request
 | Inspect agents & assigned numbers | [Agents](/agents) (**read-only**) |
 | Create / update agents | \`@awaazlabs-uva/agents\` on your backend |
 | Connect Telnyx, numbers, routing | \`@awaazlabs-uva/telephony\` on your backend |
-| Copy env / HMAC / set origins | [API Keys](/credentials) (HMAC visible to owners; rotate disabled) |
+| Copy env / HMAC / set origins | [API Keys](/credentials) (masked metadata; permitted owner reveal or secure operator delivery; rotate disabled) |
 | Inspect calls | [Sessions](/sessions) |
 | STT / LLM / TTS matrix | [Providers](/docs/providers) |
 | Operator smoke call | [Test Studio](/test-studio) — **not** your customers' mint path |
@@ -67,11 +67,11 @@ The browser talks only to **your** session endpoints. Your backend signs request
 
 ## Suggested reading order
 
-1. [How integration works](/docs/how-integration-works) — trust boundary and who does what  
-2. [Quickstart](/docs/quickstart) — first call in five steps  
-3. [What to expect](/docs/what-to-expect) — lifecycle, limits, end reasons  
-4. [Providers](/docs/providers) — English and Urdu STT / LLM / TTS (configured providers stick)  
-5. [Backend setup](/docs/backend-setup) → [Frontend setup](/docs/frontend-setup) → [Telephony](/docs/telephony) → [Going live](/docs/going-live)  
+1. [How integration works](/docs/how-integration-works) — trust boundary and who does what
+2. [Quickstart](/docs/quickstart) — first call in five steps
+3. [What to expect](/docs/what-to-expect) — lifecycle, limits, end reasons
+4. [Providers](/docs/providers) — English and Urdu STT / LLM / TTS (configured providers stick)
+5. [Backend setup](/docs/backend-setup) → [Frontend setup](/docs/frontend-setup) → [Telephony](/docs/telephony) → [Going live](/docs/going-live)
 6. [Security](/docs/security) · [Errors](/docs/errors-and-troubleshooting) · [Legal and trust](/docs/legal-and-trust)
 
 ## Version note

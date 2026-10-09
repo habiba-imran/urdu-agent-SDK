@@ -1,0 +1,203 @@
+{
+  "corpus_version": "1.0.0",
+  "schema_version": 1,
+  "policy": "baseline",
+  "data_classification": "synthetic_non_sensitive",
+  "reference_label_status": "provisional_authored_expectations_not_listener_results",
+  "native_urdu_review": "pending",
+  "required_categories": [
+    "ordinary_short_answer", "multi_part_answer", "mid_thought_pause",
+    "long_hesitation", "critical_entity_capture", "self_correction",
+    "clarification", "tool_read", "tool_write", "tool_timeout_outcome_unknown",
+    "backchannel", "one_word_takeover", "false_interruption_noise",
+    "english", "pakistani_urdu", "urdu_english_mixed",
+    "opening_greeting", "long_call_repetition"
+  ],
+  "language_styles": ["en", "ur_pk", "ur_pk_mixed"],
+  "evaluation_dimensions": [
+    "task_accuracy", "tool_truth", "correction_adoption", "turn_completeness",
+    "takeover_capture", "false_yield", "recovery", "markup_leakage",
+    "first_useful_audible_word_ms", "barge_in_audible_stop_ms",
+    "naturalness", "intelligibility", "trust", "pronunciation", "repetition",
+    "code_switch_naturalness", "register_gender_fit"
+  ],
+  "run_matrix": {
+    "channels": ["webrtc", "telephony"],
+    "startup_states": ["cold", "warm"],
+    "provider_paths": {
+      "en_reference": ["deepgram/nova-3", "groq/openai/gpt-oss-20b", "cartesia/sonic-3.5"],
+      "ur_reference": ["gladia/default", "gemini/configured-effective-model", "uplift/configured-voice"],
+      "english_selectable": {"stt": ["deepgram", "gladia"], "llm": ["groq", "gemini"], "tts": ["cartesia", "rime", "elevenlabs"]},
+      "mixed": "Urdu baseline; single-language Gladia limitation must be reported"
+    },
+    "rule": "Record exact effective provider/model/voice/options per run; matrix entries are evaluation lanes, not availability proof."
+  },
+  "synthetic_context": {
+    "business_name": "Example Appointment Desk",
+    "hours": "Monday through Friday, 09:00 to 17:00 Asia/Karachi",
+    "service_name": "Example consultation",
+    "price": "PKR 1500",
+    "customer_name": "Alex Example",
+    "customer_email": "alex@example.test",
+    "verified_caller_phone": "+12025550100",
+    "reference_code": "TEST-A104",
+    "offered_slots": ["2030-01-07T10:00:00+05:00", "2030-01-11T11:00:00+05:00"],
+    "relative_date_anchor": "2030-01-06T09:00:00+05:00",
+    "rule": "Use fake tools and identities only. Never dial the synthetic phone or write to a real calendar."
+  },
+  "scenarios": [
+    {
+      "id": "HUM-EN-001", "language_style": "en",
+      "categories": ["english", "ordinary_short_answer"],
+      "events": [{"kind": "user_speech", "text": "What time do you close on Monday?"}],
+      "reference": {"dialogue_act": "answer", "must_preserve": ["17:00"], "must_not": ["invent_hours", "list_unasked_services"], "listener_goal": "A concise, clear spoken answer."}
+    },
+    {
+      "id": "HUM-EN-002", "language_style": "en", "categories": ["multi_part_answer"],
+      "events": [{"kind": "user_speech", "text": "What does the consultation cost, and can I come on Monday?"}],
+      "reference": {"dialogue_act": "answer_and_check", "must_preserve": ["PKR 1500", "Monday"], "must_not": ["claim_available_without_tool"], "listener_goal": "Cover both requests without an unrelated list."}
+    },
+    {
+      "id": "HUM-EN-003", "language_style": "en", "categories": ["mid_thought_pause", "critical_entity_capture"],
+      "events": [{"kind": "user_speech", "text": "My email is alex at"}, {"kind": "silence", "duration_ms": 700}, {"kind": "user_speech", "text": "example dot test."}],
+      "reference": {"dialogue_act": "capture", "must_preserve": ["alex@example.test"], "must_not": ["commit_incomplete_email", "speak_over_continuation"], "listener_goal": "Allow the unfinished thought to complete."}
+    },
+    {
+      "id": "HUM-EN-004", "language_style": "en", "categories": ["long_hesitation"],
+      "events": [{"kind": "user_speech", "text": "I'd like to book for..."}, {"kind": "silence", "duration_ms": 2500}, {"kind": "user_speech", "text": "Monday morning."}],
+      "reference": {"dialogue_act": "capture_or_clarify", "must_preserve": ["Monday", "morning"], "must_not": ["guess_date", "write_before_confirmation"], "listener_goal": "Patient recovery without repeated prompting."}
+    },
+    {
+      "id": "HUM-EN-005", "language_style": "en", "categories": ["critical_entity_capture"],
+      "events": [{"kind": "user_speech", "text": "My reference is TEST dash A one zero four, and my email is alex at example dot test."}],
+      "reference": {"dialogue_act": "capture", "must_preserve": ["TEST-A104", "alex@example.test"], "must_not": ["change_code_digits", "invent_entity"], "listener_goal": "Structured values are intelligible on first hearing."}
+    },
+    {
+      "id": "HUM-EN-006", "language_style": "en", "categories": ["self_correction"],
+      "events": [{"kind": "user_speech", "text": "Friday at eleven. No, Monday at ten."}],
+      "reference": {"dialogue_act": "repair_confirm", "must_preserve": ["Monday", "10:00"], "superseded": ["Friday", "11:00"], "must_not": ["write_superseded_value"], "listener_goal": "Acknowledge the correction without repeating the discarded slot as current."}
+    },
+    {
+      "id": "HUM-EN-007", "language_style": "en", "categories": ["clarification"],
+      "events": [{"kind": "user_speech", "text": "Book it on the seventh, or maybe the eleventh."}],
+      "reference": {"dialogue_act": "clarify", "unresolved": ["date"], "must_not": ["choose_ambiguous_date", "dispatch_write"], "listener_goal": "Ask one targeted question."}
+    },
+    {
+      "id": "HUM-EN-008", "language_style": "en", "categories": ["tool_read"],
+      "events": [{"kind": "user_speech", "text": "Are there any slots on Monday?"}, {"kind": "fake_tool_result", "tool": "check_availability", "delay_ms": 100, "outcome": "success", "slots": ["2030-01-07T10:00:00+05:00"]}],
+      "reference": {"dialogue_act": "tool_result", "must_preserve": ["2030-01-07T10:00:00+05:00"], "must_not": ["invent_slot", "unnecessary_repeated_bridge"], "listener_goal": "Give the fast result directly where possible."}
+    },
+    {
+      "id": "HUM-EN-009", "language_style": "en", "categories": ["tool_write"],
+      "events": [{"kind": "user_speech", "text": "Book Monday at ten for Alex Example."}, {"kind": "fake_tool_result", "tool": "book_appointment", "outcome": "proposal", "confirmation_id": "synthetic-confirmation-001"}, {"kind": "user_speech", "text": "Yes, please book it."}, {"kind": "fake_tool_result", "tool": "book_appointment", "outcome": "success", "confirmationCode": "TEST-A104"}],
+      "reference": {"dialogue_act": "confirm_then_write", "must_preserve": ["2030-01-07T10:00:00+05:00", "TEST-A104"], "expected_write_count": 1, "must_not": ["write_before_explicit_confirmation", "duplicate_write", "claim_success_before_result"], "listener_goal": "Clear proposal, confirmation and truthful completion."}
+    },
+    {
+      "id": "HUM-EN-010", "language_style": "en", "categories": ["tool_timeout_outcome_unknown"],
+      "events": [{"kind": "user_speech", "text": "Yes, confirm that booking."}, {"kind": "fake_tool_result", "tool": "book_appointment", "outcome": "timeout_after_dispatch", "backend_effect": "unknown"}],
+      "precondition": "Matching proposal and verified synthetic caller already exist; confirmation just heard.",
+      "reference": {"dialogue_act": "report_unknown", "expected_write_count": 1, "must_not": ["retry_write_automatically", "claim_definite_success", "claim_definite_failure"], "listener_goal": "Explain uncertainty and the need to check the outcome."}
+    },
+    {
+      "id": "HUM-EN-011", "language_style": "en", "categories": ["backchannel"],
+      "events": [{"kind": "agent_playback", "text": "The consultation costs fifteen hundred rupees, and we close at five."}, {"kind": "overlap_speech", "text": "Mhm.", "intent_label": "receipt", "position": "mid_agent_clause"}],
+      "reference": {"dialogue_act": "continue", "must_not": ["lexical_only_takeover_decision", "lose_task_state"], "listener_goal": "Treat supportive receipt differently from a request to stop; audio/context evidence required."}
+    },
+    {
+      "id": "HUM-EN-012", "language_style": "en", "categories": ["one_word_takeover"],
+      "events": [{"kind": "agent_playback", "text": "The available slot is Monday at ten."}, {"kind": "overlap_speech", "text": "Stop!", "intent_label": "takeover", "position": "mid_agent_clause"}],
+      "reference": {"dialogue_act": "yield", "must_preserve": ["Stop"], "must_not": ["require_two_words", "accept_cancelled_stale_audio"], "listener_goal": "Stop old speech and capture the caller's new contribution."}
+    },
+    {
+      "id": "HUM-EN-013", "language_style": "en", "categories": ["false_interruption_noise"],
+      "events": [{"kind": "agent_playback", "text": "We close at five on weekdays."}, {"kind": "noise", "noise_class": "cough", "duration_ms": 180, "transcript": null}],
+      "reference": {"dialogue_act": "recover_false_or_continue", "must_not": ["invent_user_request", "irrelevant_apology", "lose_task_state"], "listener_goal": "Coherent continuity after non-speech; detector/acoustic validation required."}
+    },
+    {
+      "id": "HUM-EN-014", "language_style": "en", "categories": ["opening_greeting"],
+      "events": [{"kind": "session_start", "first_speaker": "agent", "greeting": "Hello, this is the Example Appointment Desk.", "recording_enabled": false}],
+      "reference": {"dialogue_act": "greet", "must_preserve": ["Example Appointment Desk"], "must_not": ["tool_call_on_greeting", "treat_connected_as_heard"], "listener_goal": "Measure cold/warm greeting and playback readiness separately."}
+    },
+    {
+      "id": "HUM-EN-015", "language_style": "en", "categories": ["opening_greeting"],
+      "events": [{"kind": "session_start", "first_speaker": "user", "recording_enabled": true, "recording_consent": "pending"}],
+      "reference": {"dialogue_act": "disclose_then_wait", "must_not": ["skip_required_disclosure", "record_without_policy_consent", "generate_business_greeting_when_user_first"], "listener_goal": "Keep mandatory disclosure separate from business greeting."}
+    },
+    {
+      "id": "HUM-EN-016", "language_style": "en", "categories": ["long_call_repetition", "self_correction", "tool_read"],
+      "events": [{"kind": "repeat_sequence", "cycles": 12, "sequence": [{"kind": "user_speech", "text": "What are your hours?"}, {"kind": "user_speech", "text": "Friday, actually Monday. What slots are open?"}, {"kind": "fake_tool_result", "tool": "check_availability", "outcome": "success", "slots": ["2030-01-07T10:00:00+05:00"]}]}],
+      "reference": {"dialogue_act": "maintain_continuity", "must_preserve": ["Monday", "09:00", "17:00"], "must_not": ["state_drift", "duplicate_write"], "listener_goal": "Track repeated wording and context growth; this recipe is not a completed 10–20 minute call."}
+    },
+    {
+      "id": "HUM-EN-017", "language_style": "en", "categories": ["tool_read", "self_correction"],
+      "events": [{"kind": "user_speech", "text": "Check Friday."}, {"kind": "user_speech", "text": "Actually, check Monday instead."}, {"kind": "fake_tool_result", "tool": "check_availability", "request_label": "old_friday", "outcome": "success", "delay_ms": 2000}],
+        "reference": {"dialogue_act": "suppress_stale_result", "must_preserve": ["Monday"], "superseded": ["Friday"], "must_not": ["speak_old_read_as_current"], "listener_goal": "An old read cannot hijack the corrected request."}
+    },
+    {
+      "id": "HUM-EN-018", "language_style": "en", "categories": ["tool_read"],
+      "events": [{"kind": "user_speech", "text": "Can a person follow up with me?"}, {"kind": "fake_tool_result", "tool": "escalate_to_human", "outcome": "record_created"}],
+      "reference": {"dialogue_act": "escalation_record", "must_not": ["claim_live_transfer"], "listener_goal": "Describe a follow-up request truthfully."}
+    },
+    {
+      "id": "HUM-UR-001", "language_style": "ur_pk", "categories": ["pakistani_urdu", "ordinary_short_answer"],
+      "events": [{"kind": "user_speech", "text": "پیر کو آپ کتنے بجے بند کرتے ہیں؟"}],
+      "reference": {"dialogue_act": "answer", "must_preserve": ["17:00"], "must_not": ["invent_hours", "roman_urdu_output"], "listener_goal": "Simple spoken Pakistani Urdu; native review pending."}
+    },
+    {
+      "id": "HUM-UR-002", "language_style": "ur_pk", "categories": ["mid_thought_pause", "long_hesitation"],
+      "events": [{"kind": "user_speech", "text": "مجھے وقت چاہیے..."}, {"kind": "silence", "duration_ms": 2500}, {"kind": "user_speech", "text": "پیر کی صبح۔"}],
+      "reference": {"dialogue_act": "capture_or_clarify", "must_preserve": ["Monday", "morning"], "must_not": ["guess_date", "write_before_confirmation"], "listener_goal": "Patient Urdu turn-taking; native/acoustic review pending."}
+    },
+    {
+      "id": "HUM-UR-003", "language_style": "ur_pk", "categories": ["self_correction"],
+      "events": [{"kind": "user_speech", "text": "جمعے کو گیارہ بجے۔ نہیں، پیر کو دس بجے۔"}],
+      "reference": {"dialogue_act": "repair_confirm", "must_preserve": ["Monday", "10:00"], "superseded": ["Friday", "11:00"], "must_not": ["write_superseded_value"], "listener_goal": "Corrected slot is current; phrasing needs native review."}
+    },
+    {
+      "id": "HUM-UR-004", "language_style": "ur_pk", "categories": ["clarification", "critical_entity_capture"],
+      "events": [{"kind": "user_speech", "text": "سات تاریخ یا شاید گیارہ تاریخ کو وقت چاہیے۔"}],
+      "reference": {"dialogue_act": "clarify", "unresolved": ["date"], "must_not": ["choose_ambiguous_date", "dispatch_write"], "listener_goal": "One targeted Urdu clarification; native review pending."}
+    },
+    {
+      "id": "HUM-UR-005", "language_style": "ur_pk", "categories": ["backchannel"],
+      "events": [{"kind": "agent_playback", "text": "ہم پیر سے جمعے تک پانچ بجے بند کرتے ہیں۔"}, {"kind": "overlap_speech", "text": "جی۔", "intent_label": "receipt", "position": "mid_agent_clause"}],
+      "reference": {"dialogue_act": "continue", "must_not": ["lexical_only_takeover_decision"], "listener_goal": "Receipt intent is provisional; require native/context/acoustic labels."}
+    },
+    {
+      "id": "HUM-UR-006", "language_style": "ur_pk", "categories": ["one_word_takeover"],
+      "events": [{"kind": "agent_playback", "text": "پیر کو دس بجے کا وقت موجود ہے۔"}, {"kind": "overlap_speech", "text": "رکیں!", "intent_label": "takeover", "position": "mid_agent_clause"}],
+      "reference": {"dialogue_act": "yield", "must_not": ["require_two_words", "accept_cancelled_stale_audio"], "listener_goal": "Critical Urdu stop; native label and audio validation pending."}
+    },
+    {
+      "id": "HUM-UR-007", "language_style": "ur_pk", "categories": ["opening_greeting"],
+      "events": [{"kind": "session_start", "first_speaker": "agent", "greeting": "السلام علیکم، میں آپ کی کیا مدد کر سکتا ہوں؟", "recording_enabled": false}],
+      "reference": {"dialogue_act": "greet", "must_not": ["provider_markup_leak", "treat_connected_as_heard"], "listener_goal": "Assess voice/gender grammar fit; example phrasing is not an approved production phrase."}
+    },
+    {
+      "id": "HUM-UR-008", "language_style": "ur_pk", "categories": ["tool_write", "tool_timeout_outcome_unknown"],
+      "precondition": "Matching synthetic proposal exists; verified synthetic caller identity is set.",
+      "events": [{"kind": "user_speech", "text": "جی ہاں، پیر کو دس بجے کا وقت بک کر دیں۔"}, {"kind": "fake_tool_result", "tool": "book_appointment", "outcome": "timeout_after_dispatch", "backend_effect": "unknown"}],
+      "reference": {"dialogue_act": "report_unknown", "expected_write_count": 1, "must_not": ["retry_write_automatically", "claim_definite_success", "claim_definite_failure"], "listener_goal": "Truthful Urdu outcome uncertainty; current Urdu-script affirmation coverage is unproven."}
+    },
+    {
+      "id": "HUM-MIX-001", "language_style": "ur_pk_mixed", "categories": ["urdu_english_mixed", "critical_entity_capture"],
+      "events": [{"kind": "user_speech", "text": "میرا email alex@example.test ہے اور reference code TEST-A104 ہے۔"}],
+      "reference": {"dialogue_act": "capture", "must_preserve": ["alex@example.test", "TEST-A104"], "must_not": ["translate_or_change_entity", "provider_markup_leak"], "listener_goal": "Mixed entity intelligibility; single-language STT limitation reported."}
+    },
+    {
+      "id": "HUM-MIX-002", "language_style": "ur_pk_mixed", "categories": ["self_correction", "tool_read"],
+      "events": [{"kind": "user_speech", "text": "Friday نہیں، Monday morning کی availability check کریں۔"}, {"kind": "fake_tool_result", "tool": "check_availability", "outcome": "success", "slots": ["2030-01-07T10:00:00+05:00"]}],
+      "reference": {"dialogue_act": "repair_and_check", "must_preserve": ["Monday", "morning"], "superseded": ["Friday"], "must_not": ["write_superseded_value", "invent_slot"], "listener_goal": "Natural mixed repair and truthful read result; native review pending."}
+    },
+    {
+      "id": "HUM-MIX-003", "language_style": "ur_pk_mixed", "categories": ["one_word_takeover"],
+      "events": [{"kind": "agent_playback", "text": "Monday کو دس بجے کا slot موجود ہے۔"}, {"kind": "overlap_speech", "text": "Wait!", "intent_label": "takeover", "position": "mid_agent_clause"}],
+      "reference": {"dialogue_act": "yield", "must_not": ["require_two_words", "accept_cancelled_stale_audio"], "listener_goal": "Mixed-language critical takeover; audio evidence pending."}
+    },
+    {
+      "id": "HUM-MIX-004", "language_style": "ur_pk_mixed", "categories": ["backchannel", "long_call_repetition"],
+      "events": [{"kind": "repeat_sequence", "cycles": 12, "sequence": [{"kind": "agent_playback", "text": "Consultation کی قیمت پندرہ سو روپے ہے۔"}, {"kind": "overlap_speech", "text": "اچھا۔", "intent_label": "receipt", "position": "mid_agent_clause"}, {"kind": "user_speech", "text": "Monday کے hours دوبارہ بتائیں۔"}]}],
+      "reference": {"dialogue_act": "maintain_continuity", "must_preserve": ["PKR 1500", "09:00", "17:00"], "must_not": ["lexical_only_takeover_decision", "state_drift"], "listener_goal": "Evaluate mixed repetition and contextual receipts; recipe is not measured long-call evidence."}
+    }
+  ]
+}

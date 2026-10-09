@@ -58,6 +58,25 @@ Successful connects appear under **[Sessions](/sessions)**. Use Sessions when UI
 
 ## Related
 
-- [What to expect](/docs/what-to-expect)  
-- [Frontend setup](/docs/frontend-setup)  
+- [What to expect](/docs/what-to-expect)
+- [Frontend setup](/docs/frontend-setup)
+
+## Current humanization SDK snapshot
+
+The published voice \`1.1.0\` baseline does not contain the new \`audio_ready\` event. The independent client ships an unpublished \`1.1.1-humanization.0\` snapshot; Test Studio uses the current repository SDK. With that build, \`audio_ready: boolean\` reports browser playback readiness. \`connected\` reports room connection. Neither proves a specific utterance was heard. Continue to handle \`audio_blocked\` and unlock via \`startAudio()\` from a gesture.
+
+Per-turn metrics are also forwarded to \`metrics_updated\` for legacy compatibility. If subscribing to both, handle a turn once:
+
+\`\`\`ts
+voice.on('turn_latency', (metrics) => {
+  // Save outcome and correlation/version fields, when supplied.
+  // Only completed outcomes belong in a completed-turn latency summary.
+});
+voice.on('metrics_updated', (metrics) => {
+  if (metrics.type !== 'metrics_updated') return;
+  // Update aggregate diagnostics.
+});
+\`\`\`
+
+Current metrics can include policy/component identities, session/user-turn/assistant-turn/generation IDs and outcome. Fields are optional and arrive only when the runtime supplies them. A provider failure can emit \`session_failed\` after connection, followed by session closure. Keep error handlers active for the whole call. Full matrix: [Humanization testing](/docs/humanization-testing).
 `;

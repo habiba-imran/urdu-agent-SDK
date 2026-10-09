@@ -67,7 +67,7 @@ export type PortalCredentials = {
   status: string;
   /** True when an HMAC secret hash exists for this tenant. */
   secret_provisioned?: boolean;
-  /** Owner-only: raw HMAC for host backend env (always visible on API Keys). */
+  /** Never populated by GET /portal/credentials (A-03). Use revealCredentialSecret(). */
   hmac_secret?: string | null;
 };
 
@@ -153,6 +153,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
+        // A-02: custom header browsers cannot set on cross-site form POSTs.
+        "X-UVA-Portal": "1",
         ...portalAuthHeaders(),
         ...(init?.headers ?? {}),
       },
@@ -255,6 +257,11 @@ export function getProviderCapabilities() {
 
 export function getCredentials() {
   return request<PortalCredentials>("/portal/credentials");
+}
+
+/** Owner-only audited reveal — the only path that returns the raw HMAC (A-03). */
+export function revealCredentialSecret() {
+  return request<{ hmac_secret: string }>("/portal/credentials/secret");
 }
 
 export type PortalOverviewSnapshot = {

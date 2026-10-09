@@ -12,7 +12,7 @@ Open **[API Keys](/credentials)** and copy:
 
 - \`UVA_CONTROL_PLANE_URL\`
 - \`UVA_TENANT_ID\`
-- \`UVA_HMAC_SECRET\` (copy from [API Keys](/credentials) — owners; backend only)
+- \`UVA_HMAC_SECRET\` (secure operator delivery, or explicit permitted owner reveal on [API Keys](/credentials); backend only)
 - \`UVA_PUBLISHABLE_KEY\` / \`NEXT_PUBLIC_UVA_PUBLISHABLE_KEY\` (or \`VITE_UVA_PUBLISHABLE_KEY\`)
 
 Create an agent with \`@awaazlabs-uva/agents\` on your backend, then open **[Agents](/agents)** to copy its \`agentId\`.
@@ -69,4 +69,8 @@ Grant mic permission when asked, speak after the agent greets you (if configured
 Open **[Sessions](/sessions)** — you should see duration, status, and transcript when available.
 
 Stuck? See [Errors and troubleshooting](/docs/errors-and-troubleshooting).
+
+## Testing the current humanization build
+
+The install instructions above describe the published baseline package. For the new playback-readiness handshake, use the packaged test snapshot included in \`client-integration-test/\` and its lockfile. It is not a registry release. See [Humanization testing](/docs/humanization-testing) before comparing baseline and candidate calls; worker policies are platform-owned and default off.
 `;

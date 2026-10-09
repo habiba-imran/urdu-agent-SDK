@@ -85,4 +85,8 @@ Not an npm package — your backend implements \`POST /api/voice/session\` (+ re
 | STT / LLM / TTS matrix | [Providers](/docs/providers) |
 | Debug a call | [Sessions](/sessions) |
 | Automate provisioning | agents / telephony SDKs |
+
+## Testing the current humanization build
+
+The install instructions above describe the published baseline package. For the new playback-readiness handshake, use the packaged test snapshot included in \`client-integration-test/\` and its lockfile. It is not a registry release. See [Humanization testing](/docs/humanization-testing) before comparing baseline and candidate calls; worker policies are platform-owned and default off.
 `;

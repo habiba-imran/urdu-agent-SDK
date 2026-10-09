@@ -21,8 +21,8 @@ Catalog: [Events and lifecycle](/docs/events-and-lifecycle).
 
 We do not publish hard SLAs here. Expect:
 
-- **Connection** (click → \`connected\`): usually a few seconds (network + region)  
-- **First agent audio**: follows your agent greeting settings  
+- **Connection** (click → \`connected\`): usually a few seconds (network + region)
+- **First agent audio**: follows your agent greeting settings
 
 Use **[Sessions](/sessions)** on test calls to set your own baselines before launch. The SDK also emits \`turn_latency\` / \`metrics_updated\` when the runtime provides them.
 
@@ -57,7 +57,11 @@ Treat Sessions as source of truth for a given call.
 
 ## Versioning
 
-- Pin npm versions in lockfiles.  
-- Breaking API changes ship as major bumps with changelog notes.  
+- Pin npm versions in lockfiles.
+- Breaking API changes ship as major bumps with changelog notes.
 - After upgrading voice or your host session endpoints, re-run Quickstart mint + connect.
+
+## Readiness and timing evidence
+
+On the current test SDK, \`audio_ready\` is separate from \`connected\`. A transcript or active-speaker event does not prove that an interrupted suffix was heard. TTS TTFB, worker e2e and browser active-speaker signals are proxies, not caller-acoustic FUAW. Use paired listening/recordings and the [humanization checklist](/docs/humanization-testing) for activation evidence. Candidate behavior remains off by default.
 `;

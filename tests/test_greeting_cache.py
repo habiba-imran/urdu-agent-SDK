@@ -183,6 +183,8 @@ def test_plan_greeting_prewarm_skips_wait_on_cache_hit():
         greeting_text=opening.text,
         audio_channel="webrtc",
         tts_options=cfg.tts_options,
+        language=cfg.agent_language,
+        tenant_id=cfg.tenant_id,
     )
     cache.put(key, [_frame()])
     assert cache.has(key) is True

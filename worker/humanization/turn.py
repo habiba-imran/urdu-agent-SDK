@@ -163,6 +163,10 @@ def build_turn_profile(
         **base["interruption"],
         "mode": interruption_mode(),
     }
+    from .coordinator import overlap_enabled
+    if overlap_enabled():
+        interruption["resume_false_interruption"] = True
+        interruption["false_interruption_timeout"] = .6
     preemptive = dict(base["preemptive_generation"])
     endpointing = dict(base.get("endpointing") or {})
     detector = str(base.get("turn_detection") or "stt")

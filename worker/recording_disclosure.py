@@ -39,7 +39,7 @@ def reset_consent_column_probe() -> None:
 
 def recording_disclosure_text(agent_language: str | None) -> str:
     lang = (agent_language or "").strip().lower()
-    if lang in ("ur", "urdu"):
+    if lang.startswith("ur") or lang == "urdu":
         return _DISCLOSURE_UR
     return _DISCLOSURE_EN
 
@@ -131,6 +131,9 @@ async def speak_recording_disclosure_if_needed(
 
     # Ensure pending until playout completes.
     userdata.recording_consent_status = CONSENT_PENDING
+    from worker.session_opening import opening_state
+    state = opening_state(session)
+    state.phase = "DISCLOSURE_PENDING"
     text = recording_disclosure_text(agent_language)
     log.info(
         "recording disclosure speaking room=%s chars=%s allow_interruptions=False",
@@ -142,7 +145,10 @@ async def speak_recording_disclosure_if_needed(
     userdata.opening_active = True
     handle = None
     try:
+        state.phase = "DISCLOSURE_PLAYING"
         handle = session.say(text, allow_interruptions=False)
+        if handle is None or not hasattr(handle, "wait_for_playout"):
+            return False
         if handle is not None and hasattr(handle, "wait_for_playout"):
             try:
                 await handle.wait_for_playout()
@@ -156,13 +162,16 @@ async def speak_recording_disclosure_if_needed(
     finally:
         userdata.opening_active = False
 
-    if handle is not None and getattr(handle, "interrupted", False):
+    failed = callable(getattr(handle, "exception", None)) and handle.exception() is not None
+    if failed or (handle is not None and getattr(handle, "interrupted", False)):
         log.info(
             "recording disclosure interrupted room=%s — consent stays pending",
             room_name,
         )
         return False
 
+    state.server_playout_complete = True
+    state.phase = "GREETING_PENDING"
     granted_at = datetime.now(timezone.utc)
     userdata.recording_consent_status = CONSENT_GRANTED
     userdata.recording_consent_at = granted_at.isoformat()

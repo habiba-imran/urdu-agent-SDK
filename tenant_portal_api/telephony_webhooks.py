@@ -87,8 +87,10 @@ def _first_non_empty(*values: Any) -> str | None:
 
 def _extract_call_error_details(event_type: str, payload: dict[str, Any]) -> tuple[str | None, str | None]:
     detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else {}
+    # Accept either the outer ``data`` object or the inner ``data.payload`` — callers pass
+    # the inner one, which previously meant hangup_cause / sip codes were never read.
     payload_detail = (
-        payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+        payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
     )
     code = _first_non_empty(
         payload_detail.get("sip_response_code"),
@@ -120,11 +122,16 @@ def _extract_call_error_details(event_type: str, payload: dict[str, Any]) -> tup
     return code, message
 
 
+_TERMINAL_STATUSES = ("completed", "busy", "no_answer", "failed", "cancelled")
+
+
 def _map_call_platform_status(event_type: str, provider_status: str, error_code: str | None) -> str | None:
     normalized_event = event_type.lower()
     normalized_status = provider_status.lower()
     if normalized_event == "call.initiated":
         return "dialing"
+    if normalized_event == "call.ringing":
+        return "ringing"
     if normalized_event in {"call.answered", "call.bridged"}:
         return "in_progress"
     if "busy" in normalized_event or "busy" in normalized_status:
@@ -195,8 +202,18 @@ def verify_telnyx_webhook_signature(
     return True
 
 
-def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> None:
-    """Best-effort durable updates for number-order and call webhook events."""
+def _apply_webhook_side_effects(
+    conn: Any,
+    event_type: str,
+    payload: dict,
+    matched_call: tuple[str, str] | None = None,
+) -> None:
+    """Durable updates for number-order and call webhook events.
+
+    ``matched_call`` is ``(call_id, tenant_id)`` already resolved by the caller. When
+    omitted (direct callers / tests) the call is resolved here via
+    :mod:`telephony_call_correlation` — never by comparing Telnyx ids to LiveKit ids.
+    """
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
     event_payload = (
         data.get("payload") if isinstance(data.get("payload"), dict) else data
@@ -230,52 +247,121 @@ def _apply_webhook_side_effects(conn: Any, event_type: str, payload: dict) -> No
         )
 
     if event_type.startswith("call."):
-        call_control_id = str(
-            event_payload.get("call_control_id")
-            or event_payload.get("call_session_id")
-            or ""
+        _apply_call_event(
+            conn,
+            event_type,
+            payload if isinstance(payload, dict) else {},
+            event_payload,
+            provider_status,
+            matched_call,
         )
-        if call_control_id:
-            error_code, error_message = _extract_call_error_details(
-                event_type, event_payload
-            )
-            mapped = _map_call_platform_status(
-                event_type,
-                provider_status or event_type,
-                error_code,
-            )
-            if mapped:
-                terminal = mapped in {"completed", "busy", "no_answer", "failed", "cancelled"}
-                conn.execute(
-                    """
-                    update telephony_calls
-                    set platform_status = case
-                            when telephony_calls.platform_status in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
-                              and %s not in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
-                            then telephony_calls.platform_status
-                            else %s
-                        end,
-                        provider_status = %s,
-                        error_code = coalesce(%s, error_code),
-                        error_message = coalesce(%s, error_message),
-                        ended_at = case
-                            when %s and ended_at is null then now()
-                            else ended_at
-                        end,
-                        updated_at = now()
-                    where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
-                    """,
-                    (
-                        mapped,
-                        mapped,
-                        provider_status or event_type,
-                        error_code,
-                        error_message,
-                        terminal,
-                        call_control_id,
-                        call_control_id,
-                    ),
-                )
+
+
+def _resolve_call_event(conn: Any, payload: dict[str, Any]) -> tuple[str, str] | None:
+    """A-01.1: correlate a Telnyx call event to a telephony_calls row (never by LiveKit id)."""
+    from tenant_portal_api.telephony_call_correlation import (
+        extract_call_identity,
+        resolve_call_for_event,
+    )
+
+    return resolve_call_for_event(conn, extract_call_identity(payload))
+
+
+def _apply_call_event(
+    conn: Any,
+    event_type: str,
+    payload: dict[str, Any],
+    event_payload: dict[str, Any],
+    provider_status: str,
+    matched_call: tuple[str, str] | None,
+) -> None:
+    if matched_call is None:
+        matched_call = _resolve_call_event(conn, payload)
+    if matched_call is None:
+        logger.warning(
+            "unmatched Telnyx call event type=%s call_control_id=%s — no telephony_calls row "
+            "correlates (claimed, not applied)",
+            event_type,
+            event_payload.get("call_control_id") or "-",
+        )
+        return
+
+    call_id, tenant_id = matched_call
+    error_code, error_message = _extract_call_error_details(event_type, event_payload)
+    # Telnyx call events carry ``state`` (and ``hangup_cause`` on hangup), not ``status``.
+    provider_status = provider_status or _first_non_empty(
+        event_payload.get("state"), event_payload.get("hangup_cause")
+    ) or ""
+    status_text = " ".join(
+        s for s in (
+            provider_status,
+            str(event_payload.get("hangup_cause") or ""),
+            str(event_payload.get("sip_hangup_cause") or ""),
+        ) if s
+    ).lower()
+    mapped = _map_call_platform_status(event_type, status_text or event_type, error_code)
+    if not mapped:
+        return
+
+    terminal = mapped in _TERMINAL_STATUSES
+    answered = mapped == "in_progress"
+    # Param order is load-bearing for the test fakes: params[0] == mapped, params[-1] == call id.
+    conn.execute(
+        """
+        update telephony_calls
+        set platform_status = case
+                when telephony_calls.platform_status in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
+                  and %s not in ('completed', 'busy', 'no_answer', 'failed', 'cancelled')
+                then telephony_calls.platform_status
+                else %s
+            end,
+            provider_status = %s,
+            error_code = coalesce(%s, error_code),
+            error_message = coalesce(%s, error_message),
+            started_at = coalesce(started_at, now()),
+            answered_at = case
+                when %s and answered_at is null then now()
+                else answered_at
+            end,
+            ended_at = case
+                when %s and ended_at is null then now()
+                else ended_at
+            end,
+            duration_sec = case
+                when %s and duration_sec is null and answered_at is not null
+                then greatest(0, extract(epoch from (now() - answered_at)))::int
+                else duration_sec
+            end,
+            updated_at = now()
+        where id = %s
+        """,
+        (
+            mapped,
+            mapped,
+            provider_status or event_type,
+            error_code,
+            error_message,
+            answered,
+            terminal,
+            terminal,
+            call_id,
+        ),
+    )
+
+    if terminal:
+        # A-01.2: the reservation taken in create_outbound_call / resolve_inbound_sip_call
+        # was never released anywhere. Idempotent via quota_released_at, so a worker-side
+        # release landing later is safe too.
+        from tenant_portal_api import telephony_queries as queries
+
+        released = queries.release_call_quota_once(conn, call_id, tenant_id)
+        logger.info(
+            "telephony call terminal call_id=%s tenant=%s status=%s quota_released=%s",
+            call_id,
+            tenant_id,
+            mapped,
+            released,
+        )
 
 
 
@@ -328,27 +414,11 @@ def _persist_telnyx_webhook_event(
                 "event_type": event_type,
             }
 
-        matched = conn.execute(
-            """
-            select id, tenant_id from telephony_calls
-            where livekit_sip_call_id = %s or livekit_sip_call_id_full = %s
-            order by created_at desc limit 1
-            """,
-            (
-                str(
-                    data.get("data", {})
-                    .get("payload", {})
-                    .get("call_control_id")
-                    or ""
-                ),
-                str(
-                    data.get("data", {})
-                    .get("payload", {})
-                    .get("call_control_id")
-                    or ""
-                ),
-            ),
-        ).fetchone()
+        # A-01.1: Telnyx ids are not LiveKit ids. Correlate (and bind on first contact)
+        # through telephony_call_correlation; only call.* events have a call to match.
+        matched: tuple[str, str] | None = None
+        if event_type.startswith("call."):
+            matched = _resolve_call_event(conn, data)
         if matched:
             tenant_id = matched[1]
             try:
@@ -392,7 +462,7 @@ def _persist_telnyx_webhook_event(
                     exc_info=True,
                 )
                 raise
-        _apply_webhook_side_effects(conn, event_type, data)
+        _apply_webhook_side_effects(conn, event_type, data, matched_call=matched)
         conn.commit()
     return None
 

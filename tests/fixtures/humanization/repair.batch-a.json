@@ -1,0 +1,79 @@
+[
+  [
+    "English weekday",
+    "Friday",
+    "No, Monday.",
+    "date",
+    "Monday"
+  ],
+  [
+    "English same utterance",
+    "Friday",
+    "Not Friday, Monday.",
+    "date",
+    "Monday"
+  ],
+  [
+    "Roman Urdu",
+    "jumma",
+    "nahi peer",
+    "date",
+    "Monday"
+  ],
+  [
+    "Mixed",
+    "Friday",
+    "Friday nahi Monday",
+    "date",
+    "Monday"
+  ],
+  [
+    "Pakistani Urdu",
+    "جمعہ",
+    "جمعہ نہیں پیر",
+    "date",
+    "Monday"
+  ],
+  [
+    "Doctor",
+    "Dr Ali",
+    "Not Dr Ali — Dr Ahmed",
+    "doctor_name",
+    "Ahmed"
+  ],
+  [
+    "Time",
+    "10 am",
+    "Actually 11 am",
+    "time",
+    "11:00"
+  ],
+  [
+    "Email",
+    "ali@example.com",
+    "No ahmed@example.com",
+    "email",
+    "ahmed@example.com"
+  ],
+  [
+    "Phone",
+    "+923001234567",
+    "nahi +923007654321",
+    "phone",
+    "+923007654321"
+  ],
+  [
+    "Reference",
+    "reference code ABC123",
+    "Actually reference code XYZ456",
+    "reference_code",
+    "XYZ456"
+  ],
+  [
+    "Booking",
+    "booking id A123",
+    "No booking id B456",
+    "booking_id",
+    "B456"
+  ]
+]

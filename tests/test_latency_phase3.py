@@ -55,8 +55,10 @@ def test_tool_execution_timing_attached_to_turn(monkeypatch):
     logger = MagicMock()
     tracker = TurnLatencyTracker(room, logger)
 
-    times = iter([100.0, 100.05, 100.5, 100.58])
-    monkeypatch.setattr("worker.latency.time.monotonic", lambda: next(times))
+    clock = [100.0]
+    monkeypatch.setattr("worker.latency.time.monotonic", lambda: clock[0])
+    handle = SimpleNamespace(id="sp1", add_done_callback=lambda callback: None)
+    tracker.on_speech_created(SimpleNamespace(speech_handle=handle, source="generate_reply"))
 
     tracker.on_tool_execution(
         SimpleNamespace(
@@ -66,6 +68,7 @@ def test_tool_execution_timing_attached_to_turn(monkeypatch):
             )
         )
     )
+    clock[0] += 0.05
     tracker.on_tool_execution(
         SimpleNamespace(
             update=SimpleNamespace(type="tool_call_ended", call_id="c1", status="done")
@@ -136,7 +139,8 @@ def test_system_instructions_append_client_tools_when_configured(monkeypatch):
 def test_wire_turn_latency_registers_tool_handler():
     session = MagicMock()
     wire_turn_latency(session, MagicMock(), MagicMock())
-    assert session.on.call_count == 3
+    handlers = {call.args[0] for call in session.on.call_args_list}
+    assert {"metrics_collected", "user_state_changed", "tool_execution_updated", "speech_created", "close"} <= handlers
 
 
 @pytest.mark.asyncio
@@ -184,7 +188,8 @@ async def test_lookup_business_info_posts_to_configured_backend(monkeypatch):
     ctx = SimpleNamespace(userdata=ud)
     result = await tools_mod.lookup_business_info(ctx, "hours?")
     assert result["result"] == "We open at 9am."
-    tracker.record_tool_duration.assert_called_once()
+    tracker.annotate_tool.assert_called_once()
+    tracker.record_tool_duration.assert_not_called()
 
 
 @pytest.mark.asyncio

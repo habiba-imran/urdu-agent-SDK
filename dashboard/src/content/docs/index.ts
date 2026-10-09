@@ -12,6 +12,7 @@ import {
 } from './pages/frontend-setup';
 import { meta as telMeta, markdown as telMd } from './pages/telephony';
 import { meta as liveMeta, markdown as liveMd } from './pages/going-live';
+import { meta as humanMeta, markdown as humanMd } from './pages/humanization-testing';
 import { meta as sdkMeta, markdown as sdkMd } from './pages/sdk-reference';
 import {
   meta as eventsMeta,
@@ -49,6 +50,7 @@ const PAGES: DocsPage[] = [
   { ...frontendMeta, markdown: frontendMd },
   { ...telMeta, markdown: telMd },
   { ...liveMeta, markdown: liveMd },
+  { ...humanMeta, markdown: humanMd },
   { ...providersMeta, markdown: providersMd },
   { ...sdkMeta, markdown: sdkMd },
   { ...eventsMeta, markdown: eventsMd },
