@@ -606,17 +606,7 @@ def test_real_framework_output_evidence_is_separate_from_synthesis(monkeypatch):
         ctx = context("rime")
         ctx.runtime = rt
 
-        async def audio(*args, **kwargs):
-            from livekit import rtc
-
-            yield rtc.AudioFrame(
-                data=bytes(320),
-                sample_rate=16000,
-                num_channels=1,
-                samples_per_channel=160,
-            )
-
-        monkeypatch.setattr(ctx, "audio_chunk", audio)
+        monkeypatch.setattr(ctx, "_plugin", lambda rendered, **kwargs: SyntheticTTS())
         session = AgentSession(tts=SyntheticTTS(), userdata=NS(humanization_runtime=rt))
         session.output.audio = SyntheticSink()
         agent = AwaazAgent(

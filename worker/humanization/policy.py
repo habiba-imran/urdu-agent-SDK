@@ -1,4 +1,4 @@
-"""Session-scoped policy identity; Phase 2 never activates candidate behavior."""
+"""Session policy: baseline/shadow rollback plus bounded conversational guidance."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping
 
-POLICY_VERSIONS = frozenset({"baseline", "natural_v1_shadow", "natural_v1"})
+POLICY_VERSIONS = frozenset({"baseline", "natural_v1_shadow", "natural_v1", "conversational_v1"})
 LEGACY_ENV_KEYS = (
     "UVA_INTERRUPTION_MODE", "UVA_FORCE_BARGE_IN_FLUSH", "UVA_CHAT_HISTORY_MAX_ITEMS",
     "UVA_DEEPGRAM_ENDPOINTING_MS", "UVA_DEEPGRAM_STT_MODE", "UVA_DEEPGRAM_FLUX_EAGER_EOT",
@@ -32,7 +32,7 @@ def resolve_humanization_policy(
     Precedence in Phase 2: existing per-agent provider options and existing turn,
     retry, history and preemption/channel resolvers remain authoritative over this
     version label. Explicit legacy environment values still reach those resolvers.
-    The policy label itself cannot override them or enable audible behavior.
+    conversational_v1 enables bounded ordinary-turn guidance, without overriding provider/turn options.
     An unconfigured agent stays baseline. natural_v1 is accepted as a request but
     resolves to shadow until later phases explicitly implement and activate it.
     """
@@ -42,4 +42,4 @@ def resolve_humanization_policy(
         raise ValueError(f"unsupported humanization policy: {version}")
     effective = "natural_v1_shadow" if version == "natural_v1" else version
     overrides = tuple((key, env[key]) for key in LEGACY_ENV_KEYS if key in env)
-    return HumanizationPolicy(version, effective, False, overrides)
+    return HumanizationPolicy(version, effective, effective == "conversational_v1", overrides)

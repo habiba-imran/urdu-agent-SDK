@@ -30,6 +30,7 @@ def build(
     tts_options: dict | None = None,
     *,
     audio_channel: str = "webrtc",
+    tokenizer=None,
 ) -> Any:
     from livekit.plugins import rime
 
@@ -41,5 +42,7 @@ def build(
     kwargs = resolve_rime_tts_kwargs(
         voice_id, _LANG_CODES[language], tts_options, audio_channel=audio_channel
     )
+    if tokenizer is not None:
+        kwargs["tokenizer"] = tokenizer
     allowed = set(inspect.signature(rime.TTS).parameters)
     return rime.TTS(**{k: v for k, v in kwargs.items() if k in allowed})

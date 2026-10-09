@@ -73,6 +73,7 @@ class HumanizationRuntime:
         self.offered_slots: set[str] = set()
         self._understood_turns: set[str] = set()
         self.latest_plan = None
+        self.latest_signals = None
         self.clarification_enabled = False
         self.last_evidence = None
         self.tool_request_revisions: dict[str, int] = {}
@@ -110,7 +111,7 @@ class HumanizationRuntime:
         # generate_reply(user_input=...) can invoke LLM before the public history event.
         # Bind request identity here without calling it an acoustic/framework commit.
         with self._lock:
-            user = next((item for item in reversed(chat_ctx.items) if getattr(item, "role", None) == "user"), None)
+            user = next((item for item in reversed(chat_ctx.items) if getattr(item, "role", None) == "user" and item.id != "awaaz_persona_data"), None)
             if user is not None:
                 self._bind_input(user.id, user.text_content or "")
 
@@ -145,7 +146,7 @@ class HumanizationRuntime:
     def understand_turn(self, turn_id: str, text: str) -> None:
         from .evidence import TranscriptEvidence
         from .understanding import apply_understanding
-        from .turn_plan import derive_turn_plan
+        from .turn_plan import conversational_signals, derive_turn_plan
         with self._lock:
             if turn_id in self._understood_turns:
                 return
@@ -168,8 +169,27 @@ class HumanizationRuntime:
             if parsed.correction or parsed.unresolved:
                 self.offered_slots.clear()
             self.turn_event("EOT_CONFIRMED", turn_id=turn_id)
-            self.latest_plan = derive_turn_plan(self.state)
+            from dataclasses import replace
+            signals = conversational_signals(text)
+            self.latest_signals = replace(
+                signals,
+                user_correction=bool(parsed.correction and (parsed.entities or parsed.unresolved)) or signals.user_correction,
+                critical_capture=any(name in {"phone", "date", "time", "email", "booking_id", "reference_code"}
+                                     for name, _ in parsed.entities),
+            )
+            self.latest_plan = derive_turn_plan(self.state, self.latest_signals)
             self.coordinator.policy_class = "structured_capture" if self.state.grounding_state.unresolved_fields else "free_form"
+
+    def observe_response(self, text: str) -> None:
+        import re
+        from .delivery.canonical import canonical_spoken_text
+        plain = canonical_spoken_text(text).casefold().strip()
+        opener = re.match(r"^(sure thing|absolutely|of course|sure|got it|okay|certainly)\b", plain)
+        with self._lock:
+            recent = self._state.recent_behavior_state
+            recent.opening_phrases.append(opener.group(1) if opener else "direct")
+            del recent.opening_phrases[:-4]
+            recent.question_streak = recent.question_streak + 1 if plain.endswith(("?", "\u061f")) else 0
 
     def require_clarification(self, fields: tuple[str, ...]) -> None:
         from .turn_plan import derive_turn_plan
@@ -224,6 +244,8 @@ class HumanizationRuntime:
                 self.snapshot("after_user_turn_commit")
             elif role == "assistant":
                 self.observe("assistant_turn_completed", event_id=f"assistant:{item_id}", turn_id=item_id)
+                if self.policy.behavior_enabled and not getattr(item, "interrupted", False):
+                    self.observe_response(getattr(item, "text_content", None) or "")
                 self.snapshot("after_assistant_turn")
                 if self.shadow is not None:
                     try:

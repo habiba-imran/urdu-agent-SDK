@@ -18,9 +18,34 @@ DAYS = {
     "sunday": "Sunday", "itwar": "Sunday", "اتوار": "Sunday",
 }
 CORRECTION = re.compile(r"(?i)\b(no|not|actually|instead|sorry|nahi|nahin|balke|balkay)\b|نہیں|نہيں|بلکہ")
-AMBIGUOUS = re.compile(r"(?i)\b(or|maybe|perhaps|ya|shayad)\b|شاید|یا")
+AMBIGUOUS = re.compile(r"(?i)\b(or|maybe|perhaps|not sure|not certain|ya|shayad)\b|شاید|یا")
 NEGATION = re.compile(r"(?i)\b(not|nahi|nahin)\b|نہیں")
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+_DIGIT_WORDS = dict(zip(
+    ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"), "0123456789"))
+_DIGIT_WORDS.update(dict(zip(
+    ("\u0635\u0641\u0631", "\u0627\u06cc\u06a9", "\u062f\u0648", "\u062a\u06cc\u0646", "\u0686\u0627\u0631", "\u067e\u0627\u0646\u0686", "\u0686\u06be", "\u0633\u0627\u062a", "\u0622\u0679\u06be", "\u0646\u0648"), "0123456789")))
+
+
+def phone_digits(text: str) -> str | None:
+    """Entire literal digit utterance with an optional explicit phone/receipt prefix."""
+    value = text.casefold().translate(DIGITS).strip()
+    value = re.sub(r"^(?:(?:yeah|yes|okay)[,. ]+)?(?:it(?:'s| is)|my (?:phone|number) is|phone|number)[: ]*", "", value)
+    value = re.sub(r"[.,!\u060c\u06d4]+", " ", value)
+    tokens = value.split()
+    if not tokens:
+        return None
+    digits = []
+    for token in tokens:
+        if token in _DIGIT_WORDS:
+            digits.append(_DIGIT_WORDS[token])
+        elif re.fullmatch(r"[0-9]+", token):
+            digits.append(token)
+        else:
+            return None
+    return "".join(digits)
 
 
 @dataclass(frozen=True)
@@ -81,6 +106,9 @@ def understand(evidence: TranscriptEvidence, *, pending_field: str | None = None
         value = ("+" if raw.startswith("+") else "") + "".join(c for c in raw if c.isdigit())
         if 7 <= len(value.lstrip("+")) <= 15:
             add("phone", value, match.start(), match.end())
+    spoken_phone = phone_digits(evidence.text)
+    if spoken_phone and 7 <= len(spoken_phone) <= 15:
+        add("phone", spoken_phone)
     for match in re.finditer(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text):
         add("email", match.group().lower(), match.start(), match.end())
     name_pattern = r"(?i)(?:\b(?:my name is|name is|naam|doctor|dr\.?)\s+|میرا نام\s+|ڈاکٹر\s+)([^\W\d_]+(?:[ '-][^\W\d_]+){0,2})"

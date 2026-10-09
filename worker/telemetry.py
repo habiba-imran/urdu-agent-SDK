@@ -42,6 +42,19 @@ def identifier(value: Any) -> str | None:
     return None
 
 
+def worker_runtime_identity(ctx: Any) -> dict[str, Any]:
+    """Public job provenance for opted-in diagnostics; never serialize job metadata."""
+    import os
+    job = getattr(ctx, "job", None)
+    return {
+        "runtime_revision": "humanization_p0_20261010_activation_observation_v1",
+        "worker_id": identifier(getattr(ctx, "worker_id", None)),
+        "job_id": identifier(getattr(job, "id", None)),
+        "dispatch_agent_name": identifier(getattr(job, "agent_name", None)),
+        "process_id": os.getpid(),
+    }
+
+
 def measurement(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if math.isfinite(value) and value >= 0:

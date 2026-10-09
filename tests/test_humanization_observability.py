@@ -500,3 +500,21 @@ def test_recoverable_provider_error_does_not_poison_completed_outcome(monkeypatc
     callbacks["error"](NS(error=NS(recoverable=True)))
     assert tracker._generation(h.id).outcome is None
     assert tracker.usage_report()["activities"][0]["category"] == "retry"
+
+
+def test_worker_identity_uses_public_context_and_excludes_secret_metadata():
+    from worker.telemetry import worker_runtime_identity
+    identity = worker_runtime_identity(NS(worker_id="AW_fixture", job=NS(
+        id="AJ_fixture", agent_name="uva-humanization-ab-fixture",
+        metadata="SECRET_TENANT_METADATA", api_secret="SECRET_API_SECRET")))
+    assert identity["worker_id"] == "AW_fixture"
+    assert identity["job_id"] == "AJ_fixture"
+    assert identity["dispatch_agent_name"] == "uva-humanization-ab-fixture"
+    assert identity["process_id"] > 0
+    assert identity["runtime_revision"] == "humanization_p0_20261010_activation_observation_v1"
+    assert "SECRET" not in json.dumps(identity)
+    invalid = worker_runtime_identity(NS(worker_id="https://secret.example/key", job=NS(
+        id="secret arbitrary text", agent_name="secret arbitrary text")))
+    assert invalid["worker_id"] is None and invalid["job_id"] is None
+    assert invalid["dispatch_agent_name"] is None
+    assert worker_runtime_identity(NS())["worker_id"] is None

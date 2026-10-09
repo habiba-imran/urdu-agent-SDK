@@ -70,6 +70,8 @@ class RecentBehaviorState:
     assistant_turn_ids: list[str] = field(default_factory=list)
     phrase_at: dict[str, float] = field(default_factory=dict)
     last_phrase: str | None = None
+    opening_phrases: list[str] = field(default_factory=list)
+    question_streak: int = 0
 
 
 @dataclass

@@ -288,3 +288,101 @@ def resolve_deepgram_endpointing_ms(
     if value <= 0:
         return 100
     return value
+
+
+async def coalesce_structured_finals(source, runtime, *, settle_seconds=1.8):
+    """Hold only a recognizably incomplete Pakistani phone; other speech stays immediate.
+
+    Deduplicate provider retransmissions only with matching nonzero acoustic offsets.
+    Flush before stop/repair/non-digit input; retain original segment evidence upstream.
+    LiveKit continues to own commitment, interruption, preemption and tool lifetime.
+    """
+    import asyncio
+    from dataclasses import replace
+    from livekit.agents import stt
+    from .understanding import phone_digits
+    queue = asyncio.Queue(maxsize=32)
+    end = object()
+
+    async def read():
+        try:
+            async for event in source:
+                await queue.put(event)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await queue.put(end)
+
+    reader = asyncio.create_task(read())
+    pending = None
+    deadline = None
+    last_final = None
+    deferred_end = None
+    loop = asyncio.get_running_loop()
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), max(0, deadline-loop.time())) if pending else await queue.get()
+            except asyncio.TimeoutError:
+                yield pending
+                pending = None
+                if deferred_end is not None:
+                    yield deferred_end
+                    deferred_end = None
+                continue
+            if event is end or isinstance(event, Exception):
+                if pending is not None:
+                    yield pending
+                if deferred_end is not None:
+                    yield deferred_end
+                if isinstance(event, Exception):
+                    raise event
+                break
+            if event.type == stt.SpeechEventType.START_OF_SPEECH:
+                last_final = None
+                deferred_end = None  # caller resumed; never replay an older EOT over live speech
+            alternatives = getattr(event, "alternatives", ())
+            final = event.type == stt.SpeechEventType.FINAL_TRANSCRIPT and bool(alternatives)
+            if final:
+                alt = alternatives[0]
+                key = (alt.text, alt.start_time, alt.end_time)
+                if alt.end_time > alt.start_time and key == last_final:
+                    continue
+                last_final = key
+                digits = phone_digits(alt.text)
+                if pending is not None:
+                    previous = pending.alternatives[0]
+                    prior_digits = phone_digits(previous.text)
+                    if digits and len(digits) <= 3 and len(prior_digits + digits) <= 15:
+                        # This is a continuation, never silently discard another final.
+                        alt = replace(previous, text=previous.text + " " + alt.text,
+                                      end_time=alt.end_time, confidence=min(previous.confidence, alt.confidence))
+                        event = replace(pending, alternatives=[alt])
+                        digits = prior_digits + digits
+                        pending = None
+                        if len(digits) == 11:
+                            yield event
+                            if deferred_end is not None:
+                                yield deferred_end
+                                deferred_end = None
+                            continue
+                    else:
+                        yield pending
+                        pending = None
+                        if deferred_end is not None:
+                            yield deferred_end
+                            deferred_end = None
+                if digits and digits.startswith("03") and 7 <= len(digits) < 11:
+                    pending = event
+                    deadline = loop.time() + settle_seconds
+                    continue
+            if pending is not None and event.type == stt.SpeechEventType.END_OF_SPEECH:
+                deferred_end = event
+                continue
+            yield event
+    finally:
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+        close = getattr(source, "aclose", None)
+        if close is not None:
+            await close()

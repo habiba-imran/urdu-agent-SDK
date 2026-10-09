@@ -36,11 +36,16 @@ def delivery_from_turn_plan(plan: TurnPlan | None, *, continuity_identity: str |
         "CLARIFY": "repair", "REPAIR_CONFIRM": "repair",
         "CONFIRM_WRITE": "confirmation", "TOOL_WAIT": "tool_wait",
     }.get(plan.dialogue_act, "normal")
+    if "critical_capture" in plan.reason_codes and mode == "normal":
+        mode = "confirmation"
     careful = mode in {"repair", "confirmation"}
     supportive = plan.empathy_level == "supportive"
+    confused = "caller_confused" in plan.reason_codes
+    precise = plan.interruption_context == "critical"
     return DeliveryIntent(
-        affect="reassuring" if supportive else "concerned" if careful else "warm",
-        pace="slower" if careful or supportive else "normal",
+        affect="reassuring" if supportive else "neutral" if mode == "confirmation" else "concerned" if careful else
+               "upbeat" if "caller_excited" in plan.reason_codes else "warm",
+        pace="slower" if careful or supportive or confused or precise else "normal",
         energy="low" if supportive else "medium",
         speech_mode=mode, continuity_identity=continuity_identity,
     )

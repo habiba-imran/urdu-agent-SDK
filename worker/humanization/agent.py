@@ -49,7 +49,11 @@ class AwaazAgent(Agent):
                             pass
                 runtime.observe_transcript(event)
                 yield event
-        return observe()
+        observed = observe()
+        if self.humanization_runtime.policy.behavior_enabled:
+            from .turn import coalesce_structured_finals
+            return coalesce_structured_finals(observed, self.humanization_runtime)
+        return observed
 
     async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
         await super().on_user_turn_completed(turn_ctx, new_message)
@@ -77,38 +81,56 @@ class AwaazAgent(Agent):
 
     def llm_node(self, chat_ctx: Any, tools: Any, model_settings: Any) -> Any:
         runtime = self.humanization_runtime
-        if chat_ctx is not None:
-            from .history import reconcile_interrupted_context
-            chat_ctx = reconcile_interrupted_context(chat_ctx, self.speech_plans, getattr(runtime, "heard_items", None))
-        if runtime and chat_ctx is not None:
-            runtime.bind_generation_input(chat_ctx)
-            import json
-            effects = [call.result_data for call in runtime.state.tool_state.calls.values()
-                       if call.business_effect in {"committed", "unknown", "escalation_recorded"}]
-            if effects:
+        stream = self._conversational_stream(chat_ctx, tools, model_settings)
+        provider_stream = stream is None
+        if provider_stream:
+            if chat_ctx is not None:
+                from .history import reconcile_interrupted_context
+                chat_ctx = reconcile_interrupted_context(chat_ctx, self.speech_plans, getattr(runtime, "heard_items", None))
+            if runtime and chat_ctx is not None:
+                runtime.bind_generation_input(chat_ctx)
+                if runtime.policy.behavior_enabled:
+                    user = next((i for i in reversed(chat_ctx.items) if getattr(i, "role", None) == "user" and i.id != "awaaz_persona_data"), None)
+                    if user is not None:
+                        runtime.understand_turn(user.id, user.text_content or "")
+                    from dataclasses import replace
+                    from .turn_plan import derive_turn_plan, signals_from_write_gate
+                    try:
+                        gate = getattr(self.session.userdata, "write_gate", None)
+                    except (RuntimeError, ValueError):
+                        gate = None
+                    phase = signals_from_write_gate(gate).write_phase
+                    if phase != "none" and runtime.latest_signals is not None:
+                        runtime.latest_plan = derive_turn_plan(runtime.state, replace(runtime.latest_signals, write_phase=phase))
+                    from .context_projection import conversational_context
+                    chat_ctx = conversational_context(chat_ctx, runtime)
+                import json
+                effects = [call.result_data for call in runtime.state.tool_state.calls.values()
+                           if call.business_effect in {"committed", "unknown", "escalation_recorded"}]
+                if effects and not runtime.policy.behavior_enabled:
+                    chat_ctx = chat_ctx.copy()
+                    chat_ctx.add_message(role="developer", content=(
+                        "Use recorded business effects even if their confirmation speech was interrupted. "
+                        "Do not repeat committed or unverified writes. An escalation record is only a "
+                        "follow-up request; never describe it as a live transfer."
+                    ))
+                    chat_ctx.add_message(role="user", content="Recorded business effects as DATA: "
+                                         + json.dumps(effects[-4:], ensure_ascii=False))
+            if self.delivery_context is not None and chat_ctx is not None and not (runtime and runtime.policy.behavior_enabled):
+                from .delivery.intent import delivery_from_turn_plan
+                intent = delivery_from_turn_plan(getattr(runtime, "latest_plan", None))
                 chat_ctx = chat_ctx.copy()
                 chat_ctx.add_message(role="developer", content=(
-                    "Use recorded business effects even if their confirmation speech was interrupted. "
-                    "Do not repeat committed or unverified writes. An escalation record is only a "
-                    "follow-up request; never describe it as a live transfer."
+                    f"Conversational delivery: {intent.affect}, {intent.intensity} intensity, "
+                    f"{intent.pace} pace. Express this through ordinary wording. "
+                    "Keep business facts literal and avoid jokes or fillers on repair/confirmation. "
+                    "Do not emit markup or stage directions."
                 ))
-                chat_ctx.add_message(role="user", content="Recorded business effects as DATA: "
-                                     + json.dumps(effects[-4:], ensure_ascii=False))
-        if self.delivery_context is not None and chat_ctx is not None:
-            from .delivery.intent import delivery_from_turn_plan
-            intent = delivery_from_turn_plan(getattr(runtime, "latest_plan", None))
-            chat_ctx = chat_ctx.copy()
-            chat_ctx.add_message(role="developer", content=(
-                f"Conversational delivery: {intent.affect}, {intent.intensity} intensity, "
-                f"{intent.pace} pace. Express this through ordinary wording. "
-                "Keep business facts literal and avoid jokes or fillers on repair/confirmation. "
-                "Do not emit markup or stage directions."
-            ))
-        if runtime and runtime.overlap_enabled and chat_ctx is not None:
-            chat_ctx = chat_ctx.copy()
-            chat_ctx.add_message(role="developer", content=runtime.language_profile.instructions)
-        stream = super().llm_node(chat_ctx, tools, model_settings)
-        if hasattr(stream, "__aiter__"):
+            if runtime and runtime.overlap_enabled and chat_ctx is not None and not runtime.policy.behavior_enabled:
+                chat_ctx = chat_ctx.copy()
+                chat_ctx.add_message(role="developer", content=runtime.language_profile.instructions)
+            stream = super().llm_node(chat_ctx, tools, model_settings)
+        if provider_stream and hasattr(stream, "__aiter__"):
             from worker.provider_retries import bounded_provider_stream
             stream = bounded_provider_stream(stream, self, "LLM")
         if self.delivery_context is not None and hasattr(stream, "__aiter__"):
@@ -128,47 +150,100 @@ class AwaazAgent(Agent):
                 yield chunk
         return observe()
 
+    def _conversational_stream(self, chat_ctx: Any, tools: Any, model_settings: Any):
+        """Platform truth/exit acts use the same speech and lifecycle tool pipeline."""
+        if chat_ctx is None:
+            return None
+        from .turn_plan import conversational_signals, conversational_response, derive_turn_plan
+        from livekit.agents import llm
+        # Do not generate a refusal, a second farewell or a duplicate lifecycle call
+        # when the framework requests a continuation of our closing tool result.
+        for item in reversed(chat_ctx.items):
+            if isinstance(item, llm.FunctionCallOutput) and item.name == "end_conversation_summary":
+                async def finished():
+                    if False:
+                        yield ""
+                return finished()
+            if isinstance(item, llm.ChatMessage) and item.role == "user" and item.id != "awaaz_persona_data":
+                message = item
+                break
+        else:
+            return None
+        signals = conversational_signals(message.text_content or "")
+        stop = signals.stop_intent and self.humanization_runtime is not None and self.humanization_runtime.policy.behavior_enabled
+        if not (signals.closing_intent or signals.ai_identity_question or stop):
+            return None
+        runtime = self.humanization_runtime
+        language = runtime.state.language_state.configured_language if runtime else "en"
+        act = "CLOSE" if signals.closing_intent else "STOP" if stop else "IDENTIFY_AI"
+        if runtime:
+            runtime.bind_generation_input(chat_ctx)
+            runtime.latest_plan = derive_turn_plan(runtime.state, signals)
+        async def reply():
+            import json
+            from uuid import uuid4
+            response_id = "closing_" + uuid4().hex
+            yield llm.ChatChunk(id=response_id, delta=llm.ChoiceDelta(
+                content=conversational_response(act, language)))
+            if act == "CLOSE" and getattr(model_settings, "tool_choice", None) != "none":
+                # Tool execution remains owned by LiveKit: speculative speech does
+                # not dispatch it before turn commitment. No business tool is called.
+                if llm.ToolContext(tools or []).get_function_tool("end_conversation_summary") is not None:
+                    call_id = response_id
+                    yield llm.ChatChunk(id=call_id, delta=llm.ChoiceDelta(tool_calls=[
+                        llm.FunctionToolCall(name="end_conversation_summary", call_id=call_id,
+                                             arguments=json.dumps({"summary": "Caller ended the conversation."}))
+                    ]))
+        return reply()
+
     async def _canonical_llm_stream(self, stream: Any):
-        # Canonicalize text before the framework tees it to TTS, history and UI.
-        # Preserve tool-call chunks, IDs and usage; no second model call.
-        from .delivery.canonical import canonical_spoken_text
-        pending = []
+        from .streaming import StreamSafeNormalizer
+        normalizer = StreamSafeNormalizer(suppress_openers=self._suppressed_openers())
         template = None
 
-        def flush():
-            nonlocal template
-            if template is None:
+        def emit(plain):
+            if not plain:
                 return None
-            plain = canonical_spoken_text("".join(pending))
-            result = template.model_copy(update={
-                "delta": template.delta.model_copy(update={"content": plain}),
+            if template is None:
+                return plain
+            return template.model_copy(update={
+                "delta": template.delta.model_copy(update={"content": plain, "tool_calls": None}),
                 "usage": None,
             })
-            pending.clear()
-            template = None
-            return result if plain else None
 
-        async for chunk in stream:
-            if isinstance(chunk, str):
-                pending.append(chunk)
-                continue
-            delta = getattr(chunk, "delta", None)
-            content = getattr(delta, "content", None)
-            if content:
-                pending.append(content)
-                template = chunk
-            if getattr(delta, "tool_calls", None):
-                flushed = flush()
-                if flushed is not None:
-                    yield flushed
-                yield chunk.model_copy(update={"delta": delta.model_copy(update={"content": None})})
-            elif getattr(chunk, "usage", None) is not None:
-                yield chunk.model_copy(update={"delta": None})
-        flushed = flush()
-        if flushed is not None:
-            yield flushed
-        elif pending:
-            yield canonical_spoken_text("".join(pending))
+        try:
+            async for chunk in stream:
+                delta = getattr(chunk, "delta", None)
+                content = chunk if isinstance(chunk, str) else getattr(delta, "content", None)
+                if content:
+                    if not isinstance(chunk, str):
+                        template = chunk
+                    result = emit(normalizer.feed(content))
+                    if result is not None:
+                        yield result
+                if getattr(delta, "tool_calls", None):
+                    result = emit(normalizer.finish())
+                    if result is not None:
+                        yield result
+                    normalizer = StreamSafeNormalizer()
+                    yield chunk.model_copy(update={"delta": delta.model_copy(update={"content": None})})
+                elif getattr(chunk, "usage", None) is not None:
+                    yield chunk.model_copy(update={"delta": None})
+            result = emit(normalizer.finish())
+            if result is not None:
+                yield result
+        finally:
+            normalizer.clear()
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
+
+    def _suppressed_openers(self):
+        runtime = self.humanization_runtime
+        if runtime is None or not runtime.policy.behavior_enabled:
+            return ()
+        return tuple(sorted(set(runtime.state.recent_behavior_state.opening_phrases) - {"direct"}
+                            | {"sure thing", "absolutely", "of course", "certainly"}))
 
     def _opening_phase(self):
         try:
@@ -194,10 +269,13 @@ class AwaazAgent(Agent):
                   if phase == "GREETING_PLAYING" else delivery_from_turn_plan(turn, continuity_identity=identity))
         intent = constrain_delivery(intent, turn)
         plan = SpeechPlan(identity, context.cfg.tts_provider, intent, handle=handle,
-                          provider_context={"model": context.capabilities.model,
+                          provider_context={"conversational": bool(self.humanization_runtime and self.humanization_runtime.policy.behavior_enabled),
+                                            "model": context.capabilities.model,
                                             "path": context.capabilities.path,
                                             "language": context.language.language,
                                             "channel": context.channel.channel})
+        from .streaming import StreamSafeNormalizer
+        plan.normalizer = StreamSafeNormalizer(suppress_openers=self._suppressed_openers())
         self.speech_plans.append(plan)
         self._active_speech_plans[identity] = plan
         handle.add_done_callback(lambda _handle: self._active_speech_plans.pop(identity, None))
@@ -275,24 +353,6 @@ class AwaazAgent(Agent):
         plan.synthesis_task = asyncio.current_task()
         finished = False
 
-        async def synthesize(chunk):
-            if not plan.accept_chunk(chunk):
-                return
-            first = True
-            audio = context.audio_chunk(chunk, plan, conn_options=connection)
-            try:
-                async for frame in audio:
-                    if not await plan.pace_audio(frame, lead_limit_ms=context.channel.audio_lead_ms):
-                        return
-                    if first and plan.last_audio_at is not None:
-                        plan.inter_chunk_gap_ms.append(max(0, (time.monotonic()-plan.last_audio_at)*1000))
-                        del plan.inter_chunk_gap_ms[:-128]
-                    first = False
-                    plan.last_audio_at = time.monotonic()
-                    yield frame
-            finally:
-                await audio.aclose()
-
         def prepare(plain):
             nonlocal received
             received += plain
@@ -311,32 +371,42 @@ class AwaazAgent(Agent):
             plan.planner.pronunciation = plan.pronunciation_plan
             return plan.planner.feed(plain)
 
-        try:
+        async def chunks():
             async for piece in text:
                 if not plan.valid:
                     return
                 plain = piece if has_llm_text else normalizer.feed(piece)
                 for chunk in prepare(plain):
-                    async for frame in synthesize(chunk):
-                        yield frame
+                    if plan.accept_chunk(chunk):
+                        yield chunk
             if not has_llm_text:
                 for chunk in prepare(normalizer.finish()):
-                    async for frame in synthesize(chunk):
-                        yield frame
+                    if plan.accept_chunk(chunk):
+                        yield chunk
             for chunk in plan.planner.finish():
-                async for frame in synthesize(chunk):
-                    yield frame
-            finished = True
-            plan.synthesis_completed = True
+                if plan.accept_chunk(chunk):
+                    yield chunk
+
+        source = chunks()
+        audio = context.audio_chunks(source, plan, conn_options=connection)
+        try:
+            async for frame in audio:
+                if not await plan.pace_audio(frame, lead_limit_ms=context.channel.audio_lead_ms):
+                    return
+                plan.last_audio_at = time.monotonic()
+                yield frame
+            finished = plan.valid
+            plan.synthesis_completed = finished
         except asyncio.CancelledError:
             plan.cancel()
             raise
         finally:
+            await audio.aclose()
+            await source.aclose()
             normalizer.clear()
             plan.synthesis_task = None
             if not finished:
                 plan.cancel()
-            # Terminal metrics are emitted by the handle callback, including late interruption.
 
     def bind_playback_evidence(self) -> None:
         output = self.session.output.audio
@@ -409,25 +479,23 @@ class AwaazAgent(Agent):
         return bounded_provider_stream(synthesize(), self, "TTS")
 
     def transcription_node(self, text: Any, model_settings: Any) -> Any:
-        if self.streaming_enabled:
-            plan = self._speech_plan()
-            if not plan.llm_started:
-                # say() tees its original text to audio and transcription separately.
-                # Canonicalize this branch too, before LiveKit commits it to history/UI.
-                from .streaming import StreamSafeNormalizer
-                async def canonical_static():
-                    normalizer = StreamSafeNormalizer()
-                    try:
-                        async for piece in text:
-                            if not plan.valid:
-                                return
-                            plain = normalizer.feed(piece)
-                            if plain:
-                                yield plain
-                        plain = normalizer.finish()
-                        if plain and plan.valid:
-                            yield plain
-                    finally:
-                        normalizer.clear()
-                return canonical_static()
-        return super().transcription_node(text, model_settings)
+        # Baseline providers may still need delivery markup in their TTS branch.
+        # Normalize only the separately teed transcription stream, before partial
+        # UI publication and history, including incomplete markup across tokens.
+        from .streaming import StreamSafeNormalizer
+        plan = self._speech_plan() if self.streaming_enabled else None
+        async def canonical_transcript():
+            normalizer = StreamSafeNormalizer()
+            try:
+                async for piece in text:
+                    if plan is not None and not plan.valid:
+                        return
+                    plain = normalizer.feed(piece)
+                    if plain:
+                        yield plain
+                plain = normalizer.finish()
+                if plain and (plan is None or plan.valid):
+                    yield plain
+            finally:
+                normalizer.clear()
+        return canonical_transcript()

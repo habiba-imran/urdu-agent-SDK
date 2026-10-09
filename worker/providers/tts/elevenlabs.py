@@ -19,10 +19,13 @@ def build(
     voice_id: str,
     language: str,
     tts_options: dict | None = None,
+    *, tokenizer=None,
 ) -> Any:
     from livekit.plugins import elevenlabs
 
     kwargs = resolve_elevenlabs_tts_kwargs(voice_id, language, tts_options)
+    if tokenizer is not None:
+        kwargs["word_tokenizer"] = tokenizer
     sig = inspect.signature(elevenlabs.TTS)
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
         return elevenlabs.TTS(**kwargs)

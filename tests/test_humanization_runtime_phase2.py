@@ -130,7 +130,7 @@ def test_audit_transcript_survives_legacy_session_history_window(monkeypatch):
     assert transcript[-1]["text"] == "turn 19"
 
 
-def test_awaaz_hook_boundary_delegates_to_installed_agent(monkeypatch):
+def test_awaaz_hook_boundary_delegates_provider_nodes_and_canonicalizes_transcript(monkeypatch):
     sentinels = [object() for _ in range(4)]
     monkeypatch.setattr(Agent, "stt_node", lambda self, *a: sentinels[0])
     monkeypatch.setattr(Agent, "llm_node", lambda self, *a: sentinels[1])
@@ -144,7 +144,12 @@ def test_awaaz_hook_boundary_delegates_to_installed_agent(monkeypatch):
     assert agent.stt_node(None, None) is sentinels[0]
     assert agent.llm_node(None, [], None) is sentinels[1]
     assert agent.tts_node(None, None) is sentinels[2]
-    assert agent.transcription_node(None, None) is sentinels[3]
+    async def transcript():
+        async def marked():
+            yield '<emotion'
+            yield ' value="calm"/>Hello.'
+        assert ''.join([piece async for piece in agent.transcription_node(marked(), None)]) == 'Hello.'
+    asyncio.run(transcript())
     asyncio.run(agent.on_user_turn_completed(None, None))
 def test_cancelled_handle_exception_cannot_escape_or_resurrect_generation():
     callbacks = {}

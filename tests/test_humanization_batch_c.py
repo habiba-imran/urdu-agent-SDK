@@ -143,7 +143,7 @@ def test_real_framework_streams_before_llm_finishes_and_keeps_canonical_history(
             async def aclose(self):
                 closed.append(True)
                 await super().aclose()
-        monkeypatch.setattr(registry, "_build_tts", lambda cfg: RecordingTTS())
+        monkeypatch.setattr(registry, "_build_tts", lambda cfg, **kwargs: RecordingTTS())
         monkeypatch.setattr(uplift, "build", lambda *a, **kw: RecordingTTS())
         class Model(llm.LLM):
             def chat(self, *, chat_ctx, tools=None, conn_options=DEFAULT_API_CONNECT_OPTIONS, **kwargs):
@@ -175,9 +175,10 @@ def test_real_framework_streams_before_llm_finishes_and_keeps_canonical_history(
             assert ''.join(c.text for c in plan.planned_chunks) == expected
             assert [m.text_content for m in session.history.messages() if m.role=="assistant"] == [expected]
             assert [m.text_content for m in agent.chat_ctx.messages() if m.role=="assistant"] == [expected]
-            assert len(received) == len(closed) == 2
+            assert len(received) == 2 and len(closed) == 1
+            assert plan.provider_context["lifecycle"] == "generation_plugin"
             assert plan.chunk_wait_ms is not None and plan.chunk_wait_ms >= 0
-            assert len(plan.inter_chunk_gap_ms) == 1
+            assert plan.inter_chunk_gap_ms == []  # one generation client; audio gaps require playback evidence
             assert plan.playout_completed is True and plan.heard_reference is None
             assert all('<emotion' not in c.text for c in plan.planned_chunks)
             static = session.say('<spell>ZX9</spell> is your code.', allow_interruptions=True)
@@ -301,7 +302,7 @@ def test_interrupted_framework_generation_closes_synthesis_and_new_generation_wo
             async def capture_frame(self,frame):
                 await super().capture_frame(frame)
                 started.set()
-        monkeypatch.setattr(registry,'_build_tts',lambda cfg:Provider())
+        monkeypatch.setattr(registry,'_build_tts',lambda cfg, **kwargs:Provider())
         monkeypatch.setattr(uplift,'build',lambda *a,**kw:Provider())
         sink = Sink()
         session = AgentSession(tts=SyntheticTTS(),tts_text_transforms=[],use_tts_aligned_transcript=False)
@@ -406,11 +407,14 @@ def test_explicit_pronunciation_offsets_survive_chunk_rendering(monkeypatch):
     async def run():
         ctx = context('cartesia')
         received = []
-        async def audio(result, **kwargs):
+        from test_humanization_observability_framework import SyntheticTTS
+        original_render = ctx.render_chunk
+        def render_chunk(chunk, plan):
+            result = original_render(chunk, plan)
             received.append(result)
-            if False:
-                yield None
-        monkeypatch.setattr(ctx,'_audio',audio)
+            return result
+        monkeypatch.setattr(ctx, 'render_chunk', render_chunk)
+        monkeypatch.setattr(ctx, '_plugin', lambda result, **kwargs: SyntheticTTS())
         full = 'First answer. Please speak to Sana, Clinic and wait.'
         start = full.index('Sana')
         plan = SpeechPlan('speech:1','cartesia',DeliveryIntent(),PronunciationPlan((
@@ -421,7 +425,6 @@ def test_explicit_pronunciation_offsets_survive_chunk_rendering(monkeypatch):
                 yield c
         agent = AwaazAgent(instructions='plain',delivery_context=ctx)
         _ = [frame async for frame in agent._streaming_tts(text(),plan,None)]
-        assert len(received)==2
-        assert 'Saa na clinic' in received[1].provider_text
-        assert 'Sana, Clinic' in received[1].canonical_text
+        assert 'Saa na clinic' in received[-1].provider_text
+        assert 'Sana, Clinic' in received[-1].canonical_text
     asyncio.run(run())

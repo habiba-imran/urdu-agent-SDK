@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from livekit.agents import tokenize
+
 from .delivery.canonical import canonical_spoken_text
 from .delivery.intent import DeliveryIntent
 from .delivery.pronunciation import PronunciationPlan, PronunciationSpan
@@ -35,6 +37,34 @@ def streaming_enabled(context, *, environ=None):
     if version("livekit-agents") != "1.6.5" or context.capabilities.plugin_version != "1.6.5":
         raise ValueError("streaming path requires an audited LiveKit version")
     return True
+
+
+# The public SDK tokenizer interface accepts complete, already protected chunks.
+# No stream.flush() between chunks: SDK 1.6.5 treats flush as a terminal segment.
+
+
+class PlannedChunkTokenizer(tokenize.SentenceTokenizer):
+    def tokenize(self, text, *, language=None):
+        return [text] if text else []
+
+    def stream(self, *, language=None):
+        return PlannedChunkStream()
+
+
+class PlannedChunkStream(tokenize.SentenceStream):
+    def push_text(self, text):
+        self._check_not_closed()
+        if text:
+            self._event_ch.send_nowait(tokenize.TokenData(segment_id="planned", token=text))
+
+    def flush(self):
+        pass  # chunks are complete; only end_input ends the native context
+
+    def end_input(self):
+        self._do_close()
+
+    async def aclose(self):
+        self._do_close()
 
 
 def current_handle():
@@ -93,14 +123,32 @@ def _stable_cut(raw: str) -> int:
 
 
 class StreamSafeNormalizer:
-    def __init__(self):
+    def __init__(self, *, suppress_openers=()):
+        self.suppress_openers = tuple(suppress_openers)
+        self.opening = ""
         self.buffer = ""
         self.whitespace = ""
         self.started = False
         self.closed = False
 
-    def _publish(self, plain):
+    def _publish(self, plain, *, final=False):
         value = self.whitespace + plain
+        if self.suppress_openers and not self.started:
+            value = self.opening + value
+            self.opening = ""
+            folded = value.lstrip().casefold()
+            candidates = [o for o in self.suppress_openers if o.startswith(folded) or folded.startswith(o)]
+            if candidates and not final and any(
+                o.startswith(folded.rstrip()) or folded.rstrip(" ,.!:-\u2014") == o for o in candidates
+            ):
+                self.opening = value
+                self.whitespace = ""
+                return ""
+            for opener in sorted(candidates, key=len, reverse=True):
+                match = re.match(r"^\s*" + re.escape(opener) + r"\s*[,!.:\u2014-]\s*(\S[\s\S]*)$", value, re.I)
+                if match:
+                    value = match.group(1)
+                    break
         if not self.started:
             value = value.lstrip()
         body = value.rstrip()
@@ -129,12 +177,12 @@ class StreamSafeNormalizer:
     def finish(self):
         if self.closed:
             return ""
-        plain = self._publish(canonical_spoken_text(self.buffer, strip=False))
+        plain = self._publish(canonical_spoken_text(self.buffer, strip=False), final=True)
         self.clear()
         return plain
 
     def clear(self):
-        self.buffer = self.whitespace = ""
+        self.buffer = self.whitespace = self.opening = ""
         self.closed = True
 
 
@@ -173,10 +221,11 @@ class SpeechChunk:
 
 
 class SpeechChunkPlanner:
-    def __init__(self, provider: str, pronunciation: PronunciationPlan = PronunciationPlan()):
+    def __init__(self, provider: str, pronunciation: PronunciationPlan = PronunciationPlan(), *, conversational=False):
         if provider not in {"cartesia", "rime", "elevenlabs", "uplift"}:
             raise ValueError("unselectable speech provider")
         self.provider = provider
+        self.conversational = conversational
         self.pronunciation = pronunciation
         self.buffer = ""
         self.offset = 0
@@ -205,6 +254,11 @@ class SpeechChunkPlanner:
                 clause = (self.chunks == 0 and len(self.buffer[:punctuation_end].split()) >= 4
                           and (self.provider == "cartesia" or (
                               self.provider == "uplift" and self.buffer[m.start()] in "،؛")))
+                if self.conversational:
+                    words = len(self.buffer[:punctuation_end].split())
+                    if sentence and self.chunks == 0 and words < 3:
+                        continue
+                    clause = self.chunks == 0 and words >= 8
                 if sentence or clause:
                     boundary = (m.end(), "sentence" if sentence else "first_clause")
                     break
@@ -295,7 +349,8 @@ class SpeechPlan:
     watcher: Any = None
 
     def __post_init__(self):
-        self.planner = SpeechChunkPlanner(self.provider, self.pronunciation_plan)
+        self.planner = SpeechChunkPlanner(self.provider, self.pronunciation_plan,
+                                          conversational=self.provider_context.get("conversational", False))
 
     @property
     def valid(self):

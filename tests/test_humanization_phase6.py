@@ -55,6 +55,11 @@ def test_deepgram_flux_build_uses_sttv2(monkeypatch):
         "livekit.plugins.deepgram",
         SimpleNamespace(STT=FakeSTT, STTv2=FakeSTTv2),
     )
+    import livekit.plugins as lk_plugins
+
+    monkeypatch.setattr(
+        lk_plugins, "deepgram", sys.modules["livekit.plugins.deepgram"], raising=False
+    )
     import worker.providers.stt.deepgram as dg
 
     dg.build("en", {"stt_mode": "flux", "flux_eager_eot": False})
@@ -74,6 +79,11 @@ def test_deepgram_flux_eager_passed_when_folded(monkeypatch):
         sys.modules,
         "livekit.plugins.deepgram",
         SimpleNamespace(STT=object, STTv2=FakeSTTv2),
+    )
+    import livekit.plugins as lk_plugins
+
+    monkeypatch.setattr(
+        lk_plugins, "deepgram", sys.modules["livekit.plugins.deepgram"], raising=False
     )
     import worker.providers.stt.deepgram as dg
 
@@ -129,6 +139,11 @@ def test_flux_falls_back_to_nova_for_non_english(monkeypatch):
         sys.modules,
         "livekit.plugins.deepgram",
         SimpleNamespace(STT=FakeSTT, STTv2=FakeSTTv2),
+    )
+    import livekit.plugins as lk_plugins
+
+    monkeypatch.setattr(
+        lk_plugins, "deepgram", sys.modules["livekit.plugins.deepgram"], raising=False
     )
     import worker.providers.stt.deepgram as dg
 

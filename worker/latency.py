@@ -1180,6 +1180,10 @@ def observe_agent_nodes(agent: Any, tracker: TurnLatencyTracker) -> None:
 def wire_turn_latency(session: Any, room: Any, logger: Any, *, agent: Any = None,
                       snapshot: dict | None = None, session_id: str | None = None) -> TurnLatencyTracker:
     tracker = TurnLatencyTracker(room, logger, snapshot=snapshot, session_id=session_id, lifecycle=True)
+    # Existing opt-in is independent of humanization. Record why room/SDK stages
+    # may be absent without publishing transcripts, prompts, credentials or URLs.
+    logger.info("turn telemetry room_publication=%s effective_configuration=%s",
+                publish_turn_latency_enabled(), json.dumps(tracker.snapshot, sort_keys=True))
 
     def user_state(ev: Any) -> None:
         new_state = getattr(ev, "new_state", None)

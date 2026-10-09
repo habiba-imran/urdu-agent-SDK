@@ -93,6 +93,11 @@ def test_deepgram_build_uses_resolved_endpointing(monkeypatch):
 
     monkeypatch.setenv("UVA_DEEPGRAM_ENDPOINTING_MS", "100")
     monkeypatch.setitem(sys.modules, "livekit.plugins.deepgram", SimpleNamespace(STT=FakeSTT))
+    import livekit.plugins as lk_plugins
+
+    monkeypatch.setattr(
+        lk_plugins, "deepgram", sys.modules["livekit.plugins.deepgram"], raising=False
+    )
     import worker.providers.stt.deepgram as dg
 
     dg.build("en")

@@ -92,6 +92,10 @@ def _language_directive(agent_language: str | None) -> str:
     if not agent_language:
         return ""
     lang = agent_language.strip().lower()
+    from .humanization.turn_plan import language_style_for
+    if language_style_for(lang) == "mixed":
+        from .humanization.delivery.renderers import LanguageProfile
+        return " " + LanguageProfile(lang).instructions
     if lang == "ur" or lang.startswith("ur"):
         return (
             " Respond only in Pakistani Urdu using proper Urdu script (not Roman Urdu), "
@@ -121,7 +125,8 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
 
     persona_prompt = cfg.prompt or ""
     compacted = False
-    if (cfg.llm_provider or "").lower() == "groq":
+    conversational = bool(humanization_runtime and humanization_runtime.policy.behavior_enabled)
+    if (cfg.llm_provider or "").lower() == "groq" and not conversational:
         persona_prompt, compacted = compact_prompt_for_groq(cfg.prompt)
         if compacted:
             logger.info(
@@ -133,6 +138,8 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
 
     from worker.humanization.delivery.policy import resolve_delivery_policy
     delivery_policy = resolve_delivery_policy(cfg.tts_provider)
+    if conversational and not delivery_policy.enabled:
+        raise ValueError("conversational_v1 requires the selected delivery_v1 renderer; use worker.development")
     delivery_context = getattr(humanization_runtime, "delivery_context", None)
     if delivery_policy.enabled and delivery_context is None:
         from worker.humanization.delivery.context import DeliveryContext
@@ -200,7 +207,12 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
             logger.exception("humanization shadow prompt audit failed")
 
     persona_ctx = ChatContext.empty()
-    persona_ctx.add_message(role="system", content=_PERSONA_FRAME + persona_prompt)
+    persona_ctx.add_message(
+        id="awaaz_persona_data",
+        role="user" if conversational else "system",
+        content=_PERSONA_FRAME + (json.dumps({"tenant_persona": persona_prompt}, ensure_ascii=False)
+                                  if conversational else persona_prompt),
+    )
     return AwaazAgent(
         instructions=system_instructions,
         chat_ctx=persona_ctx,
@@ -376,14 +388,13 @@ async def build_session(
         humanization_runtime.delivery_context = DeliveryContext(
             runtime_cfg, delivery_policy, runtime=humanization_runtime, metrics_target=components.tts,
         )
-    if delivery_policy.enabled:
-        diagnostic_snapshot["delivery"] = {
-            "policy_version": delivery_policy.version,
-            "renderer_version": delivery_policy.renderer_version,
-            "pronunciation_version": delivery_policy.pronunciation_version,
-            "activation_verified": False,
-        }
-        humanization_runtime.provider_snapshot["delivery"] = dict(diagnostic_snapshot["delivery"])
+    diagnostic_snapshot["delivery"] = {
+        "policy_version": delivery_policy.version,
+        "renderer_version": delivery_policy.renderer_version,
+        "pronunciation_version": delivery_policy.pronunciation_version,
+        "activation_verified": False,
+    }
+    humanization_runtime.provider_snapshot["delivery"] = dict(diagnostic_snapshot["delivery"])
     # Freeze effective candidate identities for this session's diagnostic events.
     diagnostic_snapshot["humanization_policy_version"] = humanization_runtime.policy.effective_version
     diagnostic_snapshot["interaction"] = dict(humanization_runtime.provider_snapshot["interaction"])
@@ -391,6 +402,7 @@ async def build_session(
         "turn": "overlap_v1" if humanization_runtime.overlap_enabled else "baseline",
         "language": "language_v1" if humanization_runtime.overlap_enabled else "baseline",
         "channel": "channel_v1" if delivery_policy.enabled else "baseline",
+        "streaming": "baseline",
     }
     if humanization_runtime.delivery_context is not None:
         from worker.humanization.streaming import streaming_enabled
@@ -1407,6 +1419,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         from livekit.agents.log import logger as _opening_logger
 
         _diagnostic_ud = getattr(session_obj, "userdata", None)
+        from worker.telemetry import worker_runtime_identity
+        _snapshot = getattr(_diagnostic_ud, "provider_snapshot", None)
+        if isinstance(_snapshot, dict):
+            _snapshot["worker"] = worker_runtime_identity(ctx)
+            _runtime = getattr(_diagnostic_ud, "humanization_runtime", None)
+            if _runtime is not None:
+                _runtime.provider_snapshot["worker"] = dict(_snapshot["worker"])
         latency_tracker = wire_turn_latency(
             session_obj, ctx.room, _opening_logger, agent=agent_obj,
             snapshot=getattr(_diagnostic_ud, "provider_snapshot", None),

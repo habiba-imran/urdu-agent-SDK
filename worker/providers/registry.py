@@ -55,7 +55,7 @@ def _build_llm(cfg: AgentRuntimeConfig):
     raise UnsupportedProviderError(f"no LLM adapter for provider={cfg.llm_provider!r}")
 
 
-def _build_tts(cfg: AgentRuntimeConfig):
+def _build_tts(cfg: AgentRuntimeConfig, *, tokenizer=None):
     if cfg.tts_provider == "uplift":
         from .tts.uplift import build
 
@@ -63,11 +63,13 @@ def _build_tts(cfg: AgentRuntimeConfig):
     if cfg.tts_provider == "cartesia":
         from .tts.cartesia import build
 
-        return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options, audio_channel=cfg.audio_channel)
+        return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options, audio_channel=cfg.audio_channel,
+                     **({"tokenizer": tokenizer} if tokenizer is not None else {}))
     if cfg.tts_provider == "elevenlabs":
         from .tts.elevenlabs import build
 
-        return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options)
+        return build(cfg.tts_voice_id, cfg.agent_language, cfg.tts_options,
+                     **({"tokenizer": tokenizer} if tokenizer is not None else {}))
     if cfg.tts_provider == "rime":
         from .tts.rime import build
 
@@ -76,5 +78,6 @@ def _build_tts(cfg: AgentRuntimeConfig):
             cfg.agent_language,
             cfg.tts_options,
             audio_channel=cfg.audio_channel,
+            **({"tokenizer": tokenizer} if tokenizer is not None else {}),
         )
     raise UnsupportedProviderError(f"no TTS adapter for provider={cfg.tts_provider!r}")

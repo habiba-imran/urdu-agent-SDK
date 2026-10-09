@@ -20,7 +20,7 @@ from typing import Any
 from .cartesia_options import low_latency_cartesia_tokenizer, resolve_cartesia_tts_kwargs
 
 
-def build(voice_id: str, language: str, tts_options: dict | None = None, *, audio_channel: str = "webrtc") -> Any:
+def build(voice_id: str, language: str, tts_options: dict | None = None, *, audio_channel: str = "webrtc", tokenizer=None) -> Any:
     from livekit.plugins import cartesia
 
     return cartesia.TTS(
@@ -29,6 +29,6 @@ def build(voice_id: str, language: str, tts_options: dict | None = None, *, audi
         ),
         # Default blingfire SentenceTokenizer buffers ~10 chars + full sentences before
         # websocket send — adds multi-second dead air during in-call turns (UVA-4).
-        tokenizer=low_latency_cartesia_tokenizer(),
+        tokenizer=tokenizer if tokenizer is not None else low_latency_cartesia_tokenizer(),
         word_timestamps=False,
     )

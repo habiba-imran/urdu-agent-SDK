@@ -255,3 +255,60 @@ This final entry supersedes historical batch scope-stop/next-phase notes for the
 ## 2026-10-09 — Independent client and dashboard testing surfaces
 
 The user authorized client/dashboard finalization and publication of all current repository work. [Client testing finalization](CLIENT_TESTING_FINALIZATION.md) records configuration, verification and limits. The client ships an unpublished `1.1.1-humanization.0` SDK snapshot and remains independently copyable; dashboard docs and Test Studio expose the current readiness/testing contract. Explicit permitted owner-only HMAC reveal uses the existing audited API without changing hosted defaults. Clean client verification and the final dashboard build pass; offline CI is 638 passed/1 existing skip. P0 activation stays blocked, candidate defaults stay off, and no live calls, migrations, npm release or canary were performed.
+
+
+## 2026-10-10 — Targeted live-call regression fix
+
+The two supplied English WebRTC debug logs showed farewell refusals, a concealed AI identity, partial Cartesia markup and no room turn metrics. [Targeted investigation and evidence](LIVE_CALL_REGRESSION_2026_10_10.md) records the traced source paths, limits of call-time attribution, exact files and effective local settings. The existing TurnPlan/Agent/lifecycle pipeline now guarantees clear farewells and truthful direct AI identification; baseline partial transcription uses the existing stream-safe canonical boundary while TTS retains provider controls. Existing write/disclosure/close guards are preserved. Session wiring logs effective provider/policy/publication configuration; the isolated worker telemetry opt-in is documented.
+
+Targeted **43 passed**; final focused English/Urdu/provider/tool/opening/close regression **523 passed**; browser SDK **33 passed**; scoped Ruff and whitespace PASS. Local policy, all renderers/streaming, overlap and opening remain **baseline**, room telemetry **OFF**; no persistent flag edits. Historical remote policy/tenant prompt and exact model refusal rationale remain unverified without matching worker artifacts. No post-fix live/acoustic result or caller-heard FUAW is claimed. Startup timing was left untouched at the user's request. Required graph refresh attempted and blocked by the existing uv trampoline error. The pre-existing usage ledger change is preserved. No production rollout/provider/model/LiveKit change or new P1/P2 work; Phases 12–15 remain intentionally deferred. Stop after this targeted fix.
+
+
+## 2026-10-10 — Live activation/naturalness investigation
+
+[Investigation and controlled A/B preparation](HUMANIZATION_ACTIVATION_INVESTIGATION_2026_10_10.md) records real client/API/LiveKit/process evidence. The client proxies staging while a local worker PID 3392 registers as `uva-staging-agent` on the same project. Direct read-only inspection of its environment confirms master/renderer/streaming/overlap/opening baseline and room metrics OFF; Uplift mode is live. Its startup-loaded prompt/telemetry modules predate the regression fixes, and installed Python LiveKit `dev` mode does not hot-reload. Historical call worker identity and remote deployment remain UNKNOWN; the project had no active room to correlate.
+
+All four selectable lanes have isolated baseline/candidate recipes, and 28 offline renderer/planner probes confirm current control limits. General TurnPlan guidance stays shadow; ordinary concerns are not automatically turned into supportive delivery. Rime/ElevenLabs/Uplift ordinary constructor controls remain unchanged in those probes; candidate synthesis recreates a provider shell per chunk. These facts do not establish acoustic quality. No live A/B audio, paid calls, metrics or listening scores were collected. Agent recording is off and a reserved isolated dispatch route/human listening setup remains unverified. **LIVE A/B ACTIVATION = BLOCKED; NATURALNESS = NOT ASSESSED; FUAW = UNAVAILABLE.**
+
+Minimal instrumentation adds public worker/job/dispatch/runtime provenance to existing session snapshots in telemetry.py/main.py, with secret-metadata exclusion coverage. Focused instrumentation/regression **118 passed**; scoped Ruff PASS. Current shared worker, production defaults, models/voices/dependencies and unrelated usage ledger remain unchanged. [Independent client A/B guide](../client-integration-test/HUMANIZATION_AB.md) prepares only the selected renderer/streaming pair with explicit process-local room telemetry. Next: verified isolated fresh-worker Cartesia A/B before selecting a bounded dialogue-signal or stream-continuity correction. Phases 12–15 remain intentionally deferred; stop after investigation/preflight.
+
+
+## 2026-10-10 - Active ordinary-turn conversation and speech implementation
+
+This entry supersedes the investigation's next-task recommendation and shadow-only ordinary-turn
+limitation for the explicitly enabled development profile. This is implementation and offline
+framework verification, not a live naturalness result or production promotion.
+
+| Field | Current state |
+| --- | --- |
+| Branch / HEAD | `main` / `a3515768400c48be7a60e70dcd0df0a55ebd4993`; implementation remains uncommitted alongside preserved earlier work |
+| Ordinary-turn activation | New `conversational_v1` activates existing ConversationState/TurnPlan/DeliveryIntent guidance for every ordinary Groq/Gemini turn. `natural_v1` still resolves to shadow. No second planner/rewrite/model request |
+| Prompt authority / facts | Trusted bounded guidance is appended to a deep copy of the first platform system preamble, including on Gemini whose installed serializer demotes later system/developer entries. Tenant persona is separately quoted lower-authority DATA. Active Groq retains the full persona and all current confirmed facts/business effects; no lossy persona/state compaction |
+| Dialogue behavior | Answer-first instructions replace the baseline question-ending/no-service-list policy. Only needed clarification/confirmation questions; bounded recent opener/question tracking; streamed formulaic opener removal preserves standalone receipts and business names. Conservative concern/confusion/excitement/hesitation/correction cues, English/Pakistani Urdu/mixed phrasing. Real LLM compliance remains a live verification item |
+| Delivery | Existing semantic DeliveryIntent now derives supportive/calm, clearer/slower and deliberate critical capture from real input cues. Cartesia renderer owns supported emotion/speed controls; ElevenLabs uses supported speed with existing voice settings preserved. Arcana and Uplift use natural canonical wording/punctuation/pronunciation where affect/speed controls are unverified or unsupported; no invented tags/controls, laughter or voice/model changes |
+| Continuity | One generation-owned plugin and native SynthesizeStream/context for Cartesia/Rime/ElevenLabs, using installed public tokenizer constructor arguments. Complete protected chunks are released without ending SDK segments or waiting for full response EOS. Uplift 1.6.5 retains its required segment streams on one reused client; fixture path remains compatible |
+| Backpressure / cancellation | Complete-chunk input batches bounded provisionally to 240 characters plus one protected chunk, paced at observed output-idle boundaries and local audio-duration/elapsed lead. No guessed character-to-audio alignment that can deadlock fast speech. Existing channel-specific paced audio handoff, generation invalidation, provider close and late-frame rejection remain; no tool lifetime cancellation. Continuous streams do not manufacture per-chunk gap/alignment metrics |
+| Turn speed | Incremental canonical text replaces the nonstreaming renderer's full-EOS normalization wait. Safe early clauses and receipt grouping reduce extra tokenizer/chunk waits. Ordinary STT finals stay immediate. Only recognizably incomplete Pakistani `03` phones (7-10 digits) settle for at most 1.8s for a short digit continuation; duplicate finals require matching nonzero acoustic offsets and reset on new voice start. Endpointing/preemption remain unchanged |
+| Safety regressions | Farewell/AI identity, partial-markup isolation, ambiguity/correction, committed write continuity, confirmation, failure/OUTCOME_UNKNOWN, stale output, disclosure/opening and graceful close regressions pass offline. No business tool truth is supplied by TurnPlan |
+| Usable activation | [Development commands and exact flags](HUMANIZATION_DEVELOPMENT.md). `python -m worker.development worker --agent-name uva-humanization-dev-habiba` loads all four compatible renderer/streaming pairs and conversational/overlap/opening/latency flags before fresh worker import. Same launcher starts loopback control plane on 8100 with matching unique dispatch. Existing independent client can use separate backend/frontend on 3101/5175 with test-tenant credentials |
+| Default enablement / isolation | Production/shared defaults stay baseline. No `.env` files edited, dependency changes, shared staging worker restart, infrastructure deployment, DB mutation or customer-agent PATCH. Launcher rejects shared dispatch names and incompatible installed plugin versions. Worker and control-plane `--check` both PASS without network/provider calls. Actual browser routing still requires the documented test-agent/backend route and matching worker/job provenance |
+| Tests | Targeted **171 passed** (new conversational suite, Batch C, prior live regression fixes). Final affected focused regression **605 passed, 0 failed/skipped** (all humanization tests plus provider/tool/write/disclosure/close/prompt tests). Counts overlap. Actual installed Groq/Gemini request serialization and all four SDK stream lifecycles exercised using offline synthetic output. CI unit manifest includes new suite and prior live regression suite |
+| Static / graph | Scoped Ruff and `git diff --check` PASS; existing invalid-noqa warning in main.py remains. Required `graphify update .` attempted; existing `uv trampoline failed to canonicalize script path` blocks graph refresh |
+| Evidence | Ignored `tmp/humanization-conversational/targeted.xml` and `focused.xml`. No paid provider/model requests, browser call, live audio, human listening score, latency improvement percentage or caller-heard FUAW claimed |
+| Remaining limits | Acoustic naturalness/pronunciation/voice continuity on all four real providers, model compliance and long context cost/limits, live STT continuation timing, real WebRTC/PSTN interruption, provider backpressure/flush behavior and actual caller hearing require live verification. Uplift has no verified affect/speed control and retains segment lifecycle; Rime Arcana affect/speed semantics are not newly asserted |
+| Scope / stop | Original Phases 12-15 intentionally deferred. No upgrades, new models/providers, canary or production rollout. Stop after requested implementation and focused verification |
+
+Files changed in this implementation (earlier unrelated changes are preserved):
+
+- Runtime/prompt/state: `worker/main.py`, `worker/cartesia_spoken_output.py`,
+  `worker/humanization/{agent,context_projection,policy,runtime,spoken,state,turn,turn_plan,understanding}.py`.
+- Delivery/streaming: `worker/humanization/streaming.py`,
+  `worker/humanization/delivery/{context,intent}.py`, `worker/providers/registry.py`,
+  `worker/providers/tts/{cartesia,rime,elevenlabs}.py`.
+- Development/docs: new `worker/development.py`, new `docs/HUMANIZATION_DEVELOPMENT.md`, this ledger.
+- Tests: new `tests/test_humanization_conversational.py`, `tests/ci_unit_manifest.txt`,
+  `tests/test_humanization_batch_c.py`, `tests/test_humanization_batch_d.py`,
+  `tests/test_humanization_phase2.py`, `tests/test_humanization_phase6.py`,
+  `tests/test_humanization_runtime_phase2.py`, prior untracked `tests/test_live_call_regressions.py`.
+  Existing lifecycle mocks now reflect generation reuse and canonical transcription; Deepgram mocks
+  patch both the plugin namespace and module registry to avoid collection-order contamination.

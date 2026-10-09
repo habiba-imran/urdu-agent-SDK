@@ -43,3 +43,6 @@ tests/test_tools_lifecycle_db.py
 tests/test_humanization_batch_c.py
 tests/test_humanization_batch_d.py
 tests/test_humanization_final_p0.py
+
+tests/test_live_call_regressions.py
+tests/test_humanization_conversational.py

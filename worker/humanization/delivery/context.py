@@ -1,7 +1,7 @@
 """Session-scoped compiler and synthesis boundary, using existing provider adapters.
 
-Batch B remains the rollback path; Phase 7 feeds isolated planned speech chunks.
-Each synthesis owns its plugin shell; cached clients/options are never mutated.
+Batch B remains the rollback path. Streaming reuses a generation-owned plugin/context
+across planned chunks; shared clients/options are never mutated.
 """
 
 from __future__ import annotations
@@ -59,6 +59,15 @@ class DeliveryContext:
             await audio.aclose()
 
     async def audio_chunk(self, chunk, speech_plan, *, conn_options=None):
+        result = self.render_chunk(chunk, speech_plan)
+        audio = self._audio(result, conn_options=conn_options)
+        try:
+            async for frame in audio:
+                yield frame
+        finally:
+            await audio.aclose()
+
+    def render_chunk(self, chunk, speech_plan):
         # Render offsets against the exact canonical chunk, with no second cleanup.
         from .pronunciation import PronunciationPlan
         pronunciation = PronunciationPlan(tuple(
@@ -71,23 +80,12 @@ class DeliveryContext:
             for pause in speech_plan.delivery_intent.pauses
             if chunk.start <= pause.offset < chunk.end
         ))
-        result = render(chunk.text, intent, pronunciation, self.language, self.channel,
+        return render(chunk.text, intent, pronunciation, self.language, self.channel,
                         self.capabilities, stored_options=self.cfg.tts_options, effective=self.effective)
-        audio = self._audio(result, conn_options=conn_options)
-        try:
-            async for frame in audio:
-                yield frame
-        finally:
-            await audio.aclose()
 
-    async def _audio(self, result: RenderedSpeech, *, conn_options=None):
-        from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+    def _plugin(self, result, *, planned=False):
         from worker.providers.registry import _build_tts
-
-        if not result.canonical_text:
-            return
         options = deepcopy(result.provider_options)
-        # Pin the effective model resolved at session construction; never change it here.
         if self.cfg.tts_provider != "uplift":
             options["model"] = self.capabilities.model
         if self.cfg.tts_provider == "uplift":
@@ -101,12 +99,129 @@ class DeliveryContext:
             )
             plugin = build(self.cfg.tts_voice_id, rendered_identity=identity)
         else:
-            plugin = _build_tts(replace(self.cfg, tts_options=options))
+            if planned:
+                from ..streaming import PlannedChunkTokenizer
+                plugin = _build_tts(replace(self.cfg, tts_options=options), tokenizer=PlannedChunkTokenizer())
+            else:
+                plugin = _build_tts(replace(self.cfg, tts_options=options))
         if self.metrics_target is not None:
-            # Keep existing session diagnostics attached to the original component.
-            # Only the actual isolated plugin emits usage/errors; no duplicate totals.
             plugin.on("metrics_collected", lambda event: self.metrics_target.emit("metrics_collected", event))
             plugin.on("error", lambda event: self.metrics_target.emit("error", event))
+        return plugin
+
+    async def audio_chunks(self, chunks, speech_plan, *, conn_options=None):
+        """One plugin per generation; one native context where installed SDK supports it.
+
+        Uplift 1.6.5 ends its AudioEmitter per segment, so it retains per-segment streams
+        on the SAME client. No private vendor APIs, per-session mutation or tool cancellation.
+        """
+        import asyncio
+        import time
+        from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+        connection = conn_options or DEFAULT_API_CONNECT_OPTIONS
+        first = await anext(chunks, None)
+        if first is None or not speech_plan.valid:
+            return
+        result = self.render_chunk(first, speech_plan)
+        plugin = self._plugin(result, planned=True)
+        speech_plan.provider_context["lifecycle"] = "generation_plugin"
+        continuous = plugin.capabilities.streaming and self.cfg.tts_provider != "uplift"
+        try:
+            if not continuous:
+                chunk = first
+                while chunk is not None and speech_plan.valid:
+                    rendered = self.render_chunk(chunk, speech_plan)
+                    if plugin.capabilities.streaming:
+                        output = plugin.stream(conn_options=connection)
+                        output.push_text(rendered.provider_text)
+                        output.end_input()
+                    else:
+                        output = plugin.synthesize(rendered.provider_text, conn_options=connection)
+                    try:
+                        async for event in output:
+                            if not speech_plan.valid:
+                                return
+                            yield event.frame
+                    finally:
+                        await output.aclose()
+                    chunk = await anext(chunks, None)
+                return
+
+            speech_plan.provider_context["lifecycle"] = "generation_stream"
+            async with plugin.stream(conn_options=connection) as output:
+                condition = asyncio.Condition()
+                produced_ms = 0.0
+                audio_started_at = None
+                last_audio_at = None
+                stopped = False
+
+                async def feed():
+                    chunk = first
+                    batch_chars = 0
+                    batch_audio_start = 0.0
+                    try:
+                        while chunk is not None and speech_plan.valid:
+                            if batch_chars > 240:
+                                # Bound native synthesis input by complete chunks. Wait for an
+                                # observed output-idle boundary, not guessed character/audio alignment.
+                                # Paced handoff duration is local evidence, never caller-heard time.
+                                async with condition:
+                                    while not stopped and speech_plan.valid:
+                                        now = time.monotonic()
+                                        lead = max(0, produced_ms - (now-audio_started_at)*1000) if audio_started_at else 0
+                                        idle = last_audio_at is not None and now-last_audio_at >= .15
+                                        if produced_ms > batch_audio_start and idle and lead <= 2000:
+                                            break
+                                        try:
+                                            await asyncio.wait_for(condition.wait(), .15)
+                                        except asyncio.TimeoutError:
+                                            pass
+                                batch_chars = 0
+                                batch_audio_start = produced_ms
+                            if stopped or not speech_plan.valid:
+                                return
+                            rendered = self.render_chunk(chunk, speech_plan)
+                            output.push_text(rendered.provider_text)
+                            # PlannedChunkTokenizer emits immediately without ending the SDK segment.
+                            batch_chars += len(chunk.text)
+                            chunk = await anext(chunks, None)
+                        output.end_input()
+                    except BaseException:
+                        await output.aclose()
+                        raise
+
+                feeder = asyncio.create_task(feed())
+                try:
+                    async for event in output:
+                        if not speech_plan.valid:
+                            return
+                        # Advance only after the consumer's paced audio handoff resumes.
+                        yield event.frame
+                        async with condition:
+                            if audio_started_at is None:
+                                audio_started_at = time.monotonic()
+                            last_audio_at = time.monotonic()
+                            produced_ms += event.frame.duration * 1000
+                            condition.notify_all()
+                    if not feeder.done():
+                        raise RuntimeError("provider stream ended before speech input completed")
+                    await feeder
+                finally:
+                    stopped = True
+                    async with condition:
+                        condition.notify_all()
+                    if not feeder.done():
+                        feeder.cancel()
+                    await asyncio.gather(feeder, return_exceptions=True)
+                    speech_plan.provider_context["stream_closed_at"] = time.monotonic()
+        finally:
+            await plugin.aclose()
+
+    async def _audio(self, result: RenderedSpeech, *, conn_options=None):
+        from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+        if not result.canonical_text:
+            return
+        plugin = self._plugin(result)
         connection = conn_options or DEFAULT_API_CONNECT_OPTIONS
         try:
             if plugin.capabilities.streaming:
