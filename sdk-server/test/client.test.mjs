@@ -240,3 +240,29 @@ function expectedSignature(body, nonce, action) {
   const message = `${TENANT_ID}.${TS_SEC}.${nonce}.${action}.${bodyHash}`;
   return createHmac('sha256', SECRET).update(message).digest('hex');
 }
+
+
+describe('wire-body signing opt-in', () => {
+  for (const signatureVersion of ['canonical-json-v1', 'raw-body-v1']) {
+    it(`sends the exact signed UTF-8 bytes in ${signatureVersion}`, async () => {
+      stubFetch(() => ({ body: { id: 'agent-1' } }));
+      await client({ signatureVersion, extraHeaders: { 'x-signature-version': 'unknown' } })
+        .createAgent({ name: 'Fixture', prompt: '\u0622\u067e', voiceId: 'v',
+          greeting: null, llmOptions: { epsilon: 1e-7, '\ud83d\ude00': 2, '\uff21': 1 } });
+      const { init } = calls[0];
+      assert.equal(init.headers['X-Signature-Version'], signatureVersion);
+      assert.equal(init.headers['x-signature-version'], undefined);
+      assert.equal(JSON.parse(init.body).greeting, null);
+      const digest = createHash('sha256').update(init.body, 'utf8').digest('hex');
+      const expected = createHmac('sha256', SECRET).update(
+        `${TENANT_ID}.${init.headers['X-Timestamp']}.${init.headers['X-Nonce']}.agent.create.${digest}`
+      ).digest('hex');
+      assert.equal(init.headers['X-Signature'], expected);
+    });
+  }
+  it('keeps legacy mode the default', async () => {
+    stubFetch(() => ({ body: [] }));
+    await client().listAgents();
+    assert.equal(calls[0].init.headers['X-Signature-Version'], 'canonical-json-v1');
+  });
+});

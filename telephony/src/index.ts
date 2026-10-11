@@ -59,6 +59,7 @@ export class TelephonyClient {
   readonly #tenantId: string;
   readonly #tenantSecret: string;
   readonly #baseUrl: string;
+  readonly #signatureVersion: 'canonical-json-v1' | 'raw-body-v1';
   readonly #extraHeaders: Record<string, string>;
   readonly #fetcher: TelephonyFetch;
   readonly #nowSeconds: () => number;
@@ -70,6 +71,7 @@ export class TelephonyClient {
     assertNonEmpty(options.tenantSecret, 'tenantSecret');
     assertNonEmpty(options.baseUrl, 'baseUrl');
 
+    this.#signatureVersion = options.signatureVersion ?? 'canonical-json-v1';
     this.#tenantId = options.tenantId;
     this.#tenantSecret = options.tenantSecret;
     this.#baseUrl = options.baseUrl.replace(/\/+$/, '');
@@ -225,6 +227,7 @@ export class TelephonyClient {
   ): Promise<TResponse> {
     const operation = TELEPHONY_MACHINE_OPERATIONS[name];
     const signed = createSignedHeaders({
+      signatureVersion: this.#signatureVersion,
       tenantId: this.#tenantId,
       tenantSecret: this.#tenantSecret,
       action: operation.action,

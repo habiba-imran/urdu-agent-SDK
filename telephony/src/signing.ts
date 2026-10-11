@@ -7,6 +7,7 @@ export const AUTH_HEADER_NAMES = [
   'X-Timestamp',
   'X-Nonce',
   'X-Signature',
+  'X-Signature-Version',
 ] as const;
 
 export interface CreateRequestSignatureOptions {
@@ -25,6 +26,7 @@ export interface CreateSignedHeadersOptions {
   body?: JsonInputObject;
   timestamp?: string;
   nonce?: string;
+  signatureVersion?: 'canonical-json-v1' | 'raw-body-v1';
 }
 
 export interface SignedHeaders {
@@ -68,6 +70,7 @@ export function createSignedHeaders(options: CreateSignedHeadersOptions): Signed
       'X-Timestamp': timestamp,
       'X-Nonce': nonce,
       'X-Signature': signature,
+      'X-Signature-Version': options.signatureVersion ?? 'canonical-json-v1',
     },
   };
 }

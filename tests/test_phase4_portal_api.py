@@ -85,7 +85,7 @@ def _cleanup_portal_tenant(tenant_id: str, voice_id: str):
 
 def test_portal_login_and_scoped_routes():
     tenant_id, secret, voice_id, agent_id = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
 
     try:
         login = client.post(
@@ -138,7 +138,7 @@ def test_portal_credentials_secret_reveal(monkeypatch):
     """Owners can fetch raw HMAC (reveal default on; explicit REVEAL=1 still works)."""
     monkeypatch.setenv("PORTAL_ALLOW_BROWSER_SECRET_REVEAL", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
 
     try:
         login = client.post(
@@ -153,7 +153,7 @@ def test_portal_credentials_secret_reveal(monkeypatch):
         assert revealed.json()["hmac_secret"] == secret
 
         # Fresh client — no Bearer and no session cookie.
-        no_auth = TestClient(app).get("/portal/credentials/secret")
+        no_auth = TestClient(app, headers={"X-UVA-Portal": "1"}).get("/portal/credentials/secret")
         assert no_auth.status_code == 401
     finally:
         _cleanup_portal_tenant(tenant_id, voice_id)
@@ -189,7 +189,7 @@ def test_stale_open_session_is_not_reported_live():
             (stale_id, tenant_id, agent_id, f"room-{uuid.uuid4()}"),
         )
 
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -225,7 +225,7 @@ def test_stale_open_session_is_not_reported_live():
 def test_portal_create_agent_forbidden_by_default():
     """M11 interim: portal JWT must not create agents (use /machine/agents)."""
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -250,7 +250,7 @@ def test_portal_create_agent_forbidden_by_default():
 def test_portal_update_agent():
     """Portal may still edit agents; create is machine-only under M11 interim."""
     tenant_id, secret, voice_id, agent_id = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
 
     try:
         login = client.post(
@@ -278,7 +278,7 @@ def test_portal_create_agent_old_style_payload_backfills_and_syncs_new_fields(mo
     """
     monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -311,7 +311,7 @@ def test_portal_create_agent_rejects_unsupported_provider_combo(monkeypatch):
     any DB write — not a generic 500 or a silent fallback to a supported provider."""
     monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -340,7 +340,7 @@ def test_portal_create_agent_rejects_unsupported_provider_combo(monkeypatch):
 
 def test_portal_provider_capabilities_requires_auth_and_returns_ur():
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         no_auth = client.get("/portal/provider-capabilities")
         assert no_auth.status_code == 401
@@ -371,7 +371,7 @@ def test_portal_provider_capabilities_requires_auth_and_returns_ur():
 def test_portal_create_agent_with_explicit_new_fields(monkeypatch):
     monkeypatch.setenv("PORTAL_ALLOW_AGENT_CREATE", "1")
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}

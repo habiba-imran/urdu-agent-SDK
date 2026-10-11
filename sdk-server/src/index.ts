@@ -19,6 +19,8 @@ export interface AwaazLabsUvaAgentsClientOptions {
   baseUrl: string;
   /** Optional non-auth headers for local tunnels/proxies. Auth headers cannot be overridden. */
   extraHeaders?: Record<string, string>;
+  /** Opt into exact wire-byte signing after deploying a raw-body-v1 portal. */
+  signatureVersion?: 'canonical-json-v1' | 'raw-body-v1';
 }
 
 export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
@@ -245,24 +247,27 @@ export class AwaazLabsUvaAgentsClient {
   ): Promise<TResponse> {
     const ts = Math.floor(Date.now() / 1000).toString();
     const nonce = randomUUID();
-    const bodyHash = await sha256Hex(canonicalJson(body));
+    const canonicalBody = canonicalJson(body);
+    const bodyHash = await sha256Hex(canonicalBody);
     const message = `${this.options.tenantId}.${ts}.${nonce}.${action}.${bodyHash}`;
     const signature = createHmac('sha256', this.options.tenantSecret).update(message).digest('hex');
 
     const headers: Record<string, string> = {
-      ...(this.options.extraHeaders ?? {}),
+      ...Object.fromEntries(Object.entries(this.options.extraHeaders ?? {})
+        .filter(([name]) => name.toLowerCase() !== 'x-signature-version')),
       'Content-Type': 'application/json',
       'X-Tenant-Id': this.options.tenantId,
       'X-Timestamp': ts,
       'X-Nonce': nonce,
       'X-Signature': signature,
+      'X-Signature-Version': this.options.signatureVersion ?? 'canonical-json-v1',
     };
 
     const hasBody = method !== 'GET';
     const res = await fetch(`${this.options.baseUrl.replace(/\/$/, '')}${path}`, {
       method,
       headers,
-      body: hasBody ? JSON.stringify(body) : undefined,
+      body: hasBody ? canonicalBody : undefined,
     });
 
     const text = await res.text();

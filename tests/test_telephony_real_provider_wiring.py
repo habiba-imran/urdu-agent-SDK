@@ -498,6 +498,13 @@ def test_webhook_real_mode_rejects_stale_timestamp(monkeypatch):
 
 
 def test_webhook_endpoint_accepts_signed_request_and_dedupes_event_id(monkeypatch):
+    # Endpoint/unit contract only: never touch a configured tenant database.
+    # Durable inbox behavior is covered by the webhook correlation suites.
+    persisted = []
+    def persist(event_id, event_type, data):
+        persisted.append(event_id)
+        return None
+    monkeypatch.setattr(telephony_webhooks, "_persist_telnyx_webhook_event", persist)
     private_key, public_key = _telnyx_test_keypair()
     monkeypatch.setenv("TELNYX_PUBLIC_KEY", public_key)
     body = b'{"data":{"event_type":"call.initiated","id":"evt_endpoint_123"}}'
@@ -532,6 +539,7 @@ def test_webhook_endpoint_accepts_signed_request_and_dedupes_event_id(monkeypatc
     )
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "duplicate"
+    assert persisted == ["evt_endpoint_123"]
 
 
 def test_webhook_endpoint_rejects_unsigned_request_in_real_mode(monkeypatch):

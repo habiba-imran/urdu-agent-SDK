@@ -47,19 +47,6 @@ def pytest_collection_modifyitems(config, items):
         if item.fspath.basename.endswith("_live.py"):
             item.add_marker("live")
 
-# Has the harness been configured to reach any real backend? Credentials live in .env.local
-# (now loaded above into os.environ), so this check reflects the actual state.
-_CREDENTIAL_VARS = (
-    "SUPABASE_URL",
-    "SUPABASE_DB_URL",
-    "SUPABASE_KEY",
-    "GROQ_API_KEY",
-    "GOOGLE_API_KEY",
-    "CEREBRAS_API_KEY",
-    "UPLIFTAI_API_KEY",
-)
-_HAS_CREDENTIALS = any(os.environ.get(_v) for _v in _CREDENTIAL_VARS)
-
 # --- offline network guard ---------------------------------------------------------------
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0", ""}
 _hits = {"n": 0}
@@ -166,10 +153,8 @@ def pytest_unconfigure(config):
 def pytest_runtest_call(item):
     """Skip a test that cannot run offline; leave genuine logic failures untouched.
 
-    A test is skipped only when it failed AND either (a) the offline guard blocked a live
-    connection, or (b) the harness has no credentials configured at all — both mean "no backend
-    and no fixture available", not "the code is wrong". When credentials ARE present the code runs
-    for real and any failure stays a failure.
+    Missing provider keys or blocked live sockets may skip. Missing credentials
+    never suppress a genuine assertion or implementation failure.
     """
     before = _hits["n"]
     try:
@@ -188,12 +173,8 @@ def pytest_runtest_call(item):
                 allow_module_level=False,
             ) from exc
         tripped = _hits["n"] > before
-        if tripped or not _HAS_CREDENTIALS:
-            reason = (
-                f"the offline guard blocked {_hits['n'] - before} connection attempt(s)"
-                if tripped
-                else "no credentials configured (.env.local absent) and no fixture cache yet"
-            )
+        if tripped:
+            reason = f"the offline guard blocked {_hits['n'] - before} connection attempt(s)"
             raise Skipped(
                 f"{item.name}: needs a live provider or a committed fixture — {reason}; "
                 f"no paid API was called (docs/30-GUIDE-FREE-TIER.md)",

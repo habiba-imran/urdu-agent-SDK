@@ -41,6 +41,8 @@ export interface TelephonyClientOptions {
   tenantSecret: string;
   baseUrl: string;
   extraHeaders?: Record<string, string>;
+  /** Requires a matching raw-body-v1 portal; legacy signing remains the default. */
+  signatureVersion?: 'canonical-json-v1' | 'raw-body-v1';
   fetch?: TelephonyFetch;
   nowSeconds?: () => number;
   nonceFactory?: () => string;

@@ -21,6 +21,7 @@ from tenant_portal_api.auth import TenantAuthError, verify_tenant_jwt
 from tenant_portal_api.machine_auth import (
     MachineAuthError,
     verify_machine_request,
+    signed_request_payload,
 )
 from tenant_portal_api.telephony_errors import TelephonyError, TelephonyErrorCode
 from tenant_portal_api.telephony_models import (
@@ -190,7 +191,7 @@ def _open_db():
 
 
 def _verify_machine(
-    conn, tenant_id: str, ts: str, nonce: str, action: str, body: dict, signature: str
+    conn, tenant_id: str, ts: str, nonce: str, action: str, body: dict | bytes, signature: str
 ):
     """Verify machine HMAC request signature."""
 
@@ -243,7 +244,7 @@ def _verify_machine(
 
 
 def _verify_machine_with_db(
-    tenant_id: str, ts: str, nonce: str, action: str, body: dict, signature: str
+    tenant_id: str, ts: str, nonce: str, action: str, body: dict | bytes, signature: str
 ):
     """Verify machine auth with an injected test connection or a deployed DB connection."""
     injected_conn = get_db()
@@ -284,13 +285,14 @@ async def _run_machine_service_call(
 ) -> Any:
     """Keep sync DB/provider work off the event loop so health checks stay responsive."""
     body = await _read_machine_json_body(request)
+    auth_payload = await signed_request_payload(request) if request is not None else body
     await run_in_threadpool(
         _verify_machine_with_db,
         tenant_id,
         timestamp,
         nonce,
         action,
-        body,
+        auth_payload,
         signature,
     )
     try:
@@ -1172,6 +1174,7 @@ async def machine_create_outbound_call(
 ):
     """SDK: createOutboundCall (action: telephony.outbound_calls.create)"""
     body = await _read_machine_json_body(request)
+    auth_payload = await signed_request_payload(request) if request is not None else body
     await run_in_threadpool(
         _verify_machine_with_db,
         x_tenant_id,

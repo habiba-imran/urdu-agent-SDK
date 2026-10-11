@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 import psycopg
 from dotenv import dotenv_values, load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Body, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Body, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -34,7 +34,7 @@ from .membership import (
 from .supabase_auth import verify_supabase_access_token
 from .db_pool import portal_db_connection, warm_portal_db_pool
 from .jwt_secret import portal_jwt_secret
-from .machine_auth import MachineAuthError, verify_machine_request
+from .machine_auth import MachineAuthError, verify_machine_request, signed_request_payload
 from .provider_capabilities import get_public_capabilities
 from .provider_validation import ProviderValidationError, resolve_agent_provider_fields
 from .greeting_fields import GreetingConfigError, normalize_first_speaker, normalize_greeting
@@ -416,7 +416,7 @@ def _require_machine(
     x_nonce: str | None,
     x_signature: str | None,
     action: str,
-    body: dict,
+    body: dict | bytes,
     client_ip: str | None = None,
 ) -> None:
     if not x_tenant_id or not x_timestamp or not x_nonce or not x_signature:
@@ -1080,6 +1080,7 @@ def machine_get_session_route(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    auth_payload: dict | bytes = Depends(signed_request_payload),
 ):
     """SDK/host CRM: fetch a session (incl. recording_url) by LiveKit room_name."""
     payload = body or {}
@@ -1094,7 +1095,7 @@ def machine_get_session_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="session.get",
-            body={"room_name": room_name},
+            body=auth_payload,
         )
         session = queries.get_session_by_room(conn, x_tenant_id, room_name)
         if not session:
@@ -1136,6 +1137,7 @@ def machine_create_agent_route(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    auth_payload: dict | bytes = Depends(signed_request_payload),
 ):
     with _conn() as conn:
         _require_machine(
@@ -1145,14 +1147,8 @@ def machine_create_agent_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="agent.create",
-            # exclude_none=True (matches agent.update below): CreateAgentBody now has optional
-            # provider/language fields (Phase 3, ADR-036) that default to None when omitted.
-            # model_dump() without this would include those None-valued keys in the signed
-            # payload, but the signing client (sdk-server, this file's own test suite) only ever
-            # signs the fields it explicitly set — the mismatch silently broke every create-agent
-            # HMAC signature the moment the first optional field was added. Caught by re-running
-            # the existing machine-auth test suite, not assumed safe.
-            body=body.model_dump(exclude_none=True),
+            # Verify received fields/bytes before schema projection.
+            body=auth_payload,
         )
         # M5-F01: machine create must honor the same per-tenant agent cap as portal.
         existing = conn.execute(
@@ -1198,6 +1194,7 @@ def machine_provider_capabilities_route(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    auth_payload: dict | bytes = Depends(signed_request_payload),
 ):
     """Phase 4, ADR-036 — machine-auth mirror of /portal/provider-capabilities, same content."""
     with _conn() as conn:
@@ -1208,7 +1205,7 @@ def machine_provider_capabilities_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="provider_capabilities.get",
-            body={},
+            body=auth_payload,
         )
         return get_public_capabilities(conn)
 
@@ -1219,6 +1216,7 @@ def machine_list_agents_route(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    auth_payload: dict | bytes = Depends(signed_request_payload),
 ):
     with _conn() as conn:
         _require_machine(
@@ -1228,7 +1226,7 @@ def machine_list_agents_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="agent.list",
-            body={},
+            body=auth_payload,
         )
         return queries.list_agents(conn, x_tenant_id)
 
@@ -1241,6 +1239,7 @@ def machine_update_agent_route(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    auth_payload: dict | bytes = Depends(signed_request_payload),
 ):
     with _conn() as conn:
         _require_machine(
@@ -1250,7 +1249,7 @@ def machine_update_agent_route(
             x_nonce=x_nonce,
             x_signature=x_signature,
             action="agent.update",
-            body=body.model_dump(exclude_none=True),
+            body=auth_payload,
         )
         current = queries.get_agent(conn, x_tenant_id, agent_id)
         if current is None:

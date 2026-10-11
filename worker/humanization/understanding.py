@@ -17,7 +17,7 @@ DAYS = {
     "saturday": "Saturday", "hafta": "Saturday", "ہفتہ": "Saturday",
     "sunday": "Sunday", "itwar": "Sunday", "اتوار": "Sunday",
 }
-CORRECTION = re.compile(r"(?i)\b(no|not|actually|instead|sorry|nahi|nahin|balke|balkay)\b|نہیں|نہيں|بلکہ")
+CORRECTION = re.compile(r"(?i)\b(no|not|don['’]?t|doesn['’]?t|won['’]?t|can['’]?t|never|actually|instead|sorry|nahi|nahin|balke|balkay)\b|نہیں|نہيں|بلکہ")
 AMBIGUOUS = re.compile(r"(?i)\b(or|maybe|perhaps|not sure|not certain|ya|shayad)\b|شاید|یا")
 NEGATION = re.compile(r"(?i)\b(not|nahi|nahin)\b|نہیں")
 DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
