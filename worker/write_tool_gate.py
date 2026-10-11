@@ -40,6 +40,10 @@ def is_affirmative_utterance(text: str | None) -> bool:
     s = (text or "").strip()
     if not s:
         return False
+    # Refusal/repair defeats affirmation, including "yes, don't book it".
+    from worker.humanization.understanding import CORRECTION, AMBIGUOUS
+    if CORRECTION.search(s) or AMBIGUOUS.search(s):
+        return False
     return _AFFIRM_RE.search(s) is not None or re.search(r"(?:ہاں|جی ہاں|ٹھیک ہے|بالکل)", s) is not None
 
 

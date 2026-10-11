@@ -92,7 +92,9 @@ The user was asked for the reserved test-agent ID and worker launch/deployment/l
 
 Existing session wiring already logs effective configuration and publication status; `UVA_PUBLISH_TURN_LATENCY=1` is prepared **only for the isolated worker**. It remains off in the existing shared worker. SDK full metrics/debug JSON will retain the new worker object without a package/schema upgrade. Source changes here are limited to these two existing modules plus one provenance regression in `tests/test_humanization_observability.py`; documentation/test profiles are the remaining additions.
 
-Validation: **118 passed** in one focused observability/framework/live-regression/final-P0 bundle; scoped Ruff PASS with an existing invalid-noqa warning in main.py. The required graph refresh was attempted but remains blocked by the existing `uv trampoline failed to canonicalize script path` tooling error. The 28 compile probes made no provider requests. No deployment or activation result is inferred from these checks. Secret-free local artifacts: `tmp/humanization-activation-20261010/running-worker-preflight.json`, `client-agent-preflight.json`, `profiles.json`, `offline-renderer-probes.json`, `instrumentation.xml`.
+Validation: **118 passed** in one focused observability/framework/live-regression/final-P0 bundle; scoped Ruff PASS with an existing invalid-noqa warning in main.py. The required graph refresh was attempted but remai
+
+ns blocked by the existing `uv trampoline failed to canonicalize script path` tooling error. The 28 compile probes made no provider requests. No deployment or activation result is inferred from these checks. Secret-free local artifacts: `tmp/humanization-activation-20261010/running-worker-preflight.json`, `client-agent-preflight.json`, `profiles.json`, `offline-renderer-probes.json`, `instrumentation.xml`.
 
 ## Ranked next work
 

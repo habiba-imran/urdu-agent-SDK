@@ -40,7 +40,7 @@ def _table_ready(conn: psycopg.Connection) -> bool:
 def db():
     try:
         conn = psycopg.connect(**conn_kwargs())
-    except Exception as exc:  # pragma: no cover
+    except (Exception, SystemExit) as exc:  # pragma: no cover
         pytest.skip(f"database unavailable: {exc}")
     if not _table_ready(conn):
         conn.close()
@@ -199,7 +199,7 @@ def test_http_invite_uses_jwt_sub_not_body_tenant(db, monkeypatch):
         role="owner",
     )["token"]
 
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     # Even if a client smuggles tenant_id in JSON, InviteMemberBody ignores it.
     resp = client.post(
         "/portal/members/invite",

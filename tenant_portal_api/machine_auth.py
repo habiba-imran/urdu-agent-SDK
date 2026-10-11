@@ -30,6 +30,7 @@ import time
 from collections import OrderedDict
 
 import psycopg
+from starlette.requests import Request
 
 from control_plane.mint import REPLAY_WINDOW_SEC
 from control_plane.secrets import SecretProvider
@@ -54,8 +55,8 @@ class MachineAuthError(Exception):
         self.reason = reason
 
 
-def payload_hash(body: dict) -> str:
-    """Canonical-JSON + sha256 of a request body. Must match byte-for-byte on the signing side
+def payload_hash(body: dict | bytes) -> str:
+    """SHA256 of received bytes (raw-body-v1) or legacy canonical JSON. Must match byte-for-byte on the signing side
     (docs/MACHINE_AGENT_API_CONTRACT.md) so both sides derive the identical hash.
 
     ensure_ascii=False is deliberate: agent prompts are Urdu-script text (this product's whole
@@ -63,6 +64,8 @@ def payload_hash(body: dict) -> str:
     never does — leaving that default on would silently desync this hash from the SDK's for any
     non-ASCII prompt. Both sides must encode the canonical string as UTF-8 before hashing.
     """
+    if isinstance(body, bytes):
+        return hashlib.sha256(body).hexdigest()
     canonical = json.dumps(
         body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -116,7 +119,7 @@ def verify_machine_request(
     ts: str,
     nonce: str,
     action: str,
-    body: dict,
+    body: dict | bytes,
     signature: str,
     now: int | None = None,
     client_ip: str | None = None,
@@ -183,3 +186,27 @@ def verify_machine_request(
 
     # Authenticated request only (P1-H3 / F-H4 class).
     _rate_limit_record(tenant_id)
+
+
+async def signed_request_payload(request: Request) -> dict | bytes:
+    """Authenticate received fields; raw wire hashing requires explicit opt-in.
+
+    Legacy clients keep canonical JSON hashing of the COMPLETE received object.
+    Empty requests retain the {} signature contract. Unknown modes fail closed.
+    """
+    from fastapi import HTTPException
+    version = request.headers.get("x-signature-version", "canonical-json-v1")
+    if version not in {"canonical-json-v1", "raw-body-v1"}:
+        raise HTTPException(status_code=401, detail="unsupported signature version")
+    raw = await request.body()
+    if version == "raw-body-v1":
+        return raw or b"{}"
+    if not raw:
+        return {}
+    try:
+        body = json.loads(raw)
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid signed JSON body") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="signed JSON body must be an object")
+    return body

@@ -42,7 +42,7 @@ def test_credentials_include_hmac_for_owners_by_default(monkeypatch):
     from tenant_portal_api.app import app
 
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -77,7 +77,7 @@ def test_credentials_secret_returns_410_when_reveal_disabled(monkeypatch):
     from tenant_portal_api.app import app
 
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -109,7 +109,7 @@ def test_portal_cookie_authenticates_whoami(monkeypatch):
     from tenant_portal_api.session_cookie import PORTAL_SESSION_COOKIE
 
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -142,7 +142,7 @@ def test_rotate_returns_410_by_default_and_does_not_rotate(monkeypatch):
     from tenant_portal_api.app import app
 
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -172,7 +172,7 @@ def test_rotate_break_glass_returns_one_shot_secret(monkeypatch):
     from tenant_portal_api.app import app
 
     tenant_id, secret, voice_id, _ = _seed_portal_tenant()
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-UVA-Portal": "1"})
     try:
         login = client.post(
             "/portal/login", json={"tenant_id": tenant_id, "tenant_secret": secret}
@@ -241,7 +241,7 @@ def test_member_cannot_rotate_secret(monkeypatch):
             auth_user_id=member_id,
             role="member",
         )
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-UVA-Portal": "1"})
         rotated = client.post(
             "/portal/credentials/rotate-secret",
             headers={"Authorization": f"Bearer {member_session['token']}"},

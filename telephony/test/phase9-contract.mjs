@@ -304,3 +304,20 @@ await testSecretsAreNotLeakedBeyondRequiredWireFields();
 await testGetAndIdentifierBodiesAreSigned();
 
 console.log('telephony phase9 contract tests passed');
+
+
+for (const signatureVersion of ['canonical-json-v1', 'raw-body-v1']) {
+  const seen = [];
+  const client = new TelephonyClient({ tenantId, tenantSecret, baseUrl, signatureVersion,
+    extraHeaders: { 'x-signature-version': 'unknown' },
+    nowSeconds: () => Number(timestamp), nonceFactory: () => nonce,
+    fetch: async (url, init) => { seen.push(init); return jsonResponse({ ok: true }); } });
+  await client.listManagedPhoneNumbers({ limit: 1e-7, cursor: '\u0622\u067e\ud83d\ude00' });
+  const init = seen[0];
+  assert.equal(init.headers['X-Signature-Version'], signatureVersion);
+  assert.equal(init.headers['x-signature-version'], undefined);
+  const digest = createHash('sha256').update(init.body, 'utf8').digest('hex');
+  assert.equal(init.headers['X-Signature'], createHmac('sha256', tenantSecret)
+    .update(`${tenantId}.${timestamp}.${nonce}.telephony.managed_numbers.list.${digest}`).digest('hex'));
+}
+console.log('telephony wire-body signing compatibility tests passed');

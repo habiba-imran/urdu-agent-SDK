@@ -36,7 +36,7 @@ def _table_exists(conn: psycopg.Connection, name: str) -> bool:
 def db():
     try:
         conn = psycopg.connect(**conn_kwargs())
-    except Exception as exc:  # pragma: no cover
+    except (Exception, SystemExit) as exc:  # pragma: no cover
         pytest.skip(f"database unavailable: {exc}")
     if not _table_exists(conn, "tenant_members"):
         conn.close()

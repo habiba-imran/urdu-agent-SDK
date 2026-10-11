@@ -42,15 +42,26 @@ Where:
   was called): `agent.create`, `agent.list`, or `agent.update`
 - `payload_hash` is derived from the canonical request body by the SDK
 
-### Canonical JSON — must match byte-for-byte
+### Signing versions and rollout
 
-Canonicalization must be byte-stable. Backend implementations should use the SDK-provided logic
-instead of recreating the signing routine in application code.
+`X-Signature-Version` accepts `canonical-json-v1` (default when absent) or
+`raw-body-v1`. Unknown values fail with `401`.
 
-- See `sdk-server/src/index.ts::canonicalJson()` for the maintained implementation used by the
-  packaged SDK.
+- Legacy mode hashes Python canonical JSON of the **complete received object**,
+  including unknown fields and explicit nulls. Schema defaults are never added to
+  authentication input. Python/JavaScript exponent formatting and Unicode key
+  sorting can still differ in legacy mode.
+- Raw mode hashes the exact UTF-8 bytes received. Both updated SDKs send the same
+  canonical string they signed, removing that cross-language ambiguity.
+- An empty request, including bodyless GET, signs the two bytes `{}` in either mode.
+- Authentication still binds tenant, timestamp, nonce, fixed route action and body
+  hash. Tenant status, replay protection and rate limiting remain enforced.
 
-For `GET /machine/agents` (list), the body is the empty object `{}` (canonical form: `"{}"`).
+Deploy this portal first, then use an SDK built from the updated source with
+`signatureVersion: 'raw-body-v1'`. The SDK default stays `canonical-json-v1` for
+compatibility with older portals. This source change does not publish an npm release
+or opt existing deployments into raw mode. No version change is made to control-plane
+`/v1/session` mint signing.
 
 ## Routes
 
@@ -83,14 +94,10 @@ pre-existing `ur`+Gladia+Gemini+Uplift behavior exactly:
 }
 ```
 
-🔴 **Signature rule — omitted fields must be entirely absent from the JSON body, not sent as
-`null`, exactly like `PATCH` below.** Any field with a Pydantic default other than `None`
-(`llm_model` today) is always present in the signed payload once resolved server-side — sign the
-value you expect the server to resolve, not only what's literally on the wire. Every field with a
-`None` default (all the new provider/language fields above) is excluded from the signed payload
-when omitted. This is not a hypothetical: adding the optional fields above silently broke every
-existing signature until the server-side verification was changed to `exclude_none=True` — a real
-regression caught by re-running this contract's own test suite, not assumed safe.
+**Signature rule:** authenticate the fields actually sent. Omitted fields stay absent
+from the signed object; defaults are resolved only for business validation/storage.
+Explicit nulls and unknown fields are authenticated even when the schema ignores them.
+Authenticating a field does not add support for that field or change its mutation semantics.
 
 `tts_voice_id` takes priority over `voice_id` when both are given (server-resolved). Unsupported or
 disabled combinations return `422` with a stable `{"code": "...", "reason": "..."}` body — see
@@ -122,10 +129,11 @@ Body: any subset of `{name, prompt, voice_id, llm_model, agent_language, stt_pro
 stt_options, llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, greeting,
 first_speaker}` — **include only
 the fields you are changing**. Omitted fields must be entirely absent from the JSON body, not sent
-as `null`; the signature covers exactly what you send, and the server only applies the fields
+as `null` when you intend to preserve a value; the signature includes explicit nulls, and
+mutation handling retains its existing per-field behavior. The server only applies the fields
 present — every other field keeps the agent's current resolved value (not the create-time
 defaults). Send `"greeting": ""` to clear a custom greeting (JSON `null` cannot clear it, because
-`null` is dropped from the signed payload).
+`null` retains the existing no-change greeting semantics).
 
 `action = "agent.update"`. Response: the updated agent row (same shape as create, above), or `404`
 if `agent_id` does not belong to this tenant (or doesn't exist).

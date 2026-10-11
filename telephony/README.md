@@ -141,3 +141,15 @@ npm test
 ## Changelog
 
 See [CHANGELOG.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/telephony/CHANGELOG.md).
+
+
+## Wire-body signing (updated source)
+
+After deploying the portal's versioned signing support, set
+`signatureVersion: 'raw-body-v1'` in this backend client's constructor. The client
+hashes exactly the UTF-8 string it sends; empty GET signs `{}`. The default remains
+`canonical-json-v1` for compatibility with older portals. This option is available
+in the updated source/build; the currently published `0.1.0` package has not been
+republished by this change. See
+[the machine API contract](../docs/MACHINE_AGENT_API_CONTRACT.md#signing-versions-and-rollout)
+for the server-first rollout and legacy numeric/Unicode limitations.
