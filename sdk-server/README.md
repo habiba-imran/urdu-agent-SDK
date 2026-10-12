@@ -97,14 +97,22 @@ Deploy the compatible portal before opting in, and verify npm release availabili
 for the server-first rollout and legacy numeric/Unicode limitations.
 
 
-## Release prerequisites (maintainers)
+## Release configuration (maintainers)
 
-Before pushing `agents-v0.1.1` release tag from the canonical organization
-repository, add the owner-approved `license` metadata and a nonempty `LICENSE`
-file in this package directory. The tag release workflow blocks publication while
-those are missing. No licensing terms are selected by this source preparation.
+This SDK is MIT licensed; the complete terms are included in `LICENSE`.
+Platform services elsewhere in the repository are outside this SDK license grant.
 
-Configure the canonical repository's `NPM_TOKEN` secret with publishing access.
-The release workflow runs build, typecheck and tests before publishing. Manual
-workflow dispatch and local `npm publish --dry-run` verify packaging without
-publishing. Keep the portal-first deployment and explicit signing-version opt-in.
+For token-free GitHub Actions publishing, configure each package's npm Trusted
+Publisher with organization `Finova-Solutions`, repository
+`urdu-voice-agent-SDK`, workflow filename `release-sdk.yml` and permission for
+`npm publish`. Leave environment empty because this workflow has no environment.
+Set repository Actions variable `NPM_PUBLISH_AUTH=trusted` after registering it.
+The workflow uses OIDC; no publishing token is supplied to the trusted publish step.
+
+Legacy mode remains the default (`NPM_PUBLISH_AUTH=token`, or unset), using the
+canonical repository's `NPM_TOKEN` secret. Unknown modes fail closed. No public
+release is created by configuring a publisher or by manual workflow dispatch;
+manual dispatch remains a packaging dry run. Matching release tags initiate
+publication. Keep the portal-first deployment and explicit signing-version opt-in.
+
+Official setup: https://docs.npmjs.com/trusted-publishers/

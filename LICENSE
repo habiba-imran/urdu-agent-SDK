@@ -1,0 +1,13 @@
+Awaaz repository license scope
+
+The client SDK packages in sdk/, sdk-server/ and telephony/ are licensed under
+MIT. Each package contains its own LICENSE with the complete terms and
+copyright notice. The grant covers the corresponding client SDK and its
+associated package documentation.
+
+This repository-level notice does not grant a license to the voice worker,
+control plane, admin API, tenant portal API, dashboard, internal tools,
+operational data or other platform materials. Their rights remain reserved
+unless separately licensed by their rights holders.
+
+Third-party components retain their own licenses and notices.

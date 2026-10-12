@@ -147,3 +147,11 @@ cd telephony && npm ci && npm run lint && npm test
    only to a freshly authenticated session, and rotatable from the credentials tab).
 2. **HMAC Signing**: Host backends hold the tenant's raw HMAC secret and sign every mint request with a 60-second replay window.
 3. **Tenant Prompt Isolation**: Tenant prompts are treated as untrusted data and placed in a separate `chat_ctx` system message framing, never interpolated into system operating rules.
+
+
+## License scope
+
+The three client SDK packages (`sdk/`, `sdk-server/`, `telephony/`) are MIT
+licensed, with complete terms included in each package's `LICENSE`. The root
+[LICENSE](LICENSE) explains the scope; platform services are outside that grant.
+Third-party licenses remain in effect.

@@ -10,11 +10,11 @@ name: Release SDK
 # The same PR that bumps `version` must add a `## [<version>]` section to that package's
 # CHANGELOG.md. workflow_dispatch runs the same checks as a dry run and never publishes.
 #
-# Publishing is from the canonical repository only: package.json `repository.url` must match
-# the repository running this workflow. Provenance (`--provenance`) is omitted because this
-# repo is private — npm only accepts provenance from public GitHub repos. A missing NPM_TOKEN
-# fails the release instead of skipping it — a green run that published nothing is worse than
-# a red one.
+# Publishing is from the canonical repository only: package.json repository.url
+# must match the repository running this workflow. Legacy token auth is the
+# default. Set Actions variable NPM_PUBLISH_AUTH=trusted only after registering
+# the package's Trusted Publisher on npm. Trusted mode uses short-lived OIDC.
+# Provenance is disabled for this private source repository.
 
 on:
   push:
@@ -44,7 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance attestation
+      id-token: write # required for npm Trusted Publishing
+    env:
+      NPM_PUBLISH_AUTH: ${{ vars.NPM_PUBLISH_AUTH || 'token' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -111,11 +113,22 @@ jobs:
             echo "::warning::$msg — add it before tagging"
           fi
 
-      - name: Set up Node.js 20
+      - name: Validate publish authentication mode
+        run: |
+          case "$NPM_PUBLISH_AUTH" in
+            token|trusted) ;;
+            *) echo "::error::NPM_PUBLISH_AUTH must be token or trusted"; exit 1 ;;
+          esac
+
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Set up OIDC-capable npm CLI
+        if: env.NPM_PUBLISH_AUTH == 'trusted'
+        run: npm install --global npm@11.6.2
 
       - name: Install, build, lint and test
         working-directory: ${{ steps.target.outputs.dir }}
@@ -138,10 +151,7 @@ jobs:
           fi
 
       - name: Check license metadata and packaged terms
-        if: >-
-          steps.target.outputs.publish == 'true' &&
-          (steps.target.outputs.name == '@awaazlabs-uva/agents' ||
-           steps.target.outputs.name == '@awaazlabs-uva/telephony')
+        if: steps.target.outputs.publish == 'true'
         env:
           DIR: ${{ steps.target.outputs.dir }}
         run: |
@@ -162,7 +172,7 @@ jobs:
           NODE
 
       - name: Check npm credentials
-        if: steps.target.outputs.publish == 'true'
+        if: steps.target.outputs.publish == 'true' && env.NPM_PUBLISH_AUTH == 'token'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -172,11 +182,20 @@ jobs:
           fi
 
       - name: Publish to npm
-        if: steps.target.outputs.publish == 'true'
+        if: steps.target.outputs.publish == 'true' && env.NPM_PUBLISH_AUTH == 'token'
         working-directory: ${{ steps.target.outputs.dir }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # No --provenance: npm rejects provenance when the source GitHub repo is private.
+          NPM_CONFIG_PROVENANCE: "false"
+        # The source repository remains private.
+        run: npm publish --access public
+
+      - name: Publish via npm Trusted Publishing
+        if: steps.target.outputs.publish == 'true' && env.NPM_PUBLISH_AUTH == 'trusted'
+        working-directory: ${{ steps.target.outputs.dir }}
+        env:
+          NODE_AUTH_TOKEN: ""
+          NPM_CONFIG_PROVENANCE: "false"
         run: npm publish --access public
 
       - name: Dry-run publish

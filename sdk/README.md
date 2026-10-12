@@ -150,3 +150,9 @@ Full host contract: [docs/HOST_BACKEND_CONTRACT.md](https://github.com/Finova-So
 ## Changelog
 
 See [CHANGELOG.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/sdk/CHANGELOG.md).
+
+
+## License
+
+This client SDK is [MIT licensed](LICENSE). The license applies to this package;
+it does not grant a license to the platform services elsewhere in the repository.

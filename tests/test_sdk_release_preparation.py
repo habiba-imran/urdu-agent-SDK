@@ -152,10 +152,6 @@ def test_tag_release_license_check_blocks_missing_terms(
         s for s in steps if s["name"] == "Check license metadata and packaged terms"
     )
     assert "publish == 'true'" in guard["if"]
-    assert (
-        "@awaazlabs-uva/agents" in guard["if"]
-        and "@awaazlabs-uva/telephony" in guard["if"]
-    )
     package = tmp_path / "package"
     package.mkdir()
     manifest = {"name": "fixture-package", "version": "0.1.1"}
@@ -182,3 +178,63 @@ def test_client_version_guard_still_rejects_wrong_install_pin(tmp_path, monkeypa
     monkeypatch.setattr(docs, "DOC_GLOBS", [guide])
     with pytest.raises(AssertionError, match="version pin mismatches"):
         docs.test_package_json_versions_match_docs_pins()
+
+
+@pytest.mark.parametrize("folder", ["sdk", "sdk-server", "telephony"])
+def test_actual_mit_package_passes_workflow_license_check(folder):
+    steps = workflow("release-sdk.yml")["jobs"]["release"]["steps"]
+    guard = next(
+        s for s in steps if s["name"] == "Check license metadata and packaged terms"
+    )
+    package = ROOT / folder
+    manifest = json.loads((package / "package.json").read_text())
+    lock = json.loads((package / "package-lock.json").read_text())
+    assert manifest["license"] == lock["packages"][""]["license"] == "MIT"
+    assert "LICENSE" in manifest["files"]
+    terms = (package / "LICENSE").read_text()
+    assert terms.startswith("MIT License")
+    assert "Copyright (c) 2026 AwaazLabs contributors" in terms
+    assert 'THE SOFTWARE IS PROVIDED "AS IS"' in terms
+    result = run_shell(guard["run"], ROOT, DIR=folder)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("token", 0), ("trusted", 0), ("unknown", 1)]
+)
+def test_publish_auth_mode_validation_fails_closed(tmp_path, mode, expected):
+    steps = workflow("release-sdk.yml")["jobs"]["release"]["steps"]
+    check = next(
+        s for s in steps if s["name"] == "Validate publish authentication mode"
+    )
+    result = run_shell(check["run"], tmp_path, NPM_PUBLISH_AUTH=mode)
+    assert result.returncode == expected
+
+
+def test_trusted_publish_path_is_token_free_and_legacy_path_preserved():
+    job = workflow("release-sdk.yml")["jobs"]["release"]
+    steps = job["steps"]
+    assert job["permissions"]["id-token"] == "write"
+    assert "|| 'token'" in job["env"]["NPM_PUBLISH_AUTH"]
+    trusted = next(
+        s for s in steps if s["name"] == "Publish via npm Trusted Publishing"
+    )
+    legacy = next(s for s in steps if s["name"] == "Publish to npm")
+    credentials = next(s for s in steps if s["name"] == "Check npm credentials")
+    assert "publish == 'true'" in trusted["if"]
+    assert "NPM_PUBLISH_AUTH == 'trusted'" in trusted["if"]
+    assert trusted["env"]["NODE_AUTH_TOKEN"] == ""
+    assert trusted["env"]["NPM_CONFIG_PROVENANCE"] == "false"
+    assert "NPM_TOKEN" not in str(trusted)
+    assert "NPM_PUBLISH_AUTH == 'token'" in legacy["if"]
+    assert "NPM_PUBLISH_AUTH == 'token'" in credentials["if"]
+    assert legacy["env"]["NODE_AUTH_TOKEN"] == "${{ secrets.NPM_TOKEN }}"
+    setup = next(
+        s for s in steps if s.get("uses", "").startswith("actions/setup-node@")
+    )
+    assert setup["with"]["node-version"] == "22"
+    npm = next(s for s in steps if s["name"] == "Set up OIDC-capable npm CLI")
+    assert "npm@11.6.2" in npm["run"]
+    dry = next(s for s in steps if s["name"] == "Dry-run publish")
+    assert "publish != 'true'" in dry["if"]
+    assert "--dry-run" in dry["run"]

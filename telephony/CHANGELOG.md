@@ -13,6 +13,7 @@ bumps the version.
 ## [0.1.1] - Unreleased
 
 ### Added
+- MIT license metadata and complete terms included in the npm package.
 - Optional `signatureVersion: 'raw-body-v1'` for exact UTF-8 request-body signing
   after the portal's versioned verifier has been deployed. The default remains
   `canonical-json-v1` for compatibility with older portals.
@@ -24,7 +25,7 @@ bumps the version.
   the existing bodyless-GET `{}` signature contract.
 
 ### Release status
-- Prepared for release; license approval and npm publishing access remain required.
+- Prepared for release under MIT; npm publishing configuration remains required.
 - No provider, model, voice or browser SDK changes.
 
 ## [0.1.0]

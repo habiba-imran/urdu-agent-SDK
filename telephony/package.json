@@ -34,7 +34,8 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
@@ -47,5 +48,6 @@
   },
   "devDependencies": {
     "typescript": "^5.4.0"
-  }
+  },
+  "license": "MIT"
 }
