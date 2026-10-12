@@ -16,7 +16,7 @@ function asList(payload) {
   return [];
 }
 
-function createTelephonyClient(config) {
+export function createTelephonyClient(config) {
   if (!config.telephonyApiUrl) {
     const err = new Error('UVA_TELEPHONY_API_URL / UVA_API_BASE_URL is not set');
     err.status = 501;
@@ -29,6 +29,7 @@ function createTelephonyClient(config) {
       baseUrl: config.telephonyApiUrl,
       tenantId: config.tenantId,
       tenantSecret: config.hmacSecret,
+      signatureVersion: 'raw-body-v1',
     });
   });
 }

@@ -32,3 +32,6 @@ scratch/
 
 # Legacy debug prompt dumps must stay local; default dumps now live under /tmp/.
 /docs/last_session_prompt.txt
+
+# Temporary raw-body verification project; never ship its credentials or artifacts.
+/uva-signing-test/

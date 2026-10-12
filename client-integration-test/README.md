@@ -5,7 +5,7 @@ This folder is a standalone client: copy the **entire folder**, including `packa
 ## SDK distribution
 
 - Browser: included `@awaazlabs-uva/voice@1.1.1-humanization.0` **unpublished test snapshot**, packed from current SDK source. Includes playback-readiness handshake, provider-failure events, and humanization metrics. This is not an npm release.
-- Backend: published `@awaazlabs-uva/agents@0.1.0` and `@awaazlabs-uva/telephony@0.1.0`, pinned in lockfiles.
+- Backend: published `@awaazlabs-uva/agents@0.1.1` and `@awaazlabs-uva/telephony@0.1.1`, pinned in lockfiles. Both clients explicitly use `signatureVersion: 'raw-body-v1'`; deploy the compatible tenant portal before running this backend.
 - `packages/voice-manifest.json` records archive SHA-256, npm integrity and SDK source hashes. `npm run verify` checks installed package identity and independence.
 - Published voice `1.1.0` remains the baseline client release. Installing it again does not test the new readiness handshake. GitHub pushes do not publish npm packages.
 
@@ -24,6 +24,20 @@ npm run verify
 Do not overwrite existing `.env` files when updating this app. `install:all` uses `npm ci` and the checked-in lockfiles. `verify` runs synthetic host-contract tests, TypeScript, production frontend build, and installed-package/hash checks; it does not place calls.
 
 The backend requires `UVA_TENANT_ID`, `UVA_HMAC_SECRET`, `UVA_PUBLISHABLE_KEY`, and `UVA_CONTROL_PLANE_URL`. Set `UVA_API_BASE_URL` for the agent/provider picker. Telephony additionally requires the appropriate API URL, backend-only Telnyx credentials, and an existing test route/number.
+
+## Verify the backend SDK integration against staging
+
+Set both machine API URLs to `https://uva-tenant-portal-staging.onrender.com`
+in the existing ignored `backend/.env`, using a staging tenant's credentials.
+Do not copy secrets into source or overwrite an existing environment file.
+From `backend/`, run `npm run verify:staging`. The runner checks installed
+0.1.1 packages and exercises the actual backend provider-capabilities, agents
+and call-record routes, plus the telephony managed-number POST. It binds only
+to loopback, prints no tenant records or credentials, and refuses other portal
+URLs. It does not mint sessions, place calls, purchase numbers or modify agents.
+This proves local backend-to-staging integration; it is not a hosted deployment
+check. See `docs/BACKEND_SDK_STAGING_ROLLOUT.md` in the platform repository for
+the deployment inventory, evidence and rollback order.
 
 The platform control plane, tenant API, worker, LiveKit and chosen provider credentials must already be available. This client does not launch or configure them. Default local URLs: control plane `http://localhost:8000`, tenant API `http://localhost:8002`.
 

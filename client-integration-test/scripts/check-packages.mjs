@@ -10,8 +10,8 @@ const archive = readFileSync(resolve(root, 'packages', manifest.artifact));
 assert.equal(createHash('sha256').update(archive).digest('hex'), manifest.sha256, 'SDK archive hash mismatch');
 for (const [dir, name, version] of [
   ['frontend', '@awaazlabs-uva/voice', manifest.version],
-  ['backend', '@awaazlabs-uva/agents', '0.1.0'],
-  ['backend', '@awaazlabs-uva/telephony', '0.1.0'],
+  ['backend', '@awaazlabs-uva/agents', '0.1.1'],
+  ['backend', '@awaazlabs-uva/telephony', '0.1.1'],
 ]) {
   const require = createRequire(resolve(root, dir, 'package.json'));
   const entry = realpathSync(require.resolve(name));

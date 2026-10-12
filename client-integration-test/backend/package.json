@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "verify:staging": "node scripts/verify-staging.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@awaazlabs-uva/agents": "0.1.0",
-    "@awaazlabs-uva/telephony": "0.1.0",
+    "@awaazlabs-uva/agents": "0.1.1",
+    "@awaazlabs-uva/telephony": "0.1.1",
     "dotenv": "^16.6.1",
     "express": "^4.21.2"
   }

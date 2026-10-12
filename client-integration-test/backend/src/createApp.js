@@ -59,7 +59,7 @@ function addCorsHeaders(res, origin, config) {
   }
 }
 
-async function createAgentsClient(config) {
+export async function createAgentsClient(config) {
   if (!config.portalApiUrl) {
     const err = new Error('UVA_API_BASE_URL not set — provider picker requires tenant portal API');
     err.code = 'portal_not_configured';
@@ -70,6 +70,7 @@ async function createAgentsClient(config) {
     baseUrl: config.portalApiUrl,
     tenantId: config.tenantId,
     tenantSecret: config.hmacSecret,
+    signatureVersion: 'raw-body-v1',
   });
 }
 
