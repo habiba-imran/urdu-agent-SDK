@@ -1,13 +1,13 @@
 # @awaazlabs-uva/voice
 
-> Voice `1.1.1` is prepared and MIT licensed; it is not yet published.
+> Voice `1.1.1` is MIT licensed; complete terms are included in this package.
 > Agents and telephony `0.1.1` are available on npm.
 
 Browser SDK for AwaazLabs UVA voice sessions. **Zero secrets** — talks only to **your** host session endpoint, then LiveKit.
 
-Release target: `@awaazlabs-uva/voice@1.1.1`. Pin this version in lockfiles. In-console guide: tenant dashboard → `/docs` (canonical for clients).
+Package: `@awaazlabs-uva/voice@1.1.1`. Pin this version in lockfiles. In-console guide: tenant dashboard → `/docs` (canonical for clients).
 
-## Install (after 1.1.1 is published)
+## Install
 
 ```bash
 npm install @awaazlabs-uva/voice@1.1.1
@@ -29,7 +29,6 @@ Where to read next:
 
 - **In-dashboard `/docs`** (Quickstart, Backend setup, Frontend setup, Errors) — client source of truth
 - Repo redirect: [docs/CLIENT_QUICKSTART.md](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/CLIENT_QUICKSTART.md)
-- Optional starter: [`client-deliverables-final/host-backend-starter/`](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/tree/main/client-deliverables-final/host-backend-starter)
 - Agent CRUD: [`@awaazlabs-uva/agents`](https://www.npmjs.com/package/@awaazlabs-uva/agents)
 - PSTN: [`@awaazlabs-uva/telephony`](https://www.npmjs.com/package/@awaazlabs-uva/telephony)
 

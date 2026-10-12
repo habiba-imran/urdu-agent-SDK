@@ -8,8 +8,6 @@ Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `
 
 ## [1.1.1] - 2026-10-12
 
-Prepared release; not yet published to npm.
-
 ### Added
 - MIT license metadata and complete terms for the client SDK package.
 - Browser playback readiness (`audio_ready`) and reliable readiness responses for current worker opening checks.
