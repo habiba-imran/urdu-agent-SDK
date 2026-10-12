@@ -85,8 +85,12 @@ def test_invite_links_member_to_owner_tenant_without_new_tenant(db, monkeypatch)
     assert invited["role"] == "member"
     assert invited["auth_user_id"] == member_auth_id
 
-    # Count tenants created for this owner path — member login must not add one.
-    before = db.execute("select count(*) from tenants").fetchone()[0]
+    # Scope the count to this fixture's users: parallel CI may create other tenants.
+    membership_count_sql = (
+        "select count(distinct tenant_id) from tenant_members "
+        "where auth_user_id in (%s, %s)"
+    )
+    before = db.execute(membership_count_sql, (owner_id, member_auth_id)).fetchone()[0]
     member_session = exchange_supabase_user_for_portal_session(
         db,
         auth_user_id=member_auth_id,
@@ -94,11 +98,11 @@ def test_invite_links_member_to_owner_tenant_without_new_tenant(db, monkeypatch)
         jwt_secret=jwt_secret,
     )
     db.commit()
-    after = db.execute("select count(*) from tenants").fetchone()[0]
+    after = db.execute(membership_count_sql, (owner_id, member_auth_id)).fetchone()[0]
 
     assert member_session["tenant_id"] == tenant_a
     assert member_session["role"] == "member"
-    assert after == before
+    assert after == before == 1
 
     claims = pyjwt.decode(
         member_session["token"],

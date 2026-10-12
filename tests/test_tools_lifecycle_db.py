@@ -127,6 +127,7 @@ def test_sync_helpers_use_psycopg_connect_not_on_async_path(monkeypatch):
 
     connect = MagicMock(return_value=fake_conn)
     monkeypatch.setattr("worker.tools.psycopg.connect", connect)
+    monkeypatch.setattr("worker.tools.conn_kwargs", lambda: {})
 
     _save_conversation_summary(
         summary="s", room_name="r", tenant_id="t"

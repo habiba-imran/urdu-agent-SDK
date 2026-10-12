@@ -97,6 +97,7 @@ def test_webhook_insert_failure_aborts_side_effects(monkeypatch):
     from tenant_portal_api import telephony_webhooks as hooks
 
     side_effects: list[str] = []
+    monkeypatch.setattr(hooks, "conn_kwargs", lambda: {})
 
     class _BoomConn:
         def execute(self, sql, params=None):

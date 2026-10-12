@@ -113,7 +113,7 @@ def test_portal_login_and_scoped_routes():
         usage = client.get("/portal/usage-summary", headers=headers)
         assert usage.status_code == 200
         usage_json = usage.json()
-        assert usage_json["quota"]["minutes_this_month"] == pytest.approx(31 / 60, rel=1e-6)
+        assert usage_json["quota"]["minutes_this_month"] == pytest.approx(0.5167, abs=1e-9)
         assert usage_json["billable_minutes"] == pytest.approx(31 / 60, abs=1e-4)
         assert usage_json["billable_agent_sec"] == 31.0
         assert usage_json["timezone"] == "UTC"

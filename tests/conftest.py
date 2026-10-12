@@ -31,6 +31,11 @@ try:
 except Exception:
     pass
 
+# Windows may omit an empty environment value when spawning pytest.
+# Reassert offline DB isolation after loading local development configuration.
+if os.environ.get("CI_UNIT_FORCE_OFFLINE") == "1":
+    os.environ["SUPABASE_DB_URL"] = ""
+
 # Default every paid provider to its offline/fixture path (30-GUIDE-FREE-TIER.md §6/§7).
 for _var in ("UPLIFT_MODE", "GLADIA_MODE", "LLM_MODE"):
     os.environ.setdefault(_var, "fixture")
@@ -56,6 +61,9 @@ def _extra_allowed_hosts():
     """Hosts tests MAY reach beyond loopback: the FREE Supabase dev backend, so the RLS
     isolation test can hit the real DB. Paid providers (Uplift/Gladia/LLMs) are never
     added here — they stay blocked, which is the whole point of the guard."""
+    if os.environ.get("CI_UNIT_FORCE_OFFLINE") == "1":
+        return set()
+
     import urllib.parse as _up
 
     from dotenv import dotenv_values as _dv

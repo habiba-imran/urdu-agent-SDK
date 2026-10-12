@@ -30,9 +30,11 @@ ROOT = Path(__file__).resolve().parent.parent
 def conn_kwargs() -> dict:
     """Parse SUPABASE_DB_URL — checks the real process environment first (prod), falls back to
     .env.local (dev) — into psycopg/libpq keyword params."""
-    raw = os.environ.get("SUPABASE_DB_URL") or dotenv_values(ROOT / ".env.local").get(
-        "SUPABASE_DB_URL"
-    )
+    # An explicitly empty process value is intentional (offline CI), not a request
+    # to reconnect to the developer database in .env.local.
+    raw = os.environ.get("SUPABASE_DB_URL")
+    if raw is None and os.environ.get("CI_UNIT_FORCE_OFFLINE") != "1":
+        raw = dotenv_values(ROOT / ".env.local").get("SUPABASE_DB_URL")
     if not raw:
         sys.exit(
             "SUPABASE_DB_URL not set (checked os.environ, then .env.local — human tasks H1/H6)."

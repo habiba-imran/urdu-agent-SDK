@@ -191,10 +191,16 @@ jobs:
 
       # A committed secret is different: that gates, because it cannot be un-leaked later.
       - name: Scan for committed secrets (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+        # The open-source CLI has no organization Action license requirement.
+        # Keep full-history scanning and fail on findings; redact every finding.
+        run: |
+          docker run --rm \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory \
+            -e GIT_CONFIG_VALUE_0=/repo \
+            -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.24.3 \
+            git /repo --redact --no-banner --log-opts="--all"
 
       - name: Check the published browser bundle holds no secrets
         run: |

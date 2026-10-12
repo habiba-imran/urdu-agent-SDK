@@ -1,4 +1,4 @@
-"""Wave 2 / P1-H6: HMAC visible to owners; console rotate off; HttpOnly session cookie."""
+"""Wave 2 / P1-H6: HMAC metadata plus explicit audited owner reveal; console rotate off; HttpOnly session cookie."""
 
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ def test_browser_secret_rotate_defaults_off(monkeypatch):
     assert browser_secret_rotate_enabled() is True
 
 
-def test_credentials_include_hmac_for_owners_by_default(monkeypatch):
-    """Owners always get raw HMAC on GET /portal/credentials (reveal default on)."""
-    monkeypatch.delenv("PORTAL_ALLOW_BROWSER_SECRET_REVEAL", raising=False)
+def test_credentials_metadata_excludes_hmac_and_owner_can_explicitly_reveal(monkeypatch):
+    """Metadata never returns the raw secret; explicit permitted owner reveal does."""
+    monkeypatch.setenv("PORTAL_ALLOW_BROWSER_SECRET_REVEAL", "1")
     monkeypatch.setenv("TENANT_PORTAL_JWT_SECRET", "wave2-test-portal-jwt-secret-32b")
 
     from tests.test_phase4_portal_api import _cleanup_portal_tenant, _seed_portal_tenant
@@ -57,7 +57,7 @@ def test_credentials_include_hmac_for_owners_by_default(monkeypatch):
         )
         assert creds.status_code == 200
         body = creds.json()
-        assert body["hmac_secret"] == secret
+        assert "hmac_secret" not in body
 
         revealed = client.get(
             "/portal/credentials/secret",

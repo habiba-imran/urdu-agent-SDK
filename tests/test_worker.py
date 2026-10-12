@@ -268,7 +268,10 @@ def test_end_conversation_summary_writes_to_the_real_session_row(two_tenants):
     result = asyncio.run(
         end_conversation_summary(ctx, summary="caller asked about pricing")
     )
-    assert result == {"status": "saved"}
+    assert result["status"] == "saved"
+    assert result["outcome"] == "SUCCESS"
+    assert result["businessEffect"] == "committed"
+    assert result["retrySafe"] is False
 
     row = conn.execute(
         "select summary from sessions where id=%s", (session_id,)
@@ -300,7 +303,11 @@ def test_escalate_to_human_writes_a_real_row_linked_to_the_session(two_tenants):
     result = asyncio.run(
         escalate_to_human(ctx, reason="wants a callback", contact_info="0300-1234567")
     )
-    assert result == {"status": "escalated"}
+    assert result["status"] == "escalated"
+    assert result["outcome"] == "SUCCESS"
+    assert result["businessEffect"] == "escalation_recorded"
+    assert result["liveTransfer"] is False
+    assert result["retrySafe"] is False
 
     row = conn.execute(
         "select tenant_id, session_id, reason, contact_info, status from escalations "

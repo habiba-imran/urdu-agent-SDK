@@ -19,7 +19,6 @@ except ImportError:
     from reconcile_sessions import reconcile_sessions  # type: ignore # noqa: E402
 
 
-import pytest  # noqa: E402
 
 
 def test_control_plane_healthz():
@@ -39,11 +38,12 @@ def test_admin_healthz():
 
 
 def test_reconcile_sessions_dry_run():
-    """Verify reconcile_sessions runs cleanly in dry-run mode."""
-    try:
-        stats = reconcile_sessions(max_age_minutes=30, dry_run=True)
-        assert isinstance(stats, dict)
-        assert "stale_sessions_closed" in stats
-        assert "tenants_reconciled" in stats
-    except Exception as e:
-        pytest.skip(f"Database connection not available: {e}")
+    """The phase-0 smoke is offline; DB reconciliation integration is separate."""
+    from tests.test_reconcile_sessions import FakeReconcileDb
+    conn = FakeReconcileDb(tenants=[], open_sessions=[], stale_sessions=[], quota={})
+    conn.dry_run_guard = True
+    stats = reconcile_sessions(max_age_minutes=30, dry_run=True, conn=conn)
+    assert isinstance(stats, dict)
+    assert "stale_sessions_closed" in stats
+    assert "tenants_reconciled" in stats
+    assert conn.usage_writes == 0

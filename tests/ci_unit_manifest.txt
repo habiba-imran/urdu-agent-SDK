@@ -50,3 +50,5 @@ tests/test_humanization_conversational.py
 tests/test_ehsan_handoff.py
 
 tests/test_sdk_release_preparation.py
+
+tests/test_ci_release_blockers.py
