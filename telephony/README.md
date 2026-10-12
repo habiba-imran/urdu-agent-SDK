@@ -1,6 +1,6 @@
 # @awaazlabs-uva/telephony
 
-> Voice 1.1.1 is a prepared release target, not yet available on npm; keep Voice 1.1.0 until publication.
+> Voice 1.1.1 is published on npm with an MIT license.
 
 Backend-only Node SDK for HMAC-signed AwaazLabs UVA machine telephony API calls.
 

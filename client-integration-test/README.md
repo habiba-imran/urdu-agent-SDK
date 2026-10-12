@@ -1,13 +1,13 @@
 # Independent client integration test
 
-This folder is a standalone client: copy the **entire folder**, including `packages/`, outside the platform repository and run it there. It imports installed SDK packages, calls public platform endpoints through its own host backend, and does not import worker, dashboard, database, or SDK source files.
+This folder is a standalone client: copy the folder outside the platform repository and run it there. It imports published npm SDK packages, calls public platform endpoints through its own host backend, and does not import worker, dashboard, database, or SDK source files. The historical `packages/` archives are not used by the current installation.
 
 ## SDK distribution
 
-- Browser: included `@awaazlabs-uva/voice@1.1.1-humanization.0` **unpublished test snapshot**, packed from current SDK source. Includes playback-readiness handshake, provider-failure events, and humanization metrics. This is not an npm release.
+- Browser: published `@awaazlabs-uva/voice@1.1.1` from npm, including playback readiness, provider-failure events and humanization metrics.
 - Backend: published `@awaazlabs-uva/agents@0.1.1` and `@awaazlabs-uva/telephony@0.1.1`, pinned in lockfiles. Both clients explicitly use `signatureVersion: 'raw-body-v1'`; deploy the compatible tenant portal before running this backend.
-- `packages/voice-manifest.json` records archive SHA-256, npm integrity and SDK source hashes. `npm run verify` checks installed package identity and independence.
-- Published voice `1.1.0` remains the baseline client release. Installing it again does not test the new readiness handshake. GitHub pushes do not publish npm packages.
+- `npm run verify` checks installed versions, registry artifact/integrity metadata, readiness support and independence from SDK source files. Historical snapshot manifests remain in `packages/` for comparison.
+- Voice `1.1.1` was published on 2026-10-12. GitHub pushes alone do not install package updates in existing applications.
 
 ## Setup (PowerShell, Node 20+)
 
@@ -67,7 +67,11 @@ Read [TESTING.md](TESTING.md) for the humanization interaction matrix and [PLATF
 
 The Telephony panel uses the backend-only telephony SDK. Check connection/readiness and assigned numbers before testing an existing inbound/outbound route. Number purchase and outbound calls incur provider charges; this app performs them only when you use those controls. Verify status and end reason in the dashboard Sessions/Telephony views. GitHub publication does not apply database migrations or provision phone routes.
 
-## Maintainer: refresh the included SDK snapshot
+## Maintainer: optional historical SDK snapshots
+
+Current clients install Voice from npm. The commands below create a candidate
+snapshot for separate experiments; do not replace the registry pin or current
+lockfile during this release rollout.
 
 From the platform repository root, after SDK source changes:
 

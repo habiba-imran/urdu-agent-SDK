@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@awaazlabs-uva/voice": "file:../packages/awaazlabs-uva-voice-1.1.1-humanization.0.tgz"
+    "@awaazlabs-uva/voice": "1.1.1"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

@@ -61,9 +61,9 @@ Successful connects appear under **[Sessions](/sessions)**. Use Sessions when UI
 - [What to expect](/docs/what-to-expect)
 - [Frontend setup](/docs/frontend-setup)
 
-## Current humanization SDK snapshot
+## Current browser SDK
 
-The published voice \`1.1.0\` baseline does not contain the new \`audio_ready\` event. The independent client ships an unpublished \`1.1.1-humanization.0\` snapshot; Test Studio uses the current repository SDK. With that build, \`audio_ready: boolean\` reports browser playback readiness. \`connected\` reports room connection. Neither proves a specific utterance was heard. Continue to handle \`audio_blocked\` and unlock via \`startAudio()\` from a gesture.
+The published voice \`1.1.1\` includes the \`audio_ready\` event and is installed by both the independent client and Test Studio. \`audio_ready: boolean\` reports browser playback readiness; \`connected\` reports room connection. Neither proves a particular utterance was heard. Continue handling \`audio_blocked\` and call \`startAudio()\` from a user gesture.
 
 Per-turn metrics are also forwarded to \`metrics_updated\` for legacy compatibility. If subscribing to both, handle a turn once:
 

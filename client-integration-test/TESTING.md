@@ -2,7 +2,7 @@
 
 ## Which client build to test
 
-The published browser SDK `@awaazlabs-uva/voice@1.1.0` supports the baseline integration. The independent `client-integration-test/` folder includes an **unpublished** `1.1.1-humanization.0` package snapshot with the current playback-readiness handshake and telemetry. Copy its whole folder, including `packages/`, and install using its lockfiles. Dashboard Test Studio builds against the current repository SDK.
+The independent frontend and dashboard Test Studio install published `@awaazlabs-uva/voice@1.1.1` from npm. This release includes the playback-readiness handshake and telemetry. Historical snapshot archives are retained for comparison; current installation uses the registry versions pinned in the lockfiles.
 
 A GitHub push does not update npm, start a worker, apply migrations, or activate candidate policies. The browser never chooses internal humanization versions in the mint body.
 

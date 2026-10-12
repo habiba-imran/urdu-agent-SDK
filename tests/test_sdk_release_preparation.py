@@ -242,10 +242,14 @@ def test_trusted_publish_path_is_token_free_and_legacy_path_preserved():
     assert "--dry-run" in dry["run"]
 
 
-def test_dashboard_local_sdk_lock_matches_prepared_voice_metadata():
+def test_dashboard_uses_published_voice_package():
     source = json.loads((ROOT / "sdk/package.json").read_text())
     dashboard = json.loads((ROOT / "dashboard/package-lock.json").read_text())
-    linked = dashboard["packages"]["../sdk"]
-    assert linked["version"] == source["version"]
-    assert linked["license"] == source["license"] == "MIT"
-    assert dashboard["packages"]["node_modules/@awaazlabs-uva/voice"]["link"] is True
+    manifest = json.loads((ROOT / "dashboard/package.json").read_text())
+    locked = dashboard["packages"]["node_modules/@awaazlabs-uva/voice"]
+    assert manifest["dependencies"][source["name"]] == source["version"] == "1.1.1"
+    assert locked["version"] == source["version"]
+    assert locked["license"] == source["license"] == "MIT"
+    assert locked["resolved"].startswith("https://registry.npmjs.org/@awaazlabs-uva/voice/-/")
+    assert locked["integrity"]
+    assert not locked.get("link")

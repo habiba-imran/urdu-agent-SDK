@@ -6,7 +6,7 @@ export const meta = {
 };
 
 export const markdown = `
-> Voice 1.1.1 is prepared, not yet published. Until release, npm users should keep Voice 1.1.0; the independent test snapshot remains available.
+> Voice 1.1.1 is published on npm with an MIT license.
 
 ## Install
 

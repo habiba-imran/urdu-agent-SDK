@@ -584,7 +584,7 @@ unlockAudioBtn.addEventListener('click', async () => {
   }
 });
 
-state.packageLabel = `packaged test snapshot · @awaazlabs-uva/voice@${__UVA_VOICE_VERSION__}`;
+state.packageLabel = `npm package · @awaazlabs-uva/voice@${__UVA_VOICE_VERSION__}`;
 void bootstrapPipelineControls();
 mountTelephonyPanel({
   backendOrigin,

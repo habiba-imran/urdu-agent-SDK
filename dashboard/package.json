@@ -4,13 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm --prefix ../sdk install && npm --prefix ../sdk run build && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@awaazlabs-uva/voice": "file:../sdk",
+    "@awaazlabs-uva/voice": "1.1.1",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
     "@supabase/supabase-js": "^2.117.2",

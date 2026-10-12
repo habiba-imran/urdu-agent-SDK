@@ -1,6 +1,6 @@
 # Client Quickstart
 
-> Voice `1.1.1` below is the prepared release target. Until it is published, keep the existing `1.1.0` installation.
+> Voice `1.1.1` is published on npm with an MIT license.
 
 > Backend SDK installation commands use the published `0.1.1` releases (2026-10-12).
 

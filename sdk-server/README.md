@@ -1,6 +1,6 @@
 # @awaazlabs-uva/agents
 
-> Voice 1.1.1 is a prepared release target, not yet available on npm; keep Voice 1.1.0 until publication.
+> Voice 1.1.1 is published on npm with an MIT license.
 
 **Server-side only. Never import this package in a browser bundle — it holds your tenant HMAC secret.**
 
