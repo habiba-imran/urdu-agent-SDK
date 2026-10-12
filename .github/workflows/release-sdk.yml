@@ -137,6 +137,30 @@ jobs:
             echo "::warning::$msg"
           fi
 
+      - name: Check license metadata and packaged terms
+        if: >-
+          steps.target.outputs.publish == 'true' &&
+          (steps.target.outputs.name == '@awaazlabs-uva/agents' ||
+           steps.target.outputs.name == '@awaazlabs-uva/telephony')
+        env:
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const dir = process.env.DIR;
+          const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+          if (typeof pkg.license !== 'string' || !pkg.license.trim()) {
+            console.error('::error::Set owner-approved package license metadata before publishing.');
+            process.exit(1);
+          }
+          const terms = path.join(dir, 'LICENSE');
+          if (!fs.existsSync(terms) || !fs.readFileSync(terms, 'utf8').trim()) {
+            console.error('::error::Include the approved LICENSE in the package directory before publishing.');
+            process.exit(1);
+          }
+          NODE
+
       - name: Check npm credentials
         if: steps.target.outputs.publish == 'true'
         env:

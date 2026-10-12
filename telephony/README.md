@@ -2,7 +2,7 @@
 
 Backend-only Node SDK for HMAC-signed AwaazLabs UVA machine telephony API calls.
 
-Published as `@awaazlabs-uva/telephony@0.1.0`. Pin this version. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
+Release target: `@awaazlabs-uva/telephony@0.1.1`. Verify availability on npm before installing; preparing this source does not publish it. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
 
 This package stores the tenant HMAC secret only on the backend client for request signing. Telnyx API keys are transient method parameters for connect/rotate — never cached in SDK state.
 
@@ -11,16 +11,16 @@ This package stores the tenant HMAC secret only on the backend client for reques
 | Package | Runtime | Purpose | Secret boundary |
 |---|---|---|---|
 | `@awaazlabs-uva/voice@1.1.0` | Browser | WebRTC sessions | Zero secrets |
-| `@awaazlabs-uva/agents@0.1.0` | Node backend | Create / update agents | Tenant HMAC |
-| `@awaazlabs-uva/telephony@0.1.0` | Node backend | Telnyx, numbers, routing, PSTN | Tenant HMAC + transient Telnyx keys |
+| `@awaazlabs-uva/agents@0.1.1` | Node backend | Create / update agents | Tenant HMAC |
+| `@awaazlabs-uva/telephony@0.1.1` | Node backend | Telnyx, numbers, routing, PSTN | Tenant HMAC + transient Telnyx keys |
 
-## Install
+## Install (after the 0.1.1 release is published)
 
 ```bash
-npm install @awaazlabs-uva/telephony@0.1.0
+npm install @awaazlabs-uva/telephony@0.1.1
 ```
 
-Releases publish from the canonical repo with npm provenance on a `telephony-v<version>` tag (see `.github/workflows/release-sdk.yml`).
+Releases publish from the canonical repository on a `telephony-v<version>` tag (see `.github/workflows/release-sdk.yml`). The current private-repository workflow does not attach npm provenance.
 
 ## Backend environment
 
@@ -149,7 +149,20 @@ After deploying the portal's versioned signing support, set
 `signatureVersion: 'raw-body-v1'` in this backend client's constructor. The client
 hashes exactly the UTF-8 string it sends; empty GET signs `{}`. The default remains
 `canonical-json-v1` for compatibility with older portals. This option is available
-in the updated source/build; the currently published `0.1.0` package has not been
-republished by this change. See
-[the machine API contract](../docs/MACHINE_AGENT_API_CONTRACT.md#signing-versions-and-rollout)
+starting with `0.1.1`; the original `0.1.0` package does not include it.
+Deploy the compatible portal before opting in, and verify npm release availability. See
+[the machine API contract](https://github.com/Finova-Solutions/urdu-voice-agent-SDK/blob/main/docs/MACHINE_AGENT_API_CONTRACT.md#signing-versions-and-rollout)
 for the server-first rollout and legacy numeric/Unicode limitations.
+
+
+## Release prerequisites (maintainers)
+
+Before pushing `telephony-v0.1.1` release tag from the canonical organization
+repository, add the owner-approved `license` metadata and a nonempty `LICENSE`
+file in this package directory. The tag release workflow blocks publication while
+those are missing. No licensing terms are selected by this source preparation.
+
+Configure the canonical repository's `NPM_TOKEN` secret with publishing access.
+The release workflow runs build, typecheck and tests before publishing. Manual
+workflow dispatch and local `npm publish --dry-run` verify packaging without
+publishing. Keep the portal-first deployment and explicit signing-version opt-in.

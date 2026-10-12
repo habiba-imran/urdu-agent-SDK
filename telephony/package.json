@@ -1,6 +1,6 @@
 {
   "name": "@awaazlabs-uva/telephony",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Backend-only AwaazLabs UVA telephony SDK for signed machine telephony API calls.",
   "repository": {
     "type": "git",

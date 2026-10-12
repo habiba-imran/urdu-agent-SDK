@@ -6,6 +6,8 @@ export const meta = {
 };
 
 export const markdown = `
+> Backend SDK examples target the prepared 0.1.1 releases. Confirm npm availability with your platform operator before installing them.
+
 ## What this SDK does
 
 AwaazLabs UVA lets you add a real-time voice agent to **your** app. Callers talk over WebRTC (browser) or the phone network (Telnyx). Your product stays in control of UX, auth, and business logic — we run the voice runtime.
@@ -76,11 +78,11 @@ The browser talks only to **your** session endpoints. Your backend signs request
 
 ## Version note
 
-Published packages used in this guide:
+Package versions targeted by this guide (confirm release availability):
 
 - \`@awaazlabs-uva/voice@1.1.0\`
-- \`@awaazlabs-uva/agents@0.1.0\`
-- \`@awaazlabs-uva/telephony@0.1.0\`
+- \`@awaazlabs-uva/agents@0.1.1\`
+- \`@awaazlabs-uva/telephony@0.1.1\`
 
 Pin versions in production. Breaking changes are called out in package changelogs and release notes.
 `;

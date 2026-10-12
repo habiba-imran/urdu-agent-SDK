@@ -160,9 +160,9 @@ export class AwaazLabsUvaAgentsError extends Error {
 export { AwaazLabsUvaAgentsError as UvaAgentsError };
 
 /**
- * Canonical JSON: recursively sort object keys, no whitespace. Must match the server's
- * `json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)` byte-for-byte,
- * including leaving non-ASCII (Urdu-script) text unescaped - see machine_auth.py::payload_hash.
+ * Stable JavaScript wire JSON: sort keys and keep non-ASCII text as UTF-8.
+ * Legacy Python canonicalization can differ for number formatting and Unicode key order;
+ * raw-body-v1 verifies these exact transmitted bytes instead of reserializing them.
  */
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') {

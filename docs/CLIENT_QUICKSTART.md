@@ -1,5 +1,8 @@
 # Client Quickstart
 
+> Backend SDK installation commands target the prepared `0.1.1` releases.
+> Confirm those releases are available on npm before installing them.
+
 > **Superseded (P2-C1).** This file previously pointed at deleted demo-app and
 > examples trees. Do not follow those paths.
 
@@ -12,8 +15,8 @@
    `client-deliverables-final/01-INTEGRATION_GUIDE.md`.
 3. **Public SDKs** (pin these — match `package.json` / `/docs`):
    - `@awaazlabs-uva/voice@1.1.0` (browser)
-   - `@awaazlabs-uva/agents@0.1.0` (backend)
-   - `@awaazlabs-uva/telephony@0.1.0` (backend)
+   - `@awaazlabs-uva/agents@0.1.1` (backend)
+   - `@awaazlabs-uva/telephony@0.1.1` (backend)
 
 ## Architecture in one sentence
 

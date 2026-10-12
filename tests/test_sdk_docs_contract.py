@@ -20,7 +20,8 @@ PACKAGES = {
 
 DOC_GLOBS = [
     ROOT / "dashboard" / "src" / "content" / "docs" / "pages",
-    ROOT / "docs",
+    # Historical audits/call logs describe earlier builds; they are not install guides.
+    ROOT / "docs" / "CLIENT_QUICKSTART.md",
 ]
 
 PINNED = re.compile(

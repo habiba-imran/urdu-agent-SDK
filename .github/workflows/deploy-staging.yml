@@ -53,15 +53,10 @@ jobs:
           fi
           curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
 
-      - name: Deploy Staging Voice Worker
-        env:
-          HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_WORKER_STAGING }}
-        run: |
-          if [ -z "$HOOK_URL" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK_WORKER_STAGING is not set - nothing was deployed"
-            exit 1
-          fi
-          curl -sS --fail-with-body -X POST "$HOOK_URL" >/dev/null
+      # The staging worker runs locally until the CTO approves hosted placement.
+      # Its availability/restart is managed by the local operator, not Render hooks.
+      - name: Record local staging worker placement
+        run: echo "Voice worker remains local; no Render worker deployment is requested."
 
       - name: Deploy Staging Admin Portal
         env:

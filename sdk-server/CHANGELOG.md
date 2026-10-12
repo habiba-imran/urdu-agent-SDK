@@ -9,6 +9,23 @@ Releases are cut by pushing an `agents-v<version>` tag that matches `version` in
 
 ## [Unreleased]
 
+## [0.1.1] - Unreleased
+
+### Added
+- Optional `signatureVersion: 'raw-body-v1'` for exact UTF-8 request-body signing
+  after the portal's versioned verifier has been deployed. The default remains
+  `canonical-json-v1` for compatibility with older portals.
+- Wire-body contract tests for exponent-form floats and Unicode, and protection
+  against overriding the signature-version header through extra headers.
+
+### Fixed
+- Send the same canonical JSON string that was signed, rather than serializing
+  the request a second time. Explicit nulls retain their place in the signed body.
+
+### Release status
+- Prepared for release; license approval and npm publishing access remain required.
+- No provider, model, voice or browser SDK changes.
+
 ## [0.1.0]
 
 First public npm release of `@awaazlabs-uva/agents`.

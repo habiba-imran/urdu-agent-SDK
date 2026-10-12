@@ -6,13 +6,15 @@ export const meta = {
 };
 
 export const markdown = `
+> Backend SDK examples target the prepared 0.1.1 releases. Confirm npm availability with your platform operator before installing them.
+
 ## Packages
 
 | Package | Runtime | Auth |
 |---------|---------|------|
 | \`@awaazlabs-uva/voice@1.1.0\` | Browser | Publishable key + your session endpoint |
-| \`@awaazlabs-uva/agents@0.1.0\` | Backend | HMAC (\`tenantId\` + \`tenantSecret\`) |
-| \`@awaazlabs-uva/telephony@0.1.0\` | Backend | HMAC (\`tenantId\` + \`tenantSecret\`) |
+| \`@awaazlabs-uva/agents@0.1.1\` | Backend | HMAC (\`tenantId\` + \`tenantSecret\`) |
+| \`@awaazlabs-uva/telephony@0.1.1\` | Backend | HMAC (\`tenantId\` + \`tenantSecret\`) |
 
 Pin versions in lockfiles.
 

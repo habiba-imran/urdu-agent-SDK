@@ -6,6 +6,8 @@ export const meta = {
 };
 
 export const markdown = `
+> Backend SDK examples target the prepared 0.1.1 releases. Confirm npm availability with your platform operator before installing them.
+
 ## 1. Get your keys
 
 Open **[API Keys](/credentials)** and copy:
@@ -22,7 +24,7 @@ Create an agent with \`@awaazlabs-uva/agents\` on your backend, then open **[Age
 :::tabs
 === Backend
 \`\`\`bash title=terminal
-npm install @awaazlabs-uva/agents@0.1.0 @awaazlabs-uva/telephony@0.1.0
+npm install @awaazlabs-uva/agents@0.1.1 @awaazlabs-uva/telephony@0.1.1
 \`\`\`
 === Frontend
 \`\`\`bash title=terminal
