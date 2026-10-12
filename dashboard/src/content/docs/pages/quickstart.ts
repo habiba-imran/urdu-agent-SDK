@@ -6,6 +6,8 @@ export const meta = {
 };
 
 export const markdown = `
+> Voice 1.1.1 is prepared, not yet published. Until release, npm users should keep Voice 1.1.0; the independent test snapshot remains available.
+
 > Backend SDK examples use the published agents and telephony 0.1.1 releases (2026-10-12).
 
 ## 1. Get your keys
@@ -28,7 +30,7 @@ npm install @awaazlabs-uva/agents@0.1.1 @awaazlabs-uva/telephony@0.1.1
 \`\`\`
 === Frontend
 \`\`\`bash title=terminal
-npm install @awaazlabs-uva/voice@1.1.0
+npm install @awaazlabs-uva/voice@1.1.1
 \`\`\`
 :::
 

@@ -6,10 +6,12 @@ export const meta = {
 };
 
 export const markdown = `
+> Voice 1.1.1 is prepared, not yet published. Until release, npm users should keep Voice 1.1.0; the independent test snapshot remains available.
+
 ## Install
 
 \`\`\`bash title=terminal
-npm install @awaazlabs-uva/voice@1.1.0
+npm install @awaazlabs-uva/voice@1.1.1
 \`\`\`
 
 Browser / bundler only. Safe to import at module scope in Next.js — DOM access happens on connect.

@@ -200,7 +200,7 @@ jobs:
             -e GIT_CONFIG_VALUE_0=/repo \
             -v "$PWD:/repo:ro" \
             ghcr.io/gitleaks/gitleaks:v8.24.3 \
-            git /repo --redact --no-banner --log-opts="--all"
+            git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /repo/.gitleaksignore --redact --no-banner --log-opts="--all"
 
       - name: Check the published browser bundle holds no secrets
         run: |

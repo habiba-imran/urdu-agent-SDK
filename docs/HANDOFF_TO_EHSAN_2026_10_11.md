@@ -256,3 +256,36 @@ deploy services, enable the scheduler, invite users, change quotas/recording
 policy, restart a worker or change repository visibility. Earlier implementation
 test results remain recorded above; this documentation update adds no live-call,
 listening or runtime-capacity evidence.
+
+
+## Approved decisions and engineering update (2026-10-12)
+
+Habiba explicitly approves metadata-only ordinary credential responses (no HMAC
+secret) and four decimal places for API minutes. MIT remains the selected SDK
+license, subject to any required CTO approval; no blanket license grant is made
+for the platform. Agents and telephony 0.1.1 are published with MIT terms. Voice
+1.1.1 is being prepared with the existing readiness/telemetry changes and MIT.
+
+Staging skips the local worker deployment step and retains the three real hosted
+service hooks. The worker remains local until CTO confirmation. The offline CI
+assertion canary, worker outcome tests and SDK documentation version tests have
+been corrected; database integration passed on the previous source revision.
+
+Secret classification is complete for the 135 scanner findings: 129 source-verified
+false positives plus six historical test findings. Habiba explicitly confirmed
+that the remaining HMAC example (three occurrences) and Next.js build keys (three
+findings) were dummy/test values. Exceptions use exact historical fingerprints
+only; no genuine production credential has been identified by this scan.
+The previous whole-file test_mint.py exclusion is removed; its one additional
+fixed LiveKit test fixture has an exact historical exception instead. No
+credentials were tested against a live service or rotated.
+No Git history rewrite is authorized. The prompt dump default moves to ignored
+local tmp/debug; the old dump is untracked prospectively, with existing history
+preserved. Production credential rotation and any history purge require affected
+credential confirmation and coordination with Habiba.
+
+Ehsan's latest branch contains audit updates, no runtime fixes to merge. His M3
+load/lifecycle and M6 SSRF/environment/recording-policy work remains separate;
+do not duplicate the release/CI corrections described above. The 20-call target
+still requires isolated live capacity measurement, not a claim from unit tests.
+No return file is requested from Ehsan.

@@ -101,3 +101,28 @@ def test_format_transcript_enabled_truncates(
     snippet, chars = format_transcript_for_log("ABCDEFGHIJKLMNOP")
     assert snippet == "ABCDEFGHIJ"
     assert chars == 16
+
+
+def test_default_prompt_dump_is_ignored_and_local(monkeypatch, tmp_path):
+    import subprocess
+    from worker import prompt_dump
+
+    expected = prompt_dump._ROOT / "tmp" / "debug" / "last_session_prompt.txt"
+    assert prompt_dump._DEFAULT_DUMP == expected
+    for relative in ("tmp/debug/last_session_prompt.txt", "docs/last_session_prompt.txt"):
+        result = subprocess.run(
+            ["git", "check-ignore", "--quiet", relative],
+            cwd=prompt_dump._ROOT, capture_output=True,
+        )
+        assert result.returncode == 0
+    monkeypatch.setenv("UVA_DUMP_PROMPTS", "1")
+    monkeypatch.delenv("UVA_DUMP_PROMPTS_PATH", raising=False)
+    target = tmp_path / "debug" / "last_session_prompt.txt"
+    monkeypatch.setattr(prompt_dump, "_DEFAULT_DUMP", target)
+    actual = dump_session_prompt(
+        agent_id="fixture-agent", llm_provider="fixture", llm_model="fixture",
+        system_instructions="fixture system", persona_raw="fixture persona",
+        persona_effective="fixture effective", tools_registered=[], compacted=False,
+    )
+    assert actual == target
+    assert target.exists()

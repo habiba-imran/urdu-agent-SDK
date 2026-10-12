@@ -6,9 +6,11 @@ export const meta = {
 };
 
 export const markdown = `
+> Voice 1.1.1 is prepared, not yet published. Until release, npm users should keep Voice 1.1.0; the independent test snapshot remains available.
+
 ## Which client build to test
 
-The published browser SDK \`@awaazlabs-uva/voice@1.1.0\` supports the baseline integration. The independent \`client-integration-test/\` folder includes an **unpublished** \`1.1.1-humanization.0\` package snapshot with the current playback-readiness handshake and telemetry. Copy its whole folder, including \`packages/\`, and install using its lockfiles. Dashboard Test Studio builds against the current repository SDK.
+The prepared browser SDK \`@awaazlabs-uva/voice@1.1.1\` includes the current playback-readiness handshake and telemetry; it is not yet published. The independent \`client-integration-test/\` folder includes an **unpublished** \`1.1.1-humanization.0\` package snapshot with the current playback-readiness handshake and telemetry. Copy its whole folder, including \`packages/\`, and install using its lockfiles. Dashboard Test Studio builds against the current repository SDK.
 
 A GitHub push does not update npm, start a worker, apply migrations, or activate candidate policies. The browser never chooses internal humanization versions in the mint body.
 

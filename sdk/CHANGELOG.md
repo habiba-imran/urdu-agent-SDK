@@ -6,7 +6,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 Releases are cut by pushing a `voice-v<version>` tag that matches `version` in `package.json`
 (see `.github/workflows/release-sdk.yml`). Add an entry here in the same PR that bumps the version.
 
-## [Unreleased]
+## [1.1.1] - 2026-10-12
+
+Prepared release; not yet published to npm.
 
 ### Added
 - MIT license metadata and complete terms for the client SDK package.

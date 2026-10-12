@@ -1,5 +1,7 @@
 # @awaazlabs-uva/telephony
 
+> Voice 1.1.1 is a prepared release target, not yet available on npm; keep Voice 1.1.0 until publication.
+
 Backend-only Node SDK for HMAC-signed AwaazLabs UVA machine telephony API calls.
 
 Published package: `@awaazlabs-uva/telephony@0.1.1`. Published to npm on 2026-10-12 using Trusted Publishing, with an MIT license. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
@@ -10,7 +12,7 @@ This package stores the tenant HMAC secret only on the backend client for reques
 
 | Package | Runtime | Purpose | Secret boundary |
 |---|---|---|---|
-| `@awaazlabs-uva/voice@1.1.0` | Browser | WebRTC sessions | Zero secrets |
+| `@awaazlabs-uva/voice@1.1.1` | Browser | WebRTC sessions | Zero secrets |
 | `@awaazlabs-uva/agents@0.1.1` | Node backend | Create / update agents | Tenant HMAC |
 | `@awaazlabs-uva/telephony@0.1.1` | Node backend | Telnyx, numbers, routing, PSTN | Tenant HMAC + transient Telnyx keys |
 

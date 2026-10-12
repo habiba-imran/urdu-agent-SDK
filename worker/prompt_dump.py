@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_DUMP = _ROOT / "docs" / "last_session_prompt.txt"
+_DEFAULT_DUMP = _ROOT / "tmp" / "debug" / "last_session_prompt.txt"
 
 _TRUTH_ON = frozenset({"1", "true", "yes", "on"})
 _TRUTH_OFF = frozenset({"0", "false", "no", "off", ""})
@@ -40,7 +40,7 @@ def dump_session_prompt(
     tools_registered: list[str],
     compacted: bool,
 ) -> Path | None:
-    """Write ``docs/last_session_prompt.txt`` only when ``UVA_DUMP_PROMPTS`` is on.
+    """Write the ignored local ``tmp/debug/last_session_prompt.txt`` only when ``UVA_DUMP_PROMPTS`` is on.
 
     Only SYSTEM + PERSONA (effective) are sent to the model. Raw DB persona is
     appended for diffing compaction — it is never part of the LLM request.

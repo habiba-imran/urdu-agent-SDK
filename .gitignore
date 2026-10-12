@@ -29,3 +29,6 @@ self-serve-demo-UI/
 # repo root and inflate every clone and image build; they are outputs, not sources.
 graphify-out/
 scratch/
+
+# Legacy debug prompt dumps must stay local; default dumps now live under /tmp/.
+/docs/last_session_prompt.txt

@@ -1,0 +1,72 @@
+# Reviewed historical false positives only: exact commit/file/rule/line fingerprints.
+# No whole-file, credential-pattern, or current/future secret exemptions.
+# HMAC examples and historical test-build keys are dummy values confirmed by Habiba on 2026-10-12.
+
+# Python SDK expression, no credential literal
+320258eff8e0fce71252fe84da9e6ee9f1652a30:tenant_portal_api/livekit_sip.py:generic-api-key:266
+8cde7f0e7c37df9cad3517f9b88a122c5af810c7:tenant_portal_api/livekit_sip.py:generic-api-key:127
+8cde7f0e7c37df9cad3517f9b88a122c5af810c7:tenant_portal_api/livekit_sip.py:generic-api-key:219
+8cde7f0e7c37df9cad3517f9b88a122c5af810c7:tenant_portal_api/livekit_sip.py:generic-api-key:311
+8cde7f0e7c37df9cad3517f9b88a122c5af810c7:tenant_portal_api/livekit_sip.py:generic-api-key:359
+8cde7f0e7c37df9cad3517f9b88a122c5af810c7:tenant_portal_api/livekit_sip.py:generic-api-key:58
+
+# SHA-256 file/content hash
+0b8e64118605158860a035d6ae3ef10b4c2020fd:graphify-out/cache/stat-index.json:generic-api-key:1
+0c1fb3534256522eef3e4259888579f7e8832665:graphify-out/cache/stat-index.json:generic-api-key:1
+68e1643937f49a3f3fa99a919e498ad1ed157601:graphify-out/cache/stat-index.json:generic-api-key:1
+a3515768400c48be7a60e70dcd0df0a55ebd4993:client-integration-test/packages/voice-manifest.json:generic-api-key:18
+a3515768400c48be7a60e70dcd0df0a55ebd4993:client-integration-test/packages/voice-manifest.json:generic-api-key:19
+a60fdb2568ac6828befc75e0b6efe1260b664b77:graphify-out/cache/stat-index.json:generic-api-key:1
+b8e104ad943a7cec20dc8ed7ecb58e3f8026913e:graphify-out/cache/stat-index.json:generic-api-key:1
+bf1205329f485a23367052963d82b114529fcdcc:graphify-out/cache/stat-index.json:generic-api-key:1
+
+# abbreviated JWT placeholder
+371a6a9e3752bf3f50e27b32c22cc150580b161c:docs/api-reference.md:generic-api-key:46
+371a6a9e3752bf3f50e27b32c22cc150580b161c:docs/api-reference.md:generic-api-key:87
+371a6a9e3752bf3f50e27b32c22cc150580b161c:docs/api-reference.md:generic-api-key:94
+6d375dad8e5be3a70d4410329ce617059911c2e0:docs/HOST_BACKEND_CONTRACT.md:generic-api-key:53
+
+# empty SIP secret matched next destination-glob configuration
+62b2eb3f5aed2bb7219230a56f5b09a6fb5485ac:client-deliverables-final/01-INTEGRATION_GUIDE.md:generic-api-key:59
+62b2eb3f5aed2bb7219230a56f5b09a6fb5485ac:client-deliverables-final/05-CREDENTIALS_TEMPLATE.md:generic-api-key:55
+62b2eb3f5aed2bb7219230a56f5b09a6fb5485ac:client-integration-test/backend/.env.example:generic-api-key:15
+
+# explicitly named test API-key fixture
+239a191d3fc3931ee836570c6966b33bdef243c4:tests/test_telephony_purchase_flow.py:generic-api-key:13
+2fb14a5ebca557fa8335e7b52a7b484b8521f3af:tests/test_phase1_critical_remediation.py:generic-api-key:15
+
+# intentionally public publishable UUID
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/CLIENT_HANDOFF_GUIDE.md:generic-api-key:197
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/CLIENT_HANDOFF_GUIDE.md:generic-api-key:255
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/NGROK_LOCAL_TESTING_RUNBOOK.md:generic-api-key:161
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/NGROK_LOCAL_TESTING_RUNBOOK.md:generic-api-key:232
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/NGROK_LOCAL_TESTING_RUNBOOK.md:generic-api-key:274
+
+# literal encryption round-trip test fixture
+f9db8476aecdd47286ab43672194d01dafbb7c15:tests/test_wave2_credential_crypto.py:generic-api-key:37
+
+# offline boundary-test credential fallback
+3ef2faf53e2b285929600c010c153c0878b6e2f5:tests/test_admin_boundary_live.py:generic-api-key:153
+a7c5ce2636c02974d79c6f22f7f625394981c3f3:scripts/verify_admin_boundary_live.py:generic-api-key:177
+bf1c9ee87783913d05dcf324a0d3457d750e4fc8:scripts/verify_admin_boundary_live.py:generic-api-key:237
+
+# public UUID example
+371a6a9e3752bf3f50e27b32c22cc150580b161c:docs/api-reference.md:generic-api-key:116
+
+# request deduplication identifier
+2fb14a5ebca557fa8335e7b52a7b484b8521f3af:tests/test_phase1_critical_remediation.py:generic-api-key:375
+2fb14a5ebca557fa8335e7b52a7b484b8521f3af:tests/test_phase1_critical_remediation.py:generic-api-key:384
+60516c3125f45e13a07190eef30002ad26f9104a:tests/test_telephony_scaffold.py:generic-api-key:93
+60516c3125f45e13a07190eef30002ad26f9104a:tests/test_telephony_scaffold.py:generic-api-key:96
+ea753b607f95a55a5fd430ad920ab1924bd60ee9:docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md:generic-api-key:467
+f13f5c2fe92580c1ff8820f7fae7bde879d7d885:docs/TELEPHONY_API_AND_SCHEMA_CONTRACT.md:generic-api-key:467
+
+# Owner-confirmed dummy HMAC examples and retired test-build keys (2026-10-12).
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/CLIENT_HANDOFF_GUIDE.md:generic-api-key:196
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/NGROK_LOCAL_TESTING_RUNBOOK.md:generic-api-key:160
+5dcd440b246f8f744ab94ca95da4f57335ae47e5:docs/NGROK_LOCAL_TESTING_RUNBOOK.md:generic-api-key:231
+db597cff9c2d8584e6144b9765f7589d88739889:dashboard/.next/prerender-manifest.json:generic-api-key:1
+db597cff9c2d8584e6144b9765f7589d88739889:dashboard/.next/server/server-reference-manifest.json:generic-api-key:1
+
+# Fixed LiveKit signing fixture in the offline mint unit test; no whole-file exclusion.
+3c95108c7d2362914865a171ff2bc73024165ff0:tests/test_mint.py:generic-api-key:29

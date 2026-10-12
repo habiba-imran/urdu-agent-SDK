@@ -312,3 +312,28 @@ Files changed in this implementation (earlier unrelated changes are preserved):
   `tests/test_humanization_runtime_phase2.py`, prior untracked `tests/test_live_call_regressions.py`.
   Existing lifecycle mocks now reflect generation reuse and canonical transcription; Deepgram mocks
   patch both the plugin namespace and module registry to avoid collection-order contamination.
+
+
+## 2026-10-12 - Voice SDK release preparation and reviewed secret gate
+
+Voice SDK 1.1.1 is prepared with MIT metadata/terms and the existing browser
+playback-readiness, provider-error and humanization telemetry changes. Agents
+and telephony 0.1.1 are already published. Voice publication is not attempted;
+GitHub release verification is a dry run only. Worker/provider defaults,
+models and candidate activation settings are unchanged.
+
+Habiba approves metadata-only ordinary credential responses and four decimal
+places for API minutes. MIT remains the SDK license subject to required CTO
+approval. The original 135 historical secret-scan findings are classified: 129
+source-verified non-secrets and six owner-confirmed dummy/test findings. The
+whole-file mint test exclusion is removed and its additional fixed unit-test
+credential gets an exact historical exception. No genuine production credential
+is identified by these findings. New commits remain scanned with default rules.
+No history rewrite or credential rotation is performed or authorized here.
+
+Opt-in prompt dumps default to ignored tmp/debug. The old docs prompt dump is
+untracked prospectively, preserving the local artifact and all existing history.
+Offline focused verification: 41 Python tests and 33 Voice SDK tests pass; SDK
+build/typecheck and MIT archive inspection pass. Offline CI suite: 795 passed,
+35 skipped. No live audio, paid provider, 20-call capacity or caller-heard latency
+evidence is added. The worker stays local; Ehsan's M3/M6 work remains separate.

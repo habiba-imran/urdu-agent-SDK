@@ -1,16 +1,16 @@
 # @awaazlabs-uva/voice
 
-> Backend SDK installation commands target the prepared `0.1.1` releases.
-> Confirm those releases are available on npm before installing them.
+> Voice `1.1.1` is prepared and MIT licensed; it is not yet published.
+> Agents and telephony `0.1.1` are available on npm.
 
 Browser SDK for AwaazLabs UVA voice sessions. **Zero secrets** — talks only to **your** host session endpoint, then LiveKit.
 
-Published as `@awaazlabs-uva/voice@1.1.0`. Pin this version in lockfiles. In-console guide: tenant dashboard → `/docs` (canonical for clients).
+Release target: `@awaazlabs-uva/voice@1.1.1`. Pin this version in lockfiles. In-console guide: tenant dashboard → `/docs` (canonical for clients).
 
-## Install
+## Install (after 1.1.1 is published)
 
 ```bash
-npm install @awaazlabs-uva/voice@1.1.0
+npm install @awaazlabs-uva/voice@1.1.1
 ```
 
 Companion packages (backend only — never in a browser bundle):

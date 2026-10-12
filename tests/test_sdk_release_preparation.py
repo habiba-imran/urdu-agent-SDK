@@ -115,9 +115,11 @@ def test_render_hook_error_still_fails_workflow(tmp_path):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("folder", ["sdk-server", "telephony"])
+@pytest.mark.parametrize(
+    "folder,version", [("sdk", "1.1.1"), ("sdk-server", "0.1.1"), ("telephony", "0.1.1")]
+)
 def test_release_target_matches_lockfile_and_changelog(
-    folder,
+    folder, version,
 ):
     package = ROOT / folder
     manifest = json.loads((package / "package.json").read_text())
@@ -126,9 +128,9 @@ def test_release_target_matches_lockfile_and_changelog(
         manifest["version"]
         == lock["version"]
         == lock["packages"][""]["version"]
-        == "0.1.1"
+        == version
     )
-    assert "## [0.1.1]" in (package / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [{version}]" in (package / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -238,3 +240,12 @@ def test_trusted_publish_path_is_token_free_and_legacy_path_preserved():
     dry = next(s for s in steps if s["name"] == "Dry-run publish")
     assert "publish != 'true'" in dry["if"]
     assert "--dry-run" in dry["run"]
+
+
+def test_dashboard_local_sdk_lock_matches_prepared_voice_metadata():
+    source = json.loads((ROOT / "sdk/package.json").read_text())
+    dashboard = json.loads((ROOT / "dashboard/package-lock.json").read_text())
+    linked = dashboard["packages"]["../sdk"]
+    assert linked["version"] == source["version"]
+    assert linked["license"] == source["license"] == "MIT"
+    assert dashboard["packages"]["node_modules/@awaazlabs-uva/voice"]["link"] is True

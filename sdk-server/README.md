@@ -1,5 +1,7 @@
 # @awaazlabs-uva/agents
 
+> Voice 1.1.1 is a prepared release target, not yet available on npm; keep Voice 1.1.0 until publication.
+
 **Server-side only. Never import this package in a browser bundle — it holds your tenant HMAC secret.**
 
 Published package: `@awaazlabs-uva/agents@0.1.1`. Published to npm on 2026-10-12 using Trusted Publishing, with an MIT license. Client integration guide: tenant dashboard → `/docs` (Backend setup, Providers, Security).
@@ -8,7 +10,7 @@ Programmatic agent management for an **existing** AwaazLabs UVA tenant (`tenantI
 
 Companion packages:
 
-- Browser sessions: [`@awaazlabs-uva/voice@1.1.0`](https://www.npmjs.com/package/@awaazlabs-uva/voice)
+- Browser sessions: [`@awaazlabs-uva/voice@1.1.1`](https://www.npmjs.com/package/@awaazlabs-uva/voice)
 - Telnyx / PSTN: [`@awaazlabs-uva/telephony@0.1.1`](https://www.npmjs.com/package/@awaazlabs-uva/telephony)
 
 ## Install

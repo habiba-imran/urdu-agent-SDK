@@ -1,5 +1,7 @@
 # Client Quickstart
 
+> Voice `1.1.1` below is the prepared release target. Until it is published, keep the existing `1.1.0` installation.
+
 > Backend SDK installation commands use the published `0.1.1` releases (2026-10-12).
 
 > **Superseded (P2-C1).** This file previously pointed at deleted demo-app and
@@ -13,7 +15,7 @@
    `client-deliverables-final/host-backend-starter/` and
    `client-deliverables-final/01-INTEGRATION_GUIDE.md`.
 3. **Public SDKs** (pin these — match `package.json` / `/docs`):
-   - `@awaazlabs-uva/voice@1.1.0` (browser)
+   - `@awaazlabs-uva/voice@1.1.1` (browser)
    - `@awaazlabs-uva/agents@0.1.1` (backend)
    - `@awaazlabs-uva/telephony@0.1.1` (backend)
 

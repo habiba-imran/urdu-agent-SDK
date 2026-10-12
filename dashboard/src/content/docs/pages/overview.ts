@@ -6,6 +6,8 @@ export const meta = {
 };
 
 export const markdown = `
+> Voice 1.1.1 is prepared, not yet published. Until release, npm users should keep Voice 1.1.0; the independent test snapshot remains available.
+
 > Backend SDK examples use the published agents and telephony 0.1.1 releases (2026-10-12).
 
 ## What this SDK does
@@ -80,7 +82,7 @@ The browser talks only to **your** session endpoints. Your backend signs request
 
 Package versions targeted by this guide (confirm release availability):
 
-- \`@awaazlabs-uva/voice@1.1.0\`
+- \`@awaazlabs-uva/voice@1.1.1\`
 - \`@awaazlabs-uva/agents@0.1.1\`
 - \`@awaazlabs-uva/telephony@0.1.1\`
 

@@ -52,3 +52,7 @@ tests/test_ehsan_handoff.py
 tests/test_sdk_release_preparation.py
 
 tests/test_ci_release_blockers.py
+
+tests/test_fm24_prompt_transcript_logging.py
+
+tests/test_secret_scan_gate.py
