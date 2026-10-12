@@ -1,7 +1,6 @@
 # Client Quickstart
 
-> Backend SDK installation commands target the prepared `0.1.1` releases.
-> Confirm those releases are available on npm before installing them.
+> Backend SDK installation commands use the published `0.1.1` releases (2026-10-12).
 
 > **Superseded (P2-C1).** This file previously pointed at deleted demo-app and
 > examples trees. Do not follow those paths.

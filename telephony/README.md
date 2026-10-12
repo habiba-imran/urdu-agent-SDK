@@ -2,7 +2,7 @@
 
 Backend-only Node SDK for HMAC-signed AwaazLabs UVA machine telephony API calls.
 
-Release target: `@awaazlabs-uva/telephony@0.1.1`. Verify availability on npm before installing; preparing this source does not publish it. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
+Published package: `@awaazlabs-uva/telephony@0.1.1`. Published to npm on 2026-10-12 using Trusted Publishing, with an MIT license. Never import in a browser bundle. Client guide: dashboard → `/docs/telephony`.
 
 This package stores the tenant HMAC secret only on the backend client for request signing. Telnyx API keys are transient method parameters for connect/rotate — never cached in SDK state.
 
@@ -14,7 +14,7 @@ This package stores the tenant HMAC secret only on the backend client for reques
 | `@awaazlabs-uva/agents@0.1.1` | Node backend | Create / update agents | Tenant HMAC |
 | `@awaazlabs-uva/telephony@0.1.1` | Node backend | Telnyx, numbers, routing, PSTN | Tenant HMAC + transient Telnyx keys |
 
-## Install (after the 0.1.1 release is published)
+## Install
 
 ```bash
 npm install @awaazlabs-uva/telephony@0.1.1

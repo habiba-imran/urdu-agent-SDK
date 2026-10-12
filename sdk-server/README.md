@@ -2,7 +2,7 @@
 
 **Server-side only. Never import this package in a browser bundle — it holds your tenant HMAC secret.**
 
-Release target: `@awaazlabs-uva/agents@0.1.1`. Verify availability on npm before installing; preparing this source does not publish it. Client integration guide: tenant dashboard → `/docs` (Backend setup, Providers, Security).
+Published package: `@awaazlabs-uva/agents@0.1.1`. Published to npm on 2026-10-12 using Trusted Publishing, with an MIT license. Client integration guide: tenant dashboard → `/docs` (Backend setup, Providers, Security).
 
 Programmatic agent management for an **existing** AwaazLabs UVA tenant (`tenantId` + `tenantSecret`). Copy those from the dashboard **API Keys** page (owners), or ask your AwaazLabs contact.
 
@@ -11,7 +11,7 @@ Companion packages:
 - Browser sessions: [`@awaazlabs-uva/voice@1.1.0`](https://www.npmjs.com/package/@awaazlabs-uva/voice)
 - Telnyx / PSTN: [`@awaazlabs-uva/telephony@0.1.1`](https://www.npmjs.com/package/@awaazlabs-uva/telephony)
 
-## Install (after the 0.1.1 release is published)
+## Install
 
 ```bash
 npm install @awaazlabs-uva/agents@0.1.1

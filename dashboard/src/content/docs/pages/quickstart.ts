@@ -6,7 +6,7 @@ export const meta = {
 };
 
 export const markdown = `
-> Backend SDK examples target the prepared 0.1.1 releases. Confirm npm availability with your platform operator before installing them.
+> Backend SDK examples use the published agents and telephony 0.1.1 releases (2026-10-12).
 
 ## 1. Get your keys
 
