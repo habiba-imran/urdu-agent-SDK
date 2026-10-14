@@ -22,6 +22,140 @@ plan. "NOT FOUND" states what was searched. Findings are recorded before fixes.
 
 ---
 
+# Round 2 — verifying Habiba's fixes (2026-10-12, `d9cc13c` merged)
+
+`docs/HANDOFF_TO_EHSAN_2026_10_11.md` reports fixes for M10-F01, M1-F01, M1-F02, M12-F01(a)
+and M6-F05. She could not run a migrated database; I could, so everything below was re-run
+against the same local PostgreSQL and a portal process built from her code, driven by the
+**rebuilt SDKs installed from `npm pack` tarballs**.
+
+| Claim | Verdict | Evidence |
+|---|---|---|
+| M10-F01 — credential-absence suppression removed | **fixed** | The same canary (`assert 1 == 2`) in the same CI-unit-job env now reports `1 failed`, where it reported `1 skipped` before. `_HAS_CREDENTIALS` is gone from `tests/conftest.py`; only the socket-guard trip and the "API key is required" branch can skip. |
+| M1-F02 — authenticate the complete received object | **fixed** | Hand-signed `agent.create`: one unknown `future_field` → **200** (was 401); explicit `greeting: null` → **200** (was 401). |
+| M1-F01 — exact wire-byte signing | **fixed in the new mode, open for every shipped client** | With `signatureVersion: 'raw-body-v1'`: `llmOptions {epsilon: 1e-7}` and an emoji option key now pass signature verification and reach business validation (422 "no llm provider accepts options yet") instead of 401. In legacy mode `1e-7` is still 401, as she documents. The published packages are 0.1.0 and have no such option, so no real client can use it until a release — see M10-F07. |
+| Tamper detection in both modes | **holds** | Signature over bytes A, body B: 401 in `raw-body-v1` *and* in legacy. Legacy still tolerates a non-canonical key order on the wire (200), which is the point of that mode. |
+| Unknown signature version fails closed | **holds** | `X-Signature-Version: made-up-v9` → 401 `unsupported signature version`. |
+| M6-F05 — negation beats affirmation | **fixed, no regression** | All six reported phrasings now invalidate the pending write ("don't book it", "dont book it", "please don't book it", "don't do it", "never mind, don't book it", "hold on, don't book it yet"), and all nine genuine confirmations still confirm (yes please / haan ji / ok / theek hai / confirm / go ahead / book it / ji haan / bilkul). |
+| M12-F01(a) — portal CSRF test failures | **13 of 15 closed** | Full suite with a database: **5 failed, 1366 passed, 19 skipped** (was 18 failed, 1310 passed). The two portal failures that remain are now *different* assertions, newly visible — see M12-F02 and M12-F03. |
+| Agents SDK 15 tests, telephony wire-body checks | **confirmed** | `npm test`: agents `pass 15 / fail 0`; telephony phase8 smoke + phase9 contract + "wire-body signing compatibility tests passed". |
+| M4 number purchases bill the tenant's own Telnyx account | **accepted, closed** | Her source trace (`_tenant_telnyx_client` decrypts that tenant's stored key, no platform fallback) matches my reading. No cap needed on our side. |
+| M3-F03 — the portal does validate models | **correct; my finding narrows** | `provider_validation.py:236` checks `allowed_llm_models(llm_cap)`, which is runtime models ∪ `legacy_aliases` (`worker/providers/capabilities.py:175-179`), and `gemini-2.5-flash` is a deliberate legacy alias (F-M15). So this is not a validation gap. What remains is only the SDK-side default — see the revised M3-F03 below. |
+
+One correction to my own round-1 work: my first tamper probe reported a `200` that looked like
+a verification hole. It was my probe's error — I signed and transmitted the same bytes. Re-run
+correctly, tampering is rejected in both modes, as shown above.
+
+### M10-F06
+```
+ID:            M10-F06
+Module:        M10
+Severity:      Medium
+Where:         .github/workflows/deploy-staging.yml:56-64 ("Deploy Staging Voice Worker")
+What:          Habiba's Q3 answer is that the worker stays local until the CTO decides hosting.
+               The staging deploy workflow hard-fails without `RENDER_DEPLOY_HOOK_WORKER_STAGING`
+               (`exit 1`), and that step runs *before* the admin (line 66) and tenant-portal
+               steps. So with no hosted worker, every staging deploy fails at the worker step
+               and the two services that *are* hosted never get deployed.
+Impact:        Staging CD is unusable for the actual topology (three hosted services + one local
+               worker). Her handoff flags it and correctly says not to invent a dummy hook.
+How verified:  read code, after her flag — confirmed the step order and the `exit 1`.
+Suggested fix: skip the worker step with a notice when the hook is absent (`if: secrets... != ''`
+               is not available in a step `if`, so resolve it in an earlier `id: mode` step as
+               `reconcile.yml` already does), or move it last so a missing hook cannot block the
+               hosted services. Same question applies to `deploy-prod.yml`.
+Status:        open
+Owner:         Ehsan (build/release)
+```
+
+### M10-F07
+```
+ID:            M10-F07
+Module:        M10 / M1
+Severity:      Medium
+Where:         sdk-server/package.json:3 and telephony/package.json:3 (both `0.1.0`);
+               npm registry (`@awaazlabs-uva/agents@0.1.0`, `@awaazlabs-uva/telephony@0.1.0`)
+What:          The `raw-body-v1` fix only reaches a client that can pass
+               `signatureVersion: 'raw-body-v1'`, and the published 0.1.0 packages do not have
+               that option. Habiba's handoff states no publish or version bump was made. So the
+               M1-F01 float/key-order class stays live for every actual integrator until both
+               backend SDKs are released.
+Impact:        A fix that exists only in source is not a fix for anyone consuming from npm.
+How verified:  read both package.json files, her handoff's rollout section, and the registry
+               (`curl`): latest agents 0.1.0, telephony 0.1.0.
+Suggested fix: cut `agents-v0.1.1` and `telephony-v0.1.1` (changelog entry + tag, which the
+               release workflow already enforces) once the portal change is deployed, and
+               document the option in both READMEs' quickstarts. Ordering matters: portal first,
+               then the SDKs, then flip the client option — rolling the portal back requires
+               flipping clients back to `canonical-json-v1` first.
+Status:        open
+Owner:         Ehsan (release)
+```
+
+### M12-F02
+```
+ID:            M12-F02
+Module:        M12
+Severity:      Low
+Where:         tests/test_phase4_portal_api.py:116 vs the usage-summary route's rounding
+What:          Newly visible once the CSRF failure stopped masking it. `GET /portal/usage-summary`
+               returns `minutes_this_month = 0.5167` (rounded to four decimals) while the test
+               asserts `pytest.approx(31/60, rel=1e-6)` = 0.5166666…, which fails by 5.2e-07.
+Impact:        One permanently red test. Either the API's rounding is intended (then the test is
+               wrong) or the rounding is losing precision callers need for billing display.
+How verified:  ran — the assertion text and both values are in the failure output.
+Suggested fix: Habiba's call: loosen the test to the API's documented precision, or stop
+               rounding in the route. Worth deciding deliberately because it is a money field.
+Status:        open
+Owner:         Habiba
+```
+
+### M12-F03
+```
+ID:            M12-F03
+Module:        M12
+Severity:      Low
+Where:         tenant_portal_api/app.py:893 (`creds.pop("hmac_secret", None)`, added in a351576)
+               vs tests/test_portal_wave2_credentials.py:60
+What:          Also newly visible. `GET /portal/credentials` now unconditionally strips
+               `hmac_secret` ("Belt-and-braces: never leak even if a future get_credentials
+               change adds it"), but
+               `test_credentials_include_hmac_for_owners_by_default` still asserts
+               `body["hmac_secret"] == secret` and its docstring says "Owners always get raw
+               HMAC on GET /portal/credentials (reveal default on)" — the earlier pilot decision
+               from fb6c550. The reveal now lives only on the dedicated, age-checked
+               `/portal/credentials/secret` route (app.py:963).
+Impact:        One permanently red test asserting the opposite of a deliberate hardening. The
+               hardening looks right; the test is stale.
+How verified:  ran (KeyError: 'hmac_secret'), then read the route and
+               `git log -S 'creds.pop("hmac_secret", None)'` → introduced in a351576.
+Suggested fix: Habiba's call: retire or rewrite the test against `/portal/credentials/secret`.
+Status:        open
+Owner:         Habiba
+```
+
+### M9-F08
+```
+ID:            M9-F08
+Module:        M9
+Severity:      Low
+Where:         sdk-server/src/index.ts (`llmOptions` in CreateAgentParams/UpdateAgentParams and
+               in the request body) vs tenant_portal_api/provider_validation.py:245-248
+What:          Same class as `ConnectOptions.voiceId` (M9-F06b): the agents SDK types and sends
+               `llmOptions`, and the server rejects any non-empty value for every provider —
+               `invalid_llm_options`, "no llm provider accepts options yet".
+Impact:        A typed option that cannot succeed. I hit it by accident while verifying
+               M1-F01: the signature now verifies, and the call then 422s on the option itself.
+How verified:  ran — `createAgent({..., llmOptions: {epsilon: 1e-7}})` with `raw-body-v1`
+               returns 422 `no llm provider accepts options yet`.
+Suggested fix: mark `llmOptions` as reserved in the SDK types and README until a provider
+               accepts options, or drop it from the surface.
+Status:        open
+Owner:         Ehsan (SDK)
+```
+
+---
+
 ## M10 — Supply chain, CI, release (P1, Ehsan leads)
 
 ### M10-F01
@@ -50,7 +184,7 @@ Suggested fix: narrow the skip to its actual purpose. The guard exists for provi
                `or not _HAS_CREDENTIALS` entirely, or gate it on an explicit opt-in
                (`UVA_TEST_ALLOW_SKIP_ON_FAILURE=1`) that CI never sets. Then add a canary
                test to CI that asserts a deliberate failure is reported as a failure.
-Status:        open
+Status:        fixed in d9cc13c (Habiba) — verified: the canary now fails instead of skipping
 Note:          This is my own F-H1 follow-up code. Mine to fix.
 ```
 
@@ -361,7 +495,8 @@ Suggested fix: sort by code point in both JS implementations (compare with
                `[...a].map(c=>c.codePointAt(0))`, or `Intl.Collator` is *not* right here), and
                document the numeric domain as "no exponential-notation numbers" — or stop
                re-serialising on the server (see M1-F02), which removes both classes at once.
-Status:        open
+Status:        fixed for raw-body-v1 clients in d9cc13c — verified live; still open for every
+               published 0.1.0 client until the SDKs are released (M10-F07)
 ```
 
 ### M1-F02
@@ -391,7 +526,7 @@ How verified:  read code (both call sites, both models, `payload_hash`, and the 
 Suggested fix: hash the raw request body bytes on the server and have clients sign those same
                bytes (the client already computes `canonicalBody` — telephony even returns it).
                Keep the canonical-JSON rule only as the client's byte-generation recipe.
-Status:        open
+Status:        fixed in d9cc13c — verified live: unknown field and explicit null both 200
 Owner:         server change — Habiba's file; raised here because it is a shared contract
                (plan §5 item 1).
 ```
@@ -442,11 +577,19 @@ Impact:        There is no integration guide, no host-backend contract document 
 How verified:  read git history — `git show --stat a351576 -- client-deliverables-final`
                (14 files, 1,241 deletions), `git ls-tree -r HEAD | grep -c client-deliverables-final`
                -> 0, and `find . -name "*starter*"` -> nothing.
-Suggested fix: decide whether the pack is retired or restored. If retired, remove the dangling
-               references (test_sdk_parity.py docstring, audit-context) and say what clients
-               get instead. If not, restore from a351576^ and keep it in CI (a build of the
-               starter would have caught the deletion).
-Status:        open
+Suggested fix: retire it. Remove the dangling references and point the client docs at dashboard
+               access instead — `docs/CLIENT_QUICKSTART.md`, `docs/CLIENT_HANDOFF_GUIDE.md`,
+               `docs/CLIENT_ONBOARDING_EMAIL_TEMPLATE.md`, `sdk/README.md:29`,
+               `docs/HOST_BACKEND_CONTRACT.md`, `tests/test_sdk_parity.py`'s docstring — and
+               invert `tests/test_wave5_residuals.py:162` so it asserts every referenced path
+               exists rather than requiring this one.
+Status:        open — direction decided 2026-10-12
+Revision:      Q8 answered: the client-facing deliverable is dashboard access via Supabase
+               invitation, and Habiba's recommendation is to retire the stale pack references
+               rather than restore the pack. Original deletion intent is still unknown, so if
+               anything in those 14 files is worth keeping it should be archived deliberately
+               from `a351576^` rather than left only in history.
+Owner:         Ehsan (docs + the test), with the product decision now settled
 ```
 
 ### M9-F02
@@ -549,7 +692,8 @@ Suggested fix: (a) is Habiba's — the new CSRF middleware needs the test client
                header, or the tests need updating; (b) assert on the subset the test cares
                about, or freeze the tool-result contract deliberately; (c) allow a prerelease
                suffix in the regex and decide whether a doc may pin an unpublished build.
-Status:        open
+Status:        13 of 15 portal failures closed in d9cc13c; 5 failures remain (2 newly visible as
+               M12-F02 / M12-F03, 3 mine: the two test_worker contract asserts and the docs pin)
 ```
 
 ---
@@ -819,9 +963,14 @@ How verified:  read code (every route handler, the CORS helper and the config lo
                confirm what it discloses (prompts yes, raw tool secret no).
 Suggested fix: require a shared secret header on every `/api/*` route except `/healthz`,
                default the Origin allowlist to closed, and split the pipeline mutation out of
-               the session route. Then decide (plan §8 Q8) whether this harness is a
-               deliverable; if it is, it needs M9's product treatment.
-Status:        open
+               the session route.
+Status:        open — severity settled at Medium 2026-10-12
+Revision:      Q8 is answered (`docs/HANDOFF_TO_EHSAN_2026_10_11.md`): clients receive
+               **dashboard access only**, via Supabase invitation. The harness is not shipped,
+               so the "High as shipped" branch does not apply. It still runs against a real
+               tenant with real credentials on an operator's machine, and Habiba agrees it
+               needs the fixes, so it stays open at Medium.
+Owner:         Ehsan
 ```
 
 ---
@@ -908,14 +1057,26 @@ verification is a drop-in for telephony and needs a one-line change in the agent
 
 ## Open questions I need answers to (plan §8)
 
+Answered in `docs/HANDOFF_TO_EHSAN_2026_10_11.md` (2026-10-12):
+
+| # | Answer | What it changes here |
+|---|---|---|
+| Q1 | **Three staging services on Render**: tenant portal, admin, control plane. Plans, sizes, URLs and deployed SHAs still unconfirmed; she says explicitly not to assume the free plan. | M8-F01 stands as arithmetic (15 s client budget vs an unmeasured wake time) but its severity cannot be settled until someone reads the plan in the dashboard. It also means **only three of the four deploy targets exist** → M10-F06. |
+| Q2 | **20 simultaneous calls**, as a requirement, not measured capacity. Per-tenant allocation unconfirmed; 20 is also the creation-time `max_concurrent` default in `membership.py`. | Gives M3-F01 its target. 20 concurrent real-time media sessions on one machine with `load_threshold = inf` and no per-job memory cap is the thing to measure first — and the number to measure *against*. |
+| Q3 | **Worker stays local** until the CTO decides hosting. `scripts/dev_worker.py` remains the runner; machine, always-on hours and named restart owner still unconfirmed. | Confirms M6-F01's premise: the deployed worker is the one where `is_hosted()` is False. Raises M10-F06 (staging CD assumes a hosted worker). |
+| Q7 | Keep the platform source **private** pending CTO/product approval; dashboard access does not need repo access. | Settles M10-F03 (delete the provenance claims rather than chase `--provenance`) and M9-F05 (fix the README links; they cannot be made to resolve). |
+| Q8 | Clients receive **dashboard access only**, via Supabase invitation. Not the harness, not the deleted pack, not the repo. | M8-F03 settles at Medium; M9-F01's direction becomes "retire the references", not "restore the pack". |
+| License | **No decision supplied** — the CTO must choose; do not invent terms. | M10-F04 stays open and is now explicitly blocked on a person, not on me. |
+| Prompt dumps | Prevent new ones from being committed, keep debug artifacts local, assess the existing content before any history rewrite (which needs separate coordination). | M7-F01's fix is the `.gitignore` + default-path change; the history question is deferred, deliberately. |
+
+Still open for a human:
+
 | # | Question | Why it blocks me |
 |---|---|---|
-| Q1 | Which services are on Render, on which plan? | M8-F01's severity is arithmetic against the real wake time. |
-| Q2 | Expected peak concurrent calls? | M3-F01 needs a target before I can set `load_threshold` and measure the machine. |
-| Q3 | Which machine runs the worker; always on; who restarts it? | M6-F01/M3-F01/M7 all hinge on "the worker is a laptop". |
-| Q7 | Will the repo stay private? | Decides M10-F03 (delete the provenance claims vs make the repo public) and M9-F05 (the dead README links). |
-| Q8 | Does a client receive `client-integration-test/` (or anything) as a deliverable? | Decides whether M8-F03 is High or Medium, and whether M9-F01 must be restored. |
-| — | Is `docs/last_session_prompt.txt`'s history worth purging? | M7-F01. |
+| Q1b | Which Render plan/size for the three services, and where is the dashboard frontend hosted? | Turns M8-F01 from arithmetic into a measured number. |
+| Q2b | Is 20 concurrent per tenant or overall, and what should existing tenants' `max_concurrent` be? | Sizing the quota change, if any. |
+| Q3b | Which machine, what hours, named restart owner? | Whether "20 concurrent calls" is a promise anyone can keep. |
+| Q4 | Has the reconcile/purge schedule actually executed? Habiba's answer confirms the workflow and the apply default but marks live execution **unverified**. | Whether a crashed worker's quota slot is really reclaimed. |
 
 ---
 
@@ -967,9 +1128,17 @@ How verified:  ran. Created two agents through the SDK and queried the database:
                  probe-known | gemini | gemini-2.5-flash
                while the same server's capabilities response listed only `gemini-3.6-flash`.
 Suggested fix: drop the SDK-side default (let the server choose) or set it to the current
-               model, and have the portal reject an `llm_model` that is not in the capability
-               list rather than storing it.
-Status:        open
+               model.
+Status:        open — narrowed 2026-10-12
+Revision:      The second half of my original suggestion was wrong and is withdrawn. The portal
+               *does* validate: `provider_validation.py:236` checks `allowed_llm_models(llm_cap)`
+               = runtime models ∪ `legacy_aliases` (`worker/providers/capabilities.py:175-179`),
+               and `gemini-2.5-flash` is a deliberate legacy alias so existing agent rows keep
+               validating while pickers show only live models (F-M15). That design is right.
+               What remains is only the SDK-side default: a new agent created today through the
+               published SDK is given a deprecated alias that works solely because the worker
+               remaps it. Habiba asked me to keep ownership of this half, which I do.
+Owner:         Ehsan (SDK default)
 ```
 
 ### M3-F04
@@ -1031,17 +1200,39 @@ How verified:  ran. Drove the real gate (a pending proposal, then `note_user_tur
 Suggested fix: add `don'?t|dont|doesn'?t|won'?t|can'?t|never` to `CORRECTION`, and make
                `is_affirmative_utterance` return False when a negation token precedes the
                affirmation in the same utterance. Add the six phrases above as test cases.
-Status:        open
+Status:        fixed in d9cc13c — verified: all six phrasings invalidate, no confirmation regressed
 ```
 
 ---
 
 ## Still to do
 
-- M3: measure the real concurrency ceiling on the worker machine with live providers, and
-  laptop-sleep / Wi-Fi-drop / SIGTERM behaviour (needs the machine and Q2/Q3).
+Fixes I own, in the order I would take them (none started — this file is still audit output):
+
+1. **M3-F01** — run the worker with `start`, or pin `load_threshold` and `job_memory_limit_mb`
+   explicitly in `WorkerOptions` so the value stops depending on which subcommand was typed.
+   Then measure against Habiba's 20-call target.
+2. **M6-F01 + M6-F02 + M6-F03** — invert the SSRF default (hosted rules unless a developer
+   opts out), add `ENV UVA_ENV=production` to `docker/worker.Dockerfile`, and point
+   `recording_policy` at `runtime_env.is_hosted()`. One change set; they share a cause.
+3. **M10-F06** — unblock staging CD for the three-hosted-services topology.
+4. **M10-F07** — release `agents-v0.1.1` / `telephony-v0.1.1` after the portal deploy, so
+   `raw-body-v1` is reachable by a real client.
+5. **M10-F03 + M9-F05 + M9-F01 docs** — with Q7 and Q8 answered, delete the provenance claims,
+   fix the dead README links, and retire the client-pack references (including inverting
+   `tests/test_wave5_residuals.py:162`).
+6. **M12-F01 (my three)** — the two `test_worker.py` contract asserts and the docs version pin.
+7. **M10-F01 follow-through** — add a CI canary so the gate can never silently stop failing
+   again; the suppression is gone but nothing proves it stays gone.
+8. **M7-F01**, **M8-F01/F02**, **M8-F03**, **M9-F03/F04/F06/F08**, **M2-F01/F02**, **M11-F01**,
+   **M6-F04**, **M3-F04** — the rest, roughly in severity order.
+
+Audit work that still needs something I do not have:
+
+- M3: the real concurrency ceiling, and laptop-sleep / Wi-Fi-drop / SIGTERM behaviour — needs
+  the worker machine and Q3b.
 - M3: per-vendor failure behaviour (timeout / 429 / mid-call disconnect) and what the caller
   hears — needs live provider keys.
-- M9: run the voice README quickstart in a browser end to end (the agents and telephony
-  quickstarts are now verified above against a live portal).
-- M12: the smallest useful concurrency and failure tests once M3's measurements exist.
+- M9: the voice README quickstart in a browser end to end. The agents and telephony quickstarts
+  are now verified against a live portal (both rounds above).
+- M12: concurrency and failure tests, once M3's measurements exist.
