@@ -199,6 +199,39 @@ def test_missing_invalid_values_remain_null(monkeypatch):
     assert measurement(float("inf")) is None
 
 
+def test_llm_timeout_does_not_report_partial_eou_as_response_latency(monkeypatch):
+    tracker, payloads = tracker_and_payloads(monkeypatch)
+    clock = [283512.984]
+    monkeypatch.setattr(tracker, "_now", lambda: clock[0])
+    tracker.mark_user_stopped_speaking()
+    h = Handle()
+    created(tracker, h)
+    tracker.mark_turn_committed("timeout-user", h.id)
+    tracker.on_metrics(NS(speech_id=h.id, end_of_utterance_delay=.689,
+                          transcription_delay=.684))
+    clock[0] = 283519.421
+    h.finish(interrupted=True, error=TimeoutError())
+    row = payloads()[0]
+    assert row["outcome"] == "provider_error"
+    assert row["sttMs"] == 684 and row["turnMs"] == 689
+    assert row["failureElapsedMs"] == 6437
+    assert row["e2eMs"] is row["roundTripMs"] is row["turn_latency_breakdown"]["e2eMs"] is None
+    assert tracker._rolling.e2e_ms == []
+
+
+def test_completed_handle_without_tts_keeps_response_latency_unavailable(monkeypatch):
+    tracker, payloads = tracker_and_payloads(monkeypatch)
+    tracker.mark_user_stopped_speaking()
+    h = Handle()
+    created(tracker, h)
+    tracker.on_metrics(NS(speech_id=h.id, end_of_utterance_delay=.2, transcription_delay=.1))
+    tracker.on_metrics(NS(speech_id=h.id, ttft=.08))
+    h.finish()
+    assert payloads()[0]["e2eMs"] is None
+    assert payloads()[0]["failureElapsedMs"] is None
+    assert tracker._rolling.e2e_ms == []
+
+
 def test_percentiles_counts_minimum_tail_samples_and_bounds():
     report = percentile_report([10])
     assert report["sampleCount"] == 1 and report["p95Ms"] is None and report["p99Ms"] is None

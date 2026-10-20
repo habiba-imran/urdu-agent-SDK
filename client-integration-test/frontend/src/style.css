@@ -91,6 +91,9 @@ summary { cursor: pointer; font-size: .75rem; font-weight: 600; color: var(--mut
 .telephony-panel { margin: 20px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 20px 0 0; box-shadow: none; }
 .telephony-panel > .hint { margin: 12px 0; }
 .telephony-status { font-size: .75rem; color: var(--muted); padding: 12px; background: var(--soft); border-radius: 8px; margin-bottom: 16px; }
+.telephony-progress { padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--soft); font-size: .8rem; line-height: 1.6; }
+.telephony-progress[hidden] { display: none; }
+.telephony-progress strong { font-weight: 500; }
 .telephony-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
 .telephony-subhead { font-size: .85rem; font-weight: 600; margin: 0 0 12px; }
 .telephony-list { min-height: 120px; max-height: 270px; overflow: auto; border: 1px solid var(--line); background: var(--soft); border-radius: 9px; padding: 12px; font-size: .75rem; color: var(--muted); }

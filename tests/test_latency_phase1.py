@@ -15,6 +15,7 @@ from worker.latency import (
     load_session_identity,
     parse_dispatch_metadata,
     prewarm_tts,
+    prewarm_llm,
     schedule_provider_prewarm,
 )
 from worker.session_opening import resolve_session_opening
@@ -55,6 +56,48 @@ async def test_prewarm_tts_calls_provider():
 @pytest.mark.asyncio
 async def test_prewarm_tts_noop_when_missing():
     await prewarm_tts(object())
+
+
+@pytest.mark.asyncio
+async def test_llm_prewarm_starts_while_stt_prewarm_is_pending(monkeypatch):
+    import worker.latency as latency
+    llm_started = asyncio.Event()
+    release_stt = asyncio.Event()
+    async def warm_llm(_llm):
+        llm_started.set()
+    async def warm_stt(_stt):
+        await release_stt.wait()
+    monkeypatch.setattr(latency, "prewarm_llm", warm_llm)
+    monkeypatch.setattr(latency, "prewarm_stt", warm_stt)
+    task = schedule_provider_prewarm(tts=None, llm=object(), stt=object())
+    try:
+        await asyncio.wait_for(llm_started.wait(), timeout=1)
+        assert not task.done()
+    finally:
+        release_stt.set()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_cancelled_llm_prewarm_closes_the_provider_stream():
+    started = asyncio.Event()
+    closed = []
+    class Stream:
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            started.set()
+            await asyncio.Event().wait()
+        async def aclose(self):
+            closed.append(True)
+    provider = MagicMock()
+    provider.chat.return_value = Stream()
+    task = asyncio.create_task(prewarm_llm(provider))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed == [True]
 
 
 @pytest.mark.asyncio

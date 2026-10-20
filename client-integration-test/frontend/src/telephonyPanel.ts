@@ -46,6 +46,8 @@ export function mountTelephonyPanel(opts: {
       </p>
 
       <div class="telephony-status" id="tel-status" role="status">Checking Telnyx connection…</div>
+      <p id="tel-feedback" class="feedback" role="status" aria-live="polite">Check your connection and select a number to begin.</p>
+      <p id="tel-progress" class="telephony-progress" hidden><strong id="tel-progress-action" role="status" aria-live="polite"></strong><span id="tel-progress-elapsed" aria-hidden="true"></span></p>
 
       <div class="actions telephony-actions">
         <button id="tel-connect-btn" type="button">Connect / refresh Telnyx</button>
@@ -103,13 +105,12 @@ export function mountTelephonyPanel(opts: {
             <input id="tel-to-number" placeholder="+15551234567" autocomplete="off" />
           </label>
           <div class="actions">
-            <button id="tel-outbound-btn" type="button">Place outbound call</button>
+            <button id="tel-outbound-btn" type="button" aria-describedby="tel-call-hint">Place outbound call</button>
           </div>
           <p id="tel-call-hint" class="hint" role="status"></p>
         </div>
       </div>
 
-      <p id="tel-feedback" class="feedback" role="status" aria-live="polite">Check your connection and select a number to begin.</p>
       <pre id="tel-log" class="log-box telephony-log">Telephony log…</pre>
     </section>
   `;
@@ -134,7 +135,22 @@ export function mountTelephonyPanel(opts: {
     assignBtn: root.querySelector<HTMLButtonElement>('#tel-assign-btn')!,
     outboundBtn: root.querySelector<HTMLButtonElement>('#tel-outbound-btn')!,
   };
-  let pendingRequests = 0;
+  type PendingRequest = { path: string; mutation: boolean; startedAt: number; promise: Promise<any> };
+  const pendingRequests = new Map<string, PendingRequest>();
+  let progressTimer: ReturnType<typeof setInterval> | null = null;
+  const actions: Array<[HTMLButtonElement, string]> = [
+    [els.connectBtn, '/connect'], [els.syncBtn, '/sync'], [els.prepareBtn, '/prepare-outbound'],
+    [els.callsBtn, '/calls'], [els.searchBtn, '/search'], [els.assignBtn, '/assign'], [els.outboundBtn, '/outbound'],
+  ];
+  const buttonLabels = new Map(actions.map(([button]) => [button, button.textContent || '']));
+  const requestLabels: Record<string, string> = {
+    status: 'Checking connection', numbers: 'Refreshing numbers', connect: 'Connecting Telnyx',
+    sync: 'Syncing account numbers', 'prepare-outbound': 'Preparing outbound', calls: 'Loading calls',
+    search: 'Searching numbers', assign: 'Configuring agent routing', outbound: 'Placing outbound call',
+    import: 'Importing number', purchase: 'Purchasing number',
+  };
+  const requestName = (path: string) => requestLabels[path.split('?')[0].split('/').at(-1) || ''] || 'Loading call status';
+  const isPending = (suffix: string) => [...pendingRequests.values()].some(request => request.path.split('?')[0] === `/api/telephony${suffix}`);
   let managedNumbers: ManagedNumber[] = [];
   let outboundReady = false;
   let readinessReasons: string[] = [];
@@ -142,23 +158,66 @@ export function mountTelephonyPanel(opts: {
   function outboundBlockReason() {
     const selected = managedNumbers.find(number => numberId(number) === els.numberId.value.trim());
     if (!selected) return 'Select a managed number and check its routing before calling.';
-    if (agentOnNumber(selected) !== resolveAgentId() || selected.routing_status !== 'ready') {
-      return 'This number needs an agent assignment and ready routing before calling. Use Assign to agent, then refresh if setup fails.';
+    if (agentOnNumber(selected) !== resolveAgentId()) {
+      return 'The selected number is not assigned to this agent. Assign it and configure ready routing before calling.';
+    }
+    if (selected.routing_status !== 'ready') {
+      return `Agent assignment is saved, but routing is ${selected.routing_status || 'unknown'} in this tenant. Calls cannot start until routing is ready. If this number already routes in another tenant, use that tenant\u2019s credentials and agent to preserve its route. Refresh lists after resolving the routing configuration.`;
     }
     if (!outboundReady) return readinessReasons.join(' ') || 'Refresh status to verify outbound readiness before calling.';
     if (!/^\+[1-9]\d{6,14}$/.test(els.toNumber.value.trim())) return 'Enter a destination in E.164 format, for example +15551234567.';
     return '';
   }
 
+  function renderProgress() {
+    const requests = [...pendingRequests.values()];
+    const current = requests.find(request => request.mutation) || requests[0];
+    root!.querySelector<HTMLElement>('#tel-progress')!.hidden = !current;
+    if (!current) return;
+    const label = requestName(current.path) + (current.mutation ? '… You can refresh lists and view recent calls while this runs.' : '…');
+    const action = root!.querySelector<HTMLElement>('#tel-progress-action')!;
+    if (action.textContent !== label) action.textContent = label;
+    root!.querySelector<HTMLElement>('#tel-progress-elapsed')!.textContent = ` ${Math.max(0, Math.floor((Date.now() - current.startedAt) / 1000))}s elapsed`;
+  }
+
   function renderBusy() {
-    root!.setAttribute('aria-busy', String(pendingRequests > 0));
+    const mutating = [...pendingRequests.values()].some(request => request.mutation);
     root!.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
-      button.disabled = pendingRequests > 0 || button.dataset.unavailable === 'true';
+      button.disabled = button.dataset.unavailable === 'true' || (mutating && (button.hasAttribute('data-buy') || button.hasAttribute('data-import')));
     });
-    root!.querySelectorAll<HTMLInputElement>('input').forEach(input => { input.disabled = pendingRequests > 0; });
+    for (const [button, suffix] of actions) {
+      const ownRequest = isPending(suffix);
+      const writes = !['/calls', '/search'].includes(suffix);
+      button.disabled = ownRequest || (writes && mutating);
+      button.setAttribute('aria-busy', String(ownRequest));
+      button.textContent = ownRequest ? `${requestName(`/api/telephony${suffix}`)}…` : buttonLabels.get(button)!;
+    }
+    els.refreshBtn.disabled = isPending('/status') || isPending('/numbers');
+    els.refreshBtn.textContent = els.refreshBtn.disabled ? 'Refreshing…' : 'Refresh lists';
+    // Keep the panel usable during reads. Only fields belonging to a running
+    // write are locked; browsing managed numbers and independent reads stay live.
+    els.numberId.disabled = els.agentId.disabled = mutating;
+    els.toNumber.disabled = isPending('/outbound');
     const reason = outboundBlockReason();
     els.outboundBtn.disabled ||= Boolean(reason);
+    els.outboundBtn.title = reason;
+    const selected = managedNumbers.find(number => numberId(number) === els.numberId.value.trim());
+    if (!isPending('/outbound') && selected && selected.routing_status !== 'ready') {
+      els.outboundBtn.textContent = 'Routing not ready';
+    }
     root!.querySelector<HTMLElement>('#tel-call-hint')!.textContent = reason || 'Routing and outbound checks passed for the selected number and agent.';
+    renderProgress();
+    if (pendingRequests.size && progressTimer === null) {
+      progressTimer = setInterval(() => {
+        if (!root!.isConnected) {
+          clearInterval(progressTimer!);
+          progressTimer = null;
+        } else renderProgress();
+      }, 1000);
+    } else if (!pendingRequests.size && progressTimer !== null) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
   }
 
   function log(title: string, payload: Json) {
@@ -168,41 +227,56 @@ export function mountTelephonyPanel(opts: {
     root!.querySelector<HTMLElement>('#tel-feedback')!.textContent = `${title}: ${typeof payload === 'string' ? payload : typeof detail === 'string' ? detail : 'see details in the log below.'}`;
   }
 
-  async function api(path: string, init?: RequestInit) {
-    pendingRequests++;
-    renderBusy();
+  function api(path: string, init?: RequestInit): Promise<any> {
     const mutation = init?.method === 'POST';
-    root!.querySelector<HTMLElement>('#tel-feedback')!.textContent = path.endsWith('/assign')
-      ? 'Saving assignment and configuring routing… This can take up to two minutes.'
-      : mutation ? 'Updating telephony…' : 'Loading telephony…';
-    try {
-    const res = await fetch(`${opts.backendOrigin}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-      signal: AbortSignal.timeout(mutation ? 180000 : 45000),
+    const key = `${init?.method || 'GET'} ${path}`;
+    const existing = pendingRequests.get(key);
+    if (!mutation && existing) return existing.promise;
+    if (mutation && [...pendingRequests.values()].some(request => request.mutation)) {
+      return Promise.reject(new Error('A telephony update is already running. Wait for its result before starting another update.'));
+    }
+    const controller = new AbortController();
+    const deadlineMs = mutation ? 150000 : 20000;
+    let deadlineTimer: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      deadlineTimer = setTimeout(() => {
+        const error = new DOMException('Request deadline reached', 'TimeoutError');
+        controller.abort(error);
+        reject(error);
+      }, deadlineMs);
     });
-    const text = await res.text();
-    let body: any = text;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      /* keep */
-    }
-    if (!res.ok) {
-      const err = new Error(body?.message || body?.error || `${res.status} ${path}`);
-      (err as any).body = body;
-      (err as any).status = res.status;
-      throw err;
-    }
-    return body;
-    } catch (error: any) {
-      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
-        const timeout = new Error('Request timed out. The server may still complete this action. Refresh status and lists before retrying; do not repeat a call automatically.');
-        (timeout as any).body = { error: 'telephony_request_timeout', message: timeout.message };
-        throw timeout;
+    const request = (async () => {
+      const res = await fetch(`${opts.backendOrigin}${path}`, {
+        ...init,
+        headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      let body: any = text;
+      try { body = text ? JSON.parse(text) : null; } catch { /* keep non-JSON error text */ }
+      if (!res.ok) {
+        const err = new Error(body?.message || body?.error || `${res.status} ${path}`);
+        (err as any).body = body;
+        (err as any).status = res.status;
+        throw err;
       }
-      throw error;
-    } finally { pendingRequests--; renderBusy(); }
+      return body;
+    })();
+    const promise = Promise.race([request, deadline]).catch((error: any) => {
+      if (error?.name !== 'TimeoutError' && error?.name !== 'AbortError') throw error;
+      const timeout = new Error(mutation
+        ? 'Request timed out. The server may still complete this action. Refresh status and lists before retrying; do not repeat a call automatically.'
+        : `${requestName(path)} timed out after 20 seconds. Use Refresh lists to retry.`);
+      (timeout as any).body = { error: 'telephony_request_timeout', message: timeout.message };
+      throw timeout;
+    }).finally(() => {
+      clearTimeout(deadlineTimer);
+      pendingRequests.delete(key);
+      renderBusy();
+    });
+    pendingRequests.set(key, { path, mutation, startedAt: Date.now(), promise });
+    renderBusy();
+    return promise;
   }
 
   function renderManaged(rows: ManagedNumber[]) {
@@ -311,6 +385,8 @@ export function mountTelephonyPanel(opts: {
       readinessReasons = Array.isArray(data.readiness?.reasons) ? data.readiness.reasons : [];
       const conn = data.connection?.platform_status || data.connectionError || 'unknown';
       els.status.innerHTML = `
+        <span>Tenant: <strong>${escapeHtml(data.tenantId || data.connection?.tenant_id || data.readiness?.tenant_id || 'unknown')}</strong></span>
+        \u00b7
         <span>Telnyx key in env: <strong>${data.telnyxKeyConfigured ? 'yes' : 'NO'}</strong></span>
         · <span>connection: <strong>${escapeHtml(conn)}</strong></span>
         · <span>outbound ready: <strong>${ready === true ? 'yes' : ready === false ? 'no' : 'n/a'}</strong></span>

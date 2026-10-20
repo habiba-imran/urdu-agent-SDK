@@ -88,3 +88,42 @@ dispatches another tenant.
 
 Deploying the adapter guard and deciding cross-tenant number ownership are separate
 from installing this local demo update.
+
+## Follow-up: panel-wide loading freeze
+
+The global pending-request counter disabled every input/button, including recovery
+controls, while a slow provisioning request waited up to three minutes. Its feedback
+was below the visible controls. The panel now tracks requests separately, shows
+operation/progress/error information above the controls, and allows independent
+reads and number browsing during provisioning. Conflicting writes stay guarded.
+
+Browser reads now expire after 20 seconds, including stalled response bodies;
+ignored-abort and late-response cases cannot leave the UI locked or overwrite its
+recovered state. Concurrent refreshes share reads. Upstream reads use 10 seconds,
+status checks run concurrently, and provisioning SDK steps share one 120-second
+operation budget, with a 150-second browser deadline.
+
+Verification passed 24 backend and 20 DOM tests, TypeScript, build, and published
+SDK checks. New cases cover never-returning requests, stalled response bodies,
+late replies, duplicate refreshes, concurrent status checks, and shared deadlines.
+After restarting the local backend, live list/status reads returned HTTP 200 in
+about five seconds and Vite served the updated progress/deadline implementation.
+No browser automation surface was available; browser visual acceptance was not
+performed. The graph refresh was attempted and hit the existing launcher failure.
+
+These changes fix panel loading behavior. They do not transfer either existing
+phone route or make the current tenant's unrouted number call-ready.
+
+## Follow-up: disabled outbound action
+
+The selected demo record has its agent assignment saved, but still reports
+`routing_status: not_configured`. The outbound action now says `Routing not ready`,
+has an accessible explanation, and distinguishes missing assignment from saved
+assignment with incomplete routing. Connection status also displays the configured
+tenant ID, including when either upstream status read fails. Once routing and
+readiness pass, the action returns to `Place outbound call` and becomes available.
+
+The existing route remains unchanged. No matching credentials for its tenant were
+found in the inspected local demo profiles. Configuring that tenant's credentials
+and existing agent is still required to use this number without moving its route.
+All 44 frontend/backend tests and the production build pass after this change.

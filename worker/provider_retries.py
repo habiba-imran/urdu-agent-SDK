@@ -178,6 +178,7 @@ async def bounded_provider_stream(stream: Any, agent: Any, stage: str, *, timeou
     # TTS may wait for LLM text; that wait is bounded by the LLM node separately.
     # Only useful output resets this deadline; usage-only/empty LLM chunks cannot.
     deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
     useful = False
     try:
         while True:
@@ -195,7 +196,9 @@ async def bounded_provider_stream(stream: Any, agent: Any, stage: str, *, timeou
                 useful = True
                 deadline = time.monotonic()+timeout
             yield item
-    except Exception:
+    except Exception as error:
+        logger.error("provider_stream_failed stage=%s error_type=%s elapsed_ms=%s useful_output=%s progress_timeout_s=%s",
+                     stage, type(error).__name__, round((time.monotonic() - started_at) * 1000), useful, timeout)
         runtime = getattr(agent, "humanization_runtime", None)
         callback = getattr(runtime, "failure_callback", None)
         if callback is not None:

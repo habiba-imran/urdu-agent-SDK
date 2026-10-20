@@ -25,12 +25,20 @@ export function createTelephonyClient(config) {
   }
   // Dynamic import keeps createApp sync-friendly at boot.
   return import('@awaazlabs-uva/telephony').then(({ TelephonyClient }) => {
+    const operationBudget = AbortSignal.timeout(config.telephonyOperationTimeoutMs ?? 120000);
     return new TelephonyClient({
       baseUrl: config.telephonyApiUrl,
       tenantId: config.tenantId,
       tenantSecret: config.hmacSecret,
       signatureVersion: 'raw-body-v1',
-      fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(120000) }),
+      fetch: (url, init) => {
+        // Several machine reads use POST. Do not give list/status requests the
+        // provisioning timeout, or multiply the budget across sequential steps.
+        const path = new URL(url).pathname;
+        const readOnly = init?.method === 'GET' || /\/(list|get|search|drift)$/.test(path);
+        const deadline = readOnly ? AbortSignal.timeout(config.telephonyReadTimeoutMs ?? 10000) : operationBudget;
+        return fetch(url, { ...init, signal: AbortSignal.any([operationBudget, deadline]) });
+      },
     });
   });
 }
@@ -43,22 +51,16 @@ export function mountTelephonyRoutes(app, config) {
   app.get('/api/telephony/status', async (_req, res) => {
     try {
       const telephony = await createTelephonyClient(config);
-      let connection = null;
-      let connectionError = null;
-      try {
-        connection = await telephony.getConnectionStatus();
-      } catch (err) {
-        connectionError = err instanceof Error ? err.message : String(err);
-      }
-      let readiness = null;
-      try {
-        readiness = await telephony.getOutboundReadiness();
-      } catch (err) {
-        readiness = {
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
+      const [connectionResult, readinessResult] = await Promise.allSettled([
+        telephony.getConnectionStatus(), telephony.getOutboundReadiness(),
+      ]);
+      const connection = connectionResult.status === 'fulfilled' ? connectionResult.value : null;
+      const connectionError = connectionResult.status === 'rejected'
+        ? (connectionResult.reason instanceof Error ? connectionResult.reason.message : String(connectionResult.reason)) : null;
+      const readiness = readinessResult.status === 'fulfilled' ? readinessResult.value
+        : { error: readinessResult.reason instanceof Error ? readinessResult.reason.message : String(readinessResult.reason) };
       res.json({
+        tenantId: config.tenantId,
         telnyxKeyConfigured: Boolean(config.telnyxApiKey),
         connection,
         connectionError,

@@ -1265,6 +1265,7 @@ function summarizeMetrics(metrics: MetricsEvent): string {
     'assistant_turn_id',
     'generation_id',
     'outcome',
+    'failureElapsedMs',
     'sequence',
     'latencyKind',
     'e2eMs',

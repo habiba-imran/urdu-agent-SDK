@@ -372,7 +372,7 @@ def wire_barge_in_flush(
 
 
 async def prewarm_llm(llm: Any) -> None:
-    """One-token LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7).
+    """Small LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7).
 
     Skip Groq entirely — free-tier TPM is 8k/min and a warm-up call plus front-desk prompts
     429 within the first conversational turns.
@@ -383,15 +383,18 @@ async def prewarm_llm(llm: Any) -> None:
     if "groq" in module.lower():
         return
 
+    stream = None
     try:
         chat_ctx = ChatContext.empty()
-        chat_ctx.add_message(role="user", content="ok")
+        chat_ctx.add_message(role="user", content="Reply only with OK.")
         stream = llm.chat(chat_ctx=chat_ctx)
         async for _chunk in stream:
             break
-        await stream.aclose()
     except Exception as exc:
         logger.warning("stage=prewarm_llm failed module=%s err=%s", module, exc)
+    finally:
+        if stream is not None:
+            await stream.aclose()
 
 
 async def prewarm_greeting_providers(
@@ -499,7 +502,7 @@ def schedule_provider_prewarm(
 
     For ``generate_reply``, await this task (TTS+STT) before opening.
 
-    LLM warm-up always runs in the background after TTS/STT. Never block the
+    LLM warm-up runs in the background alongside TTS/STT. Never block the
     opening greeting on LLM prewarm — that added 10–15s of dead air on PSTN when
     Gemini was slow/failing, while the caller already heard ringing.
     ``await_llm`` is accepted for API compatibility but ignored.
@@ -534,9 +537,10 @@ def schedule_provider_prewarm(
                     room_name or "?",
                     exc,
                 )
-        # Always background LLM — greeting must start as soon as TTS/STT are warm.
-        asyncio.create_task(_llm())
-
+    # Give the model the entire opening/setup window to warm, including time
+    # spent connecting STT/TTS. The returned task still gates only the greeting
+    # providers, so a slow model cannot delay static opening audio.
+    asyncio.create_task(_llm())
     return asyncio.create_task(_greeting())
 
 
@@ -1021,7 +1025,9 @@ class TurnLatencyTracker:
         # Tool sum is a separate execution diagnostic. Parallel tools and model
         # stages overlap, so it must not be added to this latency proxy.
         components = [v for v in (eou, parts.llm_ms, parts.tts_ttfb_ms) if v is not None]
-        e2e_ms = sum(components) if components else None
+        # A partial STT/EOU measurement is not a response. In particular a
+        # timed-out LLM can have EOU metrics without producing any audio.
+        e2e_ms = sum(components) if parts.tts_ttfb_ms is not None else None
         trace = traces[-1]
         operation = "normal_turn" if trace.user_turn_id or speech["source"] == "metrics_only" else "platform_speech"
         generation_rows = [{**t.identity(), "outcome": t.outcome or outcome,
@@ -1039,8 +1045,16 @@ class TurnLatencyTracker:
         # itself later finishes cleanly. Tools have an independent outcome.
         invalid = next((t.outcome for t in traces if t.outcome and t.outcome != "completed"), None)
         sample_outcome = invalid or outcome
+        failure_elapsed_ms = None
+        if sample_outcome != "completed":
+            e2e_ms = None
+        if sample_outcome == "provider_error":
+            stopped = speech["user_stages"].get("user_speech_stopped")
+            if stopped is not None:
+                failure_elapsed_ms = _ms(self._now() - stopped)
         payload = {**build_turn_latency_payload(speech_id, parts, e2e_ms=e2e_ms),
                    **trace.identity(), "outcome": sample_outcome, "providerSnapshot": self.snapshot,
+                   "failureElapsedMs": failure_elapsed_ms,
                    "operation": operation,
                    "session_identity_source": self.session_identity_source,
                    "humanization_policy_version": self.policy_version,

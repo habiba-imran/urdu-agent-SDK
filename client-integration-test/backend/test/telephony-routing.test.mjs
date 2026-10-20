@@ -75,3 +75,61 @@ test('importing an already managed number returns the existing record without in
   assert.equal((await response.json()).alreadyManaged, true);
   assert.deepEqual(calls, ['/machine/telephony/numbers/list']);
 });
+
+test('status checks connection and readiness concurrently', async t => {
+  const waiting = [];
+  const portal = await listen(t, createServer((req, res) => {
+    waiting.push({ path: req.url, res });
+    if (waiting.length !== 2) return;
+    for (const entry of waiting) {
+      entry.res.setHeader('Content-Type', 'application/json');
+      entry.res.end(JSON.stringify(entry.path.endsWith('/connection') ? { platform_status: 'active' } : { is_ready: false }));
+    }
+  }));
+  const base = await listen(t, createApp({ allowedOrigins: [], telephonyApiUrl: portal, tenantId: 'fixture', hmacSecret: 'fixture', telephonyReadTimeoutMs: 300 }));
+  const response = await fetch(`${base}/api/telephony/status`);
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.tenantId, 'fixture');
+  assert.equal(body.connection.platform_status, 'active');
+  assert.equal(body.connectionError, null);
+  assert.equal(body.readiness.is_ready, false);
+});
+
+test('a hanging status read returns a bounded partial result', async t => {
+  const portal = await listen(t, createServer((req, res) => {
+    if (req.url.endsWith('/connection')) return; // Simulate a provider that never replies.
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ is_ready: false }));
+  }));
+  const base = await listen(t, createApp({ allowedOrigins: [], telephonyApiUrl: portal, tenantId: 'fixture', hmacSecret: 'fixture', telephonyReadTimeoutMs: 50 }));
+  const response = await fetch(`${base}/api/telephony/status`, { signal: AbortSignal.timeout(2000) });
+  const body = await response.json();
+  assert.equal(body.connection, null);
+  assert.equal(typeof body.connectionError, 'string');
+  assert.equal(body.readiness.is_ready, false);
+});
+
+test('machine POST list operations use the read deadline too', async t => {
+  const portal = await listen(t, createServer((req, res) => {
+    if (req.url.endsWith('/numbers/list')) return;
+    res.setHeader('Content-Type', 'application/json');
+    res.end('[]');
+  }));
+  const base = await listen(t, createApp({ allowedOrigins: [], telephonyApiUrl: portal, tenantId: 'fixture', hmacSecret: 'fixture', telephonyReadTimeoutMs: 50 }));
+  const response = await fetch(`${base}/api/telephony/numbers`, { signal: AbortSignal.timeout(2000) });
+  assert.equal(response.ok, false);
+  assert.equal((await response.json()).error, 'telephony_request_failed');
+});
+
+test('sequential provisioning steps share one total deadline', async t => {
+  const portal = await listen(t, createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url.endsWith('/sync')) setTimeout(() => res.end('{}'), 20);
+    else setTimeout(() => res.end('[]'), 350);
+  }));
+  const base = await listen(t, createApp({ allowedOrigins: [], telephonyApiUrl: portal, tenantId: 'fixture', hmacSecret: 'fixture', telephonyReadTimeoutMs: 1000, telephonyOperationTimeoutMs: 200 }));
+  const response = await post(base, 'sync', {});
+  assert.equal(response.ok, false);
+  assert.equal((await response.json()).error, 'telephony_request_failed');
+});

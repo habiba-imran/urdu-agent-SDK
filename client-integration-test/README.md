@@ -75,11 +75,15 @@ See [the latency fix verification](LATENCY_FIX_VERIFICATION_2026-10-20.md) for c
 
 The Telephony panel uses the backend-only telephony SDK. Check connection/readiness and assigned numbers before testing an existing inbound/outbound route. Number purchase and outbound calls incur provider charges; this app performs them only when you use those controls. Verify status and end reason in the dashboard Sessions/Telephony views. GitHub publication does not apply database migrations or provision phone routes.
 
-Managed cards show the assigned agent and routing status. Numbers already in the managed list cannot be imported again. Assignment uses the SDK's automatic routing operation once; errors include the saved assignment/routing state when it can be verified. The panel refreshes state after an assignment error and enables outbound only when the selected number, agent, routing, tenant readiness, and E.164 destination pass its checks. Provisioning requests allow three minutes in the browser and two minutes per upstream SDK request. A timeout may leave a completed server action; refresh before retrying a mutation. Outbound calls are never retried automatically.
+Managed cards show the assigned agent and routing status. Numbers already in the managed list cannot be imported again. Assignment uses the SDK's automatic routing operation once; errors include the saved assignment/routing state when it can be verified. The panel refreshes state after an assignment error and enables outbound only when the selected number, agent, routing, tenant readiness, and E.164 destination pass its checks.
+
+Progress and errors appear above the controls, with an elapsed timer for the running operation. Provisioning locks conflicting writes while **Refresh lists**, **Recent calls**, search, and number browsing remain available. Read requests have a 20-second browser deadline and a 10-second upstream deadline; connection and readiness checks run concurrently. Provisioning has one shared two-minute backend budget across its SDK steps and a 150-second browser deadline. A stalled response body also times out; late replies cannot overwrite the recovered UI. A timeout may leave a completed server action, so refresh before retrying a mutation. Outbound calls are never retried automatically.
 
 See [the telephony routing diagnosis](TELEPHONY_ROUTING_DIAGNOSIS_2026-10-20.md) for the active cross-tenant phone-number conflict found during the demo test. The deployed API's routing guard source fix requires deployment; local UI changes do not transfer an existing phone route.
 
 See [the preserved inbound route verification](INBOUND_VERIFICATION_2026-10-20.md) for the carrier/dispatch checks, idle worker database fix, and isolated real-provider audio failure. The preserved route's Gemini reply timed out; inbound PSTN acceptance has not passed.
+
+See [the inbound LLM failure follow-up](INBOUND_LLM_FAILURE_2026-10-20.md) for the pasted PSTN timeout, corrected failed-turn latency reporting, earlier LLM warm-up, and live Gemini availability checks.
 
 ## Maintainer: optional historical SDK snapshots
 
