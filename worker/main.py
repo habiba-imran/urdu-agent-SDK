@@ -37,6 +37,7 @@ from .latency import (
     schedule_provider_prewarm,
     session_room_options,
     wire_barge_in_flush,
+    wire_interruption_tts_prewarm,
     wire_turn_latency,
 )
 from .humanization import build_turn_profile, resolve_effective_providers, turn_profile_to_livekit_options
@@ -1421,6 +1422,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             session_id=getattr(_diagnostic_ud, "telemetry_session_id", None),
         )
         wire_barge_in_flush(session_obj, _opening_logger, audio_channel=channel)
+        wire_interruption_tts_prewarm(session_obj)
         from worker.session_opening import bind_opening_transport
         from worker.provider_retries import wire_provider_failure
         bind_opening_transport(session_obj, ctx.room, channel)

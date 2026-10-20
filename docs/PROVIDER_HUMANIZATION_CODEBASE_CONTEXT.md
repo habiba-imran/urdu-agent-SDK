@@ -239,7 +239,7 @@ Silero VAD settings in `worker/latency.py`: `min_speech_duration=0.12`, `min_sil
 
 ### 6.5 Interruptions and conversational recovery
 
-`wire_barge_in_flush()` tracks user/agent speaking states and may force `session.interrupt(force=True)` while the agent speaks. Force flushing defaults **off for WebRTC, on for telephony**, overridden by `UVA_FORCE_BARGE_IN_FLUSH`. It skips force flushing while `userdata.opening_active` is true.
+`wire_barge_in_flush()` tracks user/agent speaking states and may force `session.interrupt(force=True)` while the agent speaks. Force flushing defaults **off for both WebRTC and telephony**, overridden by `UVA_FORCE_BARGE_IN_FLUSH`. Native interruption remains enabled. It skips force flushing while `userdata.opening_active` is true. After an actual interrupted speech handle finishes, `wire_interruption_tts_prewarm()` starts Cartesia's bounded transport-only recovery hook so the next reply can reuse a clean WebSocket. It never cancels tools or business writes.
 
 Native interruption remains configured even when force flushing is off. Opening greetings are interruptible by default through `UVA_GREETING_INTERRUPTIBLE=1`; `0` locks them. Comments mention false-interruption resume as protection, but executable turn defaults disable that resume behavior. Echo, a short “mm-hm,” real corrections, noise and silence after interruption all need listening tests. The application has no explicit distinction between a backchannel and an interruption in this handler.
 

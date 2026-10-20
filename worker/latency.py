@@ -306,7 +306,9 @@ def _force_barge_in_flush_enabled(audio_channel: str) -> bool:
     LiveKit native interruption (``min_duration`` + STT turn commit) still barge-in when
     the caller actually speaks, then ``generate_reply`` runs on that transcript.
 
-    Telephony default **on** (faster PSTN flush). Override either way with
+    Telephony also defaults **off**: bare VAD echo/noise must not destroy a
+    reply before native interruption has confirmed sustained caller speech.
+    Override either way with
     ``UVA_FORCE_BARGE_IN_FLUSH=0|1``.
     """
     raw = (os.environ.get("UVA_FORCE_BARGE_IN_FLUSH") or "").strip().lower()
@@ -314,7 +316,7 @@ def _force_barge_in_flush_enabled(audio_channel: str) -> bool:
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    return (audio_channel or "webrtc").strip().lower() == "telephony"
+    return False
 
 
 def wire_barge_in_flush(
@@ -369,6 +371,37 @@ def wire_barge_in_flush(
     )
     session.on("agent_state_changed", _on_agent_state)
     session.on("user_state_changed", _on_user_state)
+
+
+def wire_interruption_tts_prewarm(session: Any) -> None:
+    """Prepare clean transport after actual speech cancellation, off the reply path.
+
+    Only adapters with a transport-only recovery hook participate. Never synthesize
+    filler speech, cancel tools, or start another conversational generation here.
+    """
+    closed = False
+
+    def on_done(handle: Any) -> None:
+        if closed or not getattr(handle, "interrupted", False):
+            return
+        hook = getattr(getattr(session, "tts", None), "prewarm_after_interruption", None)
+        if callable(hook):
+            hook()
+
+    def on_speech(ev: Any) -> None:
+        handle = getattr(ev, "speech_handle", None)
+        if handle is not None:
+            handle.add_done_callback(on_done)
+
+    def on_close(_ev: Any) -> None:
+        nonlocal closed
+        closed = True
+        cancel = getattr(getattr(session, "tts", None), "cancel_interruption_prewarm", None)
+        if callable(cancel):
+            cancel()
+
+    session.on("speech_created", on_speech)
+    session.on("close", on_close)
 
 
 async def prewarm_llm(llm: Any) -> None:

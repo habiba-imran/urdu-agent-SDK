@@ -129,7 +129,8 @@ def test_wire_barge_in_flush_webrtc_default_skips_force_interrupt():
     )
 
 
-def test_wire_barge_in_flush_telephony_default_force_interrupts():
+def test_wire_barge_in_flush_telephony_default_uses_native_interruption(monkeypatch):
+    monkeypatch.delenv("UVA_FORCE_BARGE_IN_FLUSH", raising=False)
     session = MagicMock()
     session.userdata = SimpleNamespace(opening_active=False)
     logger = MagicMock()
@@ -148,7 +149,7 @@ def test_wire_barge_in_flush_telephony_default_force_interrupts():
         SimpleNamespace(new_state="speaking", old_state="listening")
     )
 
-    session.interrupt.assert_called_once_with(force=True)
+    session.interrupt.assert_not_called()
 
 
 def test_wire_barge_in_flush_skips_force_during_opening(
