@@ -23,11 +23,15 @@ from worker.tools import (  # noqa: E402
     end_conversation_summary,
     escalate_to_human,
 )
+from livekit.agents import llm
 
 
 class _FakeSession:
     def __init__(self) -> None:
         self.shutdown_calls: list[dict] = []
+        self.history = llm.ChatContext.empty()
+        self.history.add_message(role="user", content="Goodbye")
+        self.history.add_message(role="assistant", content="Take care.")
 
     def shutdown(self, **kwargs) -> None:
         self.shutdown_calls.append(kwargs)
@@ -37,6 +41,9 @@ class _FakeRunContext:
     def __init__(self, userdata: AgentUserdata, session=None) -> None:
         self.userdata = userdata
         self.session = session
+
+    async def wait_for_playout(self):
+        pass
 
 
 @pytest.fixture

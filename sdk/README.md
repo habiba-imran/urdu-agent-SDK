@@ -83,6 +83,29 @@ Safe to import at module scope in Next.js — DOM access happens on connect.
 
 - `connectionState` · `isConnected` · `isMicMuted`
 
+### Ending a call
+
+Natural call endings are handled by the shared AwaazLabs worker. The existing
+conversation LLM interprets the caller's intent from the full context, chooses a
+brief closing line in the agent's language and tone, then calls
+`end_conversation_summary`. No phrase allowlist, fixed goodbye, or separate intent
+classifier request is used. Ambiguous intent should prompt a brief clarification;
+politeness, silence, or a completed booking alone does not justify hangup.
+
+Code waits for closing speech playout, checks that the requesting caller turn is
+still current and uninterrupted, then ends the room (including a SIP leg).
+If the end is cancelled or closing speech is missing, normal model conversation
+continues. Summary storage is best effort and cannot veto an intentional hangup.
+
+Every browser integration can react to `voice.on('ended', reason => ...)` to reset
+its call UI. Do not hang up by matching agent transcript text: doing so can cut off
+the goodbye. `voice.disconnect()` remains the immediate manual End Call action.
+Disconnect cleanup and `ended` fire once per room, including transport fallbacks.
+
+The shared worker must be deployed for the server behavior; browser cleanup fixes
+require a package release and consumer update. Building locally does not update
+already published npm packages or running workers.
+
 ### Supported events
 
 | Event | Payload |

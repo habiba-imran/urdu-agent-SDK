@@ -69,10 +69,10 @@ def test_session_room_options_fast_teardown():
     assert opts.delete_room_on_close is True
 
 
-def test_session_room_options_telephony_keeps_room():
+def test_session_room_options_telephony_ends_sip_leg_on_close():
     opts = session_room_options(audio_channel="telephony")
     assert opts.close_on_disconnect is True
-    assert opts.delete_room_on_close is False
+    assert opts.delete_room_on_close is True
 
 
 def test_wire_barge_in_flush_interrupts_when_user_speaks_over_agent(

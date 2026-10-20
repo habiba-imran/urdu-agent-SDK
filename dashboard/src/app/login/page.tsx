@@ -101,15 +101,6 @@ export default function LoginPage() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
-
-          <p className="mt-6 text-[13px] text-text-muted">
-            Hosted access is invite-only (no self-serve tenant creation). Have an invite link?{' '}
-            <a href="/invite" className="font-medium text-text underline-offset-4 hover:underline">
-              Open invite
-            </a>
-            . After sign-in, copy your HMAC from API Keys — Claim is only for attaching a legacy
-            offline-provisioned tenant, not for viewing secrets.
-          </p>
         </CardContent>
       </Card>
     </div>

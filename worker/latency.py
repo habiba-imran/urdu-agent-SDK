@@ -281,16 +281,16 @@ def session_room_options(*, audio_channel: str = "webrtc") -> Any:
     """Room I/O options for session teardown.
 
     Browser WebRTC: close + delete room when the participant disconnects (UVA-15).
-    Telephony: still close on disconnect, but do **not** delete the LiveKit room from
-    the agent side — Telnyx/SIP owns hangup; aggressive room delete mid-playout has
-    cut PSTN legs while TTS was still flushing.
+    Telephony: also delete the room so the SIP participant is disconnected. Intentional
+    endings wait for goodbye playout and use shutdown(drain=True) before RoomIO emits
+    close; deleting here cannot race ahead of that drain.
     """
     from livekit.agents.voice.room_io.types import RoomOptions
 
     if audio_channel == "telephony":
         return RoomOptions(
             close_on_disconnect=True,
-            delete_room_on_close=False,
+            delete_room_on_close=True,
         )
     return RoomOptions(
         close_on_disconnect=True,

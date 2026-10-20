@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import useSWR, { useSWRConfig } from 'swr';
-import { Copy } from 'lucide-react';
+import { Copy, Check } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { revealCredentialSecret, setAllowedOrigins } from '@/lib/portalApi';
@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Toast, useToast } from '@/components/ui/toast';
+import { FixedToast, useFixedToast } from '@/components/ui/toast';
 import { CodeBlock } from '@/components/ui/code-block';
 
 function CopyField({
@@ -27,7 +27,6 @@ function CopyField({
   hint,
   mono = true,
   onCopy,
-  toastMessage,
   trailing,
 }: {
   label: string;
@@ -35,9 +34,20 @@ function CopyField({
   hint?: string;
   mono?: boolean;
   onCopy: () => void;
-  toastMessage: string | null;
   trailing?: React.ReactNode;
 }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    onCopy();
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setCopied(true);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }, [onCopy]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
   return (
     <div className="flex flex-col gap-1.5">
       <label className="font-mono-label text-text-muted">{label}</label>
@@ -47,12 +57,16 @@ function CopyField({
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {trailing}
-          <div className="relative">
-            <Toast message={toastMessage} />
-            <Button size="sm" variant="secondary" onClick={onCopy} aria-label={`Copy ${label}`}>
-              <Copy className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleCopy}
+            aria-label={copied ? `${label} copied` : `Copy ${label}`}
+          >
+            {copied
+              ? <Check className="h-4 w-4 text-[var(--success)]" />
+              : <Copy className="h-4 w-4" />}
+          </Button>
         </div>
       </div>
       {hint ? <p className="text-[13px] text-text-muted">{hint}</p> : null}
@@ -60,9 +74,53 @@ function CopyField({
   );
 }
 
+/** Per-field copy button for the HMAC row (not using CopyField layout). */
+function HmacCopyButton({
+  hmacSecret,
+  canViewKeys,
+  onCopy,
+}: {
+  hmacSecret: string | null;
+  canViewKeys: boolean;
+  onCopy: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    onCopy();
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setCopied(true);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }, [onCopy]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      onClick={handleCopy}
+      disabled={!hmacSecret}
+      aria-label={copied ? 'HMAC secret copied' : 'Copy HMAC secret'}
+      title={
+        !canViewKeys
+          ? 'Owner approval required'
+          : hmacSecret
+            ? copied ? 'Copied!' : 'Copy HMAC secret'
+            : 'Secret not available'
+      }
+    >
+      {copied
+        ? <Check className="h-4 w-4 text-[var(--success)]" />
+        : <Copy className="h-4 w-4" />}
+    </Button>
+  );
+}
+
 export default function CredentialsPage() {
   const { mutate } = useSWRConfig();
-  const { message: toastMessage, showToast } = useToast();
+  const { fixedToast, showFixedToast, dismissFixedToast } = useFixedToast();
   const isOwner = isPortalOwner();
   const { data: credentials, isLoading: loading, error } = useSWR(
     swrKeys.credentials,
@@ -113,19 +171,23 @@ export default function CredentialsPage() {
     return 'http://localhost:5174,http://localhost:3000';
   }, [credentials?.allowed_origins]);
 
-  const copyText = async (text: string, label: string) => {
+  const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
-    showToast(`${label} copied`);
+  };
+
+  const copyTextWithToast = async (text: string, label: string) => {
+    await navigator.clipboard.writeText(text);
+    showFixedToast(`${label} copied`, 'success');
   };
 
   const handleCopyPublishableKey = () => {
     if (!credentials?.publishable_key) return;
-    void copyText(credentials.publishable_key, 'Publishable key');
+    void copyToClipboard(credentials.publishable_key);
   };
 
   const handleCopyTenantId = () => {
     if (!credentials?.tenant_id) return;
-    void copyText(credentials.tenant_id, 'Tenant ID');
+    void copyToClipboard(credentials.tenant_id);
   };
 
   const handleSaveOrigins = async () => {
@@ -144,7 +206,7 @@ export default function CredentialsPage() {
       const result = await setAllowedOrigins(origins);
       setOriginsText(result.allowed_origins.join('\n'));
       setOriginsNote(result.note);
-      showToast('Allowed origins saved');
+      showFixedToast('Allowed origins saved', 'success');
       void mutate(swrKeys.credentials);
     } catch (e) {
       setOriginsError(e instanceof Error ? e.message : 'Failed to save origins');
@@ -230,11 +292,12 @@ export default function CredentialsPage() {
 
   const handleCopyHmacSecret = () => {
     if (!hmacSecret) return;
-    void copyText(hmacSecret, 'HMAC secret');
+    void copyToClipboard(hmacSecret);
   };
 
   return (
     <div>
+      <FixedToast toast={fixedToast} onDismiss={dismissFixedToast} />
       <PageHeader
         title="API Keys"
         breadcrumbLabel="API Keys"
@@ -292,15 +355,13 @@ export default function CredentialsPage() {
             label="Control plane (sessions)"
             value={PLATFORM_CONTROL_PLANE_URL}
             hint="UVA_CONTROL_PLANE_URL — your backend calls /v1/session here (HMAC-signed)."
-            onCopy={() => void copyText(PLATFORM_CONTROL_PLANE_URL, 'Control plane URL')}
-            toastMessage={toastMessage}
+            onCopy={() => void copyToClipboard(PLATFORM_CONTROL_PLANE_URL)}
           />
           <CopyField
             label="Tenant portal API (agents / telephony)"
             value={PLATFORM_TENANT_PORTAL_URL}
             hint="UVA_API_BASE_URL and UVA_TELEPHONY_API_URL — same base for both."
-            onCopy={() => void copyText(PLATFORM_TENANT_PORTAL_URL, 'Tenant portal URL')}
-            toastMessage={toastMessage}
+            onCopy={() => void copyToClipboard(PLATFORM_TENANT_PORTAL_URL)}
           />
         </CardContent>
       </Card>
@@ -331,7 +392,6 @@ export default function CredentialsPage() {
                 value={keysReady ? credentials!.tenant_id : 'Unavailable'}
                 hint="UVA_TENANT_ID — backend only. Same UUID as the publishable key."
                 onCopy={handleCopyTenantId}
-                toastMessage={toastMessage}
                 trailing={
                   credentials?.name ? (
                     <Badge variant="outline">{credentials.name}</Badge>
@@ -344,7 +404,6 @@ export default function CredentialsPage() {
                 value={keysReady ? credentials!.publishable_key! : 'Unavailable'}
                 hint="UVA_PUBLISHABLE_KEY / VITE_UVA_PUBLISHABLE_KEY — safe to embed in the client."
                 onCopy={handleCopyPublishableKey}
-                toastMessage={toastMessage}
                 trailing={<Badge variant="outline">{credentials?.status ?? 'Unknown'}</Badge>}
               />
 
@@ -361,22 +420,11 @@ export default function CredentialsPage() {
                       {revealingSecret ? 'Revealing…' : hmacSecret ? 'Hide HMAC' : 'Reveal HMAC'}
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={handleCopyHmacSecret}
-                    disabled={!hmacSecret}
-                    aria-label="Copy HMAC secret"
-                    title={
-                      !canViewKeys
-                        ? 'Owner approval required'
-                        : hmacSecret
-                          ? 'Copy HMAC secret'
-                          : 'Secret not available'
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
+                  <HmacCopyButton
+                    hmacSecret={hmacSecret}
+                    canViewKeys={canViewKeys}
+                    onCopy={handleCopyHmacSecret}
+                  />
                 </div>
                 <p className="text-[13px] text-text-muted">
                   <code className="font-mono text-[12px]">UVA_HMAC_SECRET</code> — copy into your
@@ -475,7 +523,7 @@ export default function CredentialsPage() {
               <CodeBlock label="Backend .env" code={backendEnv} />
               <div>
                 <Button
-                  onClick={() => void copyText(backendEnv, 'Backend .env')}
+                  onClick={() => void copyTextWithToast(backendEnv, 'Backend .env')}
                   disabled={loading || (!hmacSecret && Boolean(credentials))}
                 >
                   Copy backend env
@@ -508,7 +556,7 @@ export default function CredentialsPage() {
               </p>
               <CodeBlock label="Frontend .env" code={frontendEnv} />
               <div>
-                <Button onClick={() => void copyText(frontendEnv, 'Frontend .env')} disabled={loading}>
+                <Button onClick={() => void copyTextWithToast(frontendEnv, 'Frontend .env')} disabled={loading}>
                   Copy frontend env
                 </Button>
               </div>

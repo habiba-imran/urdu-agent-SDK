@@ -68,47 +68,75 @@ class AgentUserdata:
     audit_transcript: Any = None
     opening_state: Any = None
     tool_orchestrator: Any = None
+    ending_in_progress: bool = False
 
 
 @function_tool
 async def end_conversation_summary(
     ctx: RunContext[AgentUserdata], summary: str
 ) -> dict:
-    """Call this ONLY when the conversation is genuinely over, AFTER you have already said your
-    closing line to the caller. This HANGS UP — the caller cannot say anything else once you
-    call it, so never call it mid-conversation or to acknowledge something.
+    """End the call when the caller's intent, understood from the whole conversation,
+    clearly indicates they want to finish, in any language or wording. First say one
+    brief natural closing line, then invoke this tool in the same turn. Do not use
+    it just for politeness, silence, a completed business action, or a quoted farewell.
+    If uncertain, clarify instead. The tool waits for playout and checks interruptions.
 
     Args:
         summary: One sentence describing what the conversation was about.
     """
     ud = ctx.userdata
-    # F-H9: sync psycopg must not run on the event loop (stalls live audio).
+    from worker.call_ending import closing_speech_recorded, ending_is_current, latest_user_turn
     from worker.humanization.orchestrator import for_userdata
-    orchestrator = for_userdata(ud)
-    result = await orchestrator.run(
-        orchestrator.plan(ctx, "end_conversation_summary"),
-        lambda: _lifecycle_call(_save_conversation_summary, summary=summary,
-                               room_name=ud.room_name, tenant_id=ud.tenant_id),
-    )
-    if result["outcome"] != "SUCCESS":
-        return result
-    ud.ended_by_agent = True
     session = getattr(ctx, "session", None)
-    if session is not None:
-        # Public RunContext step-level wait avoids waiting for this tool itself.
+    if getattr(ud, "ended_by_agent", False) or getattr(ud, "ending_in_progress", False):
+        return {"status": "already_ending", "callEnding": bool(getattr(ud, "ended_by_agent", False))}
+    turn = latest_user_turn(session)
+    if turn is None:
+        return {"status": "not_ending", "callEnding": False,
+                "reason": "No committed caller turn is available. Keep the call open."}
+    orchestrator = for_userdata(ud)
+    plan = orchestrator.plan(ctx, "end_conversation_summary")
+
+    def still_current() -> bool:
+        return ending_is_current(ctx, turn, orchestrator, plan)
+
+    if not still_current():
+        return {"status": "continued", "callEnding": False}
+    ud.ending_in_progress = True
+    try:
+        # A summary is best effort; its failure must not veto the caller's hangup.
+        # Keep persistence off the audio loop and preserve its truthful outcome.
+        result = await orchestrator.run(
+            plan,
+            lambda: _lifecycle_call(_save_conversation_summary, summary=summary,
+                                   room_name=ud.room_name, tenant_id=ud.tenant_id),
+        )
         wait = getattr(ctx, "wait_for_playout", None)
-        if wait is not None:
-            try:
-                await asyncio.wait_for(wait(), timeout=6.0)
-            except (TimeoutError, RuntimeError):
-                logger.warning("final closing playout unavailable; summary remains committed")
-        # At an intentional goodbye with no caller speaking, no final user turn is
-        # pending. Remove the framework's otherwise unconditional 2-second wait.
+        if wait is None:
+            return {**result, "status": "playout_unavailable", "callEnding": False}
+        try:
+            # Step-level public wait cannot deadlock waiting for this tool itself.
+            await asyncio.wait_for(wait(), timeout=15.0)
+        except (TimeoutError, RuntimeError):
+            logger.warning("closing playout incomplete; leaving call open for caller")
+            return {**result, "status": "playout_incomplete", "callEnding": False}
+        if not still_current():
+            return {**result, "status": "continued", "callEnding": False}
+        if not closing_speech_recorded(session):
+            return {**result, "status": "closing_speech_missing", "callEnding": False,
+                    "reason": "Say a brief natural closing line before invoking this tool again."}
+        ud.ended_by_agent = True
         options = getattr(session, "options", None)
-        if options is not None and getattr(session, "user_state", None) != "speaking":
+        if options is not None:
             options.session_close_transcript_timeout = 0.0
         session.shutdown(drain=True)
-    return {**result, "status": "saved"}
+        saved = result["outcome"] == "SUCCESS"
+        if not saved:
+            logger.warning("ending call with unsaved summary outcome=%s", result["outcome"])
+        return {**result, "status": "saved" if saved else "ending",
+                "summarySaved": saved, "callEnding": True}
+    finally:
+        ud.ending_in_progress = False
 
 
 @function_tool

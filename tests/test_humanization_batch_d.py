@@ -430,6 +430,9 @@ def test_goodbye_waits_for_final_playout_after_commit_and_removes_silent_tail(
         session.options = NS(session_close_transcript_timeout=2.0)
         session.userdata.tenant_id = "t"
         session.userdata.room_name = "r"
+        session.history = llm.ChatContext.empty()
+        session.history.add_message(role="user", content="Goodbye")
+        session.history.add_message(role="assistant", content="Take care.")
         calls = []
 
         def save(**kwargs):

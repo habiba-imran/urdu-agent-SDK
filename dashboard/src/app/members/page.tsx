@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FixedToast, useFixedToast } from '@/components/ui/toast';
 
 export default function MembersPage() {
   const { data: members, isLoading, error, mutate } = useSWR(
@@ -26,20 +27,23 @@ export default function MembersPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [savingAccess, setSavingAccess] = useState<string | null>(null);
-  const [accessError, setAccessError] = useState<string | null>(null);
-  const [accessNote, setAccessNote] = useState<string | null>(null);
+  const { fixedToast, showFixedToast, dismissFixedToast } = useFixedToast();
 
   const handleKeyAccess = async (member: PortalMember) => {
     setSavingAccess(member.auth_user_id);
-    setAccessError(null);
-    setAccessNote(null);
     try {
       const result = await setMemberApiKeyAccess(member.auth_user_id, !member.can_view_api_keys);
       await mutate((current) => current?.map((m) =>
         m.auth_user_id === result.auth_user_id ? { ...m, ...result } : m), { revalidate: false });
-      setAccessNote(`API key access ${result.can_view_api_keys ? 'enabled' : 'disabled'} for ${member.email || 'member'}.`);
+      showFixedToast(
+        `API key access ${result.can_view_api_keys ? 'enabled' : 'disabled'} for ${member.email || 'member'}.`,
+        'success',
+      );
     } catch (err) {
-      setAccessError(err instanceof Error ? err.message : 'Could not update API key access');
+      showFixedToast(
+        err instanceof Error ? err.message : 'Could not update API key access',
+        'error',
+      );
     } finally {
       setSavingAccess(null);
     }
@@ -76,6 +80,7 @@ export default function MembersPage() {
 
   return (
     <div className="space-y-6">
+      <FixedToast toast={fixedToast} onDismiss={dismissFixedToast} />
       <PageHeader
         title="Members"
         description="Invite teammates and control each member’s access to workspace API keys."
@@ -124,8 +129,7 @@ export default function MembersPage() {
             key and reveal the HMAC secret for backend setup. Turning it off blocks future reveals;
             previously copied secrets remain usable until an operator rotates them.
           </p> : null}
-          {accessError ? <p role="alert" className="mb-4 text-sm text-destructive">{accessError}</p> : null}
-          {accessNote ? <p role="status" className="mb-4 text-sm text-muted-foreground">{accessNote}</p> : null}
+
           {isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-10 w-full" />

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AwaazLabsUvaVoice, AwaazLabsUvaVoiceError } from './index.js';
 import type { AwaazLabsUvaVoiceEvent, AwaazLabsUvaVoiceEventMap } from './index.js';
+import { RoomEvent } from 'livekit-client';
 
 type EmitAccess = {
+  state: string;
+  wireRoomEvents: (room: unknown) => void;
   emit: <K extends AwaazLabsUvaVoiceEvent>(
     event: K,
     ...args: AwaazLabsUvaVoiceEventMap[K]
@@ -36,6 +39,62 @@ function makeAgent(): AwaazLabsUvaVoice {
     sessionEndpoint: 'https://host.example/v1/session',
   });
 }
+
+describe('call-ending cleanup', () => {
+  function makeRoom() {
+    const handlers = new Map<string, (...args: any[]) => void>();
+    const room = {
+      on: (event: string, handler: (...args: any[]) => void) => { handlers.set(event, handler); return room; },
+      disconnect: vi.fn(async () => {}),
+    };
+    return { room, handlers };
+  }
+
+  it('emits ended once when disconnect resolves without a LiveKit event', async () => {
+    const agent = makeAgent();
+    const { room, handlers } = makeRoom();
+    internals(agent).room = room;
+    internals(agent).wireRoomEvents(room);
+    const ended = vi.fn();
+    agent.on('ended', ended);
+    await agent.disconnect('user_ended');
+    expect(ended).toHaveBeenCalledExactlyOnceWith('user_ended');
+    expect(internals(agent).state).toBe('idle');
+    handlers.get(RoomEvent.Disconnected)!('late_event');
+    await agent.disconnect();
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles remote room deletion once and ignores an old room after reconnect', async () => {
+    const agent = makeAgent();
+    const old = makeRoom();
+    internals(agent).room = old.room;
+    internals(agent).wireRoomEvents(old.room);
+    const ended = vi.fn();
+    agent.on('ended', ended);
+    old.handlers.get(RoomEvent.Disconnected)!('room_deleted');
+    expect(ended).toHaveBeenCalledExactlyOnceWith('room_deleted');
+    const next = makeRoom();
+    internals(agent).room = next.room;
+    internals(agent).state = 'connected';
+    old.handlers.get(RoomEvent.Disconnected)!('duplicate');
+    expect(internals(agent).room).toBe(next.room);
+    expect(internals(agent).state).toBe('connected');
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not double emit when LiveKit fires during manual disconnect', async () => {
+    const agent = makeAgent();
+    const { room, handlers } = makeRoom();
+    internals(agent).room = room;
+    internals(agent).wireRoomEvents(room);
+    room.disconnect.mockImplementation(async () => { handlers.get(RoomEvent.Disconnected)!('client_initiated'); });
+    const ended = vi.fn();
+    agent.on('ended', ended);
+    await agent.disconnect();
+    expect(ended).toHaveBeenCalledExactlyOnceWith('client_initiated');
+  });
+});
 
 describe('AwaazLabsUvaVoice.listVoices (F-M16)', () => {
   afterEach(() => {

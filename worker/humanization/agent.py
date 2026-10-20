@@ -151,7 +151,7 @@ class AwaazAgent(Agent):
         return observe()
 
     def _conversational_stream(self, chat_ctx: Any, tools: Any, model_settings: Any):
-        """Platform truth/exit acts use the same speech and lifecycle tool pipeline."""
+        """Keep identity/stop acts local; ending intent and goodbye use the model."""
         if chat_ctx is None:
             return None
         from .turn_plan import conversational_signals, conversational_response, derive_turn_plan
@@ -160,10 +160,22 @@ class AwaazAgent(Agent):
         # when the framework requests a continuation of our closing tool result.
         for item in reversed(chat_ctx.items):
             if isinstance(item, llm.FunctionCallOutput) and item.name == "end_conversation_summary":
-                async def finished():
-                    if False:
-                        yield ""
-                return finished()
+                import json
+                try:
+                    ending = json.loads(item.output).get("callEnding") is True
+                except (ValueError, AttributeError, TypeError):
+                    ending = False
+                try:
+                    ending = ending or bool(getattr(self.session.userdata, "ended_by_agent", False))
+                except (RuntimeError, ValueError):
+                    pass
+                if ending:
+                    async def finished():
+                        if False:
+                            yield ""
+                    return finished()
+                # A cancelled/rejected end needs normal model continuation, not silence.
+                return None
             if isinstance(item, llm.ChatMessage) and item.role == "user" and item.id != "awaaz_persona_data":
                 message = item
                 break
@@ -171,29 +183,19 @@ class AwaazAgent(Agent):
             return None
         signals = conversational_signals(message.text_content or "")
         stop = signals.stop_intent and self.humanization_runtime is not None and self.humanization_runtime.policy.behavior_enabled
-        if not (signals.closing_intent or signals.ai_identity_question or stop):
+        if not (signals.ai_identity_question or stop):
             return None
         runtime = self.humanization_runtime
         language = runtime.state.language_state.configured_language if runtime else "en"
-        act = "CLOSE" if signals.closing_intent else "STOP" if stop else "IDENTIFY_AI"
+        act = "STOP" if stop else "IDENTIFY_AI"
         if runtime:
             runtime.bind_generation_input(chat_ctx)
             runtime.latest_plan = derive_turn_plan(runtime.state, signals)
         async def reply():
-            import json
             from uuid import uuid4
             response_id = "closing_" + uuid4().hex
             yield llm.ChatChunk(id=response_id, delta=llm.ChoiceDelta(
                 content=conversational_response(act, language)))
-            if act == "CLOSE" and getattr(model_settings, "tool_choice", None) != "none":
-                # Tool execution remains owned by LiveKit: speculative speech does
-                # not dispatch it before turn commitment. No business tool is called.
-                if llm.ToolContext(tools or []).get_function_tool("end_conversation_summary") is not None:
-                    call_id = response_id
-                    yield llm.ChatChunk(id=call_id, delta=llm.ChoiceDelta(tool_calls=[
-                        llm.FunctionToolCall(name="end_conversation_summary", call_id=call_id,
-                                             arguments=json.dumps({"summary": "Caller ended the conversation."}))
-                    ]))
         return reply()
 
     async def _canonical_llm_stream(self, stream: Any):

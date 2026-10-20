@@ -151,27 +151,11 @@ def signals_from_write_gate(write_gate: object | None) -> TurnSignals:
 
 
 def conversational_signals(text: str) -> TurnSignals:
-    """Conservative whole-utterance exits; a mentioned farewell is not an exit."""
+    """Local delivery/identity cues. Ending intent is decided by the conversation LLM."""
     import re
     import unicodedata
     value = unicodedata.normalize("NFKC", text).casefold().replace("’", "'")
     value = re.sub(r"[.!?,،؟؛۔。\s]+", " ", value).strip()
-    farewell = (
-        r"(?:(?:no|okay|ok|thanks|thank you|that's all|that is all|all right) )*"
-        r"(?:bye|bye bye|goodbye|good bye|see you|take care)"
-        r"(?: (?:thanks|thank you|take care|have a good day))*"
-    )
-    urdu = (
-        r"(?:(?:نہیں|جی|شکریہ|بس|بس یہی|بس اتنا ہی|بس یہی تھا|ٹھیک ہے|آپ کا شکریہ) )*"
-        r"(?:خدا حافظ|خداحافظ|اللہ حافظ|اللہحافظ|بائے|پھر ملیں گے)"
-        r"(?: (?:شکریہ|آپ کا شکریہ))*"
-    )
-    roman = (
-        r"(?:(?:nahi|nahin|jee|ji|shukriya|bas|bas itna hi|theek hai) )*"
-        r"(?:allah hafiz|khuda hafiz|allah hafez|khuda hafez)"
-        r"(?: shukriya)?"
-    )
-    closing = any(re.fullmatch(pattern, value) for pattern in (farewell, urdu, roman))
     identity = bool(re.search(
         r"\b(?:are you (?:an? )?(?:ai|robot|bot|human|real person)|"
         r"are you (?:an? )?(?:ai|virtual|automated) (?:assistant|agent)|"
@@ -197,7 +181,7 @@ def conversational_signals(text: str) -> TurnSignals:
         r"\u0627\u06cc\u06a9 \u0644\u0645\u062d\u06c1|ruk jaiye|ruko|ek lamha)", value))
     excited = bool(re.search(r"\b(?:that's great|that is great|i(?:'m| am) excited|wonderful news)\b|\u0628\u06c1\u062a \u0627\u0686\u06be\u0627", value))
     hesitation = bool(re.search(r"\b(?:um|uh|let me think)\b|\u0627\u06cc\u06a9 \u0645\u0646\u0679", value))
-    return TurnSignals(closing_intent=closing, ai_identity_question=identity,
+    return TurnSignals(ai_identity_question=identity,
                        conversational=True, complaint_or_frustration=concern,
                        user_correction=bool(re.search(r"^(?:actually|sorry|no)\b.*\b(?:meant|instead)|\bi meant\b", value)),
                        confusion=confusion, acknowledgement=acknowledgement,
@@ -208,6 +192,4 @@ def conversational_response(act: str, language: str) -> str:
     urdu = language_style_for(language) in {"ur_pk", "mixed"}
     if act == "STOP":
         return "\u062c\u06cc\u06d4" if urdu else "Okay."
-    if act == "CLOSE":
-        return "شکریہ، خدا حافظ۔" if urdu else "Thank you for calling. Goodbye!"
     return "میں ایک اے آئی اسسٹنٹ ہوں۔" if urdu else "I'm an AI assistant."

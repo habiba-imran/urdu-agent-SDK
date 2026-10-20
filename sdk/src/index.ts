@@ -412,19 +412,7 @@ export class AwaazLabsUvaVoice {
     }
     // Real LiveKit Room fires RoomEvent.Disconnected, which already clears state + emits.
     // Stubs / failed-refresh paths still need local cleanup when that event never runs.
-    if (this.room === room) {
-      this.detachAllRemoteAudio();
-      this.room = null;
-      this.session = null;
-      this.sessionReceivedAt = null;
-      this.lastCallerSpeaking = null;
-      this.lastAgentSpeaking = null;
-      this.state = 'idle';
-      if (!canDisconnect) {
-        this.emit('disconnected', reason);
-        this.emit('ended', reason);
-      }
-    }
+    this.finishDisconnect(room, reason);
   }
 
   /**
@@ -477,18 +465,7 @@ export class AwaazLabsUvaVoice {
     });
 
     room.on(RoomEvent.Disconnected, (reason) => {
-      this.clearRefreshTimer();
-      this.detachAllRemoteAudio();
-      this.room = null;
-      this.session = null;
-      this.sessionReceivedAt = null;
-      this.lastCallerSpeaking = null;
-      this.lastAgentSpeaking = null;
-      this.state = 'idle';
-      this.playbackReady = false;
-      this.emit('audio_ready', false);
-      this.emit('disconnected', reason);
-      this.emit('ended', reason);
+      this.finishDisconnect(room, reason);
     });
 
     room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
@@ -582,6 +559,23 @@ export class AwaazLabsUvaVoice {
       this.emit('audio_blocked', blocked);
       this.updatePlaybackReady(room);
     });
+  }
+
+  private finishDisconnect(room: Room, reason?: unknown): void {
+    // Ignore duplicate/late events, including an old room closing after reconnect.
+    if (this.room !== room) return;
+    this.clearRefreshTimer();
+    this.detachAllRemoteAudio();
+    this.room = null;
+    this.session = null;
+    this.sessionReceivedAt = null;
+    this.lastCallerSpeaking = null;
+    this.lastAgentSpeaking = null;
+    this.state = 'idle';
+    this.playbackReady = false;
+    this.emit('audio_ready', false);
+    this.emit('disconnected', reason);
+    this.emit('ended', reason);
   }
 
   private attachRemoteAudio(trackSid: string, element: HTMLMediaElement): void {
