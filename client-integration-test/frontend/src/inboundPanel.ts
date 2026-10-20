@@ -89,7 +89,7 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
     if (!response.ok) throw new Error(result.message || result.error || `Request failed (${response.status})`);
     return result;
   }
-  el('refresh').addEventListener('click', async () => {
+  async function load() {
     if (busy) return;
     busy = true; render(); el('status').textContent = 'Loading this tenant’s inbound numbers and providers…';
     try {
@@ -107,7 +107,8 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
       el<HTMLInputElement>('agent-id').value = '';
       el('status').textContent = error instanceof Error ? error.message : 'Could not load inbound setup.';
     } finally { busy = false; render(); }
-  });
+  }
+  el('refresh').addEventListener('click', () => { void load(); });
   select('number').addEventListener('change', chooseNumber);
   select('language').addEventListener('change', () => { providers(); el('status').textContent = 'Unsaved changes. Save to use these settings on future calls.'; });
   for (const key of ['stt', 'llm', 'tts']) select(key).addEventListener('change', () => models());
@@ -127,4 +128,5 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
     } catch (error) { el('status').textContent = `${error instanceof Error ? error.message : 'Save failed.'} Save may have reached the server. Refresh to confirm stored settings before retrying.`; }
     finally { busy = false; render(); }
   });
+  void load();
 }

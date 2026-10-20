@@ -19,13 +19,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 async function load() {
-  el('refresh').click();
   await vi.waitFor(() => expect(el<HTMLButtonElement>('save').disabled).toBe(false));
 }
 test('loading selects the number’s saved pipeline without mutation and exposes route blocker', async () => {
   await load();
   expect(el<HTMLSelectElement>('llm').value).toBe('gemini');
   expect(el<HTMLInputElement>('agent-id').value).toBe('assigned');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(el('route').textContent).toContain('Inbound calls are blocked');
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
 });
