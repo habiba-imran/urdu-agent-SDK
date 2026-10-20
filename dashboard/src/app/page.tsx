@@ -218,6 +218,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
+            {credentials?.can_view_api_keys ? <>
             <CopyableMono
               label="Publishable key"
               value={credentials?.publishable_key}
@@ -228,6 +229,9 @@ export default function DashboardPage() {
               value={credentials?.tenant_id}
               loading={showSkeletons}
             />
+            </> : !showSkeletons ? <p className="text-sm text-text-muted">
+              API key access requires approval from your workspace owner in Members.
+            </p> : null}
 
             <div className="flex flex-col gap-1.5">
               <p className="font-mono-label text-text-muted">HMAC secret</p>

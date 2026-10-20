@@ -67,7 +67,10 @@ export default function CredentialsPage() {
   const { data: credentials, isLoading: loading, error } = useSWR(
     swrKeys.credentials,
     swrFetchers.credentials,
+    { refreshInterval: 15000 },
   );
+  const canViewKeys = credentials?.can_view_api_keys === true;
+  const canRevealSecret = canViewKeys && credentials?.secret_reveal_enabled === true;
   const { data: agents } = useSWR(swrKeys.agents, swrFetchers.agents);
 
   const [originsText, setOriginsText] = useState('');
@@ -78,12 +81,12 @@ export default function CredentialsPage() {
   const [revealedSecret, setRevealedSecret] = useState<{ tenantId: string; secret: string } | null>(null);
   const [revealingSecret, setRevealingSecret] = useState(false);
   const [secretError, setSecretError] = useState<string | null>(null);
-  const hmacSecret = isOwner && revealedSecret?.tenantId === credentials?.tenant_id
+  const hmacSecret = canRevealSecret && revealedSecret?.tenantId === credentials?.tenant_id
     ? revealedSecret?.secret ?? null : null;
   useEffect(() => {
     setRevealedSecret(null);
     setSecretError(null);
-  }, [credentials?.tenant_id, isOwner]);
+  }, [credentials?.tenant_id, canRevealSecret]);
 
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [hostPublicUrl, setHostPublicUrl] = useState('http://localhost:3000');
@@ -155,7 +158,7 @@ export default function CredentialsPage() {
     const pub = credentials?.publishable_key ?? '<PUBLISHABLE_KEY>';
     const hmac =
       hmacSecret ||
-      '<UVA_HMAC_SECRET — request securely from an operator, or use permitted owner reveal>';
+      '<UVA_HMAC_SECRET — reveal above, or request secure operator delivery>';
     const hostBase = hostPublicUrl.replace(/\/$/, '') || 'http://localhost:3000';
     return [
       '# --- AwaazLabs tenant (from this page) ---',
@@ -200,8 +203,8 @@ export default function CredentialsPage() {
   }, [credentials, selectedAgentId, hostPublicUrl]);
 
   const hmacDisplay =
-    !isOwner && !hmacSecret
-      ? '•••••••••••••••••••••••••••••••• (owners only)'
+    !canViewKeys && !hmacSecret
+      ? 'Owner approval required'
       : credentials?.secret_provisioned === false && !hmacSecret
         ? 'Not provisioned yet'
         : hmacSecret ||
@@ -212,7 +215,7 @@ export default function CredentialsPage() {
 
   const handleRevealSecret = async () => {
     const tenantId = credentials?.tenant_id;
-    if (!isOwner || !tenantId || revealingSecret) return;
+    if (!canRevealSecret || !tenantId || revealingSecret) return;
     setRevealingSecret(true);
     setSecretError(null);
     try {
@@ -306,9 +309,8 @@ export default function CredentialsPage() {
         <CardHeader>
           <CardTitle>Tenant keys</CardTitle>
           <CardDescription>
-            Publishable key is safe in the browser. HMAC metadata is masked; permitted owners can
-            explicitly reveal it for host setup. Hosted reveal may be disabled — request secure
-            delivery from an operator. Console rotation is disabled.
+            Owners and approved members can view keys and explicitly reveal HMAC for host setup.
+            Copy the HMAC into your backend secret manager. Console rotation is disabled.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -318,6 +320,10 @@ export default function CredentialsPage() {
               <Skeleton className="h-11 w-full" />
               <Skeleton className="h-11 w-full" />
             </div>
+          ) : !canViewKeys ? (
+            <p className="text-sm text-text-muted">
+              API key access is off. Ask your workspace owner to enable it for you in Members.
+            </p>
           ) : (
             <>
               <CopyField
@@ -335,7 +341,7 @@ export default function CredentialsPage() {
 
               <CopyField
                 label="Publishable key"
-                value={keysReady ? credentials!.publishable_key : 'Unavailable'}
+                value={keysReady ? credentials!.publishable_key! : 'Unavailable'}
                 hint="UVA_PUBLISHABLE_KEY / VITE_UVA_PUBLISHABLE_KEY — safe to embed in the client."
                 onCopy={handleCopyPublishableKey}
                 toastMessage={toastMessage}
@@ -348,9 +354,9 @@ export default function CredentialsPage() {
                 </label>
                 <div className="flex items-center justify-between gap-3 rounded-input border border-border bg-surface-muted px-4 py-3 font-mono text-[13px] text-text">
                   <span className="min-w-0 flex-1 break-all">{hmacDisplay}</span>
-                  {isOwner ? (
+                  {canViewKeys ? (
                     <Button size="sm" variant="secondary"
-                      disabled={revealingSecret || !keysReady || credentials?.secret_provisioned === false}
+                      disabled={revealingSecret || !keysReady || !canRevealSecret || credentials?.secret_provisioned === false}
                       onClick={hmacSecret ? () => setRevealedSecret(null) : () => void handleRevealSecret()}>
                       {revealingSecret ? 'Revealing…' : hmacSecret ? 'Hide HMAC' : 'Reveal HMAC'}
                     </Button>
@@ -362,8 +368,8 @@ export default function CredentialsPage() {
                     disabled={!hmacSecret}
                     aria-label="Copy HMAC secret"
                     title={
-                      !isOwner
-                        ? 'Owner role required'
+                      !canViewKeys
+                        ? 'Owner approval required'
                         : hmacSecret
                           ? 'Copy HMAC secret'
                           : 'Secret not available'
@@ -374,10 +380,13 @@ export default function CredentialsPage() {
                 </div>
                 <p className="text-[13px] text-text-muted">
                   <code className="font-mono text-[12px]">UVA_HMAC_SECRET</code> — copy into your
-                  host secret store after an explicit permitted reveal. Hosted deployments disable
-                  reveal by default; ask an operator to deliver the secret securely. Hiding it also
-                  removes it from the generated env snippet. Console rotation is disabled.
+                  host secret store after revealing it. Hiding it also removes it from the
+                  generated env snippet. Never put it in frontend code. Console rotation is disabled.
                 </p>
+                {!credentials?.secret_reveal_enabled ? <p role="status" className="text-[13px] text-text-muted">
+                  HMAC reveal is disabled by this deployment. Ask your operator for secure delivery
+                  or to enable PORTAL_ALLOW_BROWSER_SECRET_REVEAL on the portal service.
+                </p> : null}
                 {secretError ? <p role="alert" className="text-[13px] text-destructive">{secretError}</p> : null}
               </div>
             </>
@@ -419,7 +428,7 @@ export default function CredentialsPage() {
         </CardContent>
       </Card>
 
-      <Card className="mb-6">
+      {canViewKeys ? <Card className="mb-6">
         <CardHeader>
           <CardTitle>Env files</CardTitle>
           <CardDescription>
@@ -452,8 +461,8 @@ export default function CredentialsPage() {
             <TabsContent value="backend" className="mt-4 flex flex-col gap-3">
               <p className="text-[15px] text-text-body">
                 Paste into your host backend <code className="font-mono text-[13px]">.env</code>.
-                Owners get <code className="font-mono text-[13px]">UVA_HMAC_SECRET</code> filled from
-                this page. Leave{' '}
+                Reveal HMAC above to fill <code className="font-mono text-[13px]">UVA_HMAC_SECRET</code>.
+                Leave{' '}
                 <code className="font-mono text-[13px]">TELNYX_API_KEY</code> empty until you connect
                 Telnyx with{' '}
                 <code className="font-mono text-[13px]">@awaazlabs-uva/telephony</code>. Assigned
@@ -506,7 +515,7 @@ export default function CredentialsPage() {
             </TabsContent>
           </Tabs>
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <p className="text-[13px] text-text-muted">
         Next:{' '}

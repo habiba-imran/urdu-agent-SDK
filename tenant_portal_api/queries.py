@@ -278,7 +278,7 @@ def get_credentials(conn: psycopg.Connection, tenant_id: str) -> dict:
         "name": row[1],
         "allowed_origins": row[2] or [],
         "hmac_secret_hash": row[3],
-        # Never return the raw secret here — reveal is a separate age-checked route.
+        # Never return the raw secret here — reveal is a separate audited route.
         "secret_masked": "••••••••••••••••••••••••••••••••",
         "status": row[4],
         "secret_provisioned": bool(row[3]),

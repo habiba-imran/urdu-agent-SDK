@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 import sys
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -30,7 +31,10 @@ from .membership import (
     exchange_supabase_user_for_portal_session,
     invite_member_to_tenant,
     list_members,
+    set_member_api_key_access,
 )
+from .portal_access import can_view_api_keys
+from control_plane.secret_crypto import TenantSecretCryptoError
 from .supabase_auth import verify_supabase_access_token
 from .db_pool import portal_db_connection, warm_portal_db_pool
 from .jwt_secret import portal_jwt_secret
@@ -154,6 +158,10 @@ class InviteMemberBody(BaseModel):
     """Phase 2: invite email only — tenant_id is taken from the portal JWT, never the body."""
 
     email: str = Field(..., min_length=3, max_length=320)
+
+
+class MemberApiKeyAccessBody(BaseModel):
+    can_view_api_keys: bool = Field(..., strict=True)
 
 
 # F-M2 (portal half): agents.prompt had no length limit at write time, so a tenant could
@@ -644,6 +652,7 @@ def portal_whoami(
         "role": claims.get("role"),
         "auth_user_id": claims.get("auth_user_id"),
         "tenant_name": claims.get("tenant_name"),
+        "can_view_api_keys": can_view_api_keys(claims),
     }
 
 
@@ -687,6 +696,40 @@ def portal_invite_member(
         except TenantAuthError as e:
             conn.rollback()
             raise HTTPException(status_code=e.status, detail=e.reason) from e
+
+
+@app.patch("/portal/members/{auth_user_id}/api-key-access")
+def portal_set_member_api_key_access(
+    auth_user_id: uuid.UUID,
+    body: MemberApiKeyAccessBody,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    claims = _require_owner(authorization, request)
+    actor = _auth_user_id_from_claims(claims)
+    with _conn() as conn:
+        try:
+            result = set_member_api_key_access(
+                conn, tenant_id=claims["sub"], auth_user_id=str(auth_user_id),
+                allowed=body.can_view_api_keys,
+            )
+            record_attempt(
+                conn, realm="portal-member-key-access", identity=actor,
+                client_ip=request.client.host if request.client else None,
+                successful=True,
+                reason=f"member {auth_user_id}: API key access {body.can_view_api_keys}",
+            )
+            conn.commit()
+            return result
+        except TenantAuthError as e:
+            conn.rollback()
+            raise HTTPException(status_code=e.status, detail=e.reason) from e
+        except psycopg.errors.UndefinedColumn as e:
+            conn.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail="Member API key permissions are not installed. Ask your operator to apply the member_api_key_access migration.",
+            ) from e
 
 
 @app.get("/portal/agents")
@@ -890,7 +933,21 @@ def credentials_route(request: Request, authorization: str | None = Header(defau
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
     # Belt-and-braces: never leak even if a future get_credentials change adds it.
+    return _credential_access_metadata(creds, claims)
+
+
+def _credential_access_metadata(creds: dict, claims: dict) -> dict:
+    from .session_cookie import browser_secret_reveal_enabled
+
+    creds = dict(creds)
     creds.pop("hmac_secret", None)
+    creds.pop("hmac_secret_enc", None)
+    creds.pop("hmac_secret_hash", None)
+    allowed = can_view_api_keys(claims)
+    creds["can_view_api_keys"] = allowed
+    creds["secret_reveal_enabled"] = allowed and browser_secret_reveal_enabled()
+    if not allowed:
+        creds["publishable_key"] = None
     return creds
 
 
@@ -900,7 +957,9 @@ def overview_route(request: Request, authorization: str | None = Header(default=
     claims = _require_tenant(authorization, request)
     with _conn() as conn:
         try:
-            return queries.get_overview_snapshot(conn, claims["sub"])
+            snapshot = queries.get_overview_snapshot(conn, claims["sub"])
+            snapshot["credentials"] = _credential_access_metadata(snapshot["credentials"], claims)
+            return snapshot
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -928,12 +987,12 @@ def _require_fresh_tenant_token(claims: dict) -> None:
 def credentials_secret_route(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    """Return raw HMAC for owners via the audited path only (A-03).
-
-    Hosted defaults ``PORTAL_ALLOW_BROWSER_SECRET_REVEAL`` off; local defaults on.
-    """
+    """Explicit audited reveal for owners and individually approved members."""
     from .session_cookie import browser_secret_reveal_enabled
 
+    claims = _require_tenant(authorization, request)
+    if not can_view_api_keys(claims):
+        raise HTTPException(status_code=403, detail="Ask your workspace owner to enable API key access for your membership.")
     if not browser_secret_reveal_enabled():
         raise HTTPException(
             status_code=410,
@@ -944,23 +1003,27 @@ def credentials_secret_route(
             ),
         )
 
-    claims = _require_owner(authorization, request)
     client_ip = request.client.host if request.client else None
     with _conn() as conn:
         try:
             secret = queries.get_raw_secret(conn, claims["sub"])
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except TenantSecretCryptoError as e:
+            raise HTTPException(
+                status_code=503,
+                detail="The HMAC secret could not be decrypted. Ask your operator to check the tenant secret encryption key on the portal service.",
+            ) from e
         record_attempt(
             conn,
             realm="portal-secret-reveal",
-            identity=claims["sub"],
+            identity=str(claims.get("auth_user_id") or claims["sub"]),
             client_ip=client_ip,
             successful=True,
-            reason="hmac secret revealed",
+            reason=f"hmac secret revealed for tenant {claims['sub']}",
         )
         conn.commit()
-    return {"hmac_secret": secret}
+    return JSONResponse({"hmac_secret": secret}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/portal/credentials/rotate-secret")

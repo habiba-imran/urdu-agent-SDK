@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import { UserPlus } from 'lucide-react';
 
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
-import { inviteMember } from '@/lib/portalApi';
+import { inviteMember, setMemberApiKeyAccess, type PortalMember } from '@/lib/portalApi';
 import { getPortalRole, isPortalAuthFailure } from '@/lib/portalAuth';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +25,25 @@ export default function MembersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [savingAccess, setSavingAccess] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [accessNote, setAccessNote] = useState<string | null>(null);
+
+  const handleKeyAccess = async (member: PortalMember) => {
+    setSavingAccess(member.auth_user_id);
+    setAccessError(null);
+    setAccessNote(null);
+    try {
+      const result = await setMemberApiKeyAccess(member.auth_user_id, !member.can_view_api_keys);
+      await mutate((current) => current?.map((m) =>
+        m.auth_user_id === result.auth_user_id ? { ...m, ...result } : m), { revalidate: false });
+      setAccessNote(`API key access ${result.can_view_api_keys ? 'enabled' : 'disabled'} for ${member.email || 'member'}.`);
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : 'Could not update API key access');
+    } finally {
+      setSavingAccess(null);
+    }
+  };
 
   const handleInvite = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -59,7 +78,7 @@ export default function MembersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Members"
-        description="Invite teammates to this tenant. They share the same keys and data; only owners can invite."
+        description="Invite teammates and control each member’s access to workspace API keys."
       />
 
       {isOwner ? (
@@ -100,6 +119,13 @@ export default function MembersPage() {
 
       <Card>
         <CardContent className="pt-6">
+          {isOwner ? <p className="mb-4 text-sm text-muted-foreground">
+            API key access starts off for members. Enabling it lets that member view the publishable
+            key and reveal the HMAC secret for backend setup. Turning it off blocks future reveals;
+            previously copied secrets remain usable until an operator rotates them.
+          </p> : null}
+          {accessError ? <p role="alert" className="mb-4 text-sm text-destructive">{accessError}</p> : null}
+          {accessNote ? <p role="status" className="mb-4 text-sm text-muted-foreground">{accessNote}</p> : null}
           {isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-10 w-full" />
@@ -124,6 +150,7 @@ export default function MembersPage() {
                     <th className="pb-2 pr-4 font-medium">Email</th>
                     <th className="pb-2 pr-4 font-medium">Role</th>
                     <th className="pb-2 font-medium">Status</th>
+                    {isOwner ? <th className="pb-2 pl-4 font-medium">API key access</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -136,6 +163,24 @@ export default function MembersPage() {
                       <td className="py-3">
                         <Badge variant="secondary">{m.status}</Badge>
                       </td>
+                      {isOwner ? <td className="py-3 pl-4">
+                        {m.role === 'owner' ? <span className="text-muted-foreground">Always allowed</span> : (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={m.can_view_api_keys}
+                            aria-label={`API key access for ${m.email || 'member'}`}
+                            disabled={savingAccess !== null}
+                            onClick={() => void handleKeyAccess(m)}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          >
+                            <span aria-hidden="true" className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${m.can_view_api_keys ? 'bg-primary' : 'bg-muted-foreground/40'}`}>
+                              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${m.can_view_api_keys ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                            </span>
+                            {savingAccess === m.auth_user_id ? 'Saving…' : m.can_view_api_keys ? 'On' : 'Off'}
+                          </button>
+                        )}
+                      </td> : null}
                     </tr>
                   ))}
                 </tbody>

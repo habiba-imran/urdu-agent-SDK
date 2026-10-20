@@ -58,10 +58,11 @@ export default function TestStudioPage() {
   // Host-shaped mint via the tenant portal (HMAC stays on the server). Same contract as a
   // real host backend — never call control-plane /v1/session/dev-mint from the dashboard.
   const client = useMemo(() => {
-    if (!credentials?.publishable_key || !PORTAL_API_URL) return null;
+    // Publishable key currently equals tenant_id; member tests need no secret access.
+    if (!credentials?.tenant_id || !PORTAL_API_URL) return null;
     const sessionEndpoint = `${PORTAL_API_URL.replace(/\/$/, '')}/portal/test-studio/session`;
     return new AwaazLabsUvaVoice({
-      publishableKey: credentials.publishable_key,
+      publishableKey: credentials.tenant_id,
       sessionEndpoint,
       sessionCredentials: 'include',
       sessionHeaders: async () => {
@@ -75,7 +76,7 @@ export default function TestStudioPage() {
         return {};
       },
     });
-  }, [credentials?.publishable_key]);
+  }, [credentials?.tenant_id]);
 
   const clientRef = useRef<AwaazLabsUvaVoice | null>(null);
   clientRef.current = client;
@@ -244,7 +245,7 @@ export default function TestStudioPage() {
               <span className="font-medium text-foreground">your</span> backend, not this page.
             </p>
           </div>
-          {credentials && (
+          {credentials?.can_view_api_keys && credentials.publishable_key && (
             <div className="text-xs text-muted-foreground bg-muted/50 border border-border px-3 py-1.5 rounded-md font-mono">
               Key: {credentials.publishable_key.slice(0, 8)}...
             </div>

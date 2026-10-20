@@ -49,6 +49,7 @@ def enrich_claims_with_live_membership(
         # Legacy HMAC portal login — no human membership row.
         claims["role"] = "owner"
         claims["_legacy_hmac_session"] = True
+        claims["can_view_api_keys"] = True
         return claims
 
     membership = get_membership_by_auth_user(conn, str(auth_user_id))
@@ -62,6 +63,10 @@ def enrich_claims_with_live_membership(
 
     claims["role"] = membership["role"]
     claims["auth_user_id"] = membership["auth_user_id"]
+    # Always overwrite a JWT value: grants and revocations apply to existing sessions.
+    claims["can_view_api_keys"] = membership["role"] == "owner" or bool(
+        membership.get("can_view_api_keys", False)
+    )
     return claims
 
 
@@ -85,6 +90,10 @@ def require_owner_claims(claims: dict[str, Any]) -> dict[str, Any]:
     if claims.get("role") != "owner":
         raise TenantAuthError(403, "owner role required")
     return claims
+
+
+def can_view_api_keys(claims: dict[str, Any]) -> bool:
+    return claims.get("role") == "owner" or claims.get("can_view_api_keys") is True
 
 
 def http_require_portal(

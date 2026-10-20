@@ -32,7 +32,8 @@ def get_membership_by_auth_user(
     row = conn.execute(
         """
         select m.tenant_id, m.auth_user_id, m.email, m.role, t.name, t.status,
-               coalesce(m.status, 'active')
+               coalesce(m.status, 'active'),
+               coalesce((to_jsonb(m)->>'can_view_api_keys')::boolean, false)
           from tenant_members m
           join tenants t on t.id = m.tenant_id
          where m.auth_user_id = %s
@@ -50,6 +51,7 @@ def get_membership_by_auth_user(
         "tenant_name": row[4],
         "tenant_status": row[5],
         "status": row[6],
+        "can_view_api_keys": bool(row[7]),
     }
 
 
@@ -76,8 +78,9 @@ def require_owner_on_tenant(
 def list_members(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
     rows = conn.execute(
         """
-        select auth_user_id, email, role, coalesce(status, 'active'), created_at
-          from tenant_members
+        select auth_user_id, email, role, coalesce(status, 'active'), created_at,
+               coalesce((to_jsonb(m)->>'can_view_api_keys')::boolean, false)
+          from tenant_members m
          where tenant_id = %s
          order by
            case role when 'owner' then 0 else 1 end,
@@ -92,9 +95,27 @@ def list_members(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
             "role": r[2],
             "status": r[3],
             "created_at": r[4].isoformat() if r[4] else None,
+            "can_view_api_keys": r[2] == "owner" or bool(r[5]),
         }
         for r in rows
     ]
+
+
+def set_member_api_key_access(
+    conn: psycopg.Connection, *, tenant_id: str, auth_user_id: str, allowed: bool
+) -> dict:
+    """Called by the owner-only route; never change owners or another tenant's row."""
+    row = conn.execute(
+        """
+        update tenant_members set can_view_api_keys = %s
+         where tenant_id = %s and auth_user_id = %s and role = 'member'
+        returning auth_user_id, can_view_api_keys
+        """,
+        (allowed, tenant_id, auth_user_id),
+    ).fetchone()
+    if row is None:
+        raise TenantAuthError(404, "member not found in this workspace")
+    return {"auth_user_id": str(row[0]), "can_view_api_keys": bool(row[1])}
 
 
 def mark_member_active(conn: psycopg.Connection, auth_user_id: str) -> None:

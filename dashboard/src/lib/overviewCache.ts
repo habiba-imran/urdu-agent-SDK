@@ -1,6 +1,6 @@
 import type { PortalOverviewSnapshot } from '@/lib/portalApi';
 
-const STORAGE_KEY = 'uva_overview_snapshot_v1';
+const STORAGE_KEY = 'uva_overview_snapshot_v2';
 const MAX_AGE_MS = 15 * 60 * 1000;
 
 type CachedOverview = {
@@ -25,7 +25,18 @@ export function readOverviewCache(): PortalOverviewSnapshot | undefined {
 export function writeOverviewCache(data: PortalOverviewSnapshot): void {
   if (typeof window === 'undefined') return;
   try {
-    const payload: CachedOverview = { savedAt: Date.now(), data };
+    // Cached approvals must not reveal keys before the next live authorization check.
+    const payload: CachedOverview = { savedAt: Date.now(), data: {
+      ...data,
+      credentials: {
+        ...data.credentials,
+        publishable_key: null,
+        can_view_api_keys: false,
+        secret_reveal_enabled: false,
+        hmac_secret: undefined,
+        hmac_secret_hash: undefined,
+      },
+    } };
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
     /* quota / private mode — ignore */

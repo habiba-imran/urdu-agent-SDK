@@ -58,11 +58,13 @@ export type ProviderCapabilities = {
 };
 
 export type PortalCredentials = {
-  publishable_key: string;
+  publishable_key: string | null;
+  can_view_api_keys: boolean;
+  secret_reveal_enabled: boolean;
   tenant_id: string;
   name: string;
   allowed_origins: string[];
-  hmac_secret_hash: string;
+  hmac_secret_hash?: string;
   secret_masked: string;
   status: string;
   /** True when an HMAC secret hash exists for this tenant. */
@@ -312,6 +314,7 @@ export function getSession(sessionId: string) {
 }
 
 export type PortalMember = {
+  can_view_api_keys: boolean;
   auth_user_id: string;
   email: string | null;
   role: "owner" | "member" | string;
@@ -321,6 +324,13 @@ export type PortalMember = {
 
 export function getMembers() {
   return request<PortalMember[]>("/portal/members");
+}
+
+export function setMemberApiKeyAccess(authUserId: string, allowed: boolean) {
+  return request<{ auth_user_id: string; can_view_api_keys: boolean }>(
+    `/portal/members/${encodeURIComponent(authUserId)}/api-key-access`,
+    { method: 'PATCH', body: JSON.stringify({ can_view_api_keys: allowed }) },
+  );
 }
 
 export function inviteMember(email: string) {
