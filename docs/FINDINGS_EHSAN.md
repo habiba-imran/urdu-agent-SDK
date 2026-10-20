@@ -1298,7 +1298,7 @@ inside `assign_agent_to_number` (lines 916, 941).
   `upsertTelnyxOutboundVoiceProfile({ allowedDestinations })` then
   `upsertTelnyxSipConnection({ providerOutboundVoiceProfileId })` then
   `configureOutboundTrunk()` — i.e. reproduce `ensure_telephony_infrastructure` faithfully.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — `provisionOutbound()` runs SIP, profile, trunk in the portal's order; regression test `prepare-outbound provisions in the order the portal enforces` asserts the exact call sequence.
 
 ### OB-F02 — the SIP step is gated on env vars the server does not need
 
@@ -1320,7 +1320,7 @@ inside `assign_agent_to_number` (lines 916, 941).
 - **How verified:** traced optionality through SDK type, Pydantic model, route handler and
   service defaults.
 - **Suggested fix:** always call it; treat the three env vars as overrides, not as a gate.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — the env gate is gone; the SIP upsert always runs and the TELNYX_SIP_* values are passed as overrides. Test: `prepare-outbound creates the SIP connection without TELNYX_SIP_* env vars`.
 
 ### OB-F03 — the outbound voice profile is never linked back to the SIP connection
 
@@ -1336,7 +1336,7 @@ inside `assign_agent_to_number` (lines 916, 941).
   connection, because the FQDN connection has no outbound voice profile attached.
 - **How verified:** read both paths and the parameter's route into the provider client.
 - **Suggested fix:** folded into the OB-F01 fix.
-- **Status:** OPEN
+- **Status:** WITHDRAWN as a client defect — superseded by OB-F14. The link cannot be performed by any client because the routes drop the field; the portal does it internally.
 
 ### OB-F04 — all three steps can fail and the endpoint still returns 200
 
@@ -1351,7 +1351,7 @@ inside `assign_agent_to_number` (lines 916, 941).
 - **How verified:** read the route and its single call site.
 - **Suggested fix:** return 409 with the step errors when readiness is still false, and render
   `steps.*.error` in the panel.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — the endpoint now returns 409 `outbound_not_ready` with `steps`, `failures` and the portal's `reasons` when readiness is still false, and stops at the first failed step. Tests cover both.
 
 ### OB-F05 — the correct orchestrator exists on the server but no client can reach it
 
@@ -1388,7 +1388,7 @@ inside `assign_agent_to_number` (lines 916, 941).
   reconnect branch.
 - **Suggested fix:** surface `infrastructure_status` / `infrastructure_error`, and run the
   OB-F01 ordering after a reconnect.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — the reconnect path and any `infrastructure_status !== 'ready'` now run `provisionOutbound()`, and the response carries `reconnected`, `steps` and `failures`.
 
 ### OB-F07 — a readiness transport error is rendered as a readiness verdict
 
@@ -1403,7 +1403,7 @@ inside `assign_agent_to_number` (lines 916, 941).
   `reasons[]` — which names exactly which prerequisite is missing — never reaches the operator.
 - **How verified:** read both sides of the contract.
 - **Suggested fix:** render `readiness.error` distinctly from `is_ready: false`.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — `refreshStatus()` distinguishes a readiness error from `is_ready: false` and surfaces it as the blocking reason.
 
 ### OB-F08 — the telephony timeout knobs are reachable only from tests
 
@@ -1419,7 +1419,7 @@ inside `assign_agent_to_number` (lines 916, 941).
 - **How verified:** grepped both identifiers across the tree.
 - **Suggested fix:** read `TELEPHONY_OPERATION_TIMEOUT_MS` / `TELEPHONY_READ_TIMEOUT_MS` in
   `loadConfig()` and document them.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — `loadConfig()` reads `TELEPHONY_OPERATION_TIMEOUT_MS` and `TELEPHONY_READ_TIMEOUT_MS` (validated positive), documented in `.env.example`.
 
 ### OB-F09 — nothing tests the prepare-outbound ordering
 
@@ -1433,7 +1433,7 @@ inside `assign_agent_to_number` (lines 916, 941).
 - **How verified:** ran the suite (24/24) and read it.
 - **Suggested fix:** a fake portal that 409s out-of-order calls, asserting
   SIP then profile then link then trunk, and a non-200 when readiness stays false.
-- **Status:** OPEN
+- **Status:** FIXED 2026-10-20 — four ordering tests added against a fixture portal that 409s out-of-order calls. Backend suite 35/35.
 
 ### OB-F10 — the outbound prerequisite order is undocumented
 
@@ -1534,3 +1534,30 @@ Searched for, and did not find:
   provider call, and checks the destination against the tenant's OVP allowlist.
 - **No quota leak on a failed dial.** Both failure paths after `reserve_call_quota` call
   `release_call_quota_unpersisted` (service lines 1243, 1253).
+
+### OB-F14 — the SIP upsert routes drop `outbound_voice_profile_provider_id`
+
+- **Module:** M4 (telephony SDK) — Habiba leads, Ehsan reviews
+- **Severity:** Medium
+- **Where:** `tenant_portal_api/telephony_routes.py:1027-1032` (machine) and `:507-509` (portal);
+  `telephony/src/types.ts:181`
+- **What:** `upsert_telnyx_sip_connection` takes a fourth parameter,
+  `outbound_voice_profile_provider_id`, and `ensure_telephony_infrastructure` relies on it to
+  attach the outbound voice profile to the Telnyx FQDN connection. Neither HTTP route forwards
+  it: the machine handler passes `body.get("sip_fqdn")`, `body.get("sip_username")` and
+  `body.get("sip_secret")` positionally and nothing else, and the portal route passes the same
+  three off `UpsertSipConnectionBody`, which has no field for it. The telephony SDK types it as
+  `providerOutboundVoiceProfileId`, so a client can send it and get a 200 while the value is
+  silently discarded.
+- **Impact:** the profile-to-SIP link step is unreachable from any client. It still happens,
+  because the portal performs it inside its own orchestrator on connect and on assign — so this
+  is a dead SDK field rather than broken routing. Same class as M9-F08 (`llmOptions` typed and
+  rejected) and `ConnectOptions.voiceId`: the type claims a capability the wire does not have.
+- **How verified:** a fixture portal asserted the link call's body during the OB-F01 fix. The
+  second SIP round trip arrived with no `provider_outbound_voice_profile_id`, which traced to
+  both route handlers. The client-side call was then removed as a proven no-op and the test
+  pinned to `state.link === false`.
+- **Suggested fix:** either add the field to `UpsertSipConnectionBody` and forward it from both
+  routes, or drop `providerOutboundVoiceProfileId` from the SDK type so it stops advertising
+  something the API ignores. Shared contract — needs both owners per §5.
+- **Status:** OPEN — raised for Habiba

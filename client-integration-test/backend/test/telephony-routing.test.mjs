@@ -133,3 +133,103 @@ test('sequential provisioning steps share one total deadline', async t => {
   assert.equal(response.ok, false);
   assert.equal((await response.json()).error, 'telephony_request_failed');
 });
+
+// A portal that enforces the real dependency chain: the outbound voice profile and the
+// outbound trunk both 409 without a SIP connection, and the trunk 409s without an active
+// profile. Prepare-outbound used to call the trunk first, so it could never converge.
+async function orderedPortal(t, { sipParamsRequired = false } = {}) {
+  const seen = [];
+  const state = { sip: false, profile: false, trunk: false, link: false };
+  const portal = await listen(t, createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = raw ? JSON.parse(raw) : {};
+    const path = new URL(req.url, 'http://x').pathname;
+    seen.push(path.replace('/machine/telephony/', ''));
+    res.setHeader('Content-Type', 'application/json');
+    const conflict = (code, message) => {
+      res.statusCode = 409;
+      res.end(JSON.stringify({ error: { code, message, status: 409 } }));
+    };
+
+    if (path.endsWith('/telnyx/sip-connection')) {
+      if (sipParamsRequired && !body.sip_fqdn && !body.sip_username && !body.sip_secret
+          && !body.outbound_voice_profile_provider_id) {
+        return conflict('sip_params_required', 'fixture demands explicit SIP params');
+      }
+      state.sip = true;
+      if (body.outbound_voice_profile_provider_id) state.link = true;
+      return res.end(JSON.stringify({ id: 'sip-1', platform_status: 'active' }));
+    }
+    if (path.endsWith('/telnyx/outbound-voice-profile')) {
+      if (!state.sip) return conflict('sip_verification_failed', 'Tenant Telnyx SIP connection is required before outbound voice profile setup.');
+      state.profile = true;
+      return res.end(JSON.stringify({ id: 'ovp-1', provider_outbound_voice_profile_id: 'telnyx-ovp-1', platform_status: 'active' }));
+    }
+    if (path.endsWith('/telnyx/outbound-trunk/configure')) {
+      if (!state.sip) return conflict('sip_verification_failed', 'Tenant Telnyx SIP connection is required before outbound trunk setup.');
+      if (!state.profile) return conflict('outbound_voice_profile_missing', 'Tenant outbound voice profile is not configured.');
+      state.trunk = true;
+      return res.end(JSON.stringify({ outbound_trunk_id: 'trunk-1', platform_status: 'active' }));
+    }
+    if (path.endsWith('/outbound-readiness')) {
+      const isReady = state.sip && state.profile && state.trunk;
+      return res.end(JSON.stringify({
+        is_ready: isReady,
+        sip_status: state.sip ? 'active' : 'not_configured',
+        outbound_profile_status: state.profile ? 'active' : 'not_configured',
+        reasons: isReady ? [] : ['Tenant Telnyx SIP connection is not active.'],
+      }));
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  }));
+  const base = await listen(t, createApp({
+    allowedOrigins: [], telephonyApiUrl: portal, tenantId: 'fixture', hmacSecret: 'fixture-secret',
+  }));
+  return { base, seen, state };
+}
+
+test('prepare-outbound provisions in the order the portal enforces', async t => {
+  const { base, seen, state } = await orderedPortal(t);
+  const res = await post(base, 'prepare-outbound', {});
+  const body = await res.json();
+
+  assert.equal(res.status, 200, `expected readiness, got ${res.status}: ${JSON.stringify(body)}`);
+  assert.equal(body.readiness.is_ready, true);
+  assert.deepEqual(body.failures, []);
+  assert.deepEqual(seen, [
+    'telnyx/sip-connection',
+    'telnyx/outbound-voice-profile',
+    'telnyx/outbound-trunk/configure',
+    'outbound-readiness',
+  ]);
+  // No profile-link round trip: the portal's upsert routes drop
+  // outbound_voice_profile_provider_id, so the portal does the attach internally instead.
+  assert.equal(state.link, false);
+});
+
+test('prepare-outbound creates the SIP connection without TELNYX_SIP_* env vars', async t => {
+  const { base, state } = await orderedPortal(t);
+  const res = await post(base, 'prepare-outbound', {});
+  assert.equal(res.status, 200);
+  assert.ok(state.sip, 'SIP must be provisioned from an empty config, not gated on env overrides');
+});
+
+test('prepare-outbound reports failure instead of a 200 success envelope', async t => {
+  const { base } = await orderedPortal(t, { sipParamsRequired: true });
+  const res = await post(base, 'prepare-outbound', {});
+  const body = await res.json();
+
+  assert.equal(res.status, 409);
+  assert.equal(body.error, 'outbound_not_ready');
+  assert.equal(body.readiness.is_ready, false);
+  assert.deepEqual(body.failures.map(f => f.step), ['sip']);
+  assert.match(body.message, /sip: /);
+});
+
+test('prepare-outbound stops at the first failed step rather than piling up 409s', async t => {
+  const { base, seen } = await orderedPortal(t, { sipParamsRequired: true });
+  await post(base, 'prepare-outbound', {});
+  assert.deepEqual(seen, ['telnyx/sip-connection', 'outbound-readiness']);
+});

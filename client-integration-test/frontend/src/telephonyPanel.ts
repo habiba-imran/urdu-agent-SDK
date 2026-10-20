@@ -383,6 +383,11 @@ export function mountTelephonyPanel(opts: {
       const ready = data.readiness?.ready ?? data.readiness?.is_ready;
       outboundReady = ready === true;
       readinessReasons = Array.isArray(data.readiness?.reasons) ? data.readiness.reasons : [];
+      // A readiness call that failed to answer is not a verdict of "not ready". Without
+      // this the operator saw a bare "no" with an empty reason list.
+      if (ready === undefined && typeof data.readiness?.error === 'string') {
+        readinessReasons = [`Outbound readiness could not be checked: ${data.readiness.error}`];
+      }
       const conn = data.connection?.platform_status || data.connectionError || 'unknown';
       els.status.innerHTML = `
         <span>Tenant: <strong>${escapeHtml(data.tenantId || data.connection?.tenant_id || data.readiness?.tenant_id || 'unknown')}</strong></span>
@@ -449,6 +454,9 @@ export function mountTelephonyPanel(opts: {
       await refreshStatus();
     } catch (err: any) {
       log('prepare failed', err?.body || err?.message || String(err));
+      // The step errors are the diagnosis; readiness still has to be re-read so the
+      // call button and its hint reflect whatever the failed attempt did achieve.
+      await refreshStatus().catch(() => { /* feedback already shows the prepare failure */ });
     }
   });
 

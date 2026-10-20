@@ -18,6 +18,16 @@ function optionalEnv(name, fallback = '') {
   return value || fallback;
 }
 
+function optionalNumberEnv(name, fallback) {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number of milliseconds, got ${raw}`);
+  }
+  return value;
+}
+
 function parseOrigins(raw) {
   return raw
     .split(',')
@@ -46,6 +56,13 @@ export function loadConfig() {
       'TELNYX_OUTBOUND_ALLOWED_DESTINATIONS',
       'US',
     ),
+    // telephonyRoutes reads both with `??` fallbacks, so leaving them out of the config
+    // made them test-only injections rather than anything an operator could tune.
+    telephonyOperationTimeoutMs: optionalNumberEnv(
+      'TELEPHONY_OPERATION_TIMEOUT_MS',
+      120000,
+    ),
+    telephonyReadTimeoutMs: optionalNumberEnv('TELEPHONY_READ_TIMEOUT_MS', 10000),
     allowedOrigins: parseOrigins(
       process.env.HOST_ALLOWED_ORIGINS || 'http://localhost:5174',
     ),

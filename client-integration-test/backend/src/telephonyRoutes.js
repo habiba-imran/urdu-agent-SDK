@@ -44,6 +44,75 @@ export function createTelephonyClient(config) {
 }
 
 /**
+ * Provision the tenant's outbound prerequisites in the order the portal enforces.
+ *
+ * The portal guards each step on the previous one: the outbound voice profile and the
+ * outbound trunk both 409 (`sip_verification_failed`) without a SIP connection, and the
+ * trunk 409s (`outbound_voice_profile_missing`) without an active profile. Calling the
+ * trunk first can therefore never succeed on a tenant that is not already provisioned.
+ *
+ * `upsertTelnyxSipConnection` takes no required fields — the portal defaults the FQDN to
+ * its LiveKit SIP URI and generates the username and secret — so the TELNYX_SIP_* env vars
+ * are overrides, not a precondition. Gating this step on them left tenants with no SIP
+ * connection and no way to create one.
+ *
+ * Mirrors the portal's own `ensure_telephony_infrastructure`, minus its profile-to-SIP link
+ * step, which no client can reach (see the note below). Until the portal exposes that
+ * orchestrator over HTTP, every integrator has to reproduce this ordering by hand.
+ */
+async function provisionOutbound(telephony, config) {
+  const steps = {};
+  const fail = (err) => (err instanceof Error ? err.message : String(err));
+
+  try {
+    steps.sip = await telephony.upsertTelnyxSipConnection({
+      sipFqdn: config.telnyxSipFqdn || undefined,
+      sipUsername: config.telnyxSipUsername || undefined,
+      sipSecret: config.telnyxSipSecret || undefined,
+    });
+  } catch (err) {
+    // Nothing downstream can succeed without this, so stop and say why.
+    steps.sip = { error: fail(err) };
+    return steps;
+  }
+
+  try {
+    const allowedDestinations = (config.telnyxOutboundAllowedDestinations || 'US')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    steps.outboundProfile = await telephony.upsertTelnyxOutboundVoiceProfile({
+      allowedDestinations,
+    });
+  } catch (err) {
+    steps.outboundProfile = { error: fail(err) };
+    return steps;
+  }
+
+  // No link step here on purpose. The portal attaches the outbound voice profile to the
+  // Telnyx FQDN connection inside its own `ensure_telephony_infrastructure`, which runs on
+  // connect and on assign. The SDK exposes `providerOutboundVoiceProfileId`, but neither
+  // the machine nor the portal route forwards it to the service, so sending it is a wasted
+  // round trip that silently does nothing. Restore the call if that route starts
+  // forwarding the field.
+
+  try {
+    steps.outboundTrunk = await telephony.configureOutboundTrunk();
+  } catch (err) {
+    // The trunk needs at least one managed number, so "connect before sync" lands here
+    // legitimately. The portal defers it the same way.
+    steps.outboundTrunk = { error: fail(err) };
+  }
+  return steps;
+}
+
+function failedSteps(steps) {
+  return Object.entries(steps)
+    .filter(([, value]) => value && typeof value === 'object' && 'error' in value)
+    .map(([name, value]) => ({ step: name, message: value.error }));
+}
+
+/**
  * Client-host telephony routes using npm @awaazlabs-uva/telephony.
  * Telnyx API key stays on the backend (.env) — never sent to the browser.
  */
@@ -82,6 +151,7 @@ export function mountTelephonyRoutes(app, config) {
       }
       const telephony = await createTelephonyClient(config);
       let connection;
+      let reconnected = false;
       try {
         connection = await telephony.connectTelnyxAccount({
           apiKey: config.telnyxApiKey,
@@ -91,6 +161,7 @@ export function mountTelephonyRoutes(app, config) {
         // Already connected / rotation path: try rotate then status.
         const message = err instanceof Error ? err.message : String(err);
         if (/already|exist|connected|active/i.test(message) || Number(err?.status) === 409) {
+          reconnected = true;
           try {
             connection = await telephony.rotateTelnyxAccountKey({
               apiKey: config.telnyxApiKey,
@@ -102,7 +173,19 @@ export function mountTelephonyRoutes(app, config) {
           throw err;
         }
       }
-      res.json({ connection });
+      // A first connect provisions SIP and the voice profile portal-side, but rotate and
+      // status do not — so a tenant whose first connect was incomplete could never repair
+      // itself from this app. Provision on the reconnect path too, and whenever the portal
+      // reports that it did not finish.
+      let steps;
+      if (reconnected || connection?.infrastructure_status !== 'ready') {
+        steps = await provisionOutbound(telephony, config);
+      }
+      res.json({
+        connection,
+        reconnected,
+        ...(steps ? { steps, failures: failedSteps(steps) } : {}),
+      });
     } catch (err) {
       sendError(res, err, 'telephony_connect_failed');
     }
@@ -247,36 +330,28 @@ export function mountTelephonyRoutes(app, config) {
   app.post('/api/telephony/prepare-outbound', async (_req, res) => {
     try {
       const telephony = await createTelephonyClient(config);
-      const steps = {};
-      try {
-        steps.outboundTrunk = await telephony.configureOutboundTrunk();
-      } catch (err) {
-        steps.outboundTrunk = { error: err instanceof Error ? err.message : String(err) };
-      }
-      if (config.telnyxSipFqdn || config.telnyxSipUsername || config.telnyxSipSecret) {
-        try {
-          steps.sip = await telephony.upsertTelnyxSipConnection({
-            sipFqdn: config.telnyxSipFqdn || undefined,
-            sipUsername: config.telnyxSipUsername || undefined,
-            sipSecret: config.telnyxSipSecret || undefined,
-          });
-        } catch (err) {
-          steps.sip = { error: err instanceof Error ? err.message : String(err) };
-        }
-      }
-      try {
-        const allowed = (config.telnyxOutboundAllowedDestinations || 'US')
-          .split(',')
-          .map((v) => v.trim())
-          .filter(Boolean);
-        steps.outboundProfile = await telephony.upsertTelnyxOutboundVoiceProfile({
-          allowedDestinations: allowed,
-        });
-      } catch (err) {
-        steps.outboundProfile = { error: err instanceof Error ? err.message : String(err) };
-      }
+      const steps = await provisionOutbound(telephony, config);
       const readiness = await telephony.getOutboundReadiness();
-      res.json({ steps, readiness });
+      const failures = failedSteps(steps);
+      const ready = readiness?.is_ready === true;
+      if (!ready) {
+        // Returning 200 here hid the case where every step failed: the caller saw a
+        // success envelope and only "outbound ready: no" on a later refresh.
+        res.status(409).json({
+          error: 'outbound_not_ready',
+          message: failures.length
+            ? `Outbound preparation did not complete: ${failures
+                .map((failure) => `${failure.step}: ${failure.message}`)
+                .join('; ')}`
+            : (readiness?.reasons || []).join(' ')
+              || 'Outbound preparation did not complete and the portal gave no reason.',
+          steps,
+          readiness,
+          failures,
+        });
+        return;
+      }
+      res.json({ steps, readiness, failures });
     } catch (err) {
       sendError(res, err, 'telephony_prepare_failed');
     }
