@@ -406,9 +406,10 @@ def resolve_session_metadata(
                         """
                         select n.tenant_id, n.assigned_agent_id, n.provisioning_status, n.routing_status
                         from telephony_phone_numbers n
-                        where n.e164_number = %s
+                        where n.e164_number = %s and n.tenant_id = %s
+                          and n.disabled_at is null
                         """,
-                        (e164,),
+                        (e164, from_job["tenant_id"]),
 
                     ).fetchone()
                     if row:

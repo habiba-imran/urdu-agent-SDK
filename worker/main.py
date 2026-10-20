@@ -293,7 +293,7 @@ async def build_session(
 
     _build_t0 = time.monotonic()
     cfg, provider_voice_id = await asyncio.to_thread(
-        load_agent_session_bundle, md["agent_id"], md["tenant_id"]
+        load_agent_session_bundle, md["agent_id"], md["tenant_id"], use_cache=False
     )
     config_ms = int(round((time.monotonic() - _build_t0) * 1000))
 

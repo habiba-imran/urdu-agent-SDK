@@ -79,6 +79,7 @@ def test_groq_build_logs_remap(
     import worker.providers.llm.groq as groq_mod
 
     _install_fake_groq_plugin(monkeypatch)
+    monkeypatch.setattr(groq_mod, "_make_transport_client", lambda: object())
     with caplog.at_level(logging.INFO, logger="worker.providers.llm.groq"):
         llm = groq_mod.build("qwen/qwen3.6-27b")
     assert llm.model == "openai/gpt-oss-20b"

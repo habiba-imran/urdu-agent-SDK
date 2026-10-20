@@ -6,6 +6,7 @@ import {
 } from '@awaazlabs-uva/voice';
 import { mountTelephonyPanel } from './telephonyPanel';
 import { mountPromptPanel } from './promptPanel';
+import { mountInboundPanel } from './inboundPanel';
 import './style.css';
 
 type ProviderCapabilityEntry = {
@@ -176,7 +177,7 @@ appRoot.innerHTML = `
       <p>Configure your agent, shape its instructions, and hear it in action.</p>
       <p id="package-badge" class="package-badge">${escapeHtml(state.packageLabel)}</p>
     </header>
-    <nav class="workspace-nav" aria-label="Playground sections"><a href="#session-section">Voice session</a><a href="#prompt-section">Agent prompt</a><a href="#transcript-section">Transcript</a><a href="#diagnostics-section">Diagnostics</a><a href="#telephony-root">Telephony</a></nav>
+    <nav class="workspace-nav" aria-label="Playground sections"><a href="#session-section">Voice session</a><a href="#prompt-section">Agent prompt</a><a href="#transcript-section">Transcript</a><a href="#diagnostics-section">Diagnostics</a><a href="#inbound-root">Inbound settings</a><a href="#telephony-root">Telephony</a></nav>
 
     <div class="workspace-grid">
     <section class="panel session-panel" id="session-section">
@@ -370,6 +371,8 @@ const applyPipelineButton = requireEl<HTMLButtonElement>('#apply-pipeline-btn');
 const reloadAgentsButton = requireEl<HTMLButtonElement>('#reload-agents-btn');
 const sessionFeedback = requireEl<HTMLElement>('#session-feedback');
 const promptPanel = mountPromptPanel({ backendOrigin, getAgentId: () => agentIdInput.value, onBusyChange: () => render() });
+document.querySelector('#telephony-section')!.insertAdjacentHTML('beforebegin', '<div id="inbound-root"></div>');
+mountInboundPanel({ backendOrigin });
 let selectedAgentId = agentIdInput.value;
 
 function selectedPipeline() {
@@ -864,7 +867,13 @@ async function bootstrapPipelineControls(): Promise<void> {
   try {
     // Cold Render wake-up may exceed the picker requests' 20-second bound.
     // Prepare first so those requests start against a healthy service.
-    await prepareServices();
+    try {
+      await prepareServices();
+    } catch (error) {
+      // Agent configuration can still load when only the control plane is down.
+      // Keep connecting disabled until readiness recovers.
+      pushDebug('warn', error instanceof Error ? error.message : 'Backend preparation failed');
+    }
     const [capsResult, agentsResult, configResult] = await Promise.allSettled([
       fetch(`${backendOrigin}/api/provider-capabilities`, { signal: AbortSignal.timeout(20000) }),
       fetch(`${backendOrigin}/api/agents`, { signal: AbortSignal.timeout(20000) }),
@@ -928,6 +937,10 @@ async function bootstrapPipelineControls(): Promise<void> {
     pushDebug('info', 'Provider capabilities loaded', `${languages.length} language(s)`);
   } catch (error) {
     capabilities = null;
+    fillSelect(agentPicker, [{ value: '', label: 'Agents unavailable — use Refresh agents to retry' }], '');
+    for (const select of [languageSelect, sttSelect, llmSelect, ttsSelect, sttModelSelect, llmModelSelect, voiceSelect]) {
+      fillSelect(select, [{ value: '', label: 'Unavailable — retry loading' }], '');
+    }
     languageSelect.disabled = true;
     sttSelect.disabled = true;
     llmSelect.disabled = true;
