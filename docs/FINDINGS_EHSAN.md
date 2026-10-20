@@ -1236,3 +1236,301 @@ Audit work that still needs something I do not have:
 - M9: the voice README quickstart in a browser end to end. The agents and telephony quickstarts
   are now verified against a live portal (both rounds above).
 - M12: concurrency and failure tests, once M3's measurements exist.
+
+---
+
+# Round 3 — outbound telephony flow in `client-integration-test`
+
+Requested 2026-10-20. Scope: the whole path a client integrator walks for an outbound PSTN
+call — connect Telnyx, sync or buy a number, assign it to an agent, prepare outbound, dial —
+plus the `Gemini HTTP 503` provider failure seen on the voice path.
+
+Environment: branch `ehsan` at `a2610e9` (fast-forwarded onto `origin/main`), Python 3.12.15
+venv rebuilt, local PostgreSQL 18 on `127.0.0.1:55432` over TLS with all 42 migrations applied
+and the `auth.jwt()` / `auth.uid()` / `auth.role()` Supabase shims recreated. `SUPABASE_DB_URL`
+was exported to the local database before every suite, because `.env` now points at the live
+staging pooler and `load_dotenv()` would otherwise have supplied it — fixtures must not touch
+customer tenant data.
+
+Suites: Python **4 failed / 1413 passed / 17 skipped** (the 4 are one isolation defect,
+OB-F13). Integration backend **24/24**, integration frontend **20/20**, telephony smoke +
+contract + wire-body, sdk-server **15/15**.
+
+## The chain the server actually requires
+
+Read off the guards in `tenant_portal_api/telephony_service.py` rather than from any document:
+
+```
+active Telnyx connection
+  |__ telnyx_sip_connections row            (else 409 SIP_VERIFICATION_FAILED)
+        |__ telnyx_outbound_voice_profiles, platform_status='active'
+              |                              (else 409 OUTBOUND_VOICE_PROFILE_MISSING)
+              |__ livekit_outbound_trunks  +  >= 1 eligible managed number
+```
+
+- `upsert_telnyx_outbound_voice_profile` refuses without the SIP row — line 1782.
+- `configure_outbound_trunk` refuses without the SIP row — line 2148 — and without an active
+  profile — line 2165.
+- `configure_number_routing` refuses without the SIP row — line 2044.
+- `get_outbound_readiness` (line 1008) needs all four before it reports `is_ready: true`.
+
+The server already encodes this correctly in `ensure_telephony_infrastructure` (line 529):
+SIP, then profile, then **re-upsert SIP carrying the profile's provider id**, then trunk,
+tolerating "no numbers yet". It runs inside `connect_telnyx_account` (line 517) and twice
+inside `assign_agent_to_number` (lines 916, 941).
+
+---
+
+### OB-F01 — `prepare-outbound` calls the chain in an order that cannot succeed
+
+- **Module:** M9 (SDK developer integration) — Ehsan leads
+- **Severity:** Critical
+- **Where:** `client-integration-test/backend/src/telephonyRoutes.js:247-281`
+- **What:** `POST /api/telephony/prepare-outbound` runs `configureOutboundTrunk()` first
+  (line 252), the SIP connection second (line 258), the outbound voice profile third
+  (line 272). That is the dependency chain backwards. On a tenant with no SIP row, line 252
+  returns 409 `SIP_VERIFICATION_FAILED` and line 272 returns 409 `SIP_VERIFICATION_FAILED`.
+- **Impact:** the endpoint whose job is to make outbound ready cannot make it ready. Even with
+  the SIP step enabled (OB-F02), a single pass creates SIP and the profile but never the trunk,
+  because the trunk was attempted before either existed.
+- **How verified:** compared the route's call order against the four server guards above.
+- **Suggested fix:** `upsertTelnyxSipConnection({})` then
+  `upsertTelnyxOutboundVoiceProfile({ allowedDestinations })` then
+  `upsertTelnyxSipConnection({ providerOutboundVoiceProfileId })` then
+  `configureOutboundTrunk()` — i.e. reproduce `ensure_telephony_infrastructure` faithfully.
+- **Status:** OPEN
+
+### OB-F02 — the SIP step is gated on env vars the server does not need
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** Critical
+- **Where:** `client-integration-test/backend/src/telephonyRoutes.js:256`
+- **What:** the SIP upsert runs only `if (config.telnyxSipFqdn || config.telnyxSipUsername ||
+  config.telnyxSipSecret)`. `client-integration-test/backend/.env.example` ships all three
+  blank, so for anyone following the example the step never executes at all. The server
+  requires none of them: `upsert_telnyx_sip_connection(tenant_id)` defaults `sip_fqdn` to
+  `require_livekit_sip_uri()`, `sip_username` to `_normalize_sip_username(...)`, and
+  `sip_secret` to `_generate_sip_secret()`. All four SDK fields are optional
+  (`telephony/src/types.ts:173-178`), the request model is three `str | None = None`
+  (`tenant_portal_api/telephony_models.py:106-109`), and the machine handler reads
+  `body.get(...)` (`telephony_routes.py:1027-1032`) — an empty body is valid.
+- **Impact:** with the shipped example env this app never creates a SIP row, so readiness stays
+  `sip_status: "not_configured"`, `is_ready: false`, and every trunk and profile call 409s.
+  **No number of clicks converges.** This is the reported symptom.
+- **How verified:** traced optionality through SDK type, Pydantic model, route handler and
+  service defaults.
+- **Suggested fix:** always call it; treat the three env vars as overrides, not as a gate.
+- **Status:** OPEN
+
+### OB-F03 — the outbound voice profile is never linked back to the SIP connection
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** High
+- **Where:** `telephonyRoutes.js:247-281` against `telephony_service.py:531-541`
+- **What:** the server's orchestrator re-upserts the SIP connection with
+  `outbound_voice_profile_provider_id` after the profile exists, which is what attaches the
+  profile to the Telnyx FQDN connection (`create_or_get_fqdn_connection(...,
+  outbound_voice_profile_id=...)`). `prepare-outbound` never passes it, though the SDK exposes
+  it as `providerOutboundVoiceProfileId`.
+- **Impact:** local rows can look complete while Telnyx still refuses outbound on that
+  connection, because the FQDN connection has no outbound voice profile attached.
+- **How verified:** read both paths and the parameter's route into the provider client.
+- **Suggested fix:** folded into the OB-F01 fix.
+- **Status:** OPEN
+
+### OB-F04 — all three steps can fail and the endpoint still returns 200
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** High
+- **Where:** `telephonyRoutes.js:249-277`; `client-integration-test/frontend/src/telephonyPanel.ts:447-448`
+- **What:** each step sits in its own `try/catch` that writes `{ error: message }` into
+  `steps.*` and carries on. The response is always 200. The UI's only reaction is
+  `log('prepare outbound', data)`.
+- **Impact:** total failure is indistinguishable from success. The sole visible signal is
+  "outbound ready: no" after a separate refresh, with no cause attached.
+- **How verified:** read the route and its single call site.
+- **Suggested fix:** return 409 with the step errors when readiness is still false, and render
+  `steps.*.error` in the panel.
+- **Status:** OPEN
+
+### OB-F05 — the correct orchestrator exists on the server but no client can reach it
+
+- **Module:** M4 (telephony SDK) — Habiba leads, Ehsan reviews
+- **Severity:** High
+- **Where:** `tenant_portal_api/telephony_service.py:529`; no route in `telephony_routes.py`
+- **What:** `ensure_telephony_infrastructure` has no portal route, no machine route and no SDK
+  method. It can only fire as a side effect of connect or assign. Every integrator therefore
+  re-derives the four-step ordering from 409 responses. This app derived it wrongly, which is
+  evidence the contract is not discoverable rather than evidence of carelessness.
+- **Impact:** OB-F01 is the predictable consequence of not exposing the one function that
+  encodes the ordering.
+- **How verified:** grepped the symbol across routes, SDK and tests — it appears only in the
+  service and one unit test (`tests/test_telephony_outbound_destinations.py`).
+- **Suggested fix:** expose machine action `telephony.infrastructure.ensure` and add
+  `ensureTelephonyInfrastructure()` to the telephony SDK; `prepare-outbound` then becomes a
+  single call. Shared contract — needs both owners per §5.
+- **Status:** OPEN — raised for Habiba
+
+### OB-F06 — reconnecting skips auto-provisioning, so a half-provisioned tenant cannot self-heal
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** Medium
+- **Where:** `telephonyRoutes.js:84-105`
+- **What:** `POST /api/telephony/connect` catches "already connected" and falls back to
+  `rotateTelnyxAccountKey`, then to `getConnectionStatus()`. Only `connect_telnyx_account`
+  calls `ensure_telephony_infrastructure` (line 517); `rotate_telnyx_account_key` does not.
+  Separately, `connect_telnyx_account` returns `infrastructure_status` and
+  `infrastructure_error` (lines 516-526) and the client surfaces neither.
+- **Impact:** a tenant whose first connect provisioned incompletely stays that way forever.
+  "Connect" looks like the repair button and is not one; "Prepare outbound" is the repair
+  button and is broken by OB-F01/F02. Together there is no exit from the UI.
+- **How verified:** grepped every caller of `ensure_telephony_infrastructure`; read the
+  reconnect branch.
+- **Suggested fix:** surface `infrastructure_status` / `infrastructure_error`, and run the
+  OB-F01 ordering after a reconnect.
+- **Status:** OPEN
+
+### OB-F07 — a readiness transport error is rendered as a readiness verdict
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** Medium
+- **Where:** `telephonyRoutes.js:60-66`; `telephonyPanel.ts:382-385`
+- **What:** when `getOutboundReadiness()` rejects, the route sends `readiness: { error }`. The
+  panel reads `data.readiness?.ready ?? data.readiness?.is_ready`, gets `undefined`, sets
+  `outboundReady = false` and `readinessReasons = []`, and shows the generic "Refresh status to
+  verify outbound readiness before calling."
+- **Impact:** an auth or network failure is presented as "not ready", and the server's
+  `reasons[]` — which names exactly which prerequisite is missing — never reaches the operator.
+- **How verified:** read both sides of the contract.
+- **Suggested fix:** render `readiness.error` distinctly from `is_ready: false`.
+- **Status:** OPEN
+
+### OB-F08 — the telephony timeout knobs are reachable only from tests
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** Low
+- **Where:** `telephonyRoutes.js:28,39`; `client-integration-test/backend/src/config.js:28-54`
+- **What:** `config.telephonyOperationTimeoutMs` and `config.telephonyReadTimeoutMs` are read
+  with `??` fallbacks of 120000 and 10000. `loadConfig()` never produces either key and neither
+  appears in `.env.example`; the only writers are four `createApp(...)` calls in
+  `test/telephony-routing.test.mjs`.
+- **Impact:** the timeouts look configurable but are fixed in every real run. The tests pass by
+  injecting what production cannot supply.
+- **How verified:** grepped both identifiers across the tree.
+- **Suggested fix:** read `TELEPHONY_OPERATION_TIMEOUT_MS` / `TELEPHONY_READ_TIMEOUT_MS` in
+  `loadConfig()` and document them.
+- **Status:** OPEN
+
+### OB-F09 — nothing tests the prepare-outbound ordering
+
+- **Module:** M12 (npm + worker tests) — shared
+- **Severity:** Medium
+- **Where:** `client-integration-test/backend/test/telephony-routing.test.mjs`
+- **What:** 24 backend tests pass, covering assign failure paths and the read/operation
+  deadlines. Nothing asserts the order of the three `prepare-outbound` calls, nor that the
+  endpoint reports failure. Searched the file for `prepare`, `sip` and `trunk` — no matches.
+- **Impact:** a fully green suite over a flow that cannot work.
+- **How verified:** ran the suite (24/24) and read it.
+- **Suggested fix:** a fake portal that 409s out-of-order calls, asserting
+  SIP then profile then link then trunk, and a non-200 when readiness stays false.
+- **Status:** OPEN
+
+### OB-F10 — the outbound prerequisite order is undocumented
+
+- **Module:** M9 — Ehsan leads
+- **Severity:** Medium
+- **Where:** `telephony/README.md`
+- **What:** the README documents number ordering and error codes but states no prerequisite
+  order for `upsertTelnyxSipConnection` / `upsertTelnyxOutboundVoiceProfile` /
+  `configureOutboundTrunk`, and does not say the SIP upsert's parameters are all optional.
+  Searched for "order", "prerequisite", "before", "step" and "sip connection".
+- **Impact:** the ordering is discoverable only by reading the server's 409s.
+- **Suggested fix:** document the chain, or make OB-F05's single call the documented path.
+- **Status:** OPEN
+
+---
+
+## The `Gemini HTTP 503` failure
+
+### OB-F11 — provider connect retries default to 0 in code while `.env.example` ships 1
+
+- **Module:** M3 (worker capacity / provider failure) — Ehsan leads
+- **Severity:** High
+- **Where:** `worker/provider_retries.py:17-19` and `:83-107`; `.env.example:66-69`
+- **What:** the code defaults are `_DEFAULT_MAX_RETRY = 0`, `_DEFAULT_RETRY_INTERVAL = 1.0`,
+  `_DEFAULT_TIMEOUT = 5.0`. `.env.example` ships `UVA_PROVIDER_MAX_RETRY=1`,
+  `UVA_PROVIDER_RETRY_INTERVAL=1.0`, `UVA_PROVIDER_CONNECT_TIMEOUT=30`. An env file that omits
+  the three keys gets **zero** LLM and TTS connect retries and a **5 s** connect timeout — not
+  the 1 retry and 30 s the example implies. The root env block supplied on 2026-10-20 omits all
+  three, so the running configuration is the zero-retry one.
+- **Impact:** a single Gemini 503 ends the turn with no retry at all. Google returns 503 for
+  transient capacity, which one retry a second or two later usually clears.
+- **How verified:** read the defaults and the clamps (`max_retry` 0-5, interval 0.1-30,
+  timeout 1-120) and confirmed the keys are absent from the supplied env.
+- **Suggested fix:** set `UVA_PROVIDER_MAX_RETRY=2`, `UVA_PROVIDER_RETRY_INTERVAL=2.0`,
+  `UVA_PROVIDER_CONNECT_TIMEOUT=30`, and make the code defaults equal the example's so the two
+  cannot disagree again.
+- **Status:** OPEN
+
+### OB-F12 — a configured LLM provider never falls back, by design
+
+- **Module:** M3 — Ehsan leads
+- **Severity:** Info — design decision, recorded not disputed
+- **Where:** `worker/providers/llm/gemini.py:13-14` and `:64-102`
+- **What:** "Configured LLM providers always stick at runtime (no automatic Gemini to Groq
+  remap)." `build()` sets a 30 s `http_options` timeout, `temperature=0.35`,
+  `max_output_tokens=180` and a thinking level, and carries no retry or fallback itself.
+- **Impact:** a Gemini capacity outage is terminal for every agent configured on Gemini,
+  independently of OB-F11. Warm-up cannot affect it — that reading is correct.
+- **Suggested fix:** nothing to the design. Operationally, point the affected agent's
+  `llm_provider` at `groq` while Gemini is shedding load; `GROQ_LLM_MODEL=openai/gpt-oss-20b`
+  is configured. Adding a real fallback is a product decision, not a bug fix.
+- **Status:** OPEN — operational workaround only
+
+### OB-F13 — two Gemini tests and two Deepgram tests fail on import order, not on behaviour
+
+- **Module:** M12 (npm + worker tests) — shared
+- **Severity:** Medium
+- **Where:** `tests/test_latency_phase2.py:37,60,83`; `tests/test_latency_phase4.py`
+- **What:** these tests fake a plugin by assigning `sys.modules["livekit.plugins.google"]`,
+  but `worker/providers/llm/gemini.py:67` does `from livekit.plugins import google`, which
+  resolves the **attribute** on the already-imported `livekit.plugins` package and ignores the
+  `sys.modules` entry. Once any earlier test imports the real plugin, the fake is dead and
+  `captured` stays empty, producing the `KeyError`.
+- **Impact:** 4 failures in the full suite that are invisible when the files run alone — so the
+  signal reads as flakiness. It also means these Gemini and Deepgram option assertions are
+  **not actually enforced** in a full-suite run, which is exactly where Gemini configuration
+  regressions would show up.
+- **How verified:** `tests/test_latency_phase2.py` alone → **9 passed**. Preceded by one file,
+  `pytest tests/test_provider_registry.py tests/test_latency_phase2.py` → **2 failed, 14
+  passed**, deterministically. Then confirmed the mechanism directly: after
+  `from livekit.plugins import google`, replacing `sys.modules['livekit.plugins.google']` and
+  re-importing still yields the real module.
+- **Suggested fix:** `monkeypatch.setattr(livekit.plugins, "google", fake)` alongside the
+  `setitem`, or have the adapter do `import livekit.plugins.google as google` so the
+  `sys.modules` fake is honoured.
+- **Status:** OPEN
+
+---
+
+## Clean results
+
+Searched for, and did not find:
+
+- **No credential leak to the browser.** The Telnyx API key is read only in the backend
+  (`config.js:41`) and never serialized into a response; `/api/telephony/status` returns
+  `telnyxKeyConfigured` as a boolean. Searched the frontend for `TELNYX`, `apiKey` and
+  `hmac`: every match is UI copy (panel headings and the "key stays in backend/.env" note),
+  not a value. The only secret-shaped thing the browser holds is the publishable key.
+- **No missing idempotency on the dialing path.** `/api/telephony/outbound` and
+  `/api/telephony/purchase` both default `idempotencyKey` to `randomUUID()`
+  (`telephonyRoutes.js:168,295`), and the service keys on `tenant:key:call`.
+- **No unbounded operation budget.** `createTelephonyClient` composes
+  `AbortSignal.any([operationBudget, deadline])` so a sequence of provisioning calls shares one
+  total deadline; the backend suite asserts this ("sequential provisioning steps share one
+  total deadline").
+- **No E.164 validation gap.** The client sends `toNumber` unvalidated, but
+  `create_outbound_call` rejects anything not starting with `+` (service line 1087) before any
+  provider call, and checks the destination against the tenant's OVP allowlist.
+- **No quota leak on a failed dial.** Both failure paths after `reserve_call_quota` call
+  `release_call_quota_unpersisted` (service lines 1243, 1253).
