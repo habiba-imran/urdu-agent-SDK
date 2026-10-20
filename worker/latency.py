@@ -374,11 +374,14 @@ def wire_barge_in_flush(
 async def prewarm_llm(llm: Any) -> None:
     """Small LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7).
 
-    Skip Groq entirely — free-tier TPM is 8k/min and a warm-up call plus front-desk prompts
-    429 within the first conversational turns.
+    Prefer a provider's transport-only hook. Never issue a Groq completion for
+    warm-up: that consumes TPM needed by real conversational turns.
     """
     from livekit.agents.llm import ChatContext
 
+    if callable(inspect.getattr_static(llm, "prewarm", None)):
+        await _invoke_provider_prewarm(llm.prewarm)
+        return
     module = type(llm).__module__
     if "groq" in module.lower():
         return

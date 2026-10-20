@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -74,6 +75,19 @@ def resolve_groq_model(model: str) -> tuple[str, str | None]:
     return requested, None
 
 
+def _make_transport_client() -> Any:
+    """Own the public OpenAI-compatible client used for both warm-up and chat."""
+    import openai
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        raise ValueError("GROQ_API_KEY is required")
+    return openai.AsyncClient(
+        api_key=key, base_url="https://api.groq.com/openai/v1", max_retries=0,
+        http_client=httpx.AsyncClient(timeout=httpx.Timeout(30.0), follow_redirects=True,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=50, keepalive_expiry=120)),
+    )
+
+
 def build(model: str) -> Any:
     from livekit.plugins import groq
 
@@ -100,4 +114,24 @@ def build(model: str) -> Any:
         kwargs["reasoning_effort"] = "low"
     elif resolved_model.startswith("qwen/"):
         kwargs["reasoning_effort"] = "none"
-    return groq.LLM(**kwargs)
+    class TransportWarmedGroq(groq.LLM):
+        def __init__(self):
+            self._transport_client = _make_transport_client()
+            self._transport_warmed_at: float | None = None
+            super().__init__(client=self._transport_client, **kwargs)
+
+        async def prewarm(self) -> None:
+            # Reuse the same connection for chat without consuming completion TPM.
+            # Failure remains diagnostic; it never changes provider or model.
+            if self._transport_warmed_at is not None and time.monotonic() - self._transport_warmed_at < 30:
+                return
+            await self._transport_client.models.list(timeout=4.0)
+            self._transport_warmed_at = time.monotonic()
+
+        async def aclose(self) -> None:
+            try:
+                await super().aclose()
+            finally:
+                await self._transport_client.close()
+
+    return TransportWarmedGroq()

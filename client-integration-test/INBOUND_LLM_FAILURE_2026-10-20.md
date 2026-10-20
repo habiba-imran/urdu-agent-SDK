@@ -62,6 +62,15 @@ the model was experiencing high demand. The second also terminated without a
 model reply. Earlier warm-up cannot resolve provider unavailability, and these
 checks do not establish a passing inbound conversation.
 
+An additional isolated comparison replaced only the test worker's in-memory LLM
+configuration with the existing Groq `openai/gpt-oss-20b` adapter. The actual agent
+row and phone route were not changed. First greeting PCM arrived after 9,907.3 /
+9,664.8 ms. The first arithmetic request hit the six-second progress timeout;
+the second completed, with reply PCM 2,881.4 ms after the input clip ended. Its
+identity/closing replies arrived after 881.0 / 1,239.3 ms. This is one failed and
+one successful conversation, insufficient evidence to declare an alternative
+configuration reliable or production-ready. Provider selection remains explicit.
+
 Only test rooms and the disposable worker were removed. The user's running
 worker and the existing SIP dispatch rule were left in place. Applying the local
 code fixes to that running worker requires its normal restart after active calls

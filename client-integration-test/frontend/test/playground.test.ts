@@ -90,6 +90,8 @@ test('failed service preparation blocks connect and refresh can recover', async 
   button('reload-agents-btn').click();
   await vi.waitFor(() => expect($('#services-status').textContent).toContain('unavailable'));
   expect(button('connect-btn').disabled).toBe(true);
+  expect($('#agent-picker').textContent).not.toContain('Loading agents');
+  expect($<HTMLSelectElement>('#llm-provider').value).toBe('openai');
   submit();
   expect(sdk.clients).toHaveLength(0);
   ready = true;
@@ -113,6 +115,23 @@ test('picker requests wait for backend wake-up instead of timing out during it',
   finish(Response.json({ ready: true }));
   await vi.waitFor(() => expect(button('connect-btn').disabled).toBe(false));
   expect(agentLoads()).toBe(before + 1);
+});
+
+test('failed picker requests clear loading placeholders and allow retry', async () => {
+  const upstream = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((input: string, init?: RequestInit) => {
+    const path = new URL(input).pathname;
+    if (['/api/demo/ready', '/api/agents', '/api/provider-capabilities'].includes(path)) {
+      return Promise.resolve(Response.json({ ready: false, message: 'Hosted API unavailable' }, { status: 503 }));
+    }
+    return upstream(input, init);
+  });
+  button('reload-agents-btn').click();
+  await vi.waitFor(() => expect($('#pipeline-summary').textContent).toContain('Hosted API unavailable'));
+  expect($('#agent-picker').textContent).toContain('Agents unavailable');
+  expect($('#llm-provider').textContent).toContain('Unavailable');
+  expect(button('reload-agents-btn').disabled).toBe(false);
+  expect(button('connect-btn').disabled).toBe(true);
 });
 
 test('startup cards distinguish total click time from time after room connection', async () => {

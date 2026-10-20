@@ -2,6 +2,7 @@ import express from 'express';
 import { createControlPlaneHeaders } from './signing.js';
 import { mountTelephonyRoutes } from './telephonyRoutes.js';
 import { mountAgentConfigRoutes } from './agentConfig.js';
+import { mountInboundRoutes } from './inboundRoutes.js';
 
 function readJsonSafely(response) {
   return response.text().then((text) => {
@@ -328,6 +329,7 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
   });
 
   mountAgentConfigRoutes(app, agentsClientFactory);
+  mountInboundRoutes(app, config, agentsClientFactory, applyPipelineSelection, agentPipelineMatches);
 
   /** Apply language/STT/LLM/TTS to the agent before the browser SDK mints a session. */
   app.post('/api/agents/:agentId/pipeline', async (req, res) => {
