@@ -1,5 +1,9 @@
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
+}
+
 type ManagedNumber = {
   id?: string;
   number_id?: string;
@@ -8,6 +12,7 @@ type ManagedNumber = {
   phone_number?: string;
   agent_id?: string | null;
   assigned_agent_id?: string | null;
+  routing_status?: string;
   platform_status?: string;
   provider_status?: string;
   [key: string]: unknown;
@@ -40,7 +45,7 @@ export function mountTelephonyPanel(opts: {
         <strong>your host backend</strong>, which signs calls with the tenant HMAC.
       </p>
 
-      <div class="telephony-status" id="tel-status">Checking Telnyx connection…</div>
+      <div class="telephony-status" id="tel-status" role="status">Checking Telnyx connection…</div>
 
       <div class="actions telephony-actions">
         <button id="tel-connect-btn" type="button">Connect / refresh Telnyx</button>
@@ -100,9 +105,11 @@ export function mountTelephonyPanel(opts: {
           <div class="actions">
             <button id="tel-outbound-btn" type="button">Place outbound call</button>
           </div>
+          <p id="tel-call-hint" class="hint" role="status"></p>
         </div>
       </div>
 
+      <p id="tel-feedback" class="feedback" role="status" aria-live="polite">Check your connection and select a number to begin.</p>
       <pre id="tel-log" class="log-box telephony-log">Telephony log…</pre>
     </section>
   `;
@@ -127,16 +134,52 @@ export function mountTelephonyPanel(opts: {
     assignBtn: root.querySelector<HTMLButtonElement>('#tel-assign-btn')!,
     outboundBtn: root.querySelector<HTMLButtonElement>('#tel-outbound-btn')!,
   };
+  let pendingRequests = 0;
+  let managedNumbers: ManagedNumber[] = [];
+  let outboundReady = false;
+  let readinessReasons: string[] = [];
+
+  function outboundBlockReason() {
+    const selected = managedNumbers.find(number => numberId(number) === els.numberId.value.trim());
+    if (!selected) return 'Select a managed number and check its routing before calling.';
+    if (agentOnNumber(selected) !== resolveAgentId() || selected.routing_status !== 'ready') {
+      return 'This number needs an agent assignment and ready routing before calling. Use Assign to agent, then refresh if setup fails.';
+    }
+    if (!outboundReady) return readinessReasons.join(' ') || 'Refresh status to verify outbound readiness before calling.';
+    if (!/^\+[1-9]\d{6,14}$/.test(els.toNumber.value.trim())) return 'Enter a destination in E.164 format, for example +15551234567.';
+    return '';
+  }
+
+  function renderBusy() {
+    root!.setAttribute('aria-busy', String(pendingRequests > 0));
+    root!.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
+      button.disabled = pendingRequests > 0 || button.dataset.unavailable === 'true';
+    });
+    root!.querySelectorAll<HTMLInputElement>('input').forEach(input => { input.disabled = pendingRequests > 0; });
+    const reason = outboundBlockReason();
+    els.outboundBtn.disabled ||= Boolean(reason);
+    root!.querySelector<HTMLElement>('#tel-call-hint')!.textContent = reason || 'Routing and outbound checks passed for the selected number and agent.';
+  }
 
   function log(title: string, payload: Json) {
     const block = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
     els.log.textContent = `${new Date().toLocaleTimeString()} · ${title}\n${block}\n\n${els.log.textContent}`;
+    const detail = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload.message || payload.error : null;
+    root!.querySelector<HTMLElement>('#tel-feedback')!.textContent = `${title}: ${typeof payload === 'string' ? payload : typeof detail === 'string' ? detail : 'see details in the log below.'}`;
   }
 
   async function api(path: string, init?: RequestInit) {
+    pendingRequests++;
+    renderBusy();
+    const mutation = init?.method === 'POST';
+    root!.querySelector<HTMLElement>('#tel-feedback')!.textContent = path.endsWith('/assign')
+      ? 'Saving assignment and configuring routing… This can take up to two minutes.'
+      : mutation ? 'Updating telephony…' : 'Loading telephony…';
+    try {
     const res = await fetch(`${opts.backendOrigin}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
       ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      signal: AbortSignal.timeout(mutation ? 180000 : 45000),
     });
     const text = await res.text();
     let body: any = text;
@@ -152,9 +195,18 @@ export function mountTelephonyPanel(opts: {
       throw err;
     }
     return body;
+    } catch (error: any) {
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+        const timeout = new Error('Request timed out. The server may still complete this action. Refresh status and lists before retrying; do not repeat a call automatically.');
+        (timeout as any).body = { error: 'telephony_request_timeout', message: timeout.message };
+        throw timeout;
+      }
+      throw error;
+    } finally { pendingRequests--; renderBusy(); }
   }
 
   function renderManaged(rows: ManagedNumber[]) {
+    managedNumbers = rows;
     if (!rows.length) {
       els.managed.textContent = 'No managed numbers yet — Connect + Sync, or Buy.';
       return;
@@ -163,18 +215,21 @@ export function mountTelephonyPanel(opts: {
       .map((row) => {
         const id = numberId(row);
         const e164 = numberE164(row);
-        return `<button type="button" class="telephony-item" data-id="${id}" data-e164="${e164}">
-          <strong>${e164 || '(no e164)'}</strong>
-          <span>${id}</span>
-          <span>agent: ${agentOnNumber(row)}</span>
-          <span>${row.platform_status || row.provider_status || ''}</span>
+        return `<button type="button" class="telephony-item" aria-pressed="${id === els.numberId.value}" data-id="${escapeHtml(id)}" data-e164="${escapeHtml(e164)}">
+          <strong>${escapeHtml(e164 || '(no e164)')}</strong>
+          <span>${escapeHtml(id)}</span>
+          <span>agent: ${escapeHtml(agentOnNumber(row))}</span>
+          <span>routing: ${escapeHtml(row.routing_status || 'unknown')}</span>
+          <span>${escapeHtml(row.platform_status || row.provider_status || '')}</span>
         </button>`;
       })
       .join('');
     els.managed.querySelectorAll<HTMLButtonElement>('.telephony-item').forEach((btn) => {
       btn.addEventListener('click', () => {
         els.numberId.value = btn.dataset.id || '';
+        els.managed.querySelectorAll<HTMLButtonElement>('.telephony-item').forEach(item => item.setAttribute('aria-pressed', String(item === btn)));
         log('selected managed number', { id: btn.dataset.id, e164: btn.dataset.e164 });
+        renderBusy();
       });
     });
   }
@@ -187,9 +242,10 @@ export function mountTelephonyPanel(opts: {
     els.owned.innerHTML = rows
       .map((row) => {
         const e164 = numberE164(row);
+        const alreadyManaged = managedNumbers.some(number => numberE164(number) === e164);
         return `<div class="telephony-item static">
-          <strong>${e164 || JSON.stringify(row).slice(0, 80)}</strong>
-          <button type="button" class="telephony-mini" data-import="${e164}">Import to platform</button>
+          <strong>${escapeHtml(e164 || JSON.stringify(row).slice(0, 80))}</strong>
+          <button type="button" class="telephony-mini" data-import="${escapeHtml(e164)}" data-unavailable="${alreadyManaged}" ${alreadyManaged ? 'disabled' : ''}>${alreadyManaged ? 'Already managed — select above' : 'Import to platform'}</button>
         </div>`;
       })
       .join('');
@@ -220,9 +276,9 @@ export function mountTelephonyPanel(opts: {
         const e164 = row.e164_number || row.e164 || '';
         const cost = [row.upfront_cost, row.monthly_cost, row.currency].filter(Boolean).join(' / ');
         return `<div class="telephony-item static">
-          <strong>${e164}</strong>
-          <span>${row.region || row.number_type || ''} ${cost}</span>
-          <button type="button" class="telephony-mini" data-buy="${e164}">Purchase</button>
+          <strong>${escapeHtml(e164)}</strong>
+          <span>${escapeHtml(row.region || row.number_type || '')} ${escapeHtml(cost)}</span>
+          <button type="button" class="telephony-mini" data-buy="${escapeHtml(e164)}">Purchase</button>
         </div>`;
       })
       .join('');
@@ -247,20 +303,23 @@ export function mountTelephonyPanel(opts: {
   }
 
   async function refreshStatus() {
+    outboundReady = false;
     try {
       const data = await api('/api/telephony/status');
       const ready = data.readiness?.ready ?? data.readiness?.is_ready;
+      outboundReady = ready === true;
+      readinessReasons = Array.isArray(data.readiness?.reasons) ? data.readiness.reasons : [];
       const conn = data.connection?.platform_status || data.connectionError || 'unknown';
       els.status.innerHTML = `
         <span>Telnyx key in env: <strong>${data.telnyxKeyConfigured ? 'yes' : 'NO'}</strong></span>
-        · <span>connection: <strong>${conn}</strong></span>
+        · <span>connection: <strong>${escapeHtml(conn)}</strong></span>
         · <span>outbound ready: <strong>${ready === true ? 'yes' : ready === false ? 'no' : 'n/a'}</strong></span>
       `;
       log('status', data);
     } catch (err: any) {
       els.status.textContent = `Status failed: ${err?.message || err}`;
       log('status failed', err?.body || err?.message || String(err));
-    }
+    } finally { renderBusy(); }
   }
 
   async function refreshNumbers() {
@@ -270,10 +329,11 @@ export function mountTelephonyPanel(opts: {
       renderOwned(data.owned || []);
       log('numbers', { managed: (data.managed || []).length, owned: (data.owned || []).length });
     } catch (err: any) {
+      managedNumbers = [];
       els.managed.textContent = 'Failed to load managed numbers.';
       els.owned.textContent = 'Failed to load owned numbers.';
       log('numbers failed', err?.body || err?.message || String(err));
-    }
+    } finally { renderBusy(); }
   }
 
   function resolveAgentId() {
@@ -303,8 +363,7 @@ export function mountTelephonyPanel(opts: {
   });
 
   els.refreshBtn.addEventListener('click', async () => {
-    await refreshStatus();
-    await refreshNumbers();
+    await Promise.all([refreshStatus(), refreshNumbers()]);
   });
 
   els.prepareBtn.addEventListener('click', async () => {
@@ -355,10 +414,12 @@ export function mountTelephonyPanel(opts: {
       log('assign + inbound routing', data);
       els.status.insertAdjacentHTML(
         'beforeend',
-        ` · <span>inbound: call the assigned E.164; agent ${agentId.slice(0, 8)}…</span>`,
+        ` · <span>inbound: call the assigned E.164; agent ${escapeHtml(agentId.slice(0, 8))}…</span>`,
       );
-      await refreshNumbers();
+      await Promise.all([refreshNumbers(), refreshStatus()]);
+      log('assignment and routing ready', data);
     } catch (err: any) {
+      await Promise.all([refreshNumbers(), refreshStatus()]);
       log('assign failed', err?.body || err?.message || String(err));
     }
   });
@@ -368,6 +429,8 @@ export function mountTelephonyPanel(opts: {
       const fromNumberId = els.numberId.value.trim();
       const agentId = resolveAgentId();
       const toNumber = els.toNumber.value.trim();
+      const blocked = outboundBlockReason();
+      if (blocked) { log('outbound blocked', blocked); return; }
       if (!fromNumberId || !agentId || !toNumber) {
         log('outbound blocked', 'Need managed number id, agent id, and E.164 destination');
         return;
@@ -394,6 +457,7 @@ export function mountTelephonyPanel(opts: {
   });
 
   els.agentId.value = opts.getAgentId();
+  root.addEventListener('input', renderBusy);
   void refreshStatus();
   void refreshNumbers();
 }

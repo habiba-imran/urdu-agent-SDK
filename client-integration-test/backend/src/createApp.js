@@ -1,6 +1,7 @@
 import express from 'express';
 import { createControlPlaneHeaders } from './signing.js';
 import { mountTelephonyRoutes } from './telephonyRoutes.js';
+import { mountAgentConfigRoutes } from './agentConfig.js';
 
 function readJsonSafely(response) {
   return response.text().then((text) => {
@@ -88,27 +89,6 @@ function pickDefaultVoice(entry) {
   return undefined;
 }
 
-/** Process-local capabilities cache — avoids a portal round-trip on every Connect. */
-let _capsCache = { at: 0, value: null };
-const CAPS_TTL_MS = 60_000;
-
-/**
- * Last pipeline successfully confirmed/applied per agentId in this demo process.
- * Avoids a full listAgents() round-trip (often multi-second against remote DB) on
- * the Connect hot path when the browser already applied the same combo.
- */
-const _pipelineAppliedByAgent = new Map();
-
-async function getCapabilitiesCached(client) {
-  const now = Date.now();
-  if (_capsCache.value && now - _capsCache.at < CAPS_TTL_MS) {
-    return _capsCache.value;
-  }
-  const capabilities = await client.getProviderCapabilities();
-  _capsCache = { at: now, value: capabilities };
-  return capabilities;
-}
-
 function agentPipelineMatches(agent, applied) {
   if (!agent || !applied) return false;
   const lang = agent.agent_language || agent.agentLanguage;
@@ -146,7 +126,7 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
     throw err;
   }
 
-  const caps = await getCapabilitiesCached(client);
+  const caps = await client.getProviderCapabilities();
   const langCaps = caps?.languages?.[language];
   if (!langCaps) {
     const err = new Error(`language ${language} is not enabled`);
@@ -220,17 +200,12 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   };
 
   if (!force) {
-    const cached = _pipelineAppliedByAgent.get(agentId);
-    if (cached && agentPipelineMatches(cached, applied)) {
-      return { agent: cached, applied, skipped: true };
-    }
     try {
       const agents = await client.listAgents();
       const current = Array.isArray(agents)
         ? agents.find((a) => a.id === agentId || a.agent_id === agentId)
         : null;
       if (agentPipelineMatches(current, applied)) {
-        _pipelineAppliedByAgent.set(agentId, { ...current, ...applied });
         return { agent: current, applied, skipped: true };
       }
     } catch {
@@ -249,8 +224,6 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
     voiceId: ttsVoiceId,
   });
 
-  _pipelineAppliedByAgent.set(agentId, { ...(agent || {}), ...applied });
-
   return {
     agent,
     applied,
@@ -258,9 +231,12 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   };
 }
 
-export function createApp(config, fetchImpl = fetch) {
+export function createApp(config, fetchImpl = fetch, agentsClientFactory = () => createAgentsClient(config)) {
   const app = express();
-  app.use(express.json());
+  let readinessInFlight = null;
+  let readyUntil = 0;
+  let lastReadiness = null;
+  app.use(express.json({ limit: '1mb' }));
 
   app.use((req, res, next) => {
     const origin = req.get('origin');
@@ -298,9 +274,34 @@ export function createApp(config, fetchImpl = fetch) {
     });
   });
 
+  // Wake deployed services while the demo loads, before a user starts a call.
+  // This never mints a token, dispatches a worker, or changes agent configuration.
+  app.get('/api/demo/ready', async (_req, res) => {
+    if (lastReadiness && Date.now() < readyUntil) return res.json(lastReadiness);
+    if (!readinessInFlight) {
+      readinessInFlight = (async () => {
+        const started = Date.now();
+        const check = async (base) => {
+          if (!base) return { ready: false, status: 0 };
+          try {
+            const response = await fetchImpl(`${base}/healthz`, { signal: AbortSignal.timeout(55000) });
+            await response.arrayBuffer();
+            return { ready: response.ok, status: response.status };
+          } catch { return { ready: false, status: 0 }; }
+        };
+        const [controlPlane, agentApi] = await Promise.all([check(config.controlPlaneUrl), check(config.portalApiUrl)]);
+        const payload = { ready: controlPlane.ready && agentApi.ready, services: { controlPlane, agentApi }, preparationMs: Date.now() - started };
+        if (payload.ready) { lastReadiness = payload; readyUntil = Date.now() + 30000; }
+        return payload;
+      })().finally(() => { readinessInFlight = null; });
+    }
+    const payload = await readinessInFlight;
+    res.status(payload.ready ? 200 : 503).json(payload);
+  });
+
   app.get('/api/provider-capabilities', async (_req, res) => {
     try {
-      const client = await createAgentsClient(config);
+      const client = await agentsClientFactory();
       const capabilities = await client.getProviderCapabilities();
       res.json(capabilities);
     } catch (err) {
@@ -314,7 +315,7 @@ export function createApp(config, fetchImpl = fetch) {
 
   app.get('/api/agents', async (_req, res) => {
     try {
-      const client = await createAgentsClient(config);
+      const client = await agentsClientFactory();
       const agents = await client.listAgents();
       res.json({ agents });
     } catch (err) {
@@ -326,6 +327,8 @@ export function createApp(config, fetchImpl = fetch) {
     }
   });
 
+  mountAgentConfigRoutes(app, agentsClientFactory);
+
   /** Apply language/STT/LLM/TTS to the agent before the browser SDK mints a session. */
   app.post('/api/agents/:agentId/pipeline', async (req, res) => {
     const agentId = String(req.params.agentId || '').trim();
@@ -334,7 +337,7 @@ export function createApp(config, fetchImpl = fetch) {
       return;
     }
     try {
-      const result = await applyPipelineSelection(await createAgentsClient(config), agentId, req.body ?? {});
+      const result = await applyPipelineSelection(await agentsClientFactory(), agentId, req.body ?? {});
       res.json(result);
     } catch (err) {
       const status =
@@ -375,7 +378,7 @@ export function createApp(config, fetchImpl = fetch) {
       agentLanguage || sttProvider || llmProvider || ttsProvider || sttModel || llmModel || ttsVoiceId;
     if (wantsPipeline) {
       try {
-        await applyPipelineSelection(await createAgentsClient(config), agentId, {
+        await applyPipelineSelection(await agentsClientFactory(), agentId, {
           agentLanguage,
           sttProvider,
           llmProvider,

@@ -949,7 +949,7 @@ async def _resolve_session_from_participant(
     return md, audio_channel
 
 
-def _bind_verified_caller_phone(
+async def _bind_verified_caller_phone(
     session_obj: Any,
     *,
     md: dict[str, Any] | None,
@@ -983,52 +983,41 @@ def _bind_verified_caller_phone(
         if job_md.get(key) and not dispatch.get(key):
             dispatch[key] = job_md[key]
 
-    db_conn = None
-    try:
-        import sys as _sys
-        from pathlib import Path as _Path
+    # Mint identity and SIP ANI need no database. A normal browser session has
+    # neither: leave its phone unknown rather than opening a remote TLS session
+    # and querying telephony_calls on the real-time event loop, twice per join.
+    phone = resolve_verified_caller_phone(dispatch_or_md=dispatch, participant=participant)
+    if phone:
+        set_verified_caller_phone(ud, phone)
+        return
 
-        import psycopg
+    from worker.telephony_runtime import is_sip_participant
+    needs_telephony_lookup = (
+        bool(dispatch.get("telephony_call_id"))
+        or is_telephony_job(room_name=room_name, job_metadata=job_metadata)
+        or is_sip_participant(participant)
+    )
+    if not needs_telephony_lookup:
+        return
 
-        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-        try:
-            from scripts.dbconn import conn_kwargs as _conn_kwargs
-        except ImportError:
-            from dbconn import conn_kwargs as _conn_kwargs  # type: ignore # noqa: E402
+    def lookup() -> str | None:
+        from worker.db_pool import worker_db_connection
 
-        try:
-            db_conn = psycopg.connect(**_conn_kwargs(), connect_timeout=3)
-        except Exception as exc:
-            from livekit.agents.log import logger as _id_logger
-
-            _id_logger.warning(
-                "stage=caller_identity_db_connect failed room=%s err=%s",
-                room_name,
-                exc,
+        with worker_db_connection(connect_timeout=3) as conn:
+            return resolve_verified_caller_phone(
+                dispatch_or_md=dispatch, participant=participant, room_name=room_name,
+                db_conn=conn, telephony_call_id=str(dispatch.get("telephony_call_id") or "") or None,
             )
-            db_conn = None
 
-        phone = resolve_verified_caller_phone(
-            dispatch_or_md=dispatch,
-            participant=participant,
-            room_name=room_name,
-            db_conn=db_conn,
-            telephony_call_id=str(dispatch.get("telephony_call_id") or "") or None,
-        )
-        if phone:
-            set_verified_caller_phone(ud, phone)
-    finally:
-        if db_conn is not None:
-            try:
-                db_conn.close()
-            except Exception as exc:
-                from livekit.agents.log import logger as _id_logger
+    try:
+        phone = await asyncio.to_thread(lookup)
+    except Exception as exc:
+        from livekit.agents.log import logger as _id_logger
 
-                _id_logger.warning(
-                    "stage=caller_identity_db_close failed room=%s err=%s",
-                    room_name,
-                    exc,
-                )
+        _id_logger.warning("stage=caller_identity_lookup failed room=%s err=%s", room_name, exc)
+        return
+    if phone:
+        set_verified_caller_phone(ud, phone)
 
 
 def _wire_session_diagnostics(session: Any, cfg: AgentConfig, room_name: str) -> None:
@@ -1535,7 +1524,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
                 break
         except Exception:
             early_participant = None
-        _bind_verified_caller_phone(
+        await _bind_verified_caller_phone(
             session,
             md=early_md,
             participant=early_participant,
@@ -1563,7 +1552,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         except (asyncio.TimeoutError, RuntimeError, asyncio.CancelledError):
             return
         # Late SIP join: fill verified phone if still missing.
-        _bind_verified_caller_phone(
+        await _bind_verified_caller_phone(
             session,
             md=early_md,
             participant=participant,
@@ -1591,7 +1580,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             participant_md, room_name, audio_channel=resolved_channel
         )
         agent = build_agent(cfg, humanization_runtime=session.userdata.humanization_runtime)
-        _bind_verified_caller_phone(
+        await _bind_verified_caller_phone(
             session,
             md=participant_md,
             participant=participant,

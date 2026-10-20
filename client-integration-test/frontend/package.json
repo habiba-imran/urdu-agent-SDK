@@ -7,13 +7,16 @@
     "dev": "vite --port 5174 --strictPort",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5174 --strictPort",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@awaazlabs-uva/voice": "1.1.1"
   },
   "devDependencies": {
+    "happy-dom": "^21.0.3",
     "typescript": "^5.4.0",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^4.1.11"
   }
 }

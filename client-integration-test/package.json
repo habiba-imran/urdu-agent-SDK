@@ -10,7 +10,7 @@
     "dev": "npm run dev:backend",
     "typecheck": "npm run typecheck --prefix frontend",
     "build": "npm run build --prefix frontend",
-    "test": "npm test --prefix backend",
+    "test": "npm test --prefix backend && npm test --prefix frontend",
     "verify": "npm test && npm run typecheck && npm run build && node scripts/check-packages.mjs"
   }
 }

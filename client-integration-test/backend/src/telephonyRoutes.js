@@ -30,6 +30,7 @@ export function createTelephonyClient(config) {
       tenantId: config.tenantId,
       tenantSecret: config.hmacSecret,
       signatureVersion: 'raw-body-v1',
+      fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(120000) }),
     });
   });
 }
@@ -188,6 +189,12 @@ export function mountTelephonyRoutes(app, config) {
         res.status(400).json({ error: 'e164_required' });
         return;
       }
+      const existing = asList(await telephony.listManagedPhoneNumbers());
+      const alreadyManaged = existing.find(number => number.e164_number === e164Number);
+      if (alreadyManaged) {
+        res.json({ imported: alreadyManaged, managed: existing, alreadyManaged: true });
+        return;
+      }
       const imported = await telephony.importTelnyxNumber({ e164Number });
       const managed = asList(await telephony.listManagedPhoneNumbers());
       res.json({ imported, managed });
@@ -197,26 +204,41 @@ export function mountTelephonyRoutes(app, config) {
   });
 
   app.post('/api/telephony/assign', async (req, res) => {
+    let telephony;
+    const numberId = String(req.body?.numberId || '').trim();
+    const agentId = String(req.body?.agentId || '').trim();
     try {
-      const telephony = await createTelephonyClient(config);
-      const numberId = String(req.body?.numberId || '').trim();
-      const agentId = String(req.body?.agentId || '').trim();
       if (!numberId || !agentId) {
         res.status(400).json({ error: 'numberId_and_agentId_required' });
         return;
       }
-      const assigned = await telephony.assignAgentToNumber(numberId, agentId);
-      let routing = null;
-      try {
-        routing = await telephony.configureNumberRouting(numberId);
-      } catch (err) {
-        routing = {
-          error: err instanceof Error ? err.message : String(err),
-        };
+      telephony = await createTelephonyClient(config);
+      const current = await telephony.getManagedPhoneNumber(numberId);
+      // The public assignment operation already binds Telnyx and configures
+      // LiveKit routing. Do not provision the same route twice on every click.
+      const assigned = current.assigned_agent_id === agentId && current.routing_status === 'ready'
+        ? current : await telephony.assignAgentToNumber(numberId, agentId);
+      if (assigned.assigned_agent_id !== agentId || assigned.routing_status !== 'ready') {
+        const err = new Error('Agent assignment is saved, but phone routing is not ready. Refresh the lists and resolve routing before calling.');
+        err.status = 409;
+        err.code = 'number_not_routing_ready';
+        throw err;
       }
-      res.json({ assigned, routing });
+      res.json({ assigned, routing: { routing_status: 'ready' } });
     } catch (err) {
-      sendError(res, err, 'telephony_assign_failed');
+      // Assignment can commit before provider routing fails. Return verified
+      // partial state instead of claiming rollback or swallowing routing errors.
+      let current = null;
+      if (telephony) {
+        try { current = await telephony.getManagedPhoneNumber(numberId); } catch { /* outcome remains unknown */ }
+      }
+      const status = Number(err?.status || 502);
+      res.status(status >= 400 && status < 600 ? status : 502).json({
+        error: err?.code || 'telephony_assign_failed',
+        message: err instanceof Error ? err.message : String(err),
+        assignmentSaved: current ? current.assigned_agent_id === agentId : null,
+        routingStatus: current?.routing_status || 'unknown',
+      });
     }
   });
 

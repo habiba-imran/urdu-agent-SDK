@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -31,12 +32,15 @@ logger = logging.getLogger("worker.db_pool")
 
 _lock = threading.Lock()
 _cached: Connection | None = None
+_last_used_at = 0.0
+_IDLE_CHECK_SECONDS = 30.0
 
 
 def _drop_cached_unlocked() -> None:
-    global _cached
+    global _cached, _last_used_at
     conn = _cached
     _cached = None
+    _last_used_at = 0.0
     if conn is None:
         return
     try:
@@ -52,9 +56,20 @@ def reset_worker_db_pool() -> None:
 
 
 def _ensure_connection(connect_timeout: float) -> Connection:
-    global _cached
+    global _cached, _last_used_at
     if _cached is not None and not _cached.closed:
-        return _cached
+        if time.monotonic() - _last_used_at < _IDLE_CHECK_SECONDS:
+            return _cached
+        # Remote idle disconnects need not mark ``closed`` until the next I/O.
+        # Probe before lending the connection, so a stale socket cannot consume
+        # the caller's first config read. Never replay the borrower's SQL/writes.
+        try:
+            _cached.execute("select 1").fetchone()
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            _drop_cached_unlocked()
+        else:
+            _last_used_at = time.monotonic()
+            return _cached
     _drop_cached_unlocked()
     _cached = psycopg.connect(
         **conn_kwargs(),
@@ -64,6 +79,7 @@ def _ensure_connection(connect_timeout: float) -> Connection:
         # statements across checkouts — reuse otherwise raises DuplicatePreparedStatement.
         prepare_threshold=None,
     )
+    _last_used_at = time.monotonic()
     return _cached
 
 
@@ -85,6 +101,7 @@ def _normalize_idle(conn: Connection) -> None:
 @contextmanager
 def worker_db_connection(*, connect_timeout: float = 5.0) -> Iterator[Connection]:
     """Checkout the process-local connection for the duration of the ``with`` block."""
+    global _last_used_at
     with _lock:
         try:
             conn = _ensure_connection(connect_timeout)
@@ -94,6 +111,7 @@ def worker_db_connection(*, connect_timeout: float = 5.0) -> Iterator[Connection
         try:
             yield conn
             _normalize_idle(conn)
+            _last_used_at = time.monotonic()
         except Exception:
             _drop_cached_unlocked()
             raise

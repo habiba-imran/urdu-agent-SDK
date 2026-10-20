@@ -288,6 +288,23 @@ class LiveKitSipClient:
                 listed = await api.sip.list_dispatch_rule(
                     lk.ListSIPDispatchRuleRequest()
                 )
+                # An imported/synced number may resolve to a trunk already used
+                # by another active number record or tenant. Do not create an
+                # overlapping rule, or silently take over that existing route.
+                conflicting_items = [
+                    item for item in listed.items
+                    if inbound_trunk_id in list(getattr(item, "trunk_ids", []) or [])
+                    and getattr(item, "name", "") != name
+                ]
+                if conflicting_items:
+                    raise TelephonyError(
+                        status=409,
+                        code=TelephonyErrorCode.CALL_STATE_CONFLICT,
+                        message=(
+                            "This phone number's LiveKit trunk already has another dispatch rule. "
+                            "Resolve its existing routing assignment before configuring this number."
+                        ),
+                    )
                 matching_items = [
                     item for item in listed.items if getattr(item, "name", "") == name
                 ]

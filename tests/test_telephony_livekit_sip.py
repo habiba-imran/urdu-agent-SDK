@@ -286,6 +286,27 @@ def test_livekit_dispatch_rule_created_without_inbound_numbers_and_bound_to_trun
     assert '"+14755587853"' in created_request.room_config.agents[0].metadata
 
 
+def test_livekit_dispatch_rule_does_not_take_over_another_number_route(monkeypatch):
+    existing = _FakeSIPDispatchRuleInfo(
+        sip_dispatch_rule_id="existing-rule",
+        name="uva-dispatch-other-number",
+        trunk_ids=["shared-trunk"],
+        room_config=_FakeRoomConfiguration(agents=[
+            _FakeRoomAgentDispatch(agent_name="other-worker", metadata=json.dumps({"tenant_id": "other-tenant"}))
+        ]),
+    )
+    service = _FakeDispatchService(items=[existing])
+    _install_fake_livekit_api(monkeypatch, service)
+    client = LiveKitSipClient(url="wss://livekit.example", api_key="key", api_secret="secret", mock_mode=False)
+    with pytest.raises(TelephonyError) as error:
+        client.create_or_get_dispatch_rule("shared-trunk", "new-number", "+15551234567", tenant_id="new-tenant", agent_id="new-agent")
+    assert error.value.status == 409
+    assert error.value.code == TelephonyErrorCode.CALL_STATE_CONFLICT
+    assert service.created_requests == []
+    assert service.updated_rules == []
+    assert service.deleted_rule_ids == []
+
+
 def test_livekit_dispatch_rule_repairs_stale_inbound_numbers_rule(monkeypatch):
     stale_rule = _FakeSIPDispatchRuleInfo(
         sip_dispatch_rule_id="lk_rule_stale_123",
