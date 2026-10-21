@@ -247,7 +247,7 @@ def resolve_agent_provider_fields(
             "invalid_llm_options", "only the provider-neutral humanization profile is supported"
         )
     if "humanization" in resolved_llm_options:
-        from worker.humanization.persona import validate_profile
+        from worker.providers.humanization import validate_profile
         try:
             resolved_llm_options = {"humanization": validate_profile(resolved_llm_options["humanization"])}
         except ValueError as exc:

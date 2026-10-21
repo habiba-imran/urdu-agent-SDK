@@ -72,6 +72,24 @@ test('persona saves through the installed SDK and reads back without exposing se
   assert.deepEqual(writes[1].llm_options.humanization, { enabled: false });
 });
 
+test('plain-text upstream failure becomes a JSON save error with its HTTP status', async t => {
+  const portalUrl = await listen(t, createServer(async (req, res) => {
+    for await (const _chunk of req) { /* consume the signed request without logging it */ }
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Internal Server Error');
+  }));
+  const url = await listen(t, createApp({ portalApiUrl: portalUrl, tenantId: 'fixture', hmacSecret: 'private-fixture', allowedOrigins: [] }));
+  const response = await fetch(`${url}/api/agents/persona-agent/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: 'Test', firstSpeaker: 'agent', greeting: '', humanization: { enabled: true } }),
+  });
+  assert.equal(response.status, 502);
+  const data = await response.json();
+  assert.equal(data.error, 'agent_save_failed');
+  assert.match(data.message, /HTTP 500/);
+  assert.ok(!data.message.includes('Unexpected token'));
+});
+
 const selection = { agentLanguage: 'en', sttProvider: 'stt', sttModel: 's2', llmProvider: 'llm', llmModel: 'l2', ttsProvider: 'tts', ttsVoiceId: 'v2' };
 const capabilities = { languages: { en: { stt: { stt: { models: ['s1', 's2'] } }, llm: { llm: { models: ['l1', 'l2'] } }, tts: { tts: { voices: ['v1', 'v2'] } } } } };
 

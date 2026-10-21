@@ -57,10 +57,19 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
     update();
   }
   async function request(agentId: string, init?: RequestInit): Promise<AgentConfig> {
-    const response = await fetch(`${opts.backendOrigin}/api/agents/${encodeURIComponent(agentId)}/config`, {
-      ...init, headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000),
-    });
-    const data = await response.json();
+    let response: Response;
+    try {
+      response = await fetch(`${opts.backendOrigin}/api/agents/${encodeURIComponent(agentId)}/config`, {
+        ...init, headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000),
+      });
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error(`Cannot reach the client backend at ${opts.backendOrigin}. Check its terminal and allowed frontend origin.`);
+      throw error;
+    }
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`Agent configuration returned a non-JSON response (HTTP ${response.status}). Check the backend/API logs.`); }
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     return data;
   }

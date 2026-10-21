@@ -80,6 +80,15 @@ it('rejects unsupported persona fields without a request', async () => {
   assert.equal(calls.length, 0);
 });
 
+it('preserves HTTP status for plain-text and HTML API failures', async () => {
+  for (const body of ['Internal Server Error', '<html>Bad Gateway</html>']) {
+    stubFetch(() => ({ status: 500, statusText: 'Internal Server Error', body }));
+    await assert.rejects(client().updateAgent('a', { prompt: 'Test' }), error =>
+      error instanceof AwaazLabsUvaAgentsError && error.status === 500 && error.code === 'upstream_error' &&
+      error.message.includes('HTTP 500') && !error.message.includes('Unexpected token') && !error.message.includes('<html>'));
+  }
+});
+
 beforeEach(() => {
   mock.timers.enable({ apis: ['Date'], now: TS_SEC * 1000 });
 });

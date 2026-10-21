@@ -305,7 +305,17 @@ export class AwaazLabsUvaAgentsClient {
     });
 
     const text = await res.text();
-    const parsed = text ? JSON.parse(text) : null;
+    let parsed = null;
+    if (text) {
+      try { parsed = JSON.parse(text); }
+      catch {
+        throw new AwaazLabsUvaAgentsError(
+          res.ok ? 502 : res.status,
+          `Agent API returned a non-JSON response (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}).`,
+          res.ok ? 'invalid_response' : 'upstream_error',
+        );
+      }
+    }
     if (!res.ok) {
       const detail = parsed?.detail;
       // tenant_portal_api's ProviderValidationError path raises HTTPException(detail={"code":

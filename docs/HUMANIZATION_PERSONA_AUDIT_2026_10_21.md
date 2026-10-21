@@ -89,3 +89,21 @@ Primary provider references consulted:
 - [Uplift TTS API](https://docs.upliftai.org/orator)
 
 See [SDK settings and activation](HUMANIZATION_PERSONA_SDK.md) for usage.
+
+## Save-failure follow-up
+
+The initial audit missed the minimal tenant API Docker image boundary. A hosted
+profile update returned HTTP 500 with plain-text `Internal Server Error`, while
+an empty update without persona settings succeeded. An invalid profile request
+reproduced the failure before any agent fields could be written.
+
+The validator imported `worker.humanization.persona`, but the API Docker image
+copies only `worker/__init__.py` and `worker/providers/`. An isolated image-layout
+test reproduced `ModuleNotFoundError: No module named 'worker.humanization'`.
+
+Validation now lives in dependency-free `worker/providers/humanization.py`, which
+the existing image already includes. The voice runtime imports that same validator;
+there is no duplicated schema or additional voice dependency in the API image.
+The SDK/frontend now handle non-JSON failures without masking the HTTP status as
+`Unexpected token`. This fix requires redeploying the tenant API. Local frontend
+or worker restarts alone cannot repair the hosted API image.

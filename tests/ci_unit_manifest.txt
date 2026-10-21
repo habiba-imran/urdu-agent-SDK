@@ -47,6 +47,7 @@ tests/test_humanization_final_p0.py
 tests/test_live_call_regressions.py
 tests/test_humanization_conversational.py
 tests/test_persona_profile.py
+tests/test_persona_api_image.py
 
 tests/test_ehsan_handoff.py
 

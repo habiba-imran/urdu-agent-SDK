@@ -87,6 +87,19 @@ test('persona changes block connect until saved and survive reload', async () =>
   await vi.waitFor(() => expect($<HTMLSelectElement>('#web-persona-enabled').value).toBe('true'));
 });
 
+test('plain-text save failures show HTTP status and preserve edits', async () => {
+  const upstream = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((input: string, init?: RequestInit) =>
+    input.endsWith('/config') && init?.method === 'POST'
+      ? Promise.resolve(new Response('Internal Server Error', { status: 500 })) : upstream(input, init));
+  editPrompt('Keep this unsaved edit.');
+  button('save-prompt-btn').click();
+  await vi.waitFor(() => expect($('#prompt-feedback').textContent).toContain('HTTP 500'));
+  expect($('#prompt-feedback').textContent).not.toContain('Unexpected token');
+  expect($<HTMLTextAreaElement>('#agent-prompt').value).toBe('Keep this unsaved edit.');
+  expect(button('save-prompt-btn').disabled).toBe(false);
+});
+
 test('unchanged saved pipeline does not add portal round trips to connect', async () => {
   submit();
   await vi.waitFor(() => expect(button('disconnect-btn').disabled).toBe(false));

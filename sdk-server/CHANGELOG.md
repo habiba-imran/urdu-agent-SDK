@@ -13,6 +13,7 @@ Releases are cut by pushing an `agents-v<version>` tag that matches `version` in
 
 - Local preview: typed, validated `humanization` settings on agent create/update, shared by web, inbound and outbound sessions.
 - Keeps secrets server-side and preserves the existing signed request contract. Requires the matching tenant API and worker; not published to npm.
+- Preserves HTTP status when an upstream API returns plain text or HTML instead of JSON.
 
 ## [0.1.1] - Unreleased
 
