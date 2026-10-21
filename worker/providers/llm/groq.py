@@ -113,7 +113,12 @@ def build(model: str) -> Any:
         # Keep reasoning cheap on the voice path (ITPM + TTFT).
         kwargs["reasoning_effort"] = "low"
     elif resolved_model.startswith("qwen/"):
-        kwargs["reasoning_effort"] = "none"
+        # "none" is not a value Groq accepts. Sending it fails the request outright:
+        #   HTTP 400 `reasoning_effort` must be one of `low`, `medium`, or `high`
+        # (verified against the live API, 2026-10-21). Every qwen id currently resolves
+        # away via _DEAD_GROQ_MODELS, so this branch was unreachable — but a new qwen id
+        # in GROQ_LLM_MODEL would have reached it and 400'd every single turn.
+        kwargs["reasoning_effort"] = "low"
     class TransportWarmedGroq(groq.LLM):
         def __init__(self):
             self._transport_client = _make_transport_client()
