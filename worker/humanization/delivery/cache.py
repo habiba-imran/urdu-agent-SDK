@@ -13,8 +13,13 @@ def rendered_audio_identity(
     provider: str, voice: str, language: str, options: dict, channel: str, *,
     tenant_id: str = "", policy_version: str | None = None,
     renderer_version: str | None = None, pronunciation_version: str | None = None,
+    humanization: dict | None = None,
 ) -> str:
     policy = resolve_delivery_policy(provider)
+    if humanization is not None:
+        from types import SimpleNamespace
+        from .policy import delivery_policy_for
+        policy = delivery_policy_for(SimpleNamespace(tts_provider=provider, llm_options={"humanization": humanization}))
     effective = effective_options(provider, voice, language, options, channel)
     caps = resolve_capabilities(provider, effective)
     payload = {
@@ -24,6 +29,7 @@ def rendered_audio_identity(
         "renderer": renderer_version or policy.renderer_version,
         "pronunciation": pronunciation_version or policy.pronunciation_version,
         "effective": effective, "stored": options,
+        "humanization": humanization,
         "language_profile": "language_v1" if (policy_version or policy.version) != "baseline" else "baseline",
         "channel_profile": "channel_v1" if (policy_version or policy.version) != "baseline" else "baseline",
         "static_delivery": "opening_v1" if (policy_version or policy.version) != "baseline" else "baseline",

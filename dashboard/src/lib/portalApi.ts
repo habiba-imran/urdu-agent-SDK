@@ -326,6 +326,17 @@ export function getMembers() {
   return request<PortalMember[]>("/portal/members");
 }
 
+export type PortalWorkspace = {
+  tenant_id: string;
+  tenant_name: string;
+  role: string;
+  status: string;
+};
+
+export function getWorkspaces() {
+  return request<PortalWorkspace[]>("/portal/workspaces");
+}
+
 export function setMemberApiKeyAccess(authUserId: string, allowed: boolean) {
   return request<{ auth_user_id: string; can_view_api_keys: boolean }>(
     `/portal/members/${encodeURIComponent(authUserId)}/api-key-access`,

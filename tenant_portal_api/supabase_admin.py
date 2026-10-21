@@ -6,6 +6,7 @@ Never import this from the dashboard. Used for Phase 2 invites.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from typing import Any
 
 import httpx
@@ -45,8 +46,10 @@ def find_auth_user_id_by_email(email: str) -> str | None:
     url = f"{_supabase_url()}/auth/v1/admin/users"
     try:
         with httpx.Client(timeout=20.0) as client:
-            # Paginate a few pages — tenant orgs are small; avoid full dump.
-            for page in range(1, 6):
+            # Auth users belong to the project, not just this tenant. Do not
+            # silently miss existing accounts after the first 1,000 users.
+            page = 1
+            while True:
                 resp = client.get(
                     url,
                     headers=_admin_headers(),
@@ -68,6 +71,7 @@ def find_auth_user_id_by_email(email: str) -> str | None:
                         return str(uid) if uid else None
                 if len(users) < 200:
                     break
+                page += 1
     except TenantAuthError:
         raise
     except Exception as exc:
@@ -75,26 +79,33 @@ def find_auth_user_id_by_email(email: str) -> str | None:
     return None
 
 
-def _invite_redirect_to() -> str:
+def _invite_redirect_to(tenant_id: str | None = None) -> str:
     """Dashboard /invite page — must be listed in Supabase Auth Redirect URLs."""
     redirect_to = (
         os.environ.get("DASHBOARD_INVITE_REDIRECT_URL")
         or os.environ.get("NEXT_PUBLIC_DASHBOARD_URL")
         or "http://localhost:3000"
     ).strip().rstrip("/")
-    if not redirect_to.endswith("/invite"):
-        redirect_to = f"{redirect_to}/invite"
-    return redirect_to
+    parts = urlsplit(redirect_to)
+    path = parts.path.rstrip("/")
+    if not path.endswith("/invite"):
+        path = f"{path}/invite"
+    parts = parts._replace(path=path)
+    if tenant_id:
+        query = dict(parse_qsl(parts.query))
+        query["tenant_id"] = tenant_id
+        parts = parts._replace(query=urlencode(query))
+    return urlunsplit(parts)
 
 
-def _send_auth_email_with_redirect(email: str, *, path: str) -> None:
+def _send_auth_email_with_redirect(email: str, *, path: str, tenant_id: str | None = None) -> None:
     """POST GoTrue email endpoint. ``redirect_to`` must be a query param (not JSON body)."""
     url = f"{_supabase_url()}{path}"
     with httpx.Client(timeout=20.0) as client:
         resp = client.post(
             url,
             headers=_admin_headers(),
-            params={"redirect_to": _invite_redirect_to()},
+            params={"redirect_to": _invite_redirect_to(tenant_id)},
             json={"email": email},
         )
         if resp.status_code in (200, 201):
@@ -105,7 +116,7 @@ def _send_auth_email_with_redirect(email: str, *, path: str) -> None:
         )
 
 
-def invite_auth_user_by_email(email: str) -> dict[str, Any]:
+def invite_auth_user_by_email(email: str, *, tenant_id: str | None = None) -> dict[str, Any]:
     """Invite a user via Supabase Auth (sends invite email when SMTP is configured).
 
     Returns the Auth user object (must include ``id``).
@@ -120,7 +131,7 @@ def invite_auth_user_by_email(email: str) -> dict[str, Any]:
     if existing:
         # Invite API will not re-mail an existing Auth user — send recovery → /invite
         # so they can set a password on the same accept page.
-        _send_auth_email_with_redirect(normalized, path="/auth/v1/recover")
+        _send_auth_email_with_redirect(normalized, path="/auth/v1/recover", tenant_id=tenant_id)
         return {"id": existing, "email": normalized, "existing": True}
 
     # GoTrue reads redirect_to from the *query string*, not the JSON body.
@@ -131,7 +142,7 @@ def invite_auth_user_by_email(email: str) -> dict[str, Any]:
             resp = client.post(
                 url,
                 headers=_admin_headers(),
-                params={"redirect_to": _invite_redirect_to()},
+                params={"redirect_to": _invite_redirect_to(tenant_id)},
                 json={"email": normalized},
             )
             if resp.status_code in (200, 201):
@@ -150,7 +161,7 @@ def invite_auth_user_by_email(email: str) -> dict[str, Any]:
             if resp.status_code in (422, 400) and "already" in (resp.text or "").lower():
                 again = find_auth_user_id_by_email(normalized)
                 if again:
-                    _send_auth_email_with_redirect(normalized, path="/auth/v1/recover")
+                    _send_auth_email_with_redirect(normalized, path="/auth/v1/recover", tenant_id=tenant_id)
                     return {"id": again, "email": normalized, "existing": True}
 
             raise TenantAuthError(

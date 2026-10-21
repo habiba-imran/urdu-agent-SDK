@@ -126,7 +126,8 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
 
     persona_prompt = cfg.prompt or ""
     compacted = False
-    conversational = bool(humanization_runtime and humanization_runtime.policy.behavior_enabled)
+    from worker.humanization.persona import policy_for_agent
+    conversational = policy_for_agent(cfg).behavior_enabled
     if (cfg.llm_provider or "").lower() == "groq" and not conversational:
         persona_prompt, compacted = compact_prompt_for_groq(cfg.prompt)
         if compacted:
@@ -137,8 +138,8 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
                 len(persona_prompt),
             )
 
-    from worker.humanization.delivery.policy import resolve_delivery_policy
-    delivery_policy = resolve_delivery_policy(cfg.tts_provider)
+    from worker.humanization.delivery.policy import delivery_policy_for
+    delivery_policy = delivery_policy_for(cfg)
     if conversational and not delivery_policy.enabled:
         raise ValueError("conversational_v1 requires the selected delivery_v1 renderer; use worker.development")
     delivery_context = getattr(humanization_runtime, "delivery_context", None)
@@ -153,6 +154,7 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
             tts_provider=cfg.tts_provider,
             tts_voice_id=resolve_provider_voice_id_local(cfg.tts_voice_id or cfg.voice_id) or cfg.tts_voice_id or cfg.voice_id,
             tts_options=cfg.tts_options,
+            audio_channel=humanization_runtime.state.channel if humanization_runtime is not None else "webrtc",
         ), delivery_policy, runtime=humanization_runtime)
     system_instructions = build_system_instructions(cfg) + _language_directive(
         cfg.agent_language
@@ -370,7 +372,7 @@ async def build_session(
     from worker.telemetry import provider_snapshot
 
     diagnostic_snapshot = provider_snapshot(cfg, runtime_cfg, components)
-    from worker.humanization.policy import resolve_humanization_policy
+    from worker.humanization.persona import policy_for_agent, profile_from_options
     from worker.humanization.runtime import HumanizationRuntime
     from worker.humanization.history import AuditTranscript
 
@@ -378,11 +380,12 @@ async def build_session(
         tenant_id=cfg.tenant_id, agent_id=cfg.agent_id,
         session_id=md.get("session_id") or room_name,
         language=cfg.agent_language, channel=audio_channel,
-        policy=resolve_humanization_policy(),
+        policy=policy_for_agent(cfg),
+        persona_profile=profile_from_options(cfg.llm_options),
         provider_snapshot=diagnostic_snapshot,
     )
-    from worker.humanization.delivery.policy import resolve_delivery_policy
-    delivery_policy = resolve_delivery_policy(cfg.tts_provider)
+    from worker.humanization.delivery.policy import delivery_policy_for
+    delivery_policy = delivery_policy_for(cfg)
     humanization_runtime.delivery_context = None
     if delivery_policy.enabled:
         from worker.humanization.delivery.context import DeliveryContext
@@ -399,6 +402,8 @@ async def build_session(
     # Freeze effective candidate identities for this session's diagnostic events.
     diagnostic_snapshot["humanization_policy_version"] = humanization_runtime.policy.effective_version
     diagnostic_snapshot["interaction"] = dict(humanization_runtime.provider_snapshot["interaction"])
+    if humanization_runtime.persona_profile is not None:
+        diagnostic_snapshot["persona"] = dict(humanization_runtime.provider_snapshot["persona"])
     diagnostic_snapshot["component_versions"] = {
         "turn": "overlap_v1" if humanization_runtime.overlap_enabled else "baseline",
         "language": "language_v1" if humanization_runtime.overlap_enabled else "baseline",
@@ -410,9 +415,8 @@ async def build_session(
         diagnostic_snapshot["component_versions"]["streaming"] = (
             "streaming_v1" if streaming_enabled(humanization_runtime.delivery_context) else "baseline"
         )
-    diagnostic_snapshot["opening_policy_version"] = (
-        "opening_v1" if os.getenv("UVA_OPENING_POLICY", "baseline") == "opening_v1" else "baseline"
-    )
+    from worker.session_opening import opening_gate_enabled
+    diagnostic_snapshot["opening_policy_version"] = "opening_v1" if opening_gate_enabled(cfg) else "baseline"
     opening = resolve_session_opening(cfg)
     # Static say: skip TTS websocket prewarm — cache hit replays PCM; miss uses
     # single-flight synthesize (one TTS request shared by cache fill + opening).
@@ -432,6 +436,7 @@ async def build_session(
             tts_options=cfg.tts_options,
             language=cfg.agent_language,
             tenant_id=cfg.tenant_id,
+            humanization=cfg.llm_options.get("humanization"),
         )
         skip_tts_prewarm = True
         if get_greeting_cache().has(cache_key):
@@ -668,7 +673,7 @@ async def _await_opening_and_speak(
     if runtime is not None and runtime.state.session_closed:
         return
     from worker.session_opening import opening_gate_enabled, await_playback_ready
-    if opening_gate_enabled() and not await await_playback_ready(session):
+    if opening_gate_enabled(cfg) and not await await_playback_ready(session):
         from worker.provider_retries import fail_session
         fail_session(session, "PLAYBACK_NOT_READY")
         return
@@ -727,8 +732,8 @@ def _tts_agent_session_extra(
     ``inference.TTS``; we still pass it when present so an A/B agent can try it, and log if
     the installed package has no such parameter.
     """
-    from worker.humanization.delivery.policy import resolve_delivery_policy
-    if resolve_delivery_policy(cfg.tts_provider).enabled:
+    from worker.humanization.delivery.policy import delivery_policy_for
+    if delivery_policy_for(cfg).enabled:
         # The canonical boundary + common renderer replace all legacy TTS transforms.
         return {"tts_text_transforms": [], "use_tts_aligned_transcript": False}
     sanitize_fn = sanitizer_for_provider(

@@ -28,10 +28,14 @@ class HumanizationRuntime:
         self, *, tenant_id: str, agent_id: str, session_id: str,
         language: str, channel: str, policy: HumanizationPolicy,
         provider_snapshot: dict[str, Any] | None = None,
+        persona_profile=None,
     ) -> None:
         self.policy = policy
+        self.persona_profile = persona_profile
         # The existing allowlisted diagnostic snapshot excludes credentials/URLs.
         self.provider_snapshot = deepcopy(provider_snapshot or {})
+        if persona_profile is not None:
+            self.provider_snapshot["persona"] = {"version": "persona_v1", **persona_profile.wire()}
         self._state = ConversationState(
             tenant_id=tenant_id, agent_id=agent_id, session_id=session_id,
             language_state=LanguageState(language), channel=channel,
@@ -74,6 +78,7 @@ class HumanizationRuntime:
         self._understood_turns: set[str] = set()
         self.latest_plan = None
         self.latest_signals = None
+        self._supportive_turns = 0
         self.clarification_enabled = False
         self.last_evidence = None
         self.tool_request_revisions: dict[str, int] = {}
@@ -171,6 +176,12 @@ class HumanizationRuntime:
             self.turn_event("EOT_CONFIRMED", turn_id=turn_id)
             from dataclasses import replace
             signals = conversational_signals(text)
+            if signals.complaint_or_frustration:
+                self._supportive_turns = 2
+            elif self._supportive_turns:
+                self._supportive_turns -= 1
+                if self._supportive_turns and not (signals.excitement or signals.stop_intent or signals.acknowledgement):
+                    signals = replace(signals, complaint_or_frustration=True)
             self.latest_signals = replace(
                 signals,
                 user_correction=bool(parsed.correction and (parsed.entities or parsed.unresolved)) or signals.user_correction,

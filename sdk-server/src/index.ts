@@ -27,6 +27,35 @@ export type UvaAgentsClientOptions = AwaazLabsUvaAgentsClientOptions;
 
 export type FirstSpeaker = 'agent' | 'user';
 
+/** Saved on the agent; applies to web sessions and both phone-call directions. */
+export interface HumanizationOptions {
+  enabled?: boolean;
+  warmth?: 'reserved' | 'balanced' | 'warm';
+  formality?: 'casual' | 'balanced' | 'formal';
+  energy?: 'calm' | 'balanced' | 'lively';
+  pace?: 'slower' | 'normal' | 'slightly_fast';
+  expressiveness?: 'subtle' | 'balanced';
+  /** Treat saved TTS speed as the base for bounded contextual pace adjustments. */
+  adaptivePace?: boolean;
+}
+
+export function validateHumanization(value: unknown): HumanizationOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('humanization must be an object');
+  const enums: Record<string, readonly string[]> = {
+    warmth: ['reserved', 'balanced', 'warm'], formality: ['casual', 'balanced', 'formal'],
+    energy: ['calm', 'balanced', 'lively'], pace: ['slower', 'normal', 'slightly_fast'],
+    expressiveness: ['subtle', 'balanced'],
+  };
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'enabled' || key === 'adaptivePace') {
+      if (typeof entry !== 'boolean') throw new Error(`humanization.${key} must be a boolean`);
+    } else if (!enums[key] || typeof entry !== 'string' || !enums[key].includes(entry)) {
+      throw new Error(`invalid humanization.${key}`);
+    }
+  }
+  return { ...value };
+}
+
 export interface AgentRecord {
   id: string;
   name: string;
@@ -66,6 +95,8 @@ export interface CreateAgentParams {
   sttOptions?: Record<string, unknown>;
   llmProvider?: string;
   llmOptions?: Record<string, unknown>;
+  /** Replaces the saved profile. Omit to preserve; enabled:false disables it. */
+  humanization?: HumanizationOptions;
   ttsProvider?: string;
   ttsVoiceId?: string;
   ttsOptions?: Record<string, unknown>;
@@ -94,6 +125,7 @@ export interface UpdateAgentParams {
   sttOptions?: Record<string, unknown>;
   llmProvider?: string;
   llmOptions?: Record<string, unknown>;
+  humanization?: HumanizationOptions;
   ttsProvider?: string;
   ttsVoiceId?: string;
   ttsOptions?: Record<string, unknown>;
@@ -203,6 +235,7 @@ export class AwaazLabsUvaAgentsClient {
     if (params.sttOptions !== undefined) body.stt_options = params.sttOptions;
     if (params.llmProvider !== undefined) body.llm_provider = params.llmProvider;
     if (params.llmOptions !== undefined) body.llm_options = params.llmOptions;
+    if (params.humanization !== undefined) body.llm_options = { ...params.llmOptions, humanization: validateHumanization(params.humanization) };
     if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
@@ -229,6 +262,7 @@ export class AwaazLabsUvaAgentsClient {
     if (params.sttOptions !== undefined) body.stt_options = params.sttOptions;
     if (params.llmProvider !== undefined) body.llm_provider = params.llmProvider;
     if (params.llmOptions !== undefined) body.llm_options = params.llmOptions;
+    if (params.humanization !== undefined) body.llm_options = { ...params.llmOptions, humanization: validateHumanization(params.humanization) };
     if (params.ttsProvider !== undefined) body.tts_provider = params.ttsProvider;
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;

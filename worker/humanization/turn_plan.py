@@ -181,6 +181,11 @@ def conversational_signals(text: str) -> TurnSignals:
         r"\u0627\u06cc\u06a9 \u0644\u0645\u062d\u06c1|ruk jaiye|ruko|ek lamha)", value))
     excited = bool(re.search(r"\b(?:that's great|that is great|i(?:'m| am) excited|wonderful news)\b|\u0628\u06c1\u062a \u0627\u0686\u06be\u0627", value))
     hesitation = bool(re.search(r"\b(?:um|uh|let me think)\b|\u0627\u06cc\u06a9 \u0645\u0646\u0679", value))
+    concern = concern or bool(re.search(
+        r"\b(?:this is (?:the )?(?:second|third|fourth) time.{0,60}(?:call|charg|ask|fail)|charged me (?:twice|again)|"
+        r"nobody (?:called|helped)|i (?:keep|kept) calling|you (?:still|never) (?:fixed|replied)|"
+        r"i(?:'m| am) (?:really )?(?:angry|disappointed)|i need help urgently)\b"
+        r"|\u0628\u0627\u0631 \u0628\u0627\u0631|\u0628\u06c1\u062a \u067e\u0631\u06cc\u0634\u0627\u0646", value))
     return TurnSignals(ai_identity_question=identity,
                        conversational=True, complaint_or_frustration=concern,
                        user_correction=bool(re.search(r"^(?:actually|sorry|no)\b.*\b(?:meant|instead)|\bi meant\b", value)),

@@ -4,6 +4,15 @@ const API_BASE = process.env.NEXT_PUBLIC_TENANT_PORTAL_API_URL;
 /** Legacy key — cleared on load; JWT must not live in localStorage (P1-H6). */
 const LEGACY_TOKEN_KEY = "uva_tenant_portal_token";
 const ROLE_KEY = "uva_portal_role";
+const WORKSPACE_KEY = "uva_portal_workspace";
+
+export function getPortalWorkspace(): string | null {
+  return typeof window === "undefined" ? null : window.sessionStorage.getItem(WORKSPACE_KEY);
+}
+
+function setPortalWorkspace(tenantId: string) {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(WORKSPACE_KEY, tenantId);
+}
 
 /**
  * In-tab memory only (not localStorage). Needed when the dashboard origin and
@@ -100,6 +109,7 @@ export function clearStoredTenantToken() {
   clearLegacyLocalStorageToken();
   setMemoryPortalToken(null);
   setPortalRole(null);
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(WORKSPACE_KEY);
 }
 
 /** @deprecated Prefer ensurePortalSession / whoami. */
@@ -147,7 +157,9 @@ export async function ensurePortalSession(): Promise<string | null> {
   clearLegacyLocalStorageToken();
 
   const existing = await fetchWhoami();
-  if (existing?.tenant_id) {
+  const preferredWorkspace = getPortalWorkspace();
+  if (existing?.tenant_id && (!preferredWorkspace || preferredWorkspace === existing.tenant_id)) {
+    setPortalWorkspace(existing.tenant_id);
     if (existing.role) {
       setPortalRole(existing.role);
     }
@@ -170,7 +182,7 @@ export async function ensurePortalSession(): Promise<string | null> {
         clearStoredTenantToken();
         return false;
       }
-      const portal = await exchangeSupabaseAccessToken(data.session.access_token);
+      const portal = await exchangeSupabaseAccessToken(data.session.access_token, preferredWorkspace ?? undefined);
       setPortalRole(portal.role ?? null);
       return true;
     } catch {
@@ -204,6 +216,7 @@ export function redirectToLogin(): void {
 /** Exchange a Supabase access_token for the tenant portal JWT (sets HttpOnly cookie). */
 export async function exchangeSupabaseAccessToken(
   accessToken: string,
+  tenantId?: string,
 ): Promise<PortalLoginResponse> {
   if (!API_BASE) {
     throw new PortalAuthError(
@@ -217,7 +230,7 @@ export async function exchangeSupabaseAccessToken(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ access_token: accessToken }),
+    body: JSON.stringify({ access_token: accessToken, ...(tenantId ? { tenant_id: tenantId } : {}) }),
   });
 
   if (!response.ok) {
@@ -236,7 +249,20 @@ export async function exchangeSupabaseAccessToken(
   const portal = (await response.json()) as PortalLoginResponse;
   setStoredTenantToken(portal.token);
   setPortalRole(portal.role ?? null);
+  setPortalWorkspace(portal.tenant_id);
   return portal;
+}
+
+/** Select a workspace only after the backend verifies this Auth user's membership. */
+export async function switchPortalWorkspace(tenantId: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    throw new PortalAuthError("Sign in again to switch workspaces.");
+  }
+  await exchangeSupabaseAccessToken(data.session.access_token, tenantId);
+  // A full reload discards every SWR entry and any revealed secret from the old workspace.
+  window.location.assign('/');
 }
 
 /** Email/password via Supabase Auth, then bind to tenant via portal exchange. */
@@ -312,6 +338,7 @@ export async function claimExistingTenant(input: {
   const portal = (await response.json()) as PortalLoginResponse;
   setStoredTenantToken(portal.token);
   setPortalRole(portal.role ?? null);
+  setPortalWorkspace(portal.tenant_id);
   return portal;
 }
 

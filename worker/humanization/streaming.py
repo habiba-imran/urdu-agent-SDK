@@ -26,6 +26,9 @@ def streaming_enabled(context, *, environ=None):
     env = os.environ if environ is None else environ
     provider = context.cfg.tts_provider
     value = env.get("UVA_TTS_STREAMING_" + provider.upper(), "baseline").strip()
+    profile = getattr(context, "persona_profile", None)
+    if profile is not None:
+        value = STREAMING_VERSION if profile.enabled else "baseline"
     if value == "baseline":
         return False
     if value != STREAMING_VERSION or provider not in ACTIVE_PROVIDERS:

@@ -2,12 +2,13 @@
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { preload } from 'swr';
+import { usePathname } from 'next/navigation';
+import useSWR, { preload } from 'swr';
 import { Menu, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { logoutPortalSession } from '@/lib/portalAuth';
+import { getPortalWorkspace, logoutPortalSession, switchPortalWorkspace } from '@/lib/portalAuth';
+import { getWorkspaces } from '@/lib/portalApi';
 import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
 
@@ -44,10 +45,43 @@ function isActivePath(pathname: string, href: string) {
 
 export default function ConsoleNav() {
   const pathname = usePathname();
-  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const { data: workspaces } = useSWR('workspaces', getWorkspaces);
+  const [switchingWorkspace, setSwitchingWorkspace] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
+  const workspaceSelector = workspaces && workspaces.length > 1 ? (
+    <div className="px-3 py-2">
+      <label className="flex flex-col gap-1 text-xs text-text-muted">
+        Workspace
+        <select
+          aria-label="Workspace"
+          value={getPortalWorkspace() ?? ''}
+          disabled={switchingWorkspace}
+          onChange={async (event) => {
+            setSwitchingWorkspace(true);
+            setWorkspaceError(null);
+            try {
+              await switchPortalWorkspace(event.target.value);
+            } catch (error) {
+              setWorkspaceError(error instanceof Error ? error.message : 'Could not switch workspace');
+              setSwitchingWorkspace(false);
+            }
+          }}
+          className="min-h-11 w-full rounded-input border border-border bg-surface px-2 text-sm text-text"
+        >
+          {workspaces.map((workspace) => (
+            <option key={workspace.tenant_id} value={workspace.tenant_id}>
+              {workspace.tenant_name} ({workspace.role})
+            </option>
+          ))}
+        </select>
+      </label>
+      {workspaceError ? <p role="alert" className="mt-1 text-xs text-destructive">{workspaceError}</p> : null}
+    </div>
+  ) : null;
 
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, top: 0, width: 0, height: 0, opacity: 0 });
   const navContainerRef = useRef<HTMLDivElement>(null);
@@ -121,7 +155,7 @@ export default function ConsoleNav() {
 
   const handleLogout = () => {
     void logoutPortalSession().finally(() => {
-      router.replace('/login');
+      window.location.assign('/login');
     });
   };
 
@@ -185,6 +219,8 @@ export default function ConsoleNav() {
           <div className="relative hidden md:block" ref={userDropdownRef}>
             <button
               type="button"
+              aria-label="Account menu"
+              aria-expanded={userDropdownOpen}
               onClick={() => setUserDropdownOpen((o) => !o)}
               className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface font-mono text-sm font-medium uppercase text-text transition-colors duration-console hover:bg-surface-muted"
             >
@@ -192,12 +228,13 @@ export default function ConsoleNav() {
             </button>
 
             {userDropdownOpen && (
-              <div className="absolute right-0 top-[calc(100%+0.5rem)] z-[101] w-48 rounded-card border border-border bg-surface p-2 shadow-float">
+              <div className="absolute right-0 top-[calc(100%+0.5rem)] z-[101] w-72 rounded-card border border-border bg-surface p-2 shadow-float">
                 {userEmail && (
                   <div className="mb-2 truncate border-b border-border px-3 pb-2 pt-1 text-sm font-medium text-text">
                     {userEmail}
                   </div>
                 )}
+                {workspaceSelector}
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -244,6 +281,7 @@ export default function ConsoleNav() {
               {userEmail}
             </div>
           )}
+          <div className="md:hidden">{workspaceSelector}</div>
           <button
             type="button"
             onClick={handleLogout}

@@ -116,7 +116,7 @@ def test_render_hook_error_still_fails_workflow(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "folder,version", [("sdk", "1.1.1"), ("sdk-server", "0.1.1"), ("telephony", "0.1.1")]
+    "folder,version", [("sdk", "1.1.1"), ("sdk-server", "0.1.2-humanization.0"), ("telephony", "0.1.1")]
 )
 def test_release_target_matches_lockfile_and_changelog(
     folder, version,

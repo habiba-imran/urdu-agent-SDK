@@ -156,5 +156,7 @@ def test_cartesia_path_system_chars_do_not_explode_vs_overlay_alone():
     text = compose_system_instructions(
         _cfg(tts_provider="cartesia", llm_provider="groq", llm_model="openai/gpt-oss-20b")
     )
-    # Base (~1.2k) + universal (~0.9k) + groq (~0.3k) + cartesia delivery (~1.2k) ≈ < 5k.
-    assert len(text) < 5000
+    # Bound the voice overlays independently of the mandatory platform safety/closing
+    # preamble, which has grown since this original total-size assertion was written.
+    from worker.cartesia_spoken_output import SYSTEM_INSTRUCTIONS_BASE
+    assert len(text) - len(SYSTEM_INSTRUCTIONS_BASE) < 3500

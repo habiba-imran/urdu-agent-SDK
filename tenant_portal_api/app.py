@@ -31,6 +31,7 @@ from .membership import (
     exchange_supabase_user_for_portal_session,
     invite_member_to_tenant,
     list_members,
+    list_workspaces,
     set_member_api_key_access,
 )
 from .portal_access import can_view_api_keys
@@ -144,6 +145,7 @@ class SupabaseExchangeBody(BaseModel):
     """Dashboard Phase 1: exchange a Supabase access_token for a tenant portal JWT."""
 
     access_token: str = Field(..., min_length=1)
+    tenant_id: uuid.UUID | None = None
 
 
 class ClaimTenantBody(BaseModel):
@@ -535,6 +537,7 @@ def portal_auth_supabase(body: SupabaseExchangeBody, request: Request):
                 auth_user_id=auth_user_id,
                 email=email,
                 jwt_secret=TENANT_PORTAL_JWT_SECRET,
+                tenant_id=str(body.tenant_id) if body.tenant_id else None,
             )
         except TenantAuthError as e:
             record_attempt(
@@ -671,6 +674,14 @@ def portal_list_members(request: Request, authorization: str | None = Header(def
     claims = _require_tenant(authorization, request)
     with _conn() as conn:
         return list_members(conn, claims["sub"])
+
+
+@app.get("/portal/workspaces")
+def portal_workspaces(request: Request, authorization: str | None = Header(default=None)):
+    claims = _require_tenant(authorization, request)
+    auth_user_id = _auth_user_id_from_claims(claims)
+    with _conn() as conn:
+        return list_workspaces(conn, auth_user_id)
 
 
 @app.post("/portal/members/invite")
@@ -945,7 +956,7 @@ def _credential_access_metadata(creds: dict, claims: dict) -> dict:
     creds.pop("hmac_secret_hash", None)
     allowed = can_view_api_keys(claims)
     creds["can_view_api_keys"] = allowed
-    creds["secret_reveal_enabled"] = allowed and browser_secret_reveal_enabled()
+    creds["secret_reveal_enabled"] = claims.get("role") == "owner" and browser_secret_reveal_enabled()
     if not allowed:
         creds["publishable_key"] = None
     return creds
@@ -987,12 +998,10 @@ def _require_fresh_tenant_token(claims: dict) -> None:
 def credentials_secret_route(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    """Explicit audited reveal for owners and individually approved members."""
+    """Explicit audited reveal for workspace owners only."""
     from .session_cookie import browser_secret_reveal_enabled
 
-    claims = _require_tenant(authorization, request)
-    if not can_view_api_keys(claims):
-        raise HTTPException(status_code=403, detail="Ask your workspace owner to enable API key access for your membership.")
+    claims = _require_owner(authorization, request)
     if not browser_secret_reveal_enabled():
         raise HTTPException(
             status_code=410,

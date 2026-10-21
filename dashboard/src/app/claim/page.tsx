@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 
 import {
   PortalAuthError,
@@ -18,7 +17,6 @@ import { Button } from '@/components/ui/button';
  * Does not call the normal exchange (which would bootstrap an empty tenant).
  */
 export default function ClaimTenantPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -44,7 +42,7 @@ export default function ClaimTenantPage() {
         tenantSecret,
       });
       void claimed;
-      router.replace('/credentials');
+      window.location.assign('/credentials');
     } catch (err) {
       setError(
         err instanceof PortalAuthError || err instanceof Error

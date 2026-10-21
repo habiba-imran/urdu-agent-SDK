@@ -9,7 +9,7 @@ one place these rules can be bypassed from (nowhere).
 
 Layer options (`stt_options`/`llm_options`/`tts_options`): Cartesia, Rime, and ElevenLabs TTS
 consume ``tts_options``. Deepgram STT accepts a small allowlist of ``stt_options`` keys.
-``llm_options`` remain unused (must be ``{}``).
+``llm_options`` accepts only the validated provider-neutral ``humanization`` profile.
 """
 
 from __future__ import annotations
@@ -242,10 +242,16 @@ def resolve_agent_provider_fields(
     resolved_llm_options = (
         llm_options if llm_options is not None else base["llm_options"]
     )
-    if resolved_llm_options != {}:
+    if not isinstance(resolved_llm_options, dict) or set(resolved_llm_options) - {"humanization"}:
         raise ProviderValidationError(
-            "invalid_llm_options", "no llm provider accepts options yet"
+            "invalid_llm_options", "only the provider-neutral humanization profile is supported"
         )
+    if "humanization" in resolved_llm_options:
+        from worker.humanization.persona import validate_profile
+        try:
+            resolved_llm_options = {"humanization": validate_profile(resolved_llm_options["humanization"])}
+        except ValueError as exc:
+            raise ProviderValidationError("invalid_llm_options", str(exc)) from exc
 
     resolved_tts_provider = (
         tts_provider if tts_provider is not None else base["tts_provider"]

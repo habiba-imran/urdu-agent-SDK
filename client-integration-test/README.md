@@ -1,15 +1,22 @@
 # Independent client integration test
 
-This folder is a standalone client: copy the folder outside the platform repository and run it there. It imports published npm SDK packages, calls public platform endpoints through its own host backend, and does not import worker, dashboard, database, or SDK source files. The historical `packages/` archives are not used by the current installation.
+This folder is a standalone client: copy the folder, including `packages/`, outside the platform repository and run it there. It uses installed SDK artifacts and public platform endpoints through its own host backend. It does not import worker, dashboard, database, or SDK source files.
 
 ## SDK distribution
 
 - Browser: published `@awaazlabs-uva/voice@1.1.1` from npm, including playback readiness, provider-failure events and humanization metrics.
-- Backend: published `@awaazlabs-uva/agents@0.1.1` and `@awaazlabs-uva/telephony@0.1.1`, pinned in lockfiles. Both clients explicitly use `signatureVersion: 'raw-body-v1'`; deploy the compatible tenant portal before running this backend.
-- `npm run verify` checks installed versions, registry artifact/integrity metadata, readiness support and independence from SDK source files. Historical snapshot manifests remain in `packages/` for comparison.
+- Backend: packaged `@awaazlabs-uva/agents@0.1.2-humanization.0` preview from `packages/` and published `@awaazlabs-uva/telephony@0.1.1`, pinned in lockfiles. Both clients explicitly use `signatureVersion: 'raw-body-v1'`; deploy the compatible tenant portal before saving persona settings.
+- `npm run verify` checks installed versions, registry integrity for published packages, exact archive integrity for the Agents preview, readiness support and independence from SDK source files.
 - Voice `1.1.1` was published on 2026-10-12. GitHub pushes alone do not install package updates in existing applications.
 
 ## Setup (PowerShell, Node 20+)
+
+Speech persona controls are in **Agent prompt** and **Inbound call settings**.
+Enable **Humanized speech**, choose the style, and save before starting a new call.
+Outbound uses the selected outbound agent's saved profile. See
+[persona setup and activation](../docs/HUMANIZATION_PERSONA_SDK.md) for server
+requirements and provider limits. The current backend `.env` targets staging;
+local code changes alone do not deploy its tenant API or worker.
 
 From this folder:
 
@@ -31,7 +38,7 @@ Set both machine API URLs to `https://uva-tenant-portal-staging.onrender.com`
 in the existing ignored `backend/.env`, using a staging tenant's credentials.
 Do not copy secrets into source or overwrite an existing environment file.
 From `backend/`, run `npm run verify:staging`. The runner checks installed
-0.1.1 packages and exercises the actual backend provider-capabilities, agents
+installed preview/0.1.1 packages and exercises the actual backend provider-capabilities, agents
 and call-record routes, plus the telephony managed-number POST. It binds only
 to loopback, prints no tenant records or credentials, and refuses other portal
 URLs. It does not mint sessions, place calls, purchase numbers or modify agents.

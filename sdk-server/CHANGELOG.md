@@ -9,6 +9,11 @@ Releases are cut by pushing an `agents-v<version>` tag that matches `version` in
 
 ## [Unreleased]
 
+## [0.1.2-humanization.0] - 2026-10-21
+
+- Local preview: typed, validated `humanization` settings on agent create/update, shared by web, inbound and outbound sessions.
+- Keeps secrets server-side and preserves the existing signed request contract. Requires the matching tenant API and worker; not published to npm.
+
 ## [0.1.1] - Unreleased
 
 ### Added

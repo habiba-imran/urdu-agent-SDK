@@ -11,13 +11,13 @@ export const markdown = `
 1. **HMAC secret** stays on your **host backend** — never ship it in a browser app bundle or public repo.
 2. **Publishable key** may live in the frontend; it is not a substitute for HMAC.
 3. **LiveKit tokens** are short-lived; mint only through your backend.
-4. Owners and individually approved members can explicitly reveal HMAC on [API Keys](/credentials), then put it in a backend secret manager. If your deployment disables reveal, request secure operator delivery. **Console rotation is disabled** — ask AwaazLabs to rotate via admin if the secret was exposed.
+4. Only workspace owners can explicitly reveal HMAC on [API Keys](/credentials), then put it in a backend secret manager. Member approval covers the publishable key only. If your deployment disables reveal, request secure operator delivery. **Console rotation is disabled** — ask AwaazLabs to rotate via admin if the secret was exposed.
 
 ## Trust boundary
 
 See [How integration works](/docs/how-integration-works). Short version: browsers talk to you; you talk to AwaazLabs with a signature.
 
-The console [API Keys](/credentials) page loads **masked metadata**. Owners and individually approved members can request an explicit audited reveal. Reveal is enabled by default; a deployment can disable it with \`PORTAL_ALLOW_BROWSER_SECRET_REVEAL=0\`. If disabled, ask an operator for secure delivery. Do not paste the secret into tickets, chat, or frontend env.
+The console [API Keys](/credentials) page loads **masked metadata**. Only owners can request an explicit audited HMAC reveal. Reveal is enabled by default; a deployment can disable it with \`PORTAL_ALLOW_BROWSER_SECRET_REVEAL=0\`. If disabled, ask an operator for secure delivery. Do not paste the secret into tickets, chat, or frontend env.
 
 The portal decrypts \`tenants.hmac_secret_enc\` on the server using \`TENANT_SECRET_ENCRYPTION_KEY\` (AES-256-GCM). Older tenants may still use the legacy plaintext \`hmac_secret\` column until an operator completes the encryption migration. \`hmac_secret_hash\` is a digest used by legacy login/claim paths; it cannot be turned back into the secret. A tenant with no recoverable secret needs operator provisioning or rotation, rather than a reveal of the hash.
 
@@ -33,14 +33,17 @@ The portal decrypts \`tenants.hmac_secret_enc\` on the server using \`TENANT_SEC
 | Capability | Owner | Member |
 |------------|-------|--------|
 | View agents, sessions, usage, docs | Yes | Yes |
-| View publishable key / explicit audited HMAC reveal | Yes (reveal can be disabled by deployment policy) | Only after the owner enables API key access for that member |
+| View publishable key | Yes | Only after the owner enables publishable-key access for that member |
+| Explicit audited HMAC reveal | Yes (can be disabled by deployment policy) | Never (API 403) |
 | Rotate HMAC in console | No (disabled) | No |
 | Set \`allowed_origins\` / invite members | Yes | No (API 403) |
 | Create / update agents | \`@awaazlabs-uva/agents\` on **your backend** (not this console) | Same |
 | Telephony connect / purchase / outbound | \`@awaazlabs-uva/telephony\` on **your backend** (console read-only) | Same |
 | Test Studio smoke call | Yes | Yes (portal server-side HMAC; secret never needed in the browser SDK) |
 
-Only owners see the per-member API key access toggles in Members, and only owners can change them through the API. Members start with access off. Permission and role are re-checked live on every request. Disabling access blocks future reveals; an already copied HMAC remains usable until an operator rotates it. An approved HMAC holder can use the backend SDK's tenant-level operations, so grant access only to trusted backend developers.
+Only owners see the publishable-key access toggles in Members, and only owners can change them through the API. Members start with access off. Permission and role are re-checked live on every request. The toggle never grants HMAC access. Previously copied HMAC secrets remain usable until an operator rotates them.
+
+One account can belong to multiple workspaces, with independent roles and permissions. Use the account menu to switch workspaces. Invites add a membership without removing existing memberships.
 
 Agents and telephony are **not** mutated through portal UI paths. Treat [Agents](/agents) as inspection only.
 

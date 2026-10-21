@@ -94,6 +94,7 @@ export function mountTelephonyPanel(opts: {
             Agent id (defaults to Session field)
             <input id="tel-agent-id" placeholder="agent uuid" autocomplete="off" />
           </label>
+          <p class="hint">Outbound calls use this agent’s saved speech persona. To edit it, select the same agent in <a href="#prompt-section">Agent prompt</a> and save its speech persona before calling.</p>
           <div class="actions">
             <button id="tel-assign-btn" type="button">Assign to agent + configure inbound routing</button>
           </div>

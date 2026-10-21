@@ -52,7 +52,7 @@ def enrich_claims_with_live_membership(
         claims["can_view_api_keys"] = True
         return claims
 
-    membership = get_membership_by_auth_user(conn, str(auth_user_id))
+    membership = get_membership_by_auth_user(conn, str(auth_user_id), tenant_id)
     if membership is None or membership["tenant_id"] != tenant_id:
         raise TenantAuthError(401, "membership revoked or missing — sign in again")
     if membership.get("tenant_status") != "active":

@@ -3,6 +3,7 @@ import { createControlPlaneHeaders } from './signing.js';
 import { mountTelephonyRoutes } from './telephonyRoutes.js';
 import { mountAgentConfigRoutes } from './agentConfig.js';
 import { mountInboundRoutes } from './inboundRoutes.js';
+import { validateHumanization } from '@awaazlabs-uva/agents';
 
 function readJsonSafely(response) {
   return response.text().then((text) => {
@@ -99,6 +100,12 @@ function agentPipelineMatches(agent, applied) {
   const sttModel = agent.stt_model || agent.sttModel;
   const llmModel = agent.llm_model || agent.llmModel;
   const voice = agent.tts_voice_id || agent.ttsVoiceId || agent.voice_id || agent.voiceId;
+  const defaults = { enabled: false, warmth: 'warm', formality: 'balanced', energy: 'balanced',
+    pace: 'normal', expressiveness: 'subtle', adaptivePace: true };
+  const storedPersona = agent.llm_options?.humanization || agent.humanization;
+  const matchesPersona = applied.humanization === undefined || Boolean(storedPersona &&
+    Object.entries({ ...defaults, ...applied.humanization }).every(([key, value]) =>
+      ({ ...defaults, ...storedPersona })[key] === value));
   return (
     lang === applied.agentLanguage &&
     stt === applied.sttProvider &&
@@ -106,7 +113,7 @@ function agentPipelineMatches(agent, applied) {
     tts === applied.ttsProvider &&
     (!applied.sttModel || sttModel === applied.sttModel) &&
     (!applied.llmModel || llmModel === applied.llmModel) &&
-    (!applied.ttsVoiceId || voice === applied.ttsVoiceId)
+    (!applied.ttsVoiceId || voice === applied.ttsVoiceId) && matchesPersona
   );
 }
 
@@ -116,6 +123,7 @@ function agentPipelineMatches(agent, applied) {
  * Skips the portal PATCH when the agent already matches (demo Connect hot path).
  */
 async function applyPipelineSelection(client, agentId, selection, { force = false } = {}) {
+  const humanization = selection.humanization === undefined ? undefined : validateHumanization(selection.humanization);
   const language = String(selection.agentLanguage || '').trim();
   const sttProvider = String(selection.sttProvider || '').trim();
   const llmProvider = String(selection.llmProvider || '').trim();
@@ -191,6 +199,7 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   }
 
   const applied = {
+    ...(humanization === undefined ? {} : { humanization }),
     agentLanguage: language,
     sttProvider,
     sttModel,
@@ -215,6 +224,7 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   }
 
   const agent = await client.updateAgent(agentId, {
+    ...(humanization === undefined ? {} : { humanization }),
     agentLanguage: language,
     sttProvider,
     sttModel,
@@ -519,4 +529,4 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
   return app;
 }
 
-export { applyPipelineSelection };
+export { applyPipelineSelection, agentPipelineMatches };

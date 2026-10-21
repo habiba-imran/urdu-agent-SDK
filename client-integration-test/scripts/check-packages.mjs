@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 for (const [dir, name, version] of [
   ['frontend', '@awaazlabs-uva/voice', '1.1.1'],
-  ['backend', '@awaazlabs-uva/agents', '0.1.1'],
+  ['backend', '@awaazlabs-uva/agents', '0.1.2-humanization.0'],
   ['backend', '@awaazlabs-uva/telephony', '0.1.1'],
 ]) {
   const require = createRequire(resolve(root, dir, 'package.json'));
@@ -17,7 +17,15 @@ for (const [dir, name, version] of [
   const lock = JSON.parse(readFileSync(resolve(root, dir, 'package-lock.json'), 'utf8'));
   const locked = lock.packages[`node_modules/${name}`];
   assert.equal(locked.version, version);
-  assert.ok(locked.resolved.startsWith(`https://registry.npmjs.org/${name}/-/`), `${name} must come from npm`);
+  if (name === '@awaazlabs-uva/agents') {
+    assert.equal(locked.resolved, 'file:../packages/awaazlabs-uva-agents-0.1.2-humanization.0.tgz');
+    const { createHash } = await import('node:crypto');
+    const archive = readFileSync(resolve(root, 'packages/awaazlabs-uva-agents-0.1.2-humanization.0.tgz'));
+    assert.equal(locked.integrity, 'sha512-' + createHash('sha512').update(archive).digest('base64'), 'Reviewed SDK archive changed; reinstall the snapshot');
+    assert.ok(readFileSync(entry, 'utf8').includes('validateHumanization'), 'Installed Agents SDK lacks persona controls');
+  } else {
+    assert.ok(locked.resolved.startsWith(`https://registry.npmjs.org/${name}/-/`), `${name} must come from npm`);
+  }
   assert.ok(locked.integrity, `${name} must have registry integrity metadata`);
   if (dir === 'frontend') {
     const source = readFileSync(entry, 'utf8');

@@ -1,5 +1,39 @@
 # @awaazlabs-uva/agents
 
+## Speech persona preview
+
+The local `0.1.2-humanization.0` snapshot adds a provider-neutral profile. Deploy the
+matching tenant API and worker before saving it; this preview is not an npm release.
+
+```ts
+await client.updateAgent(agentId, {
+  humanization: {
+    enabled: true,
+    warmth: 'warm',
+    formality: 'balanced',
+    energy: 'balanced',
+    pace: 'normal',
+    expressiveness: 'subtle',
+    adaptivePace: true,
+  },
+});
+```
+
+The same option works on `createAgent`. Settings replace the previous profile;
+omission preserves it, and `{ enabled: false }` disables it. The wire representation
+is `llm_options.humanization`, returned in `AgentRecord.llm_options`; no schema
+migration is needed. With no profile, existing platform policies keep their behavior.
+
+Saved settings apply to new browser sessions and both phone-call directions using
+that agent. The browser Voice SDK still connects with `{ agentId }`; it does not
+hold the tenant secret or change agent configuration. Browser apps should send
+configuration changes to their own authenticated backend, which uses this SDK.
+
+Persona influences wording on Gemini/Groq and delivery on every selectable TTS.
+Native controls vary: Cartesia supports emotion/pace; ElevenLabs supports pace;
+Rime Arcana and Uplift use wording, punctuation and their selected voice. These
+settings do not promise identical acoustic expression or enable unsupported tags.
+
 > Voice 1.1.1 is published on npm with an MIT license.
 
 **Server-side only. Never import this package in a browser bundle — it holds your tenant HMAC secret.**

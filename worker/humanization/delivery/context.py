@@ -20,8 +20,10 @@ from .renderers import ChannelProfile, LanguageProfile, RenderedSpeech, render
 
 class DeliveryContext:
     def __init__(self, cfg: Any, policy: DeliveryPolicy, *, runtime: Any = None, metrics_target: Any = None) -> None:
-        self.cfg = replace(cfg, tts_options=deepcopy(cfg.tts_options))
+        self.cfg = replace(cfg, tts_options=deepcopy(cfg.tts_options), llm_options=deepcopy(cfg.llm_options))
         self.policy = policy
+        from ..persona import profile_from_options
+        self.persona_profile = profile_from_options(cfg.llm_options)
         self.runtime = runtime
         self.metrics_target = metrics_target
         self.effective = effective_options(
@@ -43,6 +45,8 @@ class DeliveryContext:
             if greeting else delivery_from_turn_plan(plan, continuity_identity=identity)
         )
         intent = constrain_delivery(intent, plan)
+        from ..persona import personalize, clause_intent
+        intent = clause_intent(personalize(intent, self.persona_profile, plan), canonical, self.persona_profile)
         pronunciation = plan_pronunciation(canonical, state=state, language=self.language.language)
         return render(
             canonical, intent, pronunciation, self.language, self.channel, self.capabilities,
@@ -80,6 +84,8 @@ class DeliveryContext:
             for pause in speech_plan.delivery_intent.pauses
             if chunk.start <= pause.offset < chunk.end
         ))
+        from ..persona import clause_intent
+        intent = clause_intent(intent, chunk.text, self.persona_profile)
         return render(chunk.text, intent, pronunciation, self.language, self.channel,
                         self.capabilities, stored_options=self.cfg.tts_options, effective=self.effective)
 
@@ -96,6 +102,7 @@ class DeliveryContext:
                 self.cfg.audio_channel, policy_version=self.policy.version,
                 renderer_version=self.policy.renderer_version,
                 pronunciation_version=self.policy.pronunciation_version,
+                humanization=self.cfg.llm_options.get("humanization"),
             )
             plugin = build(self.cfg.tts_voice_id, rendered_identity=identity)
         else:

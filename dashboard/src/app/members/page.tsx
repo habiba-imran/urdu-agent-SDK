@@ -36,7 +36,7 @@ export default function MembersPage() {
       await mutate((current) => current?.map((m) =>
         m.auth_user_id === result.auth_user_id ? { ...m, ...result } : m), { revalidate: false });
       showFixedToast(
-        `API key access ${result.can_view_api_keys ? 'enabled' : 'disabled'} for ${member.email || 'member'}.`,
+        `Publishable key access ${result.can_view_api_keys ? 'enabled' : 'disabled'} for ${member.email || 'member'}.`,
         'success',
       );
     } catch (err) {
@@ -83,7 +83,7 @@ export default function MembersPage() {
       <FixedToast toast={fixedToast} onDismiss={dismissFixedToast} />
       <PageHeader
         title="Members"
-        description="Invite teammates and control each member’s access to workspace API keys."
+        description="Invite teammates and control each member’s access to the publishable key."
       />
 
       {isOwner ? (
@@ -112,7 +112,7 @@ export default function MembersPage() {
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
             {formSuccess ? <p className="text-sm text-muted-foreground">{formSuccess}</p> : null}
             <p className="text-xs text-muted-foreground">
-              Invites are scoped to your tenant automatically. The browser never chooses a tenant id.
+              Members can belong to multiple workspaces and switch between them from the account menu.
             </p>
           </CardContent>
         </Card>
@@ -125,9 +125,8 @@ export default function MembersPage() {
       <Card>
         <CardContent className="pt-6">
           {isOwner ? <p className="mb-4 text-sm text-muted-foreground">
-            API key access starts off for members. Enabling it lets that member view the publishable
-            key and reveal the HMAC secret for backend setup. Turning it off blocks future reveals;
-            previously copied secrets remain usable until an operator rotates them.
+            Publishable key access is off by default. Enable it only when a member needs the
+            browser integration key. HMAC secrets are always restricted to owners.
           </p> : null}
 
           {isLoading ? (
@@ -148,19 +147,25 @@ export default function MembersPage() {
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[620px] table-fixed text-left text-sm">
+                <colgroup>
+                  <col />
+                  <col className="w-24" />
+                  <col className="w-24" />
+                  {isOwner ? <col className="w-44" /> : null}
+                </colgroup>
                 <thead>
                   <tr className="border-b border-border text-muted-foreground">
                     <th className="pb-2 pr-4 font-medium">Email</th>
                     <th className="pb-2 pr-4 font-medium">Role</th>
                     <th className="pb-2 font-medium">Status</th>
-                    {isOwner ? <th className="pb-2 pl-4 font-medium">API key access</th> : null}
+                    {isOwner ? <th className="pb-2 pl-4 font-medium">Publishable key</th> : null}
                   </tr>
                 </thead>
                 <tbody>
                   {members.map((m) => (
                     <tr key={m.auth_user_id} className="border-b border-border/60">
-                      <td className="py-3 pr-4 text-foreground">{m.email || '—'}</td>
+                      <td className="break-all py-3 pr-4 text-foreground">{m.email || '—'}</td>
                       <td className="py-3 pr-4">
                         <Badge variant="outline">{m.role}</Badge>
                       </td>
@@ -173,7 +178,8 @@ export default function MembersPage() {
                             type="button"
                             role="switch"
                             aria-checked={m.can_view_api_keys}
-                            aria-label={`API key access for ${m.email || 'member'}`}
+                            aria-label={`Publishable key access for ${m.email || 'member'}`}
+                            aria-busy={savingAccess === m.auth_user_id}
                             disabled={savingAccess !== null}
                             onClick={() => void handleKeyAccess(m)}
                             className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
@@ -181,7 +187,9 @@ export default function MembersPage() {
                             <span aria-hidden="true" className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${m.can_view_api_keys ? 'bg-primary' : 'bg-muted-foreground/40'}`}>
                               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${m.can_view_api_keys ? 'translate-x-5' : 'translate-x-0.5'}`} />
                             </span>
-                            {savingAccess === m.auth_user_id ? 'Saving…' : m.can_view_api_keys ? 'On' : 'Off'}
+                            <span className="inline-block w-16 text-left">
+                              {savingAccess === m.auth_user_id ? 'Saving…' : m.can_view_api_keys ? 'On' : 'Off'}
+                            </span>
                           </button>
                         )}
                       </td> : null}

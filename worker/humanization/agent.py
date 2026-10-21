@@ -270,6 +270,8 @@ class AwaazAgent(Agent):
                   DeliveryIntent(affect="warm", speech_mode="greeting", continuity_identity=identity)
                   if phase == "GREETING_PLAYING" else delivery_from_turn_plan(turn, continuity_identity=identity))
         intent = constrain_delivery(intent, turn)
+        from .persona import personalize
+        intent = personalize(intent, context.persona_profile, turn)
         plan = SpeechPlan(identity, context.cfg.tts_provider, intent, handle=handle,
                           provider_context={"conversational": bool(self.humanization_runtime and self.humanization_runtime.policy.behavior_enabled),
                                             "model": context.capabilities.model,

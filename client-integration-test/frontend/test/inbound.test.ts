@@ -29,6 +29,17 @@ test('loading selects the number’s saved pipeline without mutation and exposes
   expect(el('route').textContent).toContain('Inbound calls are blocked');
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
 });
+
+test('inbound persona is saved for the assigned agent in the number-scoped request', async () => {
+  await load();
+  const enabled = document.querySelector<HTMLSelectElement>('#inbound-persona-enabled')!;
+  enabled.value = 'true'; enabled.dispatchEvent(new Event('change'));
+  el('save').click();
+  await vi.waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const write = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+  expect(write[0]).toContain('/numbers/phone/pipeline');
+  expect(JSON.parse(String(write[1]?.body)).humanization.enabled).toBe(true);
+});
 test('explicit provider switch updates model and persists once without claiming routing success', async () => {
   await load();
   el<HTMLSelectElement>('llm').value = 'groq';

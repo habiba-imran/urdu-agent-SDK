@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { mountInboundRoutes } from '../src/inboundRoutes.js';
-import { applyPipelineSelection } from '../src/createApp.js';
+import { applyPipelineSelection, agentPipelineMatches } from '../src/createApp.js';
 
 const caps = { languages: { en: { stt: { deepgram: { models: ['nova-3'] } }, llm: { gemini: { models: ['gemini-model'] }, groq: { models: ['groq-model'] } }, tts: { cartesia: { voices: ['voice-1'] } } } } };
 const selection = { agentLanguage: 'en', sttProvider: 'deepgram', sttModel: 'nova-3', llmProvider: 'groq', llmModel: 'groq-model', ttsProvider: 'cartesia', ttsVoiceId: 'voice-1', agentId: 'wrong-browser-agent' };
@@ -17,7 +17,8 @@ async function host(t, { routing = 'ready', missing = false, stale = false, chan
     updateAgent: async (id, body) => {
       writes.push({ id, body });
       if (!stale) agent = { ...agent, agent_language: body.agentLanguage, stt_provider: body.sttProvider, stt_model: body.sttModel,
-        llm_provider: body.llmProvider, llm_model: body.llmModel, tts_provider: body.ttsProvider, tts_voice_id: body.ttsVoiceId };
+        llm_provider: body.llmProvider, llm_model: body.llmModel, tts_provider: body.ttsProvider, tts_voice_id: body.ttsVoiceId,
+        llm_options: body.humanization ? { humanization: body.humanization } : {} };
       return agent;
     },
   };
@@ -26,7 +27,7 @@ async function host(t, { routing = 'ready', missing = false, stale = false, chan
     return changed && reads > 1 ? { ...phone, assigned_agent_id: 'other-agent' } : phone;
   } };
   const app = express(); app.use(express.json());
-  const matches = (saved, applied) => saved?.llm_provider === applied.llmProvider && saved?.llm_model === applied.llmModel;
+  const matches = agentPipelineMatches;
   mountInboundRoutes(app, { tenantId: 'demo-tenant' }, async () => client, applyPipelineSelection, matches, async () => telephony);
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -58,6 +59,24 @@ test('provider save uses assigned agent rather than browser agent and verifies r
   assert.equal(writes[0].body.sttProvider, 'deepgram');
   assert.equal(writes[0].body.ttsProvider, 'cartesia');
   assert.equal(writes[0].body.prompt, undefined);
+});
+
+test('saved persona is verified on the assigned agent without touching phone routing', async t => {
+  const { save, writes, get } = await host(t);
+  const humanization = { enabled: true, formality: 'formal', expressiveness: 'subtle' };
+  const result = await (await save({ ...selection, humanization })).json();
+  assert.deepEqual(result.agent.humanization, humanization);
+  assert.equal(writes[0].id, 'assigned-agent');
+  assert.deepEqual(writes[0].body.humanization, humanization);
+  const refreshed = await (await get()).json();
+  assert.equal(refreshed.numbers[0].assigned_agent_id, 'assigned-agent');
+  assert.deepEqual(refreshed.agents[0].humanization, humanization);
+});
+
+test('malformed inbound persona never mutates the assigned agent', async t => {
+  const { save, writes } = await host(t);
+  assert.equal((await save({ ...selection, humanization: { enabled: 'yes' } })).status, 422);
+  assert.equal(writes.length, 0);
 });
 test('unrouted demo number can save providers without claiming calls are ready', async t => {
   const { save } = await host(t, { routing: 'not_configured' });

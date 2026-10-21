@@ -128,7 +128,7 @@ export default function CredentialsPage() {
     { refreshInterval: 15000 },
   );
   const canViewKeys = credentials?.can_view_api_keys === true;
-  const canRevealSecret = canViewKeys && credentials?.secret_reveal_enabled === true;
+  const canRevealSecret = isOwner && credentials?.secret_reveal_enabled === true;
   const { data: agents } = useSWR(swrKeys.agents, swrFetchers.agents);
 
   const [originsText, setOriginsText] = useState('');
@@ -370,7 +370,7 @@ export default function CredentialsPage() {
         <CardHeader>
           <CardTitle>Tenant keys</CardTitle>
           <CardDescription>
-            Owners and approved members can view keys and explicitly reveal HMAC for host setup.
+            Members need owner approval to view the publishable key. Only owners can reveal HMAC for host setup.
             Copy the HMAC into your backend secret manager. Console rotation is disabled.
           </CardDescription>
         </CardHeader>
@@ -383,7 +383,8 @@ export default function CredentialsPage() {
             </div>
           ) : !canViewKeys ? (
             <p className="text-sm text-text-muted">
-              API key access is off. Ask your workspace owner to enable it for you in Members.
+              Publishable key access is off. Ask your workspace owner to enable it for you in Members.
+              HMAC secrets are restricted to owners.
             </p>
           ) : (
             <>
@@ -407,7 +408,7 @@ export default function CredentialsPage() {
                 trailing={<Badge variant="outline">{credentials?.status ?? 'Unknown'}</Badge>}
               />
 
-              <div className="flex flex-col gap-1.5">
+              {isOwner ? <div className="flex flex-col gap-1.5">
                 <label className="font-mono-label text-text-muted">
                   HMAC secret (host server only)
                 </label>
@@ -436,7 +437,7 @@ export default function CredentialsPage() {
                   or to enable PORTAL_ALLOW_BROWSER_SECRET_REVEAL on the portal service.
                 </p> : null}
                 {secretError ? <p role="alert" className="text-[13px] text-destructive">{secretError}</p> : null}
-              </div>
+              </div> : <p className="text-sm text-text-muted">HMAC secrets are restricted to workspace owners.</p>}
             </>
           )}
         </CardContent>
@@ -500,13 +501,13 @@ export default function CredentialsPage() {
             </p>
           </div>
 
-          <Tabs defaultValue="backend">
+          <Tabs defaultValue={isOwner ? 'backend' : 'frontend'}>
             <TabsList>
-              <TabsTrigger value="backend">Backend .env</TabsTrigger>
+              {isOwner ? <TabsTrigger value="backend">Backend .env</TabsTrigger> : null}
               <TabsTrigger value="frontend">Frontend .env</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="backend" className="mt-4 flex flex-col gap-3">
+            {isOwner ? <TabsContent value="backend" className="mt-4 flex flex-col gap-3">
               <p className="text-[15px] text-text-body">
                 Paste into your host backend <code className="font-mono text-[13px]">.env</code>.
                 Reveal HMAC above to fill <code className="font-mono text-[13px]">UVA_HMAC_SECRET</code>.
@@ -529,7 +530,7 @@ export default function CredentialsPage() {
                   Copy backend env
                 </Button>
               </div>
-            </TabsContent>
+            </TabsContent> : null}
 
             <TabsContent value="frontend" className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1.5 sm:max-w-md">

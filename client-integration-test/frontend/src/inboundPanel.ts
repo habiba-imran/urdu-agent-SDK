@@ -1,5 +1,6 @@
+import { humanizationMarkup, personaControls, type Humanization } from './humanization';
 type Entry = { models?: string[]; defaultModel?: string; voices?: string[]; defaultVoice?: string };
-type Agent = Record<string, string>;
+type Agent = Record<string, string> & { humanization?: Humanization };
 type Phone = { id: string; e164_number: string; assigned_agent_id?: string; agent_id?: string; routing_status?: string; disabled_at?: string };
 type Setup = { tenantId: string; numbers: Phone[]; agents: Agent[]; capabilities: { languages: Record<string, { label: string; stt?: Record<string, Entry>; llm?: Record<string, Entry>; tts?: Record<string, Entry> }> } };
 
@@ -31,6 +32,8 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
   </section>`;
   const el = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#inbound-${id}`)!;
   const select = (id: string) => el<HTMLSelectElement>(id);
+  el('saved').insertAdjacentHTML('beforebegin', humanizationMarkup('inbound-persona'));
+  const persona = personaControls(root);
   const keys = ['number', 'language', 'stt', 'llm', 'tts', 'stt-model', 'llm-model', 'voice'];
   let setup: Setup | null = null;
   let busy = false;
@@ -46,6 +49,7 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
     select(id).value = preferred && values.includes(preferred) ? preferred : values[0] || '';
   }
   function render() {
+    persona.lock(busy || !assigned() || !!phone()?.disabled_at);
     for (const key of keys) select(key).disabled = busy || !select(key).options.length || (key !== 'number' && (!assigned() || !!phone()?.disabled_at));
     el<HTMLButtonElement>('save').disabled = busy || !assigned() || !!phone()?.disabled_at || keys.some(key => !select(key).value);
     el<HTMLButtonElement>('refresh').disabled = busy;
@@ -72,6 +76,7 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
   function chooseNumber() {
     const agent = assigned();
     const number = phone();
+    persona.set(agent?.humanization);
     el<HTMLInputElement>('agent-id').value = number?.assigned_agent_id || number?.agent_id || '';
     el('route').textContent = number
       ? `Tenant ${setup!.tenantId} · Agent ${agent?.name || agent?.id || 'unassigned'} · Routing: ${number.routing_status || 'unknown'}. ${number.routing_status === 'ready' && !number.disabled_at ? 'Dial ' + number.e164_number + ' at least 30 seconds after saving.' : 'Inbound calls are blocked in this tenant until routing is ready. Use the telephony panel to review the route; existing routes in other tenants remain unchanged.'}`
@@ -109,6 +114,7 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
     } finally { busy = false; render(); }
   }
   el('refresh').addEventListener('click', () => { void load(); });
+  persona.onChange(() => { el('status').textContent = 'Unsaved speech persona. Save before calling.'; });
   select('number').addEventListener('change', chooseNumber);
   select('language').addEventListener('change', () => { providers(); el('status').textContent = 'Unsaved changes. Save to use these settings on future calls.'; });
   for (const key of ['stt', 'llm', 'tts']) select(key).addEventListener('change', () => models());
@@ -120,6 +126,7 @@ export function mountInboundPanel({ backendOrigin }: { backendOrigin: string }) 
       const result = await request(`/api/inbound/numbers/${encodeURIComponent(select('number').value)}/pipeline`, {
         agentLanguage: select('language').value, sttProvider: select('stt').value, sttModel: select('stt-model').value,
         llmProvider: select('llm').value, llmModel: select('llm-model').value, ttsProvider: select('tts').value, ttsVoiceId: select('voice').value,
+        humanization: persona.value(),
       });
       setup!.agents = setup!.agents.map(agent => agent.id === result.agent.id ? result.agent : agent);
       setup!.numbers = setup!.numbers.map(number => number.id === result.number.id ? result.number : number);

@@ -61,6 +61,7 @@ def make_greeting_cache_key(
     policy_version: str | None = None,
     renderer_version: str | None = None,
     pronunciation_version: str | None = None,
+    humanization: dict | None = None,
 ) -> GreetingCacheKey:
     from .humanization.delivery.cache import rendered_audio_identity
     identity = rendered_audio_identity(
@@ -68,6 +69,7 @@ def make_greeting_cache_key(
         tts_options or {}, audio_channel, tenant_id=tenant_id,
         policy_version=policy_version, renderer_version=renderer_version,
         pronunciation_version=pronunciation_version,
+        humanization=humanization,
     )
     return (
         agent_id,

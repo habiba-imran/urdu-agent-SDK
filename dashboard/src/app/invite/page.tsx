@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import type { Session } from '@supabase/supabase-js';
 
 import { getSupabaseBrowserClient } from '@/lib/supabaseBrowser';
@@ -20,7 +19,6 @@ import { Button } from '@/components/ui/button';
  * treat a null getSession() on the first tick as an expired invite.
  */
 export default function InviteAcceptPage() {
-  const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -144,9 +142,10 @@ export default function InviteAcceptPage() {
       if (!accessToken) {
         throw new PortalAuthError('Session missing after setting password');
       }
-      const portal = await exchangeSupabaseAccessToken(accessToken);
+      const tenantId = new URLSearchParams(window.location.search).get('tenant_id') ?? undefined;
+      const portal = await exchangeSupabaseAccessToken(accessToken, tenantId);
       void portal;
-      router.replace('/');
+      window.location.assign('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not finish invite');
     } finally {

@@ -44,7 +44,12 @@ def opening_state(session: Any) -> OpeningState:
     return state
 
 
-def opening_gate_enabled() -> bool:
+def opening_gate_enabled(cfg=None) -> bool:
+    if cfg is not None:
+        from .humanization.persona import profile_from_options
+        profile = profile_from_options(getattr(cfg, "llm_options", None))
+        if profile is not None:
+            return profile.enabled
     return os.getenv("UVA_OPENING_POLICY", "baseline") == "opening_v1"
 
 
@@ -159,8 +164,8 @@ class GreetingPrewarmPlan:
 
 
 def _spoken_greeting(cfg: AgentConfig, text: str) -> str:
-    from .humanization.delivery.policy import resolve_delivery_policy
-    if resolve_delivery_policy(cfg.tts_provider).enabled:
+    from .humanization.delivery.policy import delivery_policy_for
+    if delivery_policy_for(cfg).enabled:
         from .humanization.delivery.canonical import canonical_spoken_text
         return canonical_spoken_text(text)
     from .cartesia_spoken_output import enrich_static_greeting_for_tts
@@ -228,6 +233,7 @@ def plan_greeting_prewarm(
             tts_options=cfg.tts_options,
             language=cfg.agent_language,
             tenant_id=cfg.tenant_id,
+            humanization=cfg.llm_options.get("humanization"),
         )
         frames = get_greeting_cache().get(key)
         if frames is not None:

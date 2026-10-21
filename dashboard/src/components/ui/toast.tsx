@@ -40,7 +40,7 @@ export function Toast({ message }: { message: string | null }) {
 }
 
 /* ---------------------------------------------------------------------------
- * Fixed (viewport-anchored) toast — appears at the top-center of the screen,
+ * Fixed (viewport-anchored) toast — appears at the bottom-right of the screen,
  * auto-dismisses, and supports success / error variants.
  * -------------------------------------------------------------------------*/
 
@@ -99,12 +99,12 @@ export function FixedToast({
       role="status"
       aria-live="polite"
       className={cn(
-        'pointer-events-none fixed left-1/2 top-4 z-[9999] flex -translate-x-1/2',
+        'pointer-events-none fixed bottom-6 right-4 z-[9999] flex w-[calc(100%-2rem)] max-w-sm sm:right-6',
         'items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium',
-        'transition-all duration-300 ease-out',
+        'transition-all duration-300 ease-out motion-reduce:transition-none',
         toast
           ? cn('pointer-events-auto translate-y-0 opacity-100', variantStyles[toast.variant])
-          : 'translate-y-[-12px] opacity-0',
+          : 'translate-y-3 opacity-0',
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />

@@ -1,4 +1,5 @@
-type AgentConfig = { id: string; name?: string; prompt: string; firstSpeaker: 'agent' | 'user'; greeting: string };
+import { humanizationMarkup, personaControls, normalizedHumanization, type Humanization } from './humanization';
+type AgentConfig = { id: string; name?: string; prompt: string; firstSpeaker: 'agent' | 'user'; greeting: string; humanization?: Humanization };
 
 export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () => string; onBusyChange?: () => void }) {
   const root = document.querySelector<HTMLElement>('#prompt-root')!;
@@ -25,14 +26,18 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
   const copy = el<HTMLButtonElement>('copy-prompt-btn');
   const feedback = el('prompt-feedback');
   let saved: AgentConfig | null = null;
+  el('agent-prompt').insertAdjacentHTML('afterend', humanizationMarkup('web-persona'));
+  const persona = personaControls(root);
   let busy = false;
   let locked = false;
   let requestId = 0;
-  const isDirty = () => !!saved && (prompt.value !== saved.prompt || speaker.value !== saved.firstSpeaker || greeting.value !== saved.greeting);
+  const personaDirty = () => !!saved && JSON.stringify(persona.value()) !== JSON.stringify(normalizedHumanization(saved.humanization));
+  const isDirty = () => !!saved && (prompt.value !== saved.prompt || speaker.value !== saved.firstSpeaker || greeting.value !== saved.greeting || personaDirty());
   function update() {
     const current = !!saved && saved.id === opts.getAgentId().trim();
     const disabled = locked || busy || !current;
     prompt.disabled = speaker.disabled = disabled;
+    persona.lock(disabled);
     greeting.disabled = disabled || speaker.value === 'user';
     save.disabled = disabled || !isDirty() || !prompt.value.trim();
     reset.disabled = disabled || !isDirty();
@@ -48,6 +53,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
     prompt.value = config.prompt;
     speaker.value = config.firstSpeaker;
     greeting.value = config.greeting;
+    persona.set(config.humanization);
     update();
   }
   async function request(agentId: string, init?: RequestInit): Promise<AgentConfig> {
@@ -82,8 +88,10 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
   [prompt, speaker, greeting].forEach(input => input.addEventListener('input', () => {
     feedback.textContent = 'Unsaved changes. Save to use these instructions in the next session.';
     update();
+    opts.onBusyChange?.();
   }));
-  reset.addEventListener('click', () => { if (saved) show(saved); feedback.textContent = 'Restored the last saved instructions.'; });
+  persona.onChange(() => { feedback.textContent = 'Unsaved speech persona. Save before starting a new call.'; update(); opts.onBusyChange?.(); });
+  reset.addEventListener('click', () => { if (saved) show(saved); feedback.textContent = 'Restored the last saved instructions.'; opts.onBusyChange?.(); });
   reload.addEventListener('click', () => { if (!isDirty() || confirm('Reload the saved prompt and discard your unsaved changes?')) void load(); });
   save.addEventListener('click', async () => {
     if (save.disabled || !saved) return;
@@ -92,7 +100,8 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
     update();
     opts.onBusyChange?.();
     try {
-      const data = await request(id, { method: 'POST', body: JSON.stringify({ prompt: prompt.value, firstSpeaker: speaker.value, greeting: greeting.value }) });
+      const data = await request(id, { method: 'POST', body: JSON.stringify({ prompt: prompt.value, firstSpeaker: speaker.value, greeting: greeting.value,
+        ...((personaDirty() || saved.humanization) ? { humanization: persona.value() } : {}) }) });
       if (opts.getAgentId().trim() === id) {
         show(data);
         feedback.textContent = 'Prompt saved to the agent. Ready for your next session.';

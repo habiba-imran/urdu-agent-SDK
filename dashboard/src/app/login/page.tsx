@@ -1,20 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
 
 import {
   PortalAuthError,
   PORTAL_SESSION_TTL_HOURS,
   loginWithEmailPassword,
 } from '@/lib/portalAuth';
-import { preload } from 'swr';
-import { swrKeys, swrFetchers } from '@/lib/swr-keys';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -28,9 +24,7 @@ export default function LoginPage() {
     try {
       const result = await loginWithEmailPassword(email, password);
       void result;
-      // Warm Overview cache before first paint (single aggregate endpoint).
-      void preload(swrKeys.overview, swrFetchers.overview);
-      router.replace('/');
+      window.location.assign('/');
     } catch (err) {
       const raw =
         err instanceof PortalAuthError || err instanceof Error

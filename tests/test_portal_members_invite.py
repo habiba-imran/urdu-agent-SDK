@@ -66,7 +66,7 @@ def test_invite_links_member_to_owner_tenant_without_new_tenant(db, monkeypatch)
     db.commit()
     tenant_a = owner["tenant_id"]
 
-    def _fake_invite(email: str):
+    def _fake_invite(email: str, **kwargs):
         assert email == member_email
         return {"id": member_auth_id, "email": email, "existing": False}
 
@@ -136,7 +136,7 @@ def test_member_cannot_invite(db, monkeypatch):
 
     monkeypatch.setattr(
         "tenant_portal_api.membership.invite_auth_user_by_email",
-        lambda email: {"id": member_id, "email": email, "existing": False},
+        lambda email, **kwargs: {"id": member_id, "email": email, "existing": False},
     )
     invite_member_to_tenant(
         db,
@@ -192,7 +192,7 @@ def test_http_invite_uses_jwt_sub_not_body_tenant(db, monkeypatch):
     member_auth_id = str(uuid.uuid4())
     monkeypatch.setattr(
         "tenant_portal_api.membership.invite_auth_user_by_email",
-        lambda email: {"id": member_auth_id, "email": email, "existing": False},
+        lambda email, **kwargs: {"id": member_auth_id, "email": email, "existing": False},
     )
 
     token = issue_portal_session(

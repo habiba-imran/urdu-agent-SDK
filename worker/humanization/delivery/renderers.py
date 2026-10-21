@@ -136,7 +136,7 @@ def render(
     if caps.emotion:
         emotion = {
             "neutral": "neutral", "warm": "content", "reassuring": "calm",
-            "concerned": "sympathetic", "upbeat": "content", "amused": "content",
+            "concerned": "sympathetic", "upbeat": "happy", "amused": "content", "curious": "curious",
         }.get(delivery_intent.affect, "neutral")
         text = f'<emotion value="{emotion}"/> ' + text
     elif delivery_intent.affect != "neutral":
@@ -149,13 +149,13 @@ def render(
     if caps.speed and delivery_intent.pace != "normal":
         factor = .9 if delivery_intent.pace == "slower" else 1.05
         if caps.provider == "cartesia":
-            if "speed" not in options:
+            if "speed" not in options or delivery_intent.adaptive_pace:
                 options["speed"] = max(.6, min(1.5, float(effective.get("speed", .95)) * factor))
         elif caps.provider == "elevenlabs":
             settings = options.setdefault("voice_settings", {})
-            if "speed" not in settings:
-                settings["speed"] = max(.7, min(1.2, float(effective.get("voice_settings", {}).get("speed", 1)) * factor))
-        elif caps.provider == "rime" and "speed_alpha" not in options:
+            if "speed" not in settings or delivery_intent.adaptive_pace:
+                settings["speed"] = max(.8, min(1.2, float(effective.get("voice_settings", {}).get("speed", 1)) * factor))
+        elif caps.provider == "rime" and ("speed_alpha" not in options or delivery_intent.adaptive_pace):
             # Mist v2 reverses speed direction; Arcana is never inferred.
             multiplier = 1 / factor if caps.model == "mistv2" else factor
             options["speed_alpha"] = max(.5, min(2, float(effective.get("speed_alpha", 1)) * multiplier))

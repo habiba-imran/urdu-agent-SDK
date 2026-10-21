@@ -1,6 +1,6 @@
 {
   "name": "@awaazlabs-uva/agents",
-  "version": "0.1.1",
+  "version": "0.1.2-humanization.0",
   "description": "AwaazLabs-UVA-Agents server-side agent-management SDK - SERVER-SIDE ONLY, holds your tenant secret.",
   "repository": {
     "type": "git",

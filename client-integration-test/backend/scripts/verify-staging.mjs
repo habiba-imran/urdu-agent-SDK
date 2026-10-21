@@ -15,7 +15,7 @@ for (const url of [config.portalApiUrl, config.telephonyApiUrl]) {
 const require = createRequire(import.meta.url);
 for (const name of ['@awaazlabs-uva/agents', '@awaazlabs-uva/telephony']) {
   const pkg = JSON.parse(readFileSync(resolve(dirname(require.resolve(name)), '../package.json'), 'utf8'));
-  assert.equal(pkg.version, '0.1.1');
+  assert.equal(pkg.version, name === '@awaazlabs-uva/agents' ? '0.1.2-humanization.0' : '0.1.1');
   console.log(`PASS: installed ${name}@${pkg.version}`);
 }
 const server = createApp(config).listen(0, '127.0.0.1');

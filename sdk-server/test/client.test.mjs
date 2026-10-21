@@ -17,6 +17,7 @@ import {
   AwaazLabsUvaAgentsError,
   UvaAgentsClient,
   UvaAgentsError,
+  validateHumanization,
 } from '../dist/index.js';
 
 const TENANT_ID = '11111111-2222-3333-4444-555555555555';
@@ -59,6 +60,25 @@ function client(overrides = {}) {
 }
 
 const realFetch = globalThis.fetch;
+
+it('saves the same persona profile for every channel through signed agent create and update', async () => {
+  stubFetch(() => ({ body: { id: 'agent-persona' } }));
+  const humanization = { enabled: true, warmth: 'warm', formality: 'casual', energy: 'balanced', adaptivePace: true };
+  await client({ signatureVersion: 'raw-body-v1' }).createAgent({ name: 'Test', prompt: 'Test persona', voiceId: 'test', humanization });
+  await client({ signatureVersion: 'raw-body-v1' }).updateAgent('agent-persona', { humanization: { enabled: false } });
+  assert.deepEqual(JSON.parse(calls[0].init.body).llm_options, { humanization });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { llm_options: { humanization: { enabled: false } } });
+  assert.equal(calls[1].init.headers['X-Signature-Version'], 'raw-body-v1');
+});
+
+it('rejects unsupported persona fields without a request', async () => {
+  for (const value of [null, [], { enabled: 'true' }, { pitch: 2 }, { warmth: 'ignore rules' }]) {
+    assert.throws(() => validateHumanization(value));
+  }
+  stubFetch(() => assert.fail('invalid persona must not reach the network'));
+  await assert.rejects(client().updateAgent('a', { humanization: { adaptivePace: 'yes' } }));
+  assert.equal(calls.length, 0);
+});
 
 beforeEach(() => {
   mock.timers.enable({ apis: ['Date'], now: TS_SEC * 1000 });

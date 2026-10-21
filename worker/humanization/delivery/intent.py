@@ -16,7 +16,7 @@ class PauseIntent:
 
 @dataclass(frozen=True)
 class DeliveryIntent:
-    affect: Literal["neutral", "warm", "reassuring", "concerned", "upbeat", "amused"] = "neutral"
+    affect: Literal["neutral", "warm", "reassuring", "concerned", "upbeat", "amused", "curious"] = "neutral"
     intensity: Literal["low", "medium", "high"] = "low"
     pace: Literal["slower", "normal", "slightly_fast"] = "normal"
     energy: Literal["low", "medium", "high"] = "medium"
@@ -26,6 +26,7 @@ class DeliveryIntent:
     continuity_identity: str | None = None
     speech_mode: Literal["normal", "greeting", "repair", "confirmation", "tool_wait"] = "normal"
     interruptible: bool = True
+    adaptive_pace: bool = False  # explicit persona opt-in treats saved speed as a base pace
 
 
 def delivery_from_turn_plan(plan: TurnPlan | None, *, continuity_identity: str | None = None) -> DeliveryIntent:

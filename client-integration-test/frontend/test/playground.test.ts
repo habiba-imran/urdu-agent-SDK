@@ -74,6 +74,19 @@ test('startup loads saved prompt and live capabilities without agent mutations',
   expect($<HTMLSelectElement>('#tts-voice').options.length).toBe(2);
 });
 
+test('persona changes block connect until saved and survive reload', async () => {
+  const enabled = $<HTMLSelectElement>('#web-persona-enabled');
+  enabled.value = 'true'; enabled.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(button('connect-btn').disabled).toBe(true);
+  expect(button('save-prompt-btn').disabled).toBe(false);
+  button('save-prompt-btn').click();
+  await vi.waitFor(() => expect(button('connect-btn').disabled).toBe(false));
+  const saved = fetchMock.mock.calls.find(([url, init]) => url.endsWith('/config') && init?.method === 'POST');
+  expect(JSON.parse(String(saved?.[1]?.body)).humanization).toMatchObject({ enabled: true, warmth: 'warm', adaptivePace: true });
+  button('reload-prompt-btn').click();
+  await vi.waitFor(() => expect($<HTMLSelectElement>('#web-persona-enabled').value).toBe('true'));
+});
+
 test('unchanged saved pipeline does not add portal round trips to connect', async () => {
   submit();
   await vi.waitFor(() => expect(button('disconnect-btn').disabled).toBe(false));

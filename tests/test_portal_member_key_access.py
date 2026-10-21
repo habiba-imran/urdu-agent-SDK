@@ -31,7 +31,7 @@ def portal(monkeypatch):
     }
     memberships[outsider] = {**memberships[member], "tenant_id": str(uuid.uuid4()), "auth_user_id": outsider}
     monkeypatch.setattr("tenant_portal_api.portal_access.get_membership_by_auth_user",
-                        lambda conn, uid: memberships.get(uid))
+                        lambda conn, uid, tid=None: memberships.get(uid) if tid is None or (memberships.get(uid) or {}).get('tenant_id') == tid else None)
     connection = MagicMock()
 
     @contextmanager
@@ -78,12 +78,13 @@ def test_grant_and_revoke_take_effect_with_the_same_existing_token(portal):
 
     members[member]["can_view_api_keys"] = True
     response = client.get("/portal/credentials/secret", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["hmac_secret"] == "offline-dummy-signing-secret"
-    assert response.headers["cache-control"] == "no-store"
-    assert audit.call_args.kwargs["identity"] == member
-    assert "offline-dummy-signing-secret" not in str(audit.call_args)
-    assert client.get("/portal/credentials", headers=headers).json()["publishable_key"] == members[member]["tenant_id"]
+    assert response.status_code == 403
+    raw.assert_not_called()
+    for path in ["/portal/credentials", "/portal/overview"]:
+        metadata = client.get(path, headers=headers).json()
+        metadata = metadata.get("credentials", metadata)
+        assert metadata["publishable_key"] == members[member]["tenant_id"]
+        assert metadata["secret_reveal_enabled"] is False
 
     # Approval never makes a member an owner or lets them approve themselves.
     target = f"/portal/members/{member}/api-key-access"
@@ -153,6 +154,16 @@ def test_owner_reveal_disabled_and_crypto_errors_are_explained(portal, monkeypat
     assert "encryption key" in response.json()["detail"]
     assert "private backend diagnostic" not in response.text
     audit.assert_not_called()
+
+
+def test_owner_can_reveal_secret_with_audit_and_no_store(portal):
+    api, client, members, token, owner, member, outsider, raw, audit, connection = portal
+    response = client.get("/portal/credentials/secret", headers=token(owner))
+    assert response.status_code == 200
+    assert response.json()["hmac_secret"] == "offline-dummy-signing-secret"
+    assert response.headers["cache-control"] == "no-store"
+    assert audit.call_args.kwargs["identity"] == owner
+    assert "offline-dummy-signing-secret" not in str(audit.call_args)
 
 
 def test_reveal_default_applies_on_hosted_deployments(monkeypatch):

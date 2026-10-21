@@ -8,7 +8,7 @@ from typing import Mapping
 
 ACTIVE_PROVIDERS = frozenset({"cartesia", "rime", "elevenlabs", "uplift"})
 POLICY_VERSION = "delivery_v1"
-RENDERER_VERSION = "renderer_v1"
+RENDERER_VERSION = "renderer_v2"
 PRONUNCIATION_VERSION = "pronunciation_v1"
 
 
@@ -32,3 +32,15 @@ def resolve_delivery_policy(provider: str, *, environ: Mapping[str, str] | None 
     if provider not in ACTIVE_PROVIDERS or value != POLICY_VERSION:
         raise ValueError("unsupported TTS renderer policy")
     return DeliveryPolicy(POLICY_VERSION, RENDERER_VERSION, PRONUNCIATION_VERSION)
+
+
+def delivery_policy_for(cfg) -> DeliveryPolicy:
+    from ..persona import profile_from_options
+    profile = profile_from_options(getattr(cfg, "llm_options", None))
+    if profile is None:
+        return resolve_delivery_policy(cfg.tts_provider)
+    if not profile.enabled:
+        return DeliveryPolicy()
+    return resolve_delivery_policy(cfg.tts_provider, environ={
+        "UVA_TTS_RENDERER_" + cfg.tts_provider.upper(): POLICY_VERSION,
+    })

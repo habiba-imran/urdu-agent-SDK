@@ -1,4 +1,4 @@
-"""Tenant membership + first-user bootstrap (Phase 1) + invites (Phase 2).
+"""Tenant-scoped membership, first-user bootstrap, and invites.
 
 Link: auth.users.id → tenant_members.auth_user_id → tenant_id → tenants.
 
@@ -27,7 +27,7 @@ from .supabase_admin import invite_auth_user_by_email
 
 
 def get_membership_by_auth_user(
-    conn: psycopg.Connection, auth_user_id: str
+    conn: psycopg.Connection, auth_user_id: str, tenant_id: str | None = None
 ) -> dict | None:
     row = conn.execute(
         """
@@ -37,9 +37,11 @@ def get_membership_by_auth_user(
           from tenant_members m
           join tenants t on t.id = m.tenant_id
          where m.auth_user_id = %s
+           and (%s::uuid is null or m.tenant_id = %s::uuid)
+         order by (t.status = 'active') desc, m.created_at asc, m.tenant_id
          limit 1
         """,
-        (auth_user_id,),
+        (auth_user_id, tenant_id, tenant_id),
     ).fetchone()
     if row is None:
         return None
@@ -58,7 +60,7 @@ def get_membership_by_auth_user(
 def require_membership_on_tenant(
     conn: psycopg.Connection, *, auth_user_id: str, tenant_id: str
 ) -> dict:
-    membership = get_membership_by_auth_user(conn, auth_user_id)
+    membership = get_membership_by_auth_user(conn, auth_user_id, tenant_id)
     if membership is None or membership["tenant_id"] != str(tenant_id):
         raise TenantAuthError(403, "not a member of this tenant")
     return membership
@@ -118,25 +120,30 @@ def set_member_api_key_access(
     return {"auth_user_id": str(row[0]), "can_view_api_keys": bool(row[1])}
 
 
-def mark_member_active(conn: psycopg.Connection, auth_user_id: str) -> None:
-    has_status = conn.execute(
+def list_workspaces(conn: psycopg.Connection, auth_user_id: str) -> list[dict]:
+    rows = conn.execute(
         """
-        select 1 from information_schema.columns
-         where table_schema = 'public'
-           and table_name = 'tenant_members'
-           and column_name = 'status'
-        """
-    ).fetchone()
-    if not has_status:
-        return
+        select m.tenant_id, t.name, m.role, m.status
+          from tenant_members m join tenants t on t.id = m.tenant_id
+         where m.auth_user_id = %s and t.status = 'active'
+           and m.status in ('active', 'invited')
+         order by m.created_at, m.tenant_id
+        """,
+        (auth_user_id,),
+    ).fetchall()
+    return [dict(tenant_id=str(r[0]), tenant_name=r[1], role=r[2], status=r[3]) for r in rows]
+
+
+def mark_member_active(conn: psycopg.Connection, auth_user_id: str, tenant_id: str) -> None:
     conn.execute(
         """
         update tenant_members
            set status = 'active'
          where auth_user_id = %s
+           and tenant_id = %s
            and coalesce(status, 'active') <> 'active'
         """,
-        (auth_user_id,),
+        (auth_user_id, tenant_id),
     )
 
 def invite_member_to_tenant(
@@ -167,7 +174,7 @@ def invite_member_to_tenant(
         status = str(existing_row[2] or "active")
         if status == "invited":
             # Resend email with /invite redirect (earlier invites often hit Site URL → /login).
-            auth_user = invite_auth_user_by_email(normalized)
+            invite_auth_user_by_email(normalized, tenant_id=tenant_id)
             return {
                 "auth_user_id": str(existing_row[0]),
                 "email": normalized,
@@ -179,33 +186,26 @@ def invite_member_to_tenant(
             }
         raise TenantAuthError(409, "user is already a member of this tenant")
 
-    auth_user = invite_auth_user_by_email(normalized)
+    auth_user = invite_auth_user_by_email(normalized, tenant_id=tenant_id)
     auth_user_id = str(auth_user["id"])
 
-    other = get_membership_by_auth_user(conn, auth_user_id)
+    other = get_membership_by_auth_user(conn, auth_user_id, tenant_id)
     if other is not None:
-        if other["tenant_id"] == str(tenant_id):
-            raise TenantAuthError(409, "user is already a member of this tenant")
-        raise TenantAuthError(409, "user already belongs to another tenant")
+        raise TenantAuthError(409, "user is already a member of this tenant")
 
     try:
-        conn.execute(
-            """
-            insert into tenant_members (tenant_id, auth_user_id, email, role, status)
-            values (%s, %s, %s, 'member', 'invited')
-            """,
-            (tenant_id, auth_user_id, normalized),
-        )
-    except psycopg.errors.UndefinedColumn:
-        conn.execute(
-            """
-            insert into tenant_members (tenant_id, auth_user_id, email, role)
-            values (%s, %s, %s, 'member')
-            """,
-            (tenant_id, auth_user_id, normalized),
-        )
+        with conn.transaction():
+            conn.execute(
+                """
+                insert into tenant_members (tenant_id, auth_user_id, email, role, status)
+                values (%s, %s, %s, 'member', 'invited')
+                """,
+                (tenant_id, auth_user_id, normalized),
+            )
     except psycopg.errors.UniqueViolation as exc:
-        raise TenantAuthError(409, "user already belongs to another tenant") from exc
+        if exc.diag.constraint_name == "tenant_members_auth_user_unique":
+            raise TenantAuthError(503, "apply the multi_tenant_memberships migration to enable multi-workspace invitations") from exc
+        raise TenantAuthError(409, "user is already a member of this tenant") from exc
 
     return {
         "auth_user_id": auth_user_id,
@@ -232,6 +232,8 @@ def bootstrap_owner_for_auth_user(
     email: str | None,
 ) -> dict:
     """Create tenants row + owner membership. Caller must hold a transaction."""
+    # Composite membership uniqueness no longer serializes first-login bootstraps.
+    conn.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (auth_user_id,))
     existing = get_membership_by_auth_user(conn, auth_user_id)
     if existing is not None:
         return existing
@@ -310,9 +312,12 @@ def resolve_or_bootstrap_membership(
     *,
     auth_user_id: str,
     email: str | None,
+    tenant_id: str | None = None,
 ) -> dict:
-    membership = get_membership_by_auth_user(conn, auth_user_id)
+    membership = get_membership_by_auth_user(conn, auth_user_id, tenant_id)
     if membership is None:
+        if tenant_id is not None:
+            raise TenantAuthError(403, "not a member of this tenant")
         from .portal_access import auto_bootstrap_enabled
 
         if not auto_bootstrap_enabled():
@@ -323,11 +328,12 @@ def resolve_or_bootstrap_membership(
         membership = bootstrap_owner_for_auth_user(
             conn, auth_user_id=auth_user_id, email=email
         )
-    else:
-        mark_member_active(conn, auth_user_id)
-        membership["status"] = "active"
     if membership["tenant_status"] != "active":
         raise TenantAuthError(403, "tenant suspended")
+    if membership.get("status", "active") not in {"active", "invited"}:
+        raise TenantAuthError(403, "membership not active")
+    mark_member_active(conn, auth_user_id, membership["tenant_id"])
+    membership["status"] = "active"
     return membership
 
 
@@ -337,9 +343,10 @@ def exchange_supabase_user_for_portal_session(
     auth_user_id: str,
     email: str | None,
     jwt_secret: str,
+    tenant_id: str | None = None,
 ) -> dict:
     membership = resolve_or_bootstrap_membership(
-        conn, auth_user_id=auth_user_id, email=email
+        conn, auth_user_id=auth_user_id, email=email, tenant_id=tenant_id
     )
     session = issue_portal_session(
         conn,
@@ -376,33 +383,6 @@ def _verify_tenant_hmac(
     return str(tid), str(status)
 
 
-def _tenant_agent_count(conn: psycopg.Connection, tenant_id: str) -> int:
-    try:
-        row = conn.execute(
-            "select count(*) from agents where tenant_id = %s",
-            (tenant_id,),
-        ).fetchone()
-    except psycopg.errors.UndefinedTable:
-        return 0
-    return int(row[0] if row else 0)
-
-
-def _detach_empty_membership(
-    conn: psycopg.Connection, *, auth_user_id: str, membership: dict
-) -> None:
-    """Drop a mistaken Phase-1 bootstrap membership if that tenant has no agents."""
-    if _tenant_agent_count(conn, membership["tenant_id"]) > 0:
-        raise TenantAuthError(
-            409,
-            "your email is already linked to a different tenant that has agents — "
-            "ask an owner to invite you, or use that workspace",
-        )
-    conn.execute(
-        "delete from tenant_members where auth_user_id = %s",
-        (auth_user_id,),
-    )
-
-
 def claim_existing_tenant_for_auth_user(
     conn: psycopg.Connection,
     *,
@@ -422,10 +402,10 @@ def claim_existing_tenant_for_auth_user(
         conn, tenant_id=tenant_id.strip(), tenant_secret=tenant_secret
     )
 
-    existing = get_membership_by_auth_user(conn, auth_user_id)
+    existing = get_membership_by_auth_user(conn, auth_user_id, tid)
     if existing is not None:
         if existing["tenant_id"] == tid:
-            mark_member_active(conn, auth_user_id)
+            mark_member_active(conn, auth_user_id, tid)
             session = issue_portal_session(
                 conn,
                 tenant_id=tid,
@@ -437,7 +417,6 @@ def claim_existing_tenant_for_auth_user(
             session["email"] = existing.get("email") or email
             session["claimed"] = False
             return session
-        _detach_empty_membership(conn, auth_user_id=auth_user_id, membership=existing)
 
     owner = conn.execute(
         """
@@ -480,7 +459,7 @@ def claim_existing_tenant_for_auth_user(
             )
         except psycopg.errors.UniqueViolation as exc:
             raise TenantAuthError(
-                409, "email is already linked to another tenant"
+                409, "membership already exists in this tenant"
             ) from exc
 
     session = issue_portal_session(

@@ -137,8 +137,10 @@ def conversational_context(chat_ctx: Any, runtime: Any) -> Any:
         instructions += " Recent replies ended in questions. Do not append another optional question."
     from .delivery.intent import delivery_from_turn_plan
     intent = delivery_from_turn_plan(plan)
+    from .persona import personalize
+    intent = personalize(intent, runtime.persona_profile, plan)
     instructions += (f" Conversational delivery: {intent.affect}, {intent.intensity} intensity, "
-                     f"{intent.pace} pace. Express this through ordinary wording and natural punctuation, "
+                     f"{intent.pace} pace, {intent.energy} energy. Express this through ordinary wording and natural punctuation, "
                      "not markup. Keep deliberate critical read-backs and avoid artificial pauses.")
     from .delivery.renderers import LanguageProfile
     instructions += " " + LanguageProfile(state.language_state.configured_language).instructions

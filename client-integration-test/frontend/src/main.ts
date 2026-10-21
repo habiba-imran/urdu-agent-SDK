@@ -1130,7 +1130,7 @@ function renderError(error: unknown): void {
 function render(): void {
   const connected = !!agent?.isConnected;
   const locked = sessionBusy || connected || pipelineBusy;
-  connectButton.disabled = locked || bootstrapBusy || !servicesReady;
+  connectButton.disabled = locked || bootstrapBusy || !servicesReady || promptPanel.isBusy() || promptPanel.isDirty();
   connectButton.textContent = sessionBusy ? (state.status === 'disconnecting' ? 'Ending session…' : 'Connecting…') : connected ? 'Session live' : 'Start conversation';
   disconnectButton.disabled = !connected || sessionBusy;
   muteButton.disabled = !connected || micBusy || sessionBusy;
