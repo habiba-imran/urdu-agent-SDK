@@ -80,30 +80,44 @@ is already warmed, so the better-instrumented path is the one that needed it les
 
 ### L-02 — Uplift does not re-warm after a barge-in
 
-**Severity: High. Confidence: medium — see the confound.** `wire_interruption_tts_prewarm`
-(`worker/latency.py:376`) looks for `prewarm_after_interruption` on the session TTS. Cartesia
-implements it, with a comment that names the mechanism exactly:
+**Severity: Medium (revised down). The magnitude claim here was wrong — see the correction.**
+
+`wire_interruption_tts_prewarm` (`worker/latency.py:376`) looks for `prewarm_after_interruption`
+on the session TTS. Cartesia implements it, with a comment naming the mechanism:
 
 > Pinned plugin 1.6.5 removes cancelled sockets from its pool.
 
-Uplift implements neither hook. So on the Urdu path every barge-in plausibly discards the warm
-connection and the next reply pays L-01's cost again — on a voice agent, where interruption is
-normal rather than exceptional.
+Uplift implemented neither hook, so the architectural gap was real. The *reason* I gave for it
+was not.
 
-Measured, aborting each stream mid-playout to simulate barge-in:
+**Correction, 2026-10-21.** My first experiment fired twelve requests back to back and showed
+TTFB degrading from ~350 ms to 2.9 s after mid-stream aborts. I flagged rate limiting as a
+confound and re-ran with 6 s between requests. The confound was the whole effect:
 
 ```
-cold:                              1,441 ms
-TTFB, full drain (reuse):   1,125 → 343 → 359 → 367 ms
-TTFB, mid-stream abort:       386 → 382 → 1,001 → 2,420 ms
-TTFB, drain again after:    2,663 → 1,218 → 2,931 ms
+DRAIN  (6s apart): 1227, 1234, 3151, 1230, 1202 ms
+ABORT  (6s apart): 1614, 2363, 1314, 1514, 1261 ms
+DRAIN  again     : 1234, 1220, 1224, 1243 ms
 ```
 
-**Confound:** these twelve requests were issued back to back, so vendor-side rate limiting
-could explain part of the rising tail. The steady 343/359/367 ms under full drain is tight and
-repeatable; the post-abort degradation is suggestive but not isolated. Confirm with spaced
-requests before treating the magnitude as established. The architectural gap — no hook where
-Cartesia has one — is not in doubt.
+Aborted and fully-drained streams are indistinguishable. **An interrupted request does not
+poison the transport.** That hypothesis is withdrawn.
+
+The re-run found something more useful, though. At 6 s spacing — ordinary conversational
+spacing — TTFB is a steady **~1.23 s, not ~350 ms**. The fast figures existed only because
+requests were issued with no gap. So on the REST path the connection is cold *between every
+turn*, not just on the first one.
+
+This makes L-01 larger rather than smaller, and for a different reason than I originally gave:
+the value of holding the plugin's socket.io connection open is not "saves the first utterance",
+it is "saves roughly a second on every utterance that follows a natural pause".
+
+Note the measurement boundary: all of this used Uplift's REST streaming endpoint.
+`livekit-plugins-upliftai==1.6.5` uses a persistent socket.io connection instead, so these
+numbers bound the cost of *establishing* a connection and do not describe the plugin's
+steady-state behaviour. Whether its socket survives a barge-in is a different mechanism that
+these tests do not speak to, which is why the rewarm hook is implemented defensively (reconnect
+only when `connected` is false) rather than on every interruption.
 
 ### L-03 — the fastest LLM is the one denied TTFT hiding
 
@@ -200,17 +214,26 @@ cannot affect the English path.
   never block the greeting.
 - Verify: `ttsTtfbMs` on turn 1 against turn 3 of the same call, before and after.
 
-### 2. Set the three provider-retry knobs
+### 2. Make `.env.example`'s retry values coherent — **not** the code defaults
 
-```
-UVA_PROVIDER_MAX_RETRY=2
-UVA_PROVIDER_RETRY_INTERVAL=2.0
-UVA_PROVIDER_CONNECT_TIMEOUT=30
-```
+**Correction, 2026-10-21.** I originally wrote "align the code defaults with `.env.example`".
+That was backwards, and so was the retry setting I recommended in chat.
 
-Zero code change. Then align the code defaults with `.env.example` so the two cannot disagree
-again (L-04), and resolve the budget conflict in item 8 at the same time — a 30 s connect
-timeout under a 6 s watchdog is incoherent as shipped.
+`worker/provider_retries.py` opens with "P0 defaults settle within five seconds without
+retries", and `tests/test_provider_retries.py:20,22` pin `max_retry == 0` and `timeout == 5.0`.
+The code defaults are a deliberate P0 bound, not drift. What is incoherent is `.env.example`,
+which shipped `UVA_PROVIDER_CONNECT_TIMEOUT=30` — larger than `PROGRESS_TIMEOUT = 6.0`, so a
+connect budget that can never fire before the useful-progress watchdog kills the turn. An
+operator following the example bought dead air, not recovery.
+
+Fixed by changing the example to `5` and documenting the interaction, leaving the code and its
+pinned tests alone.
+
+**And the advice I gave in chat was wrong.** `UVA_PROVIDER_MAX_RETRY=2` with
+`UVA_PROVIDER_RETRY_INTERVAL=2.0` spends 4 s of a 6 s budget before the second attempt starts,
+and a 30 s connect timeout cannot fire inside 6 s at all. For a provider that takes 13.4 s just
+to return its 503, **no retry configuration helps** — the budget is gone before the first
+attempt fails. The only effective response to L-04 is item 3: change provider.
 
 ### 3. Make Groq the default for the voice path, and decide the preemptive question
 
@@ -269,3 +292,53 @@ of connect time. Fix L-07 by dropping the `qwen/` branch or using `low`.
   from Q2 is unmeasured, and contention will change every figure here.
 - **Tool-call turns.** `toolMs` is instrumented but no tool-invoking turn was timed; a gateway
   round trip sits on top of everything above.
+
+## Status — 2026-10-21
+
+| Item | State |
+| --- | --- |
+| 1. Uplift warm-up hooks | **Done.** `prewarm` + `prewarm_after_interruption` on the real adapter, 12 tests in `tests/test_uplift_transport_prewarm.py`. |
+| 2. `.env.example` retry coherence | **Done**, inverted from the original recommendation — see the correction above. |
+| 3. Groq default / preemptive decision | **Open — needs an owner.** Config change plus a paid-tier question. |
+| 4. Cross-call connection pooling | Open, needs investigation before commitment. |
+| 5. Acoustic measurement harness | Open. Blocks verifying items 1 and 3. |
+| 6. Re-run the L-02 abort experiment | **Done.** Hypothesis refuted; L-02 revised and L-01 strengthened. |
+| 7. Instrument the Groq token cap | Open, deliberately. Needs a hot-path wrapper around the stream to read `finish_reason`; not worth bundling with a transport change. |
+| 8. Timeout budgets + qwen trap | **Partly done.** Trap fixed (`reasoning_effort` now `low`, pinned by a test). Budget alignment is the `.env.example` fix in item 2; making the watchdog connect-aware is still open. |
+
+What item 1 is expected to buy, stated so it can be falsified: roughly a second off the first
+Urdu reply, and — if the plugin's socket stays open across turns the way holding it should —
+a similar saving on replies that follow a pause. **This is unverified in a real call.** The
+measurement that would verify it is item 5, which does not exist yet. Compare `ttsTtfbMs` on
+turn 1 against turn 3 of the same call, before and after, and treat the result as provisional
+until there is an acoustic number.
+
+### Implementation note — why the wrapper checks for a class
+
+The adapter subclasses `upliftai.TTS` at build time, the way `cartesia.py` does. The first
+version of that broke `tests/test_humanization_batch_b.py::test_uplift_phrase_config_live_constructor_preserves_pcm`,
+which patches `upliftai.TTS` with a lambda to capture constructor kwargs — and a lambda cannot
+be subclassed:
+
+```
+TypeError: function() argument 'code' must be code, not str
+```
+
+`_build_prewarmable` now falls back to calling the attribute directly when it is not a class,
+constructing exactly as before and going without warm-up rather than failing. Pinned by
+`test_build_tolerates_a_non_class_tts_double`.
+
+### Pre-existing failures in this area, for whoever runs the suite next
+
+Six failures in the `uplift or groq or latency or provider or humaniz or tts or worker`
+selection are **not** from this work. Each was confirmed by stashing these changes and
+re-running on a clean tree:
+
+- 4 x `test_latency_phase2.py` / `test_latency_phase4.py` — the OB-F13 import-order defect:
+  they fake `sys.modules["livekit.plugins.google"]` while the adapter does
+  `from livekit.plugins import google`, which reads the package attribute. They pass alone and
+  fail after anything imports the real plugin.
+- `test_worker.py::test_end_conversation_summary_writes_to_the_real_session_row` —
+  `'not_ending' == 'saved'`. Arrived with `a37b635`, which moved ending intent out of
+  `conversational_signals` and into the conversation LLM. Habiba's area.
+- `test_humanization_phase1.py::test_cartesia_path_system_chars_do_not_explode_vs_overlay_alone`.
