@@ -305,6 +305,29 @@ async def await_greeting_frames(
         return hit
 
 
+def _prewarm_humanization() -> dict | None:
+    """Parse ``UVA_PREWARM_HUMANIZATION`` (the agent's ``llm_options.humanization``).
+
+    Returns None when unset or unusable. A malformed value must not stop the seed — it
+    simply means the key will not match a persona-bearing agent, which is the pre-existing
+    behaviour, not a new failure.
+    """
+    raw = (os.getenv("UVA_PREWARM_HUMANIZATION") or "").strip()
+    if not raw:
+        return None
+    try:
+        import json
+
+        value = json.loads(raw)
+    except ValueError:
+        logger.warning("ignoring malformed UVA_PREWARM_HUMANIZATION (not JSON)")
+        return None
+    if not isinstance(value, dict):
+        logger.warning("ignoring UVA_PREWARM_HUMANIZATION: expected an object")
+        return None
+    return value
+
+
 def seed_greeting_pcm_from_env() -> bool:
     """Optionally pre-synthesize demo greeting PCM at process start (sync wrapper).
 
@@ -322,6 +345,11 @@ def seed_greeting_pcm_from_env() -> bool:
     voice_id = (os.getenv("UVA_PREWARM_TTS_VOICE_ID") or "").strip()
     if not text or not agent_id or not voice_id:
         return False
+    # The persona profile is part of the cache key and of the rendering. Without it the
+    # seed is dead weight for any agent that has one: `humanization` joined the key when
+    # SDK personas shipped, and this seeder was not updated, so the seeded key could never
+    # equal the runtime key. Pass the agent's own `llm_options.humanization` as JSON.
+    humanization = _prewarm_humanization()
     provider = (os.getenv("UVA_PREWARM_TTS_PROVIDER") or "cartesia").strip().lower()
     channel = (os.getenv("UVA_PREWARM_AUDIO_CHANNEL") or "webrtc").strip().lower()
     language = (os.getenv("UVA_PREWARM_TTS_LANGUAGE") or "en").strip().lower()
@@ -370,6 +398,7 @@ def seed_greeting_pcm_from_env() -> bool:
         tts_options={},
         language=language,
         tenant_id=(os.getenv("UVA_PREWARM_TENANT_ID") or "").strip(),
+        humanization=humanization,
     )
     if _cache.has(key):
         return True
@@ -391,8 +420,13 @@ def seed_greeting_pcm_from_env() -> bool:
             if candidate:
                 from worker.humanization.delivery.context import DeliveryContext
                 from worker.providers.types import AgentRuntimeConfig
+                # llm_options is the 7th field; the delivery layer reads the persona
+                # from it. Seeding audio rendered without the profile under a key that
+                # claims to have it would serve the wrong greeting — worse than a miss.
                 context = DeliveryContext(AgentRuntimeConfig(
-                    language, "", "", {}, "", "", {}, provider, voice_id, {}, channel,
+                    language, "", "", {}, "", "",
+                    {"humanization": humanization} if humanization else {},
+                    provider, voice_id, {}, channel,
                 ), resolve_delivery_policy(provider))
             return await synthesize_greeting_frames(tts, text, delivery_context=context)
 
