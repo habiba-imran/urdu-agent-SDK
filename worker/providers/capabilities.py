@@ -112,6 +112,25 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
                 ],
                 "default_model": "gemini-3.6-flash",
             },
+            "anthropic": {
+                "state": "enabled",
+                # Live IDs from GET /v1/models on the project key (2026-10-23).
+                # Measured TTFT through worker/providers/llm/anthropic.py, effort=low:
+                # haiku-5-5 735ms, sonnet-5-5 781ms, opus-5-5 3,203ms. Opus 5.5 cannot
+                # disable thinking, so it is not a voice-path default.
+                "models": [
+                    "claude-haiku-5-5",
+                    "claude-sonnet-5-5",
+                    "claude-opus-5-5",
+                ],
+                "legacy_aliases": [
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-opus-4-8",
+                    "claude-sonnet-4-6",
+                ],
+                "default_model": "claude-haiku-5-5",
+            },
         },
         "tts": {
             "uplift": {"state": "enabled"},
@@ -161,6 +180,25 @@ CAPABILITIES: dict[str, dict[str, dict[str, dict]]] = {
                     "moonshotai/kimi-k2-instruct-0905",
                 ],
                 "default_model": "openai/gpt-oss-20b",
+            },
+            "anthropic": {
+                "state": "enabled",
+                # Live IDs from GET /v1/models on the project key (2026-10-23).
+                # Measured TTFT through worker/providers/llm/anthropic.py, effort=low:
+                # haiku-5-5 735ms, sonnet-5-5 781ms, opus-5-5 3,203ms. Opus 5.5 cannot
+                # disable thinking, so it is not a voice-path default.
+                "models": [
+                    "claude-haiku-5-5",
+                    "claude-sonnet-5-5",
+                    "claude-opus-5-5",
+                ],
+                "legacy_aliases": [
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-opus-4-8",
+                    "claude-sonnet-4-6",
+                ],
+                "default_model": "claude-haiku-5-5",
             },
         },
         "tts": {

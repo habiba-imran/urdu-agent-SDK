@@ -52,6 +52,10 @@ def _build_llm(cfg: AgentRuntimeConfig):
         from .llm.groq import build
 
         return build(cfg.llm_model)
+    if cfg.llm_provider == "anthropic":
+        from .llm.anthropic import build
+
+        return build(cfg.llm_model)
     raise UnsupportedProviderError(f"no LLM adapter for provider={cfg.llm_provider!r}")
 
 
