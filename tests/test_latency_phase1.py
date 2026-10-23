@@ -243,6 +243,24 @@ async def test_prewarm_tts_runs_sync_prewarm_on_event_loop():
     assert seen_on_loop is True
 
 
+@pytest.mark.asyncio
+async def test_sync_prewarm_returning_task_is_awaited():
+    finished = False
+
+    async def warm():
+        nonlocal finished
+        await asyncio.sleep(0)
+        finished = True
+
+    def prewarm():
+        return asyncio.create_task(warm())
+
+    tts = MagicMock()
+    tts.prewarm = prewarm
+    await prewarm_tts(tts)
+    assert finished
+
+
 def test_static_greeting_skips_llm():
     cfg = AgentConfig(
         agent_id="a",

@@ -21,6 +21,28 @@ def test_deepgram_stt_mode_default_nova(monkeypatch):
     assert resolve_deepgram_stt_mode({}) == "nova"
 
 
+def test_anthropic_flux_uses_native_turn_end_without_an_extra_endpointing_pause():
+    profile = build_turn_profile(audio_channel='webrtc', stt_provider='deepgram',
+                                 llm_provider='anthropic', agent_language='en',
+                                 stt_options={'stt_mode': 'flux', 'flux_eager_eot': True})
+    assert profile.detector == 'stt'
+    assert profile.endpointing_min_delay == 0
+    assert profile.preemptive_generation_enabled and profile.preemptive_tts
+    assert profile.preemptive_max_retries == 1
+
+
+def test_flux_keeps_groq_speculation_off_and_does_not_change_nova():
+    groq = build_turn_profile(audio_channel='webrtc', stt_provider='deepgram',
+                              llm_provider='groq', agent_language='en',
+                              stt_options={'stt_mode': 'flux'})
+    assert not groq.preemptive_generation_enabled
+    assert groq.preemptive_max_retries == 0
+    nova = build_turn_profile(audio_channel='webrtc', stt_provider='deepgram',
+                              llm_provider='anthropic', agent_language='en',
+                              stt_options={'stt_mode': 'nova'})
+    assert nova.endpointing_min_delay == 0.12
+
+
 def test_deepgram_stt_mode_flux_env_and_options(monkeypatch):
     monkeypatch.setenv("UVA_DEEPGRAM_STT_MODE", "flux")
     assert resolve_deepgram_stt_mode(None) == "flux"

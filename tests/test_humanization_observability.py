@@ -232,6 +232,27 @@ def test_completed_handle_without_tts_keeps_response_latency_unavailable(monkeyp
     assert tracker._rolling.e2e_ms == []
 
 
+def test_empty_tool_continuation_does_not_replace_first_reply_timings(monkeypatch):
+    tracker, payloads = tracker_and_payloads(monkeypatch)
+    tracker.mark_user_stopped_speaking()
+    handle = Handle()
+    created(tracker, handle)
+    tracker.mark_turn_committed('user-message', handle.id)
+    first = tracker._generation(handle.id)
+    first.stages.update(llm_request_start=100.0, first_useful_llm_text=100.8,
+                        first_speakable_chunk_ready=100.9, tts_first_audio=101.2)
+    metrics(tracker, handle.id)
+    continuation = tracker._generation(handle.id, fresh=True)
+    continuation.stages['llm_request_start'] = 104.0
+    handle.finish()
+    row = payloads()[0]
+    assert row['generation_id'] == first.generation_id
+    assert row['stages']['tts_first_audio'] == 101.2
+    assert row['stages']['first_speakable_chunk_ready'] == 100.9
+    assert len(row['generations']) == 2
+    assert row['generations'][1]['stages']['tts_first_audio'] is None
+
+
 def test_percentiles_counts_minimum_tail_samples_and_bounds():
     report = percentile_report([10])
     assert report["sampleCount"] == 1 and report["p95Ms"] is None and report["p99Ms"] is None
@@ -260,6 +281,66 @@ def test_snapshot_effective_model_and_options_excludes_private_fields(monkeypatc
     assert snapshot["stt"]["effective_options"]["endpointing_ms"] == 345
     assert "SECRET" not in json.dumps(snapshot)
     assert "api_key" not in json.dumps(snapshot)
+
+
+def test_first_speakable_chunk_marks_only_the_scoped_generation_once(monkeypatch):
+    from worker.latency import _generation_scope, mark_first_speakable_chunk
+    tracker, _ = tracker_and_payloads(monkeypatch)
+    first = tracker._generation('first-speech')
+    second = tracker._generation('second-speech')
+    token = _generation_scope.set((tracker, first.generation_id))
+    try:
+        mark_first_speakable_chunk()
+        timestamp = first.stages['first_speakable_chunk_ready']
+        assert timestamp is not None
+        mark_first_speakable_chunk()
+        assert first.stages['first_speakable_chunk_ready'] == timestamp
+        assert second.stages['first_speakable_chunk_ready'] is None
+    finally:
+        _generation_scope.reset(token)
+
+
+@pytest.mark.parametrize('caching', [None, 'ephemeral'])
+def test_anthropic_snapshot_uses_cached_claude_options_and_no_gemini_fields(monkeypatch, caching):
+    from worker.providers.types import AgentRuntimeConfig
+    monkeypatch.setenv('ANTHROPIC_EFFORT', 'high')
+    monkeypatch.setenv('ANTHROPIC_THINKING', 'on')
+    monkeypatch.setenv('ANTHROPIC_MAX_TOKENS', '320')
+    runtime = AgentRuntimeConfig('en', 'deepgram', 'nova-3', {}, 'anthropic',
+                                 'claude-haiku-5-5', {}, 'cartesia', 'voice1', {})
+    cfg = NS(stt_model='nova-3', llm_model=runtime.llm_model, tts_options={})
+    components = NS(stt=NS(), tts=NS(), llm=NS(
+        _opts=NS(max_tokens=160), voice_options={
+            'max_tokens': 160, 'effort': 'low', 'thinking': 'disabled',
+            'timeout_seconds': 30, 'max_retries': 0, 'api_key': 'SECRET',
+            'caching': caching,
+        }))
+    snapshot = provider_snapshot(cfg, runtime, components)
+    assert snapshot['llm']['effective_model'] == 'claude-haiku-5-5'
+    assert snapshot['llm']['effective_options'] == {
+        'max_tokens': 160, 'effort': 'low', 'thinking': 'disabled',
+        'timeout_seconds': 30, 'max_retries': 0,
+        'caching': caching,
+    }
+    assert 'SECRET' not in json.dumps(snapshot)
+
+
+@pytest.mark.parametrize('cached_tokens', [0, 3000])
+def test_provider_cache_reads_are_observed_and_repeated_metrics_are_not_double_counted(monkeypatch, cached_tokens):
+    tracker, payloads = tracker_and_payloads(monkeypatch)
+    tracker.mark_user_stopped_speaking()
+    handle = Handle()
+    created(tracker, handle)
+    tracker.mark_turn_committed('cache_fixture', handle.id)
+    event = NS(speech_id=handle.id, ttft=.8, cancelled=False, total_tokens=3240,
+               prompt_tokens=3200, prompt_cached_tokens=cached_tokens, request_id='cache_read_fixture')
+    tracker.on_metrics(event)
+    tracker.on_metrics(event)
+    handle.finish()
+    usage = payloads()[0]['generations'][0]['usage']
+    assert usage['llm_tokens'] == 3240
+    assert usage['llm_prompt_tokens'] == 3200
+    assert usage['llm_cached_prompt_tokens'] == cached_tokens
 
 
 def test_snapshot_omits_arbitrary_config_text_and_urls(monkeypatch):

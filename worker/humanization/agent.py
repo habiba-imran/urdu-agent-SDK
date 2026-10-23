@@ -284,6 +284,7 @@ class AwaazAgent(Agent):
         self._active_speech_plans[identity] = plan
         handle.add_done_callback(lambda _handle: self._active_speech_plans.pop(identity, None))
         plan.bind()
+        context.prewarm_for_plan(plan)
         return plan
 
     async def _streaming_llm_stream(self, stream, plan):

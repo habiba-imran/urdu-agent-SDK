@@ -34,9 +34,10 @@ Spoken replies are one or two sentences — measured 34-61 output tokens — so 
 is capped tightly via ``ANTHROPIC_MAX_TOKENS``. Output is the expensive side of the bill and
 an uncapped 1024 (the plugin's fallback) would be ~17x the headroom this path needs.
 
-Prompt caching is deliberately left alone: the plugin already applies ``cache_control`` to
-the trailing system/user blocks, and a voice system prompt is far below the minimum
-cacheable prefix, so no cache would be created either way.
+Prompt caching is explicitly enabled using the pinned plugin's ``caching="ephemeral"``
+option. Its default is NOT_GIVEN, which emits no cache breakpoints. Stable tool/prompt
+prefixes can be reused; changing turn guidance can still invalidate later prefixes.
+Actual cache reads must be verified from provider metrics, not inferred from this flag.
 
 Requires ANTHROPIC_API_KEY. Spend limits are a Console setting (Billing -> Spend limits);
 nothing in this process can enforce a budget, so the cap must be set there.
@@ -44,6 +45,7 @@ nothing in this process can enforce a budget, so the cap must be set there.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -204,11 +206,21 @@ def build(model: str) -> Any:
         def __init__(self) -> None:
             self._transport_client = _make_client()
             self._transport_warmed_at: float | None = None
+            self._transport_warm_task: asyncio.Task[None] | None = None
+            # Safe constructor settings for telemetry, including cached clients
+            # whose environment may have changed since they were constructed.
+            self.voice_options = {
+                "max_tokens": max_tokens, "effort": effort,
+                "thinking": (thinking or {}).get("type", "model_default"),
+                "timeout_seconds": 30, "max_retries": 0,
+                "caching": "ephemeral",
+            }
             # No temperature / top_k on purpose — both return 400 on current models.
             super().__init__(
                 model=resolved_model,
                 client=self._transport_client,
                 max_tokens=max_tokens,
+                caching="ephemeral",
             )
 
         def chat(self, **kwargs: Any) -> Any:
@@ -226,7 +238,23 @@ def build(model: str) -> Any:
                 extra.update(caller)
             return super().chat(extra_kwargs=extra, **kwargs)
 
-        async def prewarm(self) -> None:
+        def prewarm(self) -> asyncio.Task[None]:
+            """LiveKit calls this synchronously; own and share the async work.
+
+            Our explicit warm-up path can await the returned task. The SDK's
+            fire-and-forget call must not create an unawaited coroutine.
+            """
+            task = self._transport_warm_task
+            if task is None or task.done():
+                task = self._transport_warm_task = asyncio.create_task(self._prewarm_transport())
+                task.add_done_callback(self._on_transport_warm_done)
+            return task
+
+        def _on_transport_warm_done(self, task: asyncio.Task[None]) -> None:
+            if not task.cancelled() and (error := task.exception()) is not None:
+                logger.warning("anthropic transport prewarm failed error_type=%s", type(error).__name__)
+
+        async def _prewarm_transport(self) -> None:
             """Open the HTTPS connection before the first turn.
 
             ``models.list`` is free and consumes no tokens, so this costs nothing against
@@ -242,6 +270,10 @@ def build(model: str) -> Any:
             self._transport_warmed_at = time.monotonic()
 
         async def aclose(self) -> None:
+            task = self._transport_warm_task
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             try:
                 await super().aclose()
             finally:

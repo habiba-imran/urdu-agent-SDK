@@ -31,6 +31,10 @@ def build(voice_id: str, language: str, tts_options: dict | None = None, *, audi
         _interruption_warm_task: asyncio.Task | None = None
         _closing = False
 
+        def prepare_transport(self) -> None:
+            """Prepare a fresh delivery client before its first text chunk arrives."""
+            self.prewarm_after_interruption()
+
         def prewarm_after_interruption(self) -> None:
             if self._closing or (self._interruption_warm_task is not None and not self._interruption_warm_task.done()):
                 return

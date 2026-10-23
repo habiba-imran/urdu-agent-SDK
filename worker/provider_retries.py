@@ -1,8 +1,9 @@
 """F-H10 Phase D: bounded LiveKit provider connect retries (env-tunable).
 
-P0 defaults settle within five seconds without retries. LLM/TTS retain explicit
+LLM/TTS default to a five-second timeout without retries, retaining explicit
 legacy retry settings plus a separate six-second useful-progress bound. STT
-connections always settle within five seconds; idle microphone silence is valid.
+connections have one retry within a five-second connect budget; idle microphone
+silence is valid.
 """
 
 from __future__ import annotations
@@ -118,6 +119,13 @@ def build_session_connect_options() -> Any:
         retry_interval=settings.retry_interval,
         timeout=settings.timeout,
     )
+    # LiveKit 1.6.5 waits 0.1s before its first retry. Split the existing
+    # five-second connect budget across two attempts rather than making the
+    # first transient STT connection failure terminal or doubling dead air.
+    stt_conn = APIConnectOptions(
+        max_retry=1, retry_interval=0.1,
+        timeout=min(settings.timeout, (5.0 - 0.1) / 2),
+    )
     logger.info(
         "provider_retries max_retry=%s retry_interval=%s timeout=%s "
         "(env UVA_PROVIDER_MAX_RETRY / UVA_PROVIDER_RETRY_INTERVAL / "
@@ -126,13 +134,12 @@ def build_session_connect_options() -> Any:
         settings.retry_interval,
         settings.timeout,
     )
+    logger.info("stt_connect max_retry=%s timeout=%s total_connect_budget_s=5.0",
+                stt_conn.max_retry, stt_conn.timeout)
     return SessionConnectOptions(
         llm_conn_options=conn,
         tts_conn_options=conn,
-        # A missing speech recognizer cannot hide behind a legacy 30s override.
-        # Its first connection attempt must settle within the P0 silence budget.
-        stt_conn_options=APIConnectOptions(max_retry=0, retry_interval=settings.retry_interval,
-                                          timeout=min(settings.timeout, 5.0)),
+        stt_conn_options=stt_conn,
     )
 
 
@@ -217,6 +224,19 @@ def wire_provider_failure(session: Any, room: Any) -> None:
         err = getattr(ev, "error", ev)
         name = type(err).__name__.upper()
         stage = next((stage for stage in ("STT", "LLM", "TTS") if stage in name), "PIPELINE")
+        api_error = getattr(err, "error", None)
+        cause = getattr(api_error, "__cause__", None)
+        recoverable = bool(getattr(err, "recoverable", False))
+        # Log only classifications: provider exception text can contain URLs,
+        # credentials or request data. Keep the underlying timeout/DNS cause.
+        logger.warning("provider_error stage=%s recoverable=%s error_type=%s cause_type=%s status_code=%s",
+                       stage, recoverable, type(api_error).__name__,
+                       type(cause).__name__ if cause is not None else None,
+                       getattr(api_error, "status_code", None))
+        if recoverable:
+            # The SDK is about to retry. Shutting down here cancels its retry
+            # and turns a recoverable connection error into a dropped call.
+            return
         fail_session(session, stage, room=room)
     runtime = session_runtime(session)
     if runtime is not None:

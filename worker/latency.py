@@ -32,6 +32,18 @@ from worker.telemetry import (
 _speech_scope = contextvars.ContextVar("awaaz_telemetry_speech", default=None)
 _generation_scope = contextvars.ContextVar("awaaz_telemetry_generation", default=None)
 
+
+def mark_first_speakable_chunk() -> None:
+    """Observe the first protected chunk without changing speech or turn policy."""
+    scope = _generation_scope.get()
+    if scope is None:
+        return
+    tracker, generation_id = scope
+    trace = tracker._traces.get(generation_id)
+    if trace is not None and trace.stages["first_speakable_chunk_ready"] is None:
+        trace.stages["first_speakable_chunk_ready"] = tracker._now()
+        tracker._event("first_speakable_chunk_ready", trace=trace)
+
 logger = logging.getLogger("worker.latency")
 
 _TRUTH_ON = frozenset({"1", "true", "yes", "on"})
@@ -255,10 +267,9 @@ async def _invoke_provider_prewarm(prewarm: Any) -> None:
     LiveKit websocket pools schedule work via ``asyncio.create_task`` and raise
     ``RuntimeError: no running event loop`` when invoked from ``asyncio.to_thread``.
     """
-    if asyncio.iscoroutinefunction(prewarm):
-        await prewarm()
-    else:
-        prewarm()
+    result = prewarm()
+    if inspect.isawaitable(result):
+        await result
 
 
 async def prewarm_tts(tts: Any) -> None:
@@ -998,6 +1009,11 @@ class TurnLatencyTracker:
             value = measurement(getattr(metric, "total_tokens", None))
             if value is not None:
                 trace.usage["llm_tokens"] = trace.usage.get("llm_tokens", 0) + value
+            for source, target in (("prompt_tokens", "llm_prompt_tokens"),
+                                   ("prompt_cached_tokens", "llm_cached_prompt_tokens")):
+                value = measurement(getattr(metric, source, None))
+                if value is not None:
+                    trace.usage[target] = trace.usage.get(target, 0) + value
         else:
             parts.tts_ms = _ms(getattr(metric, "duration", None))
             parts.tts_ttfb_ms = parts.tts_ttfb_ms if parts.tts_ttfb_ms is not None else _ms(getattr(metric, "ttfb", None))
@@ -1064,7 +1080,10 @@ class TurnLatencyTracker:
         # A partial STT/EOU measurement is not a response. In particular a
         # timed-out LLM can have EOU metrics without producing any audio.
         e2e_ms = sum(components) if parts.tts_ttfb_ms is not None else None
-        trace = traces[-1]
+        # A tool continuation may generate no speech. Retain the generation
+        # that produced the first audio, rather than replacing its timings with
+        # a later, empty continuation (e.g. after end_conversation_summary).
+        trace = next((t for t in traces if t.stages['tts_first_audio'] is not None), traces[-1])
         operation = "normal_turn" if trace.user_turn_id or speech["source"] == "metrics_only" else "platform_speech"
         generation_rows = [{**t.identity(), "outcome": t.outcome or outcome,
                             "stages": t.stages, "usage": t.usage} for t in traces]
@@ -1103,7 +1122,7 @@ class TurnLatencyTracker:
                                         "first_useful_llm_text": "first_nonempty_content_delta; not acoustic/semantic verification",
                                         "tts_request_start": "default_tts_node_entered",
                                         "tts_first_audio": "first_frame_from_default_tts_node; not receiver playout",
-                                        "first_speakable_chunk_ready": "unavailable_until_chunk_planning"}}
+                                        "first_speakable_chunk_ready": "first_protected_chunk_accepted_by_speech_planner"}}
         event = self._event("turn_latency", trace=trace, speech_id=speech_id, outcome=sample_outcome)
         payload.update(sequence=event["sequence"], monotonicAt=event["monotonicAt"])
         self._logger.info("turn_latency %s", json.dumps(payload))

@@ -381,6 +381,8 @@ class SpeechPlan:
         self.planned_chunks.append(chunk)
         if self.first_chunk_at is None:
             self.first_chunk_at = time.monotonic()
+            from worker.latency import mark_first_speakable_chunk
+            mark_first_speakable_chunk()
         return True
 
     def cancel(self):

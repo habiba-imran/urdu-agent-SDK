@@ -103,6 +103,18 @@ def test_never_sends_sampling_params_that_current_models_reject(fake_plugin):
     assert "top_k" not in ctor
 
 
+def test_enables_native_prompt_caching_without_changing_output_controls(fake_plugin):
+    llm = adapter.build("claude-haiku-5-5")
+    ctor = _FakeBaseLLM.instances[0].ctor_kwargs
+    assert ctor["caching"] == "ephemeral"
+    assert llm.voice_options["caching"] == "ephemeral"
+    llm.chat(chat_ctx="ctx", extra_kwargs={"user": "fixture-user"})
+    request = _FakeBaseLLM.instances[0].chat_calls[0]
+    assert request["extra_kwargs"]["thinking"] == {"type": "disabled"}
+    assert request["extra_kwargs"]["output_config"] == {"effort": "low"}
+    assert request["extra_kwargs"]["user"] == "fixture-user"
+
+
 def test_injects_effort_because_the_plugin_exposes_no_thinking_control(fake_plugin):
     llm = adapter.build("claude-opus-5-5")
     llm.chat(chat_ctx="ctx")
@@ -187,6 +199,29 @@ def test_prewarm_opens_the_connection_without_spending_tokens(fake_plugin):
     client = _FakeAsyncAnthropic.instances[0]
     # models.list is free; a completion would bill against the development budget.
     assert client.list_calls == 1
+
+
+def test_sync_sdk_prewarm_shares_pending_task_and_close_cancels_it(fake_plugin):
+    llm = adapter.build('claude-haiku-5-5')
+
+    async def run():
+        started = asyncio.Event()
+
+        async def pending(**kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        llm._transport_client.models.list = pending
+        # LiveKit calls the hook without awaiting it. It must start the work.
+        task = llm.prewarm()
+        assert not asyncio.iscoroutine(task)
+        await started.wait()
+        assert llm.prewarm() is task
+        await llm.aclose()
+        assert task.cancelled()
+
+    asyncio.run(run())
+    assert _FakeAsyncAnthropic.instances[0].closed
 
 
 def test_client_disables_sdk_retries_so_they_cannot_stack_in_the_watchdog(fake_plugin):

@@ -155,6 +155,18 @@ def provider_snapshot(cfg: Any, runtime_cfg: Any, components: Any) -> dict[str, 
             llm_options["reasoning_effort"] = "low"
         elif llm_model.startswith("qwen/"):
             llm_options["reasoning_effort"] = "none"
+    elif llm == "anthropic":
+        from worker.providers.llm.anthropic import (
+            _max_tokens, resolve_anthropic_model, resolve_effort, resolve_thinking,
+        )
+        llm_model = resolve_anthropic_model(runtime_cfg.llm_model)[0]
+        llm_options = {"max_tokens": _max_tokens(), "effort": resolve_effort(),
+                       "thinking": (resolve_thinking(llm_model) or {}).get("type", "model_default"),
+                       "timeout_seconds": 30, "max_retries": 0, "caching": None}
+        actual_voice_options = getattr(components.llm, "voice_options", None)
+        if isinstance(actual_voice_options, dict):
+            llm_options.update({key: actual_voice_options[key] for key in llm_options
+                                if key in actual_voice_options})
     else:
         llm_model = resolve_gemini_model(runtime_cfg.llm_model)[0]
         llm_options = {"temperature": .35, "max_output_tokens": 180, "timeout_seconds": 30}

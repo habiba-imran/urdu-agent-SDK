@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 from worker.humanization.types import TurnProfile
@@ -147,6 +148,7 @@ def build_turn_profile(
     stt_provider: str | None = None,
     llm_provider: str | None = None,
     agent_language: str | None = None,
+    stt_options: dict | None = None,
 ) -> TurnProfile:
     """Build turn policy for the *effective* providers (after telephony remaps).
 
@@ -196,6 +198,19 @@ def build_turn_profile(
             "max_speech_duration": 12.0,
             "max_retries": 0,
         }
+
+    flux = ((stt_provider or '').lower() == 'deepgram'
+            and (agent_language or '').lower().startswith('en')
+            and (stt_options or {}).get('stt_mode') == 'flux')
+    if flux:
+        # Flux has already made the semantic end-of-turn decision. Do not add
+        # Nova's extra endpointing pause or a second audio turn detector.
+        detector = 'stt'
+        endpointing['min_delay'] = 0.0
+        if llm == 'anthropic':
+            # At most one speculative draft per user turn. Final authorization
+            # and tool execution remain owned by LiveKit, including TurnResumed.
+            preemptive['max_retries'] = 1
 
     return TurnProfile(
         channel=channel,
@@ -301,6 +316,31 @@ async def coalesce_structured_finals(source, runtime, *, settle_seconds=1.8):
     from dataclasses import replace
     from livekit.agents import stt
     from .understanding import phone_digits
+    if getattr(runtime, 'stt_whole_turn_finals', False):
+        # Flux emits an entire turn at EndOfTurn, not an arbitrary segment.
+        # Waiting 1.8s for another final would add latency and could merge two
+        # separate user turns. Final evidence always passes through unchanged.
+        try:
+            async for event in source:
+                alternatives = getattr(event, 'alternatives', ())
+                if event.type == stt.SpeechEventType.PREFLIGHT_TRANSCRIPT and alternatives:
+                    text = alternatives[0].text
+                    digits = phone_digits(text)
+                    if digits and digits.startswith('03') and len(digits) < 11:
+                        continue  # Do not draft from an unfinished phone number.
+                    # Flux can eagerly emit a dangling noun phrase, then revise
+                    # it a few milliseconds later (e.g. "a pain in my"). An HTTP
+                    # draft cancelled at that point discards the pooled socket.
+                    # Suppress only these clear open English prefixes. Finals,
+                    # resumed speech and complete eager transcripts stay immediate.
+                    if re.search(r'\b(?:a|an|the|my|your|our|their)\s*$', text, re.I):
+                        continue
+                yield event
+        finally:
+            close = getattr(source, 'aclose', None)
+            if close is not None:
+                await close()
+        return
     queue = asyncio.Queue(maxsize=32)
     end = object()
 

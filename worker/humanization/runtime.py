@@ -28,10 +28,13 @@ class HumanizationRuntime:
         self, *, tenant_id: str, agent_id: str, session_id: str,
         language: str, channel: str, policy: HumanizationPolicy,
         provider_snapshot: dict[str, Any] | None = None,
-        persona_profile=None,
+        persona_profile=None, stt_whole_turn_finals: bool = False,
     ) -> None:
         self.policy = policy
         self.persona_profile = persona_profile
+        # Runtime STT contract, supplied by construction rather than telemetry.
+        # Flux final transcripts are whole turns, unlike Nova segment finals.
+        self.stt_whole_turn_finals = stt_whole_turn_finals
         # The existing allowlisted diagnostic snapshot excludes credentials/URLs.
         self.provider_snapshot = deepcopy(provider_snapshot or {})
         if persona_profile is not None:

@@ -142,5 +142,6 @@ def test_build_session_connect_options_bounded_provider_retries(monkeypatch):
     opts = build_session_connect_options()
     assert opts.llm_conn_options.max_retry == 0
     assert opts.tts_conn_options.max_retry == 0
-    assert opts.stt_conn_options.max_retry == 0
+    assert opts.stt_conn_options.max_retry == 1
+    assert 2 * opts.stt_conn_options.timeout + opts.stt_conn_options._interval_for_retry(0) <= 5.0
     assert opts.llm_conn_options.timeout == 5.0

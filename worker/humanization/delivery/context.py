@@ -1,7 +1,7 @@
 """Session-scoped compiler and synthesis boundary, using existing provider adapters.
 
-Batch B remains the rollback path. Streaming reuses a generation-owned plugin/context
-across planned chunks; shared clients/options are never mutated.
+Batch B remains the rollback path. Streaming uses an exclusive client lease/context
+across planned chunks; session reuse never mutates another generation's options.
 """
 
 from __future__ import annotations
@@ -33,6 +33,65 @@ class DeliveryContext:
         self.capabilities = resolve_capabilities(cfg.tts_provider, self.effective)
         self.language = LanguageProfile(cfg.agent_language)
         self.channel = ChannelProfile(cfg.audio_channel)
+        self._client_pool = None
+
+    def enable_session_reuse(self) -> None:
+        """Enable only after the job has registered our shutdown callback.
+
+        Cartesia clients are leased exclusively, never shared by concurrent
+        generations. Their exact constructor options and tokenizer must match.
+        """
+        if self.cfg.tts_provider == 'cartesia' and self._client_pool is None:
+            from .client_pool import DeliveryClientPool
+            self._client_pool = DeliveryClientPool(max_idle=4)
+
+    async def aclose(self, reason: str = '') -> None:
+        if self._client_pool is not None:
+            await self._client_pool.aclose()
+
+    @staticmethod
+    def _client_key(result, *, planned):
+        import json
+        return planned, json.dumps(result.provider_options, sort_keys=True, allow_nan=False)
+
+    def prewarm_for_plan(self, speech_plan) -> None:
+        """Open the actual delivery client's transport while the LLM is working.
+
+        No speech text is sent. Exact options still govern the synthesis lease:
+        a text-dependent renderer change uses a different client as usual.
+        """
+        if self._client_pool is None:
+            return
+        import logging
+        from ..streaming import SpeechChunk
+        try:
+            result = self.render_chunk(SpeechChunk(0, 0, '', 'transport_prewarm'), speech_plan)
+            key = self._client_key(result, planned=True)
+            plugin, created = self._client_pool.prepare(key, lambda: self._plugin(result, planned=True))
+            if plugin is None:
+                return
+            # This bounded hook retries preparation after a cancelled socket and
+            # owns its task until client close. It does not synthesize audio.
+            plugin.prepare_transport()
+            logging.getLogger(__name__).debug('delivery transport prepare provider=cartesia created=%s', created)
+        except Exception as exc:
+            # Transport preparation must never prevent the real generation.
+            logging.getLogger(__name__).warning('delivery transport prepare failed error_type=%s', type(exc).__name__)
+
+    def _acquire_plugin(self, result, *, planned=False):
+        if self._client_pool is None:
+            return self._plugin(result, planned=planned), None
+        import logging
+        key = self._client_key(result, planned=planned)
+        plugin, reused = self._client_pool.acquire(key, lambda: self._plugin(result, planned=planned))
+        logging.getLogger(__name__).debug('delivery client provider=cartesia reused=%s planned=%s', reused, planned)
+        return plugin, key
+
+    async def _release_plugin(self, plugin, key, *, healthy):
+        if key is None:
+            await plugin.aclose()
+        else:
+            await self._client_pool.release(key, plugin, healthy=healthy)
 
     def compile(self, text: str, *, greeting: bool = False, disclosure: bool = False) -> RenderedSpeech:
         canonical = canonical_spoken_text(text)
@@ -117,7 +176,7 @@ class DeliveryContext:
         return plugin
 
     async def audio_chunks(self, chunks, speech_plan, *, conn_options=None):
-        """One plugin per generation; one native context where installed SDK supports it.
+        """One exclusive client lease and native context per speech generation.
 
         Uplift 1.6.5 ends its AudioEmitter per segment, so it retains per-segment streams
         on the SAME client. No private vendor APIs, per-session mutation or tool cancellation.
@@ -130,7 +189,8 @@ class DeliveryContext:
         if first is None or not speech_plan.valid:
             return
         result = self.render_chunk(first, speech_plan)
-        plugin = self._plugin(result, planned=True)
+        plugin, lease_key = self._acquire_plugin(result, planned=True)
+        healthy = False
         speech_plan.provider_context["lifecycle"] = "generation_plugin"
         continuous = plugin.capabilities.streaming and self.cfg.tts_provider != "uplift"
         try:
@@ -152,6 +212,7 @@ class DeliveryContext:
                     finally:
                         await output.aclose()
                     chunk = await anext(chunks, None)
+                healthy = speech_plan.valid
                 return
 
             speech_plan.provider_context["lifecycle"] = "generation_stream"
@@ -221,14 +282,16 @@ class DeliveryContext:
                         feeder.cancel()
                     await asyncio.gather(feeder, return_exceptions=True)
                     speech_plan.provider_context["stream_closed_at"] = time.monotonic()
+            healthy = speech_plan.valid
         finally:
-            await plugin.aclose()
+            await self._release_plugin(plugin, lease_key, healthy=healthy)
 
     async def _audio(self, result: RenderedSpeech, *, conn_options=None):
         from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
         if not result.canonical_text:
             return
-        plugin = self._plugin(result)
+        plugin, lease_key = self._acquire_plugin(result)
+        healthy = False
         connection = conn_options or DEFAULT_API_CONNECT_OPTIONS
         try:
             if plugin.capabilities.streaming:
@@ -241,5 +304,6 @@ class DeliveryContext:
                 async with plugin.synthesize(result.provider_text, conn_options=connection) as stream:
                     async for event in stream:
                         yield event.frame
+            healthy = True
         finally:
-            await plugin.aclose()
+            await self._release_plugin(plugin, lease_key, healthy=healthy)

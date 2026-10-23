@@ -383,6 +383,9 @@ async def build_session(
         policy=policy_for_agent(cfg),
         persona_profile=profile_from_options(cfg.llm_options),
         provider_snapshot=diagnostic_snapshot,
+        stt_whole_turn_finals=(runtime_cfg.stt_provider == 'deepgram'
+                              and runtime_cfg.agent_language.startswith('en')
+                              and runtime_cfg.stt_options.get('stt_mode') == 'flux'),
     )
     from worker.humanization.delivery.policy import delivery_policy_for
     delivery_policy = delivery_policy_for(cfg)
@@ -515,6 +518,7 @@ async def build_session(
         stt_provider=cfg.stt_provider,
         llm_provider=cfg.llm_provider,
         agent_language=cfg.agent_language,
+        stt_options=runtime_cfg.stt_options,
     )
     logger.info(
         "turn_profile room=%s channel=%s stt=%s llm=%s lang=%s detector=%s "
@@ -1375,6 +1379,11 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         ctx.add_shutdown_callback(_record_agent_minutes)
         ctx.add_shutdown_callback(_persist_session_recording)
 
+        delivery_context = getattr(agent_obj, "delivery_context", None)
+        if delivery_context is not None:
+            ctx.add_shutdown_callback(delivery_context.aclose)
+            delivery_context.enable_session_reuse()
+
         if channel == "telephony":
             # A-01.6: mirror LiveKit's sip.callStatus / dial-failure disconnect onto
             # telephony_calls so call history shows ringing/answered/busy/no_answer
@@ -1659,6 +1668,12 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
     from livekit.plugins import groq  # noqa: F401
 
     imported.append("livekit.plugins.groq")
+
+    # Claude is selectable per agent too. Register its plugin on the main thread
+    # before Windows job threads reach the adapter's lazy import (ADR-007).
+    from livekit.plugins import anthropic  # noqa: F401
+
+    imported.append("livekit.plugins.anthropic")
 
     # gladia + deepgram are both real, per-agent-selectable STT providers now (Phase 2's registry
     # dispatches on each agent's own `stt_provider` DB column, not a worker-level env var; deepgram

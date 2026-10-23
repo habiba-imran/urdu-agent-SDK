@@ -383,6 +383,59 @@ def test_split_phone_finals_produce_one_capture_and_no_extra_turn():
     asyncio.run(run())
 
 
+def test_flux_skips_a_dangling_eager_phrase_but_keeps_final_and_resumed_events_immediate():
+    async def run():
+        from dataclasses import replace
+        incomplete = replace(final('Yeah. A pain in my'), type=stt.SpeechEventType.PREFLIGHT_TRANSCRIPT)
+        complete = replace(final('Yeah. A pain in my leg.'), type=stt.SpeechEventType.PREFLIGHT_TRANSCRIPT)
+        resumed = replace(final('Actually, both legs.'), type=stt.SpeechEventType.INTERIM_TRANSCRIPT)
+        # A final is preserved even if the caller really stopped mid-phrase.
+        last = final('I need the')
+        release = asyncio.Event()
+
+        async def source():
+            yield incomplete
+            yield complete
+            yield resumed
+            yield last
+            await release.wait()
+
+        rt = runtime()
+        rt.stt_whole_turn_finals = True
+        stream = coalesce_structured_finals(source(), rt)
+        assert await asyncio.wait_for(anext(stream), .2) is complete
+        assert await asyncio.wait_for(anext(stream), .2) is resumed
+        assert await asyncio.wait_for(anext(stream), .2) is last
+        await stream.aclose()
+
+    asyncio.run(run())
+
+
+def test_flux_whole_turn_final_is_immediate_and_separate_turns_are_not_merged():
+    async def run():
+        from dataclasses import replace
+        release = asyncio.Event()
+        first = final('0305578021')
+        speculative = replace(first, type=stt.SpeechEventType.PREFLIGHT_TRANSCRIPT)
+        last = final('Four.', 2, 3)
+
+        async def source():
+            yield speculative  # An unfinished phone must not start a speculative reply.
+            yield first
+            await release.wait()
+            yield stt.SpeechEvent(type=stt.SpeechEventType.END_OF_SPEECH)
+            yield last  # A new Flux turn is not a Nova continuation.
+
+        rt = runtime()
+        rt.stt_whole_turn_finals = True
+        stream = coalesce_structured_finals(source(), rt)
+        assert await asyncio.wait_for(anext(stream), .2) is first
+        release.set()
+        remaining = [event async for event in stream]
+        assert [e for e in remaining if e.type == stt.SpeechEventType.FINAL_TRANSCRIPT] == [last]
+    asyncio.run(run())
+
+
 def test_normal_final_is_immediate_and_retransmission_is_not_another_turn():
     async def run():
         release = asyncio.Event()

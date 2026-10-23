@@ -57,8 +57,9 @@ def test_build_session_connect_options_applies_settings(
         opts = build_session_connect_options()
     assert opts.llm_conn_options.max_retry == 3
     assert opts.tts_conn_options.max_retry == 3
-    assert opts.stt_conn_options.max_retry == 0
-    assert opts.stt_conn_options.timeout <= 5.0
+    assert opts.stt_conn_options.max_retry == 1
+    stt = opts.stt_conn_options
+    assert 2 * stt.timeout + stt._interval_for_retry(0) <= 5.0
     assert opts.llm_conn_options.retry_interval == 1.5
     assert opts.llm_conn_options.timeout == 20.0
     assert any("provider_retries max_retry=3" in r.message for r in caplog.records)
@@ -71,4 +72,28 @@ def test_main_wrapper_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     opts = main_build()
     assert opts.llm_conn_options.max_retry == 1
     assert opts.tts_conn_options.max_retry == 1
-    assert opts.stt_conn_options.max_retry == 0
+    assert opts.stt_conn_options.max_retry == 1
+
+
+def test_recoverable_stt_error_can_retry_without_shutting_down(caplog):
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    from worker.provider_retries import wire_provider_failure
+
+    callbacks = {}
+    session = NS(on=lambda name, callback: callbacks.setdefault(name, callback), shutdown=Mock())
+    wire_provider_failure(session, None)
+    cause = TimeoutError('private connection details')
+    error = RuntimeError('private provider request')
+    error.__cause__ = cause
+    event = type('STTError', (), {})()
+    event.error, event.recoverable = error, True
+    with caplog.at_level(logging.WARNING, logger='worker.provider_retries'):
+        callbacks['error'](NS(error=event))
+    session.shutdown.assert_not_called()
+    assert 'cause_type=TimeoutError' in caplog.text
+    assert 'private connection details' not in caplog.text
+    assert 'private provider request' not in caplog.text
+    event.recoverable = False
+    callbacks['error'](NS(error=event))
+    session.shutdown.assert_called_once_with(drain=False)
