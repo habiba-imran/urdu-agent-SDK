@@ -49,7 +49,11 @@ import os
 import time
 from typing import Any
 
-import httpx
+# The anthropic SDK is built on httpx2 and rejects objects from the `httpx` package
+# outright ("Invalid `http_client` argument ... this SDK uses `httpx2`"). The Groq adapter
+# in this package uses plain `httpx` because the OpenAI SDK does; both live in the same
+# process, so the import has to be per-adapter rather than shared.
+import httpx2
 
 logger = logging.getLogger("worker.providers.llm.anthropic")
 
@@ -63,6 +67,22 @@ _FALLBACK_MODEL = "claude-haiku-5-5"
 _DEFAULT_EFFORT = "low"
 _EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
+# How to switch thinking off, per model. Verified against the live API 2026-10-23:
+#   haiku-5-5   {"type": "disabled"}       200   {"type": "between_tools"}  400
+#   sonnet-5-5  {"type": "disabled"}       400   {"type": "between_tools"}  200
+#   opus-5-5    both 400 — thinking cannot be turned off on that model at all.
+# Sending the wrong one fails the whole turn, so this is a table, not a guess.
+#
+# This matters beyond latency. The LiveKit plugin turns a text delta into a chat chunk and
+# drops everything else, so a `thinking_delta` produces no chunk. A turn where the model
+# spends its entire `max_tokens` budget on thinking therefore streams zero content, and
+# worker/provider_retries.py raises "LLM returned no useful output" and ends the call.
+# Turning thinking off removes that failure mode as well as its latency.
+_THINKING_OFF: dict[str, dict[str, str]] = {
+    "claude-haiku-5-5": {"type": "disabled"},
+    "claude-sonnet-5-5": {"type": "between_tools"},
+}
+
 
 def _default_model() -> str:
     return (os.getenv("ANTHROPIC_LLM_MODEL") or "").strip() or _FALLBACK_MODEL
@@ -71,12 +91,16 @@ def _default_model() -> str:
 def _max_tokens() -> int:
     raw = (os.getenv("ANTHROPIC_MAX_TOKENS") or "").strip()
     if not raw:
-        return 160
+        # 160 was sized from observed replies (34-61 tokens) and was too tight: thinking
+        # tokens are charged against the same budget, so a thinking-heavy turn could spend
+        # all of it and emit no text, which ends the call. 320 keeps the output bill small
+        # while leaving room for a reply even when thinking cannot be switched off.
+        return 320
     try:
         value = int(raw)
     except ValueError:
-        logger.warning("invalid ANTHROPIC_MAX_TOKENS=%r — using 160", raw)
-        return 160
+        logger.warning("invalid ANTHROPIC_MAX_TOKENS=%r — using 320", raw)
+        return 320
     # A spoken turn never needs thousands of tokens; refuse a cap that would let one
     # runaway reply dominate the development budget.
     return max(32, min(value, 2048))
@@ -89,6 +113,21 @@ def resolve_effort() -> str:
     if raw:
         logger.warning("invalid ANTHROPIC_EFFORT=%r — using %s", raw, _DEFAULT_EFFORT)
     return _DEFAULT_EFFORT
+
+
+def resolve_thinking(model: str) -> dict[str, str] | None:
+    """Thinking config for the voice path, or None to leave the model's default alone.
+
+    ``ANTHROPIC_THINKING`` overrides: ``off`` (default) uses the per-model table above,
+    ``on`` leaves thinking enabled. An unknown model is left alone rather than sent a value
+    its API would reject.
+    """
+    mode = (os.getenv("ANTHROPIC_THINKING") or "off").strip().lower()
+    if mode in {"on", "adaptive", "1", "true"}:
+        return None
+    if mode not in {"off", "0", "false", ""}:
+        logger.warning("invalid ANTHROPIC_THINKING=%r — using off", mode)
+    return _THINKING_OFF.get(model)
 
 
 def resolve_anthropic_model(model: str) -> tuple[str, str | None]:
@@ -116,7 +155,18 @@ def _make_client() -> Any:
         # LiveKit already retries at the session layer; a second retry budget here would
         # stack inside the 6s useful-progress watchdog (worker/provider_retries.py).
         max_retries=0,
-        timeout=httpx.Timeout(30.0),
+        timeout=httpx2.Timeout(30.0),
+        # keepalive_expiry defaults to 5s while conversational turns are ~10s apart, so the
+        # pooled connection always expired and every turn paid a fresh TCP + TLS handshake
+        # (84ms + 88ms in the 2026-10-23 staging log). DefaultAsyncHttpxClient keeps the
+        # SDK's own defaults for everything this does not override.
+        http_client=anthropic_sdk.DefaultAsyncHttpxClient(
+            limits=httpx2.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
+        ),
     )
 
 
@@ -139,12 +189,15 @@ def build(model: str) -> Any:
 
     effort = resolve_effort()
     max_tokens = _max_tokens()
+    thinking = resolve_thinking(resolved_model)
     logger.info(
-        "anthropic llm model=%s effort=%s max_tokens=%s "
-        "(env ANTHROPIC_LLM_MODEL / ANTHROPIC_EFFORT / ANTHROPIC_MAX_TOKENS)",
+        "anthropic llm model=%s effort=%s max_tokens=%s thinking=%s "
+        "(env ANTHROPIC_LLM_MODEL / ANTHROPIC_EFFORT / ANTHROPIC_MAX_TOKENS / "
+        "ANTHROPIC_THINKING)",
         resolved_model,
         effort,
         max_tokens,
+        (thinking or {}).get("type", "model_default"),
     )
 
     class VoiceClaude(anthropic_plugin.LLM):
@@ -166,6 +219,8 @@ def build(model: str) -> Any:
             wins, so an explicit ``output_config`` is never overwritten.
             """
             extra: dict[str, Any] = {"output_config": {"effort": effort}}
+            if thinking is not None:
+                extra["thinking"] = thinking
             caller = kwargs.pop("extra_kwargs", NOT_GIVEN)
             if is_given(caller) and caller:
                 extra.update(caller)

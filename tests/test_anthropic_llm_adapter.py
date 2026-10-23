@@ -67,6 +67,14 @@ def fake_plugin(monkeypatch):
     sdk = ModuleType("anthropic")
     sdk.AsyncAnthropic = _FakeAsyncAnthropic
 
+    class _FakeHttpxClient:
+        """Stands in for anthropic.DefaultAsyncHttpxClient (httpx2-backed)."""
+
+        def __init__(self, **kwargs):
+            self.limits = kwargs.get("limits")
+
+    sdk.DefaultAsyncHttpxClient = _FakeHttpxClient
+
     import livekit.plugins
 
     monkeypatch.setitem(sys.modules, "livekit.plugins.anthropic", plugin)
@@ -78,6 +86,7 @@ def fake_plugin(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_LLM_MODEL", raising=False)
     monkeypatch.delenv("ANTHROPIC_MAX_TOKENS", raising=False)
     monkeypatch.delenv("ANTHROPIC_EFFORT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_THINKING", raising=False)
     return plugin
 
 
@@ -135,7 +144,7 @@ def test_chat_passes_through_unknown_kwargs(fake_plugin):
 
 def test_max_tokens_is_capped_tight_for_spoken_replies(fake_plugin, monkeypatch):
     adapter.build("claude-opus-5-5")
-    assert _FakeBaseLLM.instances[-1].ctor_kwargs["max_tokens"] == 160
+    assert _FakeBaseLLM.instances[-1].ctor_kwargs["max_tokens"] == 320
 
     monkeypatch.setenv("ANTHROPIC_MAX_TOKENS", "400")
     adapter.build("claude-opus-5-5")
@@ -148,7 +157,7 @@ def test_max_tokens_is_capped_tight_for_spoken_replies(fake_plugin, monkeypatch)
 
     monkeypatch.setenv("ANTHROPIC_MAX_TOKENS", "not-a-number")
     adapter.build("claude-opus-5-5")
-    assert _FakeBaseLLM.instances[-1].ctor_kwargs["max_tokens"] == 160
+    assert _FakeBaseLLM.instances[-1].ctor_kwargs["max_tokens"] == 320
 
 
 def test_empty_model_resolves_to_the_repo_default_not_the_plugin_default(fake_plugin, monkeypatch):
@@ -210,3 +219,59 @@ def test_capabilities_offer_anthropic_for_both_languages():
         assert cap["default_model"] == "claude-haiku-5-5"
         # Portal validation is capability-driven, so this set is what agent rows may carry.
         assert {"claude-opus-5-5", "claude-haiku-5-5"} <= set(allowed_llm_models(cap))
+
+
+# --- thinking: the control that decides whether a turn produces any text at all ---------
+
+
+def test_thinking_off_value_is_per_model_because_the_wrong_one_is_a_400():
+    """Verified against the live API 2026-10-23:
+
+        haiku-5-5   disabled 200   between_tools 400
+        sonnet-5-5  disabled 400   between_tools 200
+        opus-5-5    both 400 -- thinking cannot be switched off there
+
+    Sending the wrong value fails the whole turn, so this is a table lookup, not a guess.
+    """
+    assert adapter.resolve_thinking("claude-haiku-5-5") == {"type": "disabled"}
+    assert adapter.resolve_thinking("claude-sonnet-5-5") == {"type": "between_tools"}
+    assert adapter.resolve_thinking("claude-opus-5-5") is None
+    # An unrecognised model is left alone rather than sent a value its API may reject.
+    assert adapter.resolve_thinking("claude-future-9") is None
+
+
+def test_thinking_is_sent_with_effort_on_every_request(fake_plugin):
+    """A thinking-only response streams no text deltas at all.
+
+    The plugin maps a text delta to a chat chunk and drops every other event, so a turn
+    that spends its whole max_tokens budget on thinking yields zero content and
+    worker/provider_retries.py raises "LLM returned no useful output" -- which ends the
+    call, not just the turn. That is what killed the 2026-10-23 staging sessions.
+    """
+    adapter.build("claude-haiku-5-5").chat(chat_ctx="ctx")
+    extra = _FakeBaseLLM.instances[-1].chat_calls[0]["extra_kwargs"]
+    assert extra["thinking"] == {"type": "disabled"}
+    assert extra["output_config"] == {"effort": "low"}
+
+
+def test_thinking_can_be_left_on_deliberately(fake_plugin, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_THINKING", "on")
+    adapter.build("claude-haiku-5-5").chat(chat_ctx="ctx")
+    assert "thinking" not in _FakeBaseLLM.instances[-1].chat_calls[0]["extra_kwargs"]
+
+
+def test_opus_never_receives_a_thinking_field_it_would_reject(fake_plugin):
+    adapter.build("claude-opus-5-5").chat(chat_ctx="ctx")
+    assert "thinking" not in _FakeBaseLLM.instances[-1].chat_calls[0]["extra_kwargs"]
+
+
+def test_connection_is_kept_alive_across_conversational_turns(fake_plugin):
+    """keepalive_expiry defaults to 5s; turns are ~10s apart.
+
+    Without this the pooled connection expired between every turn and each one paid a
+    fresh TCP + TLS handshake -- 84ms + 88ms in the staging log.
+    """
+    adapter.build("claude-haiku-5-5")
+    limits = _FakeAsyncAnthropic.instances[0].ctor_kwargs["http_client"].limits
+    assert limits.keepalive_expiry == 120
+    assert limits.max_keepalive_connections == 50
