@@ -14,6 +14,11 @@ from typing import Any
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def offline_room_presence(monkeypatch):
+    monkeypatch.setattr("worker.room_presence.room_is_active", lambda room: False)
+
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -98,6 +103,8 @@ class QuotaDb:
         self.executed.append(sql)
 
         # --- sessions (worker close) ---
+        if "select id, tenant_id from sessions s" in sql or "update sessions set finalized_at" in sql:
+            return _Cur([])
         if "update sessions set ended_at = now()" in sql and "returning id" in sql:
             room = params[-1]
             s = next((s for s in self.sessions if s["room_name"] == room and s["ended_at"] is None), None)
@@ -168,9 +175,9 @@ class QuotaDb:
             return _Cur([])
 
         # reconciler: stale active calls
-        if "select id, tenant_id from telephony_calls" in sql and "interval '2 hours'" in sql:
+        if "select id, tenant_id, room_name from telephony_calls" in sql and "interval '3 minutes'" in sql:
             rows = [c for c in self.calls if c["platform_status"] in self.ACTIVE and c["stale"]]
-            return _Cur([(c["id"], c["tenant_id"]) for c in rows[: params[0]]])
+            return _Cur([(c["id"], c["tenant_id"], c["room_name"]) for c in rows[: params[0]]])
 
         # reconciler / sweep: terminal but unreleased
         if "select id, tenant_id from telephony_calls" in sql and "quota_released_at is null" in sql:
@@ -352,7 +359,9 @@ def test_outbound_dispatch_failure_releases_reservation():
             idempotency_key="dispatch-fails-1",
         )
     assert db.quota["tenant_client_1"] == 0
-    assert db.calls == []
+    # The failed operation remains durable so retrying its key cannot redial.
+    assert len(db.calls) == 1
+    assert db.calls[0]["platform_status"] == "failed"
 
 
 def test_outbound_insert_stamps_quota_reserved_at():
@@ -619,9 +628,8 @@ def test_session_close_telephony_lookup_failure_does_not_raise():
             return super().execute(query, params)
 
     db = Broken()
-    res = _close(db, "r1")
-    assert res.telephony_call_id is None
-    assert res.quota_decremented is False
+    with pytest.raises(RuntimeError, match="db down"):
+        _close(db, "r1")
 
 
 # ------------------------------------------------------------ telephony reconciler

@@ -1,0 +1,92 @@
+{
+  "distribution": "Unpublished connection lifecycle working-tree snapshots; not npm releases",
+  "packages": [
+    {
+      "name": "@awaazlabs-uva/voice",
+      "version": "1.1.1",
+      "artifact": "awaazlabs-uva-voice-1.1.1-lifecycle.tgz",
+      "sha256": "4248eba60381d194da3b645912995be9098e6b0a3418c4334804aed4a89cdf13",
+      "integrity": "sha512-6Wob84/i2likWfqQUEIbwY2zFQcA1pbRpuG8L1m3KJ2Hh8Lu2ZHB3x4Y4raO9X1V6E2htWY1E9DqA/qIPuw+Iw==",
+      "source_sha256": [
+        {
+          "path": "sdk/src/index.ts",
+          "sha256": "015efb258fca389eae0f741d8dfe00f9f30821c54a5786129d81e8c7aa64e925"
+        },
+        {
+          "path": "sdk/src/internal/errors.ts",
+          "sha256": "0afed031ebfd39f5c55f0a980b2c9a2eb60e98fb6e8cb7c1e853452d1878b9a8"
+        },
+        {
+          "path": "sdk/src/internal/http.ts",
+          "sha256": "26ca27a6e6aed50ae4b54734cbd7031f937cdaf4f264bb57d76ab525b404534e"
+        },
+        {
+          "path": "sdk/src/internal/livekitToken.ts",
+          "sha256": "0ca764aa36acf4a32132ba03222176d68cf4e92ee83fbceffac1c3f3c91a5173"
+        },
+        {
+          "path": "sdk/package.json",
+          "sha256": "c6eceb77b6c5dc4391dd83c1b794c8b5b9b1d7a1f9eee4a3538084b261027321"
+        }
+      ]
+    },
+    {
+      "name": "@awaazlabs-uva/agents",
+      "version": "0.1.2-humanization.0",
+      "artifact": "awaazlabs-uva-agents-0.1.2-humanization.0-lifecycle.tgz",
+      "sha256": "debe724f8fc3505c4820d55154c923dd1b4d7c6e095b2840c4bbb0157cbd6b12",
+      "integrity": "sha512-msAEYV6CpQ+JAdlnYAmukJvIFCAlEZPb0Lctj1c4PQsZG9Izc/qVwgFRZFG0MpJAt61ueTJwZF3ciWI2vVTrzw==",
+      "source_sha256": [
+        {
+          "path": "sdk-server/src/index.ts",
+          "sha256": "c3effd01419eeefe1fe97d7f019fd91a73b107b2347cf8e2cca20f8a4fbea337"
+        },
+        {
+          "path": "sdk-server/package.json",
+          "sha256": "2c9cbc4548805d7cfe1dca47a62e7942fe77a0e08b019bcc1d3964a06fec4eee"
+        }
+      ]
+    },
+    {
+      "name": "@awaazlabs-uva/telephony",
+      "version": "0.1.1",
+      "artifact": "awaazlabs-uva-telephony-0.1.1-lifecycle.tgz",
+      "sha256": "f22a055f63e0267ae49fd2fe9285162397f1391222ad53ea9fbb82c768d3b9ca",
+      "integrity": "sha512-v/4z74yhjYyHEe/+NI/N+wOODfDQJhPYJcHnOizZp6WZUJjGLRRjshpSPEY2SgZ2LHNDa2mVxpZ74uu1eZcRHA==",
+      "source_sha256": [
+        {
+          "path": "telephony/src/errors.ts",
+          "sha256": "a438f392f2ab37f2379a7c2914682cd1fa750c4b8a6b3459b5b32f20df8cd6d5"
+        },
+        {
+          "path": "telephony/src/index.ts",
+          "sha256": "88954075c1f7560775ad40682ecf394e53caba12f68404b15855986ea5a7e2ec"
+        },
+        {
+          "path": "telephony/src/node-crypto.d.ts",
+          "sha256": "e09a5ac3758cf339a965ca6385480d3d1887114a90d16711b9e1d79dbd61cb31"
+        },
+        {
+          "path": "telephony/src/routes.ts",
+          "sha256": "ef907d9e87e157e3fe1625a7947809c32a8cb5c55c17b0347611c2714ccf06dc"
+        },
+        {
+          "path": "telephony/src/signing.ts",
+          "sha256": "11bb19340e0e7e79af08c5a03854da45a014400365337d0f68273c6499c9124a"
+        },
+        {
+          "path": "telephony/src/transport.ts",
+          "sha256": "b91a8ffedb22a5b6b4700819d84355dccc19d7a341f4119a90f7d6d166600f0a"
+        },
+        {
+          "path": "telephony/src/types.ts",
+          "sha256": "a51a1b584aabca3eb816d79e10811b3b397616d2dd6534bb8ee3389392177723"
+        },
+        {
+          "path": "telephony/package.json",
+          "sha256": "fe0c9ec59b6ac8d8249f6742a6cfa36127eeaa8b07dabae02d432259b300692b"
+        }
+      ]
+    }
+  ]
+}

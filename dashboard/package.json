@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@awaazlabs-uva/voice": "1.1.1",
+    "@awaazlabs-uva/voice": "file:../client-integration-test/packages/awaazlabs-uva-voice-1.1.1-lifecycle.tgz",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
     "@supabase/supabase-js": "^2.117.2",

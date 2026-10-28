@@ -62,7 +62,7 @@ def test_schedule_dispatch_starts_immediately(monkeypatch):
     gate = threading.Event()
     calls: list[dict] = []
 
-    async def capture(room_name, *, tenant_id, agent_id, greeting=None, verified_caller_phone=None):
+    async def capture(room_name, *, tenant_id, agent_id, session_id=None, greeting=None, verified_caller_phone=None):
         calls.append(
             {
                 "room_name": room_name,
@@ -107,6 +107,9 @@ def test_watch_dispatch_rolls_back_on_failure(monkeypatch):
         rolled.append((tenant_id, room_name, end_reason))
 
     monkeypatch.setattr(app_module, "_rollback_dispatched_session", fake_rollback)
+    async def compensate(room_name):
+        return None
+    monkeypatch.setattr(app_module, "_compensate_dispatch", compensate)
 
     class BoomFuture:
         def result(self, timeout=None):
@@ -172,5 +175,5 @@ def test_session_endpoint_schedules_dispatch_without_background_tasks(monkeypatc
     )
     assert response.status_code == 200
     assert scheduled == [
-        ("room-123", "tenant-123", "agent-123", {"greeting": None, "verified_caller_phone": None})
+        ("room-123", "tenant-123", "agent-123", {"session_id": None, "greeting": None, "verified_caller_phone": None})
     ]

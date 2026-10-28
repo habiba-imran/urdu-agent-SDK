@@ -19,6 +19,7 @@ export interface JsonInputObject {
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 export interface TelephonyFetchInit {
+  signal?: AbortSignal;
   method: HttpMethod;
   headers: Record<string, string>;
   body?: string;
@@ -37,6 +38,8 @@ export type TelephonyFetch = (
 ) => Promise<TelephonyFetchResponse>;
 
 export interface TelephonyClientOptions {
+  /** Full HTTP deadline including body. Default 15 seconds; writes are never auto-retried. */
+  requestTimeoutMs?: number;
   tenantId: string;
   tenantSecret: string;
   baseUrl: string;

@@ -49,6 +49,8 @@ def test_gemini_voice_path_disables_thinking(monkeypatch):
         ThinkingConfig=_thinking_config,
     )
     fake_google = SimpleNamespace(LLM=FakeLLM)
+    import livekit.plugins
+    monkeypatch.setattr(livekit.plugins, "google", fake_google, raising=False)
     monkeypatch.setitem(sys.modules, "livekit.plugins.google", fake_google)
     monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
     monkeypatch.setitem(sys.modules, "google.genai", SimpleNamespace(types=fake_types))
@@ -71,7 +73,10 @@ def test_gemini_25_path_uses_thinking_budget(monkeypatch):
         HttpOptions=lambda timeout: SimpleNamespace(timeout=timeout),
         ThinkingConfig=lambda **kwargs: kwargs,
     )
-    monkeypatch.setitem(sys.modules, "livekit.plugins.google", SimpleNamespace(LLM=FakeLLM))
+    fake_google = SimpleNamespace(LLM=FakeLLM)
+    import livekit.plugins
+    monkeypatch.setattr(livekit.plugins, "google", fake_google, raising=False)
+    monkeypatch.setitem(sys.modules, "livekit.plugins.google", fake_google)
     monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
     monkeypatch.setitem(sys.modules, "google.genai", SimpleNamespace(types=fake_types))
     monkeypatch.setattr(gemini_mod, "_DEPRECATED_GEMINI_MODELS", {})
@@ -92,8 +97,11 @@ def test_deepgram_stt_voice_options(monkeypatch):
     import worker.providers.stt.deepgram as dg
 
     fake_deepgram = SimpleNamespace(STT=FakeSTT)
+    import livekit.plugins
+    monkeypatch.setattr(livekit.plugins, "deepgram", fake_deepgram, raising=False)
     monkeypatch.setitem(sys.modules, "livekit.plugins.deepgram", fake_deepgram)
     monkeypatch.delenv("UVA_DEEPGRAM_ENDPOINTING_MS", raising=False)
+    monkeypatch.setenv("UVA_DEEPGRAM_STT_MODE", "nova")
     dg.build("en")
     assert created["model"] == "nova-3"
     assert created["no_delay"] is True

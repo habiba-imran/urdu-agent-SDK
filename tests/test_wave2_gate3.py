@@ -129,8 +129,9 @@ def test_expired_windows_are_dropped(cp, monkeypatch):
 class _FakeConn:
     """Returns a queued result per execute() call, in query order."""
 
-    def __init__(self, tenant_row, session_row, quota_row):
-        self._rows = [tenant_row, session_row, quota_row]
+    def __init__(self, tenant_row, session_row, quota_row, active_minutes=0):
+        monthly = (tenant_row[1], quota_row[0]) if tenant_row and quota_row else None
+        self._rows = [tenant_row, session_row, monthly, (active_minutes,)]
         self.queries: list[str] = []
 
     def execute(self, sql, params=None):
@@ -181,6 +182,14 @@ def test_refresh_is_refused_past_the_monthly_cap(cp, monkeypatch):
     from fastapi import HTTPException
 
     _patch_conn(cp, monkeypatch, _FakeConn(("active", 100), (None,), (100,)))
+    with pytest.raises(HTTPException) as excinfo:
+        cp._enforce_refresh_gates(tenant_id="t", room="r")
+    assert excinfo.value.status_code == 429
+
+
+def test_refresh_counts_minutes_of_ongoing_sessions(cp, monkeypatch):
+    from fastapi import HTTPException
+    _patch_conn(cp, monkeypatch, _FakeConn(("active", 100), (None,), (90,), active_minutes=10))
     with pytest.raises(HTTPException) as excinfo:
         cp._enforce_refresh_gates(tenant_id="t", room="r")
     assert excinfo.value.status_code == 429

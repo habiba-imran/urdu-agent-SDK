@@ -125,7 +125,15 @@ def build(model: str) -> Any:
             self._transport_warmed_at: float | None = None
             super().__init__(client=self._transport_client, **kwargs)
 
-        async def prewarm(self) -> None:
+        def prewarm(self):
+            import asyncio
+            task = getattr(self, "_warm_task", None)
+            if task is None or task.done():
+                self._warm_task = asyncio.create_task(self._prewarm())
+                self._warm_task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            return self._warm_task
+
+        async def _prewarm(self) -> None:
             # Reuse the same connection for chat without consuming completion TPM.
             # Failure remains diagnostic; it never changes provider or model.
             if self._transport_warmed_at is not None and time.monotonic() - self._transport_warmed_at < 30:
@@ -134,6 +142,11 @@ def build(model: str) -> Any:
             self._transport_warmed_at = time.monotonic()
 
         async def aclose(self) -> None:
+            task = getattr(self, "_warm_task", None)
+            if task is not None:
+                import asyncio
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             try:
                 await super().aclose()
             finally:

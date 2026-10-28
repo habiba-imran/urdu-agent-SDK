@@ -20,6 +20,8 @@ export interface AwaazLabsUvaAgentsClientOptions {
   /** Optional non-auth headers for local tunnels/proxies. Auth headers cannot be overridden. */
   extraHeaders?: Record<string, string>;
   /** Opt into exact wire-byte signing after deploying a raw-body-v1 portal. */
+  /** Full HTTP operation deadline, including response body. Default 15 seconds. */
+  requestTimeoutMs?: number;
   signatureVersion?: 'canonical-json-v1' | 'raw-body-v1';
 }
 
@@ -57,6 +59,7 @@ export function validateHumanization(value: unknown): HumanizationOptions {
 }
 
 export interface AgentRecord {
+  max_call_duration_seconds: number;
   id: string;
   name: string;
   prompt: string;
@@ -103,6 +106,8 @@ export interface CreateAgentParams {
   /** Exact opening line when firstSpeaker is 'agent'. Omit for a generated greeting. Empty string on update clears it. */
   greeting?: string;
   /** Who speaks first. Default 'agent'. 'user' waits for the caller. */
+  /** Applies to web, inbound and outbound calls. Default 1800; allowed 60..7200 seconds. */
+  maxCallDurationSeconds?: number;
   firstSpeaker?: FirstSpeaker;
   /**
    * HTTPS (or http for local) base URL of THIS client's tool gateway.
@@ -131,6 +136,8 @@ export interface UpdateAgentParams {
   ttsOptions?: Record<string, unknown>;
   /** Exact opening line when firstSpeaker is 'agent'. Empty string clears it. */
   greeting?: string;
+  /** Applies to web, inbound and outbound calls. Default 1800; allowed 60..7200 seconds. */
+  maxCallDurationSeconds?: number;
   firstSpeaker?: FirstSpeaker;
   toolsBaseUrl?: string;
   toolsAuthSecret?: string;
@@ -217,6 +224,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 export class AwaazLabsUvaAgentsClient {
   constructor(private readonly options: AwaazLabsUvaAgentsClientOptions) {
+    if (options.requestTimeoutMs !== undefined && (!Number.isFinite(options.requestTimeoutMs) || options.requestTimeoutMs <= 0)) throw new Error('requestTimeoutMs must be positive');
     if (!options.tenantId.trim()) throw new Error('tenantId is required');
     if (!options.tenantSecret.trim()) throw new Error('tenantSecret is required');
     if (!options.baseUrl.trim()) throw new Error('baseUrl is required');
@@ -240,6 +248,12 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
     if (params.greeting !== undefined) body.greeting = params.greeting;
+    if (params.maxCallDurationSeconds !== undefined) {
+      if (!Number.isInteger(params.maxCallDurationSeconds) || params.maxCallDurationSeconds < 60 || params.maxCallDurationSeconds > 7200) {
+        throw new Error('maxCallDurationSeconds must be an integer between 60 and 7200');
+      }
+      body.max_call_duration_seconds = params.maxCallDurationSeconds;
+    }
     if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
     if (params.toolsBaseUrl !== undefined) body.tools_base_url = params.toolsBaseUrl;
     if (params.toolsAuthSecret !== undefined) body.tools_auth_secret = params.toolsAuthSecret;
@@ -267,6 +281,12 @@ export class AwaazLabsUvaAgentsClient {
     if (params.ttsVoiceId !== undefined) body.tts_voice_id = params.ttsVoiceId;
     if (params.ttsOptions !== undefined) body.tts_options = params.ttsOptions;
     if (params.greeting !== undefined) body.greeting = params.greeting;
+    if (params.maxCallDurationSeconds !== undefined) {
+      if (!Number.isInteger(params.maxCallDurationSeconds) || params.maxCallDurationSeconds < 60 || params.maxCallDurationSeconds > 7200) {
+        throw new Error('maxCallDurationSeconds must be an integer between 60 and 7200');
+      }
+      body.max_call_duration_seconds = params.maxCallDurationSeconds;
+    }
     if (params.firstSpeaker !== undefined) body.first_speaker = params.firstSpeaker;
     if (params.toolsBaseUrl !== undefined) body.tools_base_url = params.toolsBaseUrl;
     if (params.toolsAuthSecret !== undefined) body.tools_auth_secret = params.toolsAuthSecret;
@@ -298,8 +318,13 @@ export class AwaazLabsUvaAgentsClient {
     };
 
     const hasBody = method !== 'GET';
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = this.options.requestTimeoutMs ?? 15000;
+    const operation = async () => {
     const res = await fetch(`${this.options.baseUrl.replace(/\/$/, '')}${path}`, {
       method,
+      signal: controller.signal,
       headers,
       body: hasBody ? canonicalBody : undefined,
     });
@@ -329,6 +354,15 @@ export class AwaazLabsUvaAgentsClient {
       throw new AwaazLabsUvaAgentsError(res.status, String(detail ?? res.statusText));
     }
     return parsed as TResponse;
+    };
+    try {
+      return await Promise.race([operation(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new AwaazLabsUvaAgentsError(504, 'Agent API deadline exceeded', 'request_timeout'));
+        }, timeoutMs);
+      })]);
+    } finally { clearTimeout(timer); }
   }
 
   /** GET /machine/provider-capabilities (Phase 4, ADR-036) - which (language, layer, provider)

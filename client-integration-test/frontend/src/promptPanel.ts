@@ -1,5 +1,5 @@
 import { humanizationMarkup, personaControls, normalizedHumanization, type Humanization } from './humanization';
-type AgentConfig = { id: string; name?: string; prompt: string; firstSpeaker: 'agent' | 'user'; greeting: string; humanization?: Humanization };
+type AgentConfig = { maxCallDurationSeconds?: number; id: string; name?: string; prompt: string; firstSpeaker: 'agent' | 'user'; greeting: string; humanization?: Humanization };
 
 export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () => string; onBusyChange?: () => void }) {
   const root = document.querySelector<HTMLElement>('#prompt-root')!;
@@ -13,6 +13,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
         <label>Who speaks first?<select id="first-speaker" disabled><option value="agent">Agent starts</option><option value="user">Wait for caller</option></select></label>
         <label>Opening line <span class="optional">optional</span><input id="agent-greeting" maxlength="500" dir="auto" placeholder="Leave empty for a generated greeting" disabled /></label>
       </div>
+      <label>Maximum call duration (minutes)<input id="call-duration" type="number" min="1" max="120" step="any" value="30" disabled /></label><p class="hint">Applies to web, inbound and outbound calls. Default 30 minutes; maximum 120 minutes.</p>
       <div class="actions prompt-actions"><button id="save-prompt-btn" type="button" class="primary" disabled>Save prompt</button><button id="reset-prompt-btn" type="button" disabled>Reset changes</button><button id="reload-prompt-btn" type="button">Reload</button><button id="copy-prompt-btn" type="button" disabled>Copy prompt</button></div>
       <p id="prompt-feedback" class="feedback" role="status" aria-live="polite">Choose an agent to view its prompt.</p>
     </section>`;
@@ -20,6 +21,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
   const prompt = el<HTMLTextAreaElement>('agent-prompt');
   const speaker = el<HTMLSelectElement>('first-speaker');
   const greeting = el<HTMLInputElement>('agent-greeting');
+  const duration = el<HTMLInputElement>('call-duration');
   const save = el<HTMLButtonElement>('save-prompt-btn');
   const reset = el<HTMLButtonElement>('reset-prompt-btn');
   const reload = el<HTMLButtonElement>('reload-prompt-btn');
@@ -32,14 +34,14 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
   let locked = false;
   let requestId = 0;
   const personaDirty = () => !!saved && JSON.stringify(persona.value()) !== JSON.stringify(normalizedHumanization(saved.humanization));
-  const isDirty = () => !!saved && (prompt.value !== saved.prompt || speaker.value !== saved.firstSpeaker || greeting.value !== saved.greeting || personaDirty());
+  const isDirty = () => !!saved && (prompt.value !== saved.prompt || speaker.value !== saved.firstSpeaker || greeting.value !== saved.greeting || Math.round(Number(duration.value) * 60) !== (saved.maxCallDurationSeconds ?? 1800) || personaDirty());
   function update() {
     const current = !!saved && saved.id === opts.getAgentId().trim();
     const disabled = locked || busy || !current;
-    prompt.disabled = speaker.disabled = disabled;
+    prompt.disabled = speaker.disabled = duration.disabled = disabled;
     persona.lock(disabled);
     greeting.disabled = disabled || speaker.value === 'user';
-    save.disabled = disabled || !isDirty() || !prompt.value.trim();
+    save.disabled = disabled || !isDirty() || !prompt.value.trim() || !duration.checkValidity();
     reset.disabled = disabled || !isDirty();
     reload.disabled = locked || busy || !opts.getAgentId().trim();
     copy.disabled = !prompt.value;
@@ -53,6 +55,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
     prompt.value = config.prompt;
     speaker.value = config.firstSpeaker;
     greeting.value = config.greeting;
+    duration.value = String((config.maxCallDurationSeconds ?? 1800) / 60);
     persona.set(config.humanization);
     update();
   }
@@ -94,7 +97,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
       if (serial === requestId) { busy = false; update(); opts.onBusyChange?.(); }
     }
   }
-  [prompt, speaker, greeting].forEach(input => input.addEventListener('input', () => {
+  [prompt, speaker, greeting, duration].forEach(input => input.addEventListener('input', () => {
     feedback.textContent = 'Unsaved changes. Save to use these instructions in the next session.';
     update();
     opts.onBusyChange?.();
@@ -109,7 +112,7 @@ export function mountPromptPanel(opts: { backendOrigin: string; getAgentId: () =
     update();
     opts.onBusyChange?.();
     try {
-      const data = await request(id, { method: 'POST', body: JSON.stringify({ prompt: prompt.value, firstSpeaker: speaker.value, greeting: greeting.value,
+      const data = await request(id, { method: 'POST', body: JSON.stringify({ maxCallDurationSeconds: Math.round(Number(duration.value) * 60), prompt: prompt.value, firstSpeaker: speaker.value, greeting: greeting.value,
         ...((personaDirty() || saved.humanization) ? { humanization: persona.value() } : {}) }) });
       if (opts.getAgentId().trim() === id) {
         show(data);

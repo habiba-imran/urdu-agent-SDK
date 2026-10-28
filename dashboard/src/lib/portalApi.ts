@@ -32,6 +32,7 @@ export type PortalAgent = {
   tts_voice_id?: string | null;
   tts_options?: Record<string, unknown>;
   /** F-C4 — opt-in call recording (default false). */
+  max_call_duration_seconds?: number;
   recording_enabled?: boolean;
 };
 

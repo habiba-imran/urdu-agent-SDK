@@ -113,7 +113,8 @@ function agentPipelineMatches(agent, applied) {
     tts === applied.ttsProvider &&
     (!applied.sttModel || sttModel === applied.sttModel) &&
     (!applied.llmModel || llmModel === applied.llmModel) &&
-    (!applied.ttsVoiceId || voice === applied.ttsVoiceId) && matchesPersona
+    (!applied.ttsVoiceId || voice === applied.ttsVoiceId) &&
+    (applied.maxCallDurationSeconds === undefined || (agent.max_call_duration_seconds ?? 1800) === applied.maxCallDurationSeconds) && matchesPersona
   );
 }
 
@@ -123,6 +124,10 @@ function agentPipelineMatches(agent, applied) {
  * Skips the portal PATCH when the agent already matches (demo Connect hot path).
  */
 async function applyPipelineSelection(client, agentId, selection, { force = false } = {}) {
+  const maxCallDurationSeconds = selection.maxCallDurationSeconds;
+  if (maxCallDurationSeconds !== undefined && (!Number.isInteger(maxCallDurationSeconds) || maxCallDurationSeconds < 60 || maxCallDurationSeconds > 7200)) {
+    throw Object.assign(new Error('Call duration must be 60 to 7200 seconds.'), {code: 'invalid_duration'});
+  }
   const humanization = selection.humanization === undefined ? undefined : validateHumanization(selection.humanization);
   const language = String(selection.agentLanguage || '').trim();
   const sttProvider = String(selection.sttProvider || '').trim();
@@ -200,6 +205,7 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
 
   const applied = {
     ...(humanization === undefined ? {} : { humanization }),
+    ...(maxCallDurationSeconds === undefined ? {} : { maxCallDurationSeconds }),
     agentLanguage: language,
     sttProvider,
     sttModel,
@@ -225,6 +231,7 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
 
   const agent = await client.updateAgent(agentId, {
     ...(humanization === undefined ? {} : { humanization }),
+    ...(maxCallDurationSeconds === undefined ? {} : { maxCallDurationSeconds }),
     agentLanguage: language,
     sttProvider,
     sttModel,
@@ -427,6 +434,7 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
     try {
       upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session`, {
         method: 'POST',
+        signal: AbortSignal.timeout(15000),
         headers,
         body: JSON.stringify({ agent_id: agentId }),
       });
@@ -461,6 +469,7 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
     }
 
     res.json({
+      sessionId: payload.sessionId,
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,
@@ -492,6 +501,7 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
     try {
       upstream = await fetchImpl(`${config.controlPlaneUrl}/v1/session/refresh`, {
         method: 'POST',
+        signal: AbortSignal.timeout(15000),
         headers,
         body: bearer?.startsWith('Bearer ') ? undefined : JSON.stringify({ token }),
       });
@@ -515,6 +525,7 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
     }
 
     res.json({
+      sessionId: payload.sessionId,
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,

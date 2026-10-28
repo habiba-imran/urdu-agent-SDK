@@ -203,6 +203,7 @@ class CreateAgentBody(BaseModel):
     greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
     # F-C4: opt-in call recording (default false — column default matches).
+    max_call_duration_seconds: int | None = Field(default=None, ge=60, le=7200, strict=True)
     recording_enabled: bool | None = Field(default=None)
     # Client backend tool gateway (RAG/FAQ/scheduling). Per-agent so multi-client SDK
     # workers call the right host — not a single global worker env URL.
@@ -226,6 +227,7 @@ class UpdateAgentBody(BaseModel):
     tts_options: dict | None = Field(default=None)
     greeting: str | None = Field(default=None, max_length=MAX_GREETING_CHARS)
     first_speaker: str | None = Field(default=None)
+    max_call_duration_seconds: int | None = Field(default=None, ge=60, le=7200, strict=True)
     recording_enabled: bool | None = Field(default=None)
     tools_base_url: str | None = Field(default=None)
     tools_auth_secret: str | None = Field(default=None)
@@ -799,6 +801,7 @@ def create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            max_call_duration_seconds=body.max_call_duration_seconds,
             recording_enabled=_recording_enabled_from_body(body, None),
             tools_base_url=tools["tools_base_url"],
             tools_auth_secret=tools["tools_auth_secret"],
@@ -842,6 +845,7 @@ def update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                max_call_duration_seconds=(body.max_call_duration_seconds if "max_call_duration_seconds" in body.model_fields_set else current.get("max_call_duration_seconds", 1800)),
                 recording_enabled=_recording_enabled_from_body(body, current),
                 tools_base_url=tools["tools_base_url"],
                 tools_auth_secret=tools["tools_auth_secret"],
@@ -1252,6 +1256,7 @@ def machine_create_agent_route(
             tts_options=resolved["tts_options"],
             greeting=opening["greeting"],
             first_speaker=opening["first_speaker"],
+            max_call_duration_seconds=body.max_call_duration_seconds,
             recording_enabled=_recording_enabled_from_body(body, None),
             tools_base_url=tools["tools_base_url"],
             tools_auth_secret=tools["tools_auth_secret"],
@@ -1349,6 +1354,7 @@ def machine_update_agent_route(
                 tts_options=resolved["tts_options"],
                 greeting=opening["greeting"],
                 first_speaker=opening["first_speaker"],
+                max_call_duration_seconds=(body.max_call_duration_seconds if "max_call_duration_seconds" in body.model_fields_set else current.get("max_call_duration_seconds", 1800)),
                 recording_enabled=_recording_enabled_from_body(body, current),
                 tools_base_url=tools["tools_base_url"],
                 tools_auth_secret=tools["tools_auth_secret"],

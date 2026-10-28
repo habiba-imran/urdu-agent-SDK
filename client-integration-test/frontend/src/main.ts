@@ -691,6 +691,13 @@ navLinks.forEach(link => {
 navLinks[0]?.setAttribute('aria-current', 'location');
 
 function bindAgent(client: AwaazLabsUvaVoice): void {
+  client.on('connection_state_changed', connection => {
+    if (connection === 'reconnecting') {
+      state.audioReady = false;
+      sessionFeedback.textContent = 'Reconnecting voice transport...';
+      setStatus('reconnecting');
+    } else if (connection === 'connected') setStatus('connected');
+  });
   client.on('connect_timing', (timing) => {
     state.timing.sessionMintMs = timing.mintMs;
     state.timing.livekitConnectMs = timing.livekitConnectMs;
@@ -730,7 +737,10 @@ function bindAgent(client: AwaazLabsUvaVoice): void {
     state.thinking = false;
     state.speaking = false;
     state.agentSpeaking = false;
-    sessionFeedback.textContent = 'Session disconnected. Ready to reconnect.';
+    const outcome = typeof reason === 'object' && reason !== null ? reason as { reason?: string; stage?: string; code?: string } : null;
+    sessionFeedback.textContent = outcome?.reason === 'max_duration_reached' ? 'Call duration limit reached.' :
+      outcome?.stage ? 'Call ended because the ' + outcome.stage + ' provider failed (' + (outcome.code ?? 'provider_unavailable') + ').' :
+      'Session disconnected. Ready to reconnect.';
     setStatus('idle');
   });
   client.on('transcript', (entry) => {

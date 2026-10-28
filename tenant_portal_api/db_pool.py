@@ -37,6 +37,24 @@ _created = 0
 _fill_started = False
 
 
+def _slot_lost(pool: queue.Queue) -> None:
+    global _created, _fill_started
+    with _lock:
+        if _pool is pool:
+            _created = max(0, _created - 1)
+            _fill_started = False
+
+
+@contextmanager
+def _checkout_lock(timeout: float):
+    if not _lock.acquire(timeout=timeout):
+        raise TimeoutError("portal DB pool initialization deadline exceeded")
+    try:
+        yield
+    finally:
+        _lock.release()
+
+
 def _open_connection(connect_timeout: float) -> Connection:
     return psycopg.connect(
         **conn_kwargs(),
@@ -85,7 +103,7 @@ def _fill_pool_background(connect_timeout: float) -> None:
 def _ensure_pool(connect_timeout: float) -> queue.Queue[Connection]:
     """Return the pool, creating the first connection synchronously if needed."""
     global _pool, _created, _fill_started
-    with _lock:
+    with _checkout_lock(connect_timeout):
         if _pool is None:
             _pool = queue.Queue(maxsize=_POOL_SIZE)
             _created = 0
@@ -166,7 +184,7 @@ def portal_db_connection(*, connect_timeout: float = 10.0) -> Iterator[Connectio
         try:
             conn = _open_connection(connect_timeout)
         except Exception:
-            pool.put(_open_connection(connect_timeout))
+            _slot_lost(pool)
             raise
 
     try:
@@ -181,5 +199,5 @@ def portal_db_connection(*, connect_timeout: float = 10.0) -> Iterator[Connectio
         try:
             pool.put(_open_connection(connect_timeout))
         except Exception:
-            pass
+            _slot_lost(pool)
         raise

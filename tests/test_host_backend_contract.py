@@ -94,7 +94,7 @@ def test_session_endpoint_contract_error_mapping(monkeypatch):
     client = TestClient(app_module.app)
 
     def fake_mint_session(**kwargs):
-        raise MintError(429, "concurrent cap reached")
+        raise app_module.MintError(429, "concurrent cap reached")
 
     @contextmanager
     def fake_mint_db_connection(*, connect_timeout: float = 10.0):
@@ -103,6 +103,7 @@ def test_session_endpoint_contract_error_mapping(monkeypatch):
     monkeypatch.setattr(app_module, "mint_session", fake_mint_session)
     monkeypatch.setattr(app_module, "_rate_limited", lambda tenant_id: False)
     monkeypatch.setattr(app_module, "mint_db_connection", fake_mint_db_connection)
+    monkeypatch.setattr(app_module, "record_mint_rejection", lambda *args: None)
 
     ts = str(int(datetime.datetime.now(datetime.UTC).timestamp()))
     headers = {
@@ -126,6 +127,7 @@ def test_refresh_endpoint_contract_accepts_bearer(monkeypatch):
     def fake_refresh(token: str):
         assert token == "existing-token"
         return app_module.RefreshResponse(
+            sessionId="session-123",
             token="refreshed-token",
             wsUrl="wss://example.livekit.cloud",
             roomName="room-123",
@@ -143,6 +145,7 @@ def test_refresh_endpoint_contract_accepts_bearer(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "token": "refreshed-token",
+        "sessionId": "session-123",
         "wsUrl": "wss://example.livekit.cloud",
         "roomName": "room-123",
         "refreshUrl": "/v1/session/refresh",

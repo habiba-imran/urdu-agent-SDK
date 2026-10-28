@@ -60,6 +60,21 @@ class LiveKitSipClient:
             timeout=aiohttp.ClientTimeout(total=self.http_timeout_sec),
         )
 
+    def end_room(self, room_name: str) -> None:
+        """Compensate an uncertain dispatch/dial using its already-persisted room ID."""
+        if self.mock_mode:
+            return
+        self._require_credentials()
+        async def op():
+            import livekit.api as lk
+            client = self._livekit_api()
+            try:
+                await client.room.delete_room(lk.DeleteRoomRequest(room=room_name))
+            finally:
+                await client.aclose()
+        self._run(op(), TelephonyErrorCode.CALL_SETUP_FAILED,
+                  "Failed to end outbound room.")
+
     def create_or_get_inbound_trunk(
         self, phone_number_id: str, e164_number: str
     ) -> dict[str, Any]:

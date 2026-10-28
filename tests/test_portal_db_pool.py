@@ -3,10 +3,39 @@
 from __future__ import annotations
 
 import time
+import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from tenant_portal_api import db_pool
+
+
+def test_failed_replacement_does_not_permanently_lose_pool_capacity(monkeypatch):
+    db_pool.reset_portal_db_pool()
+    monkeypatch.setattr(db_pool, "_POOL_SIZE", 1)
+    opened = []
+    def open_connection(timeout):
+        opened.append(timeout)
+        if len(opened) == 2:
+            raise OSError("replacement unavailable")
+        return SimpleNamespace(closed=False, info=SimpleNamespace(transaction_status=0), close=lambda: None)
+    monkeypatch.setattr(db_pool, "_open_connection", open_connection)
+    with pytest.raises(ValueError):
+        with db_pool.portal_db_connection() as conn:
+            raise ValueError("query failed")
+    with db_pool.portal_db_connection() as conn:
+        assert conn.closed is False
+    assert len(opened) == 3
+    db_pool.reset_portal_db_pool()
+
+
+def test_initialization_lock_has_a_deadline():
+    db_pool._lock.acquire()
+    try:
+        with pytest.raises(TimeoutError, match="initialization deadline"):
+            db_pool._ensure_pool(.01)
+    finally:
+        db_pool._lock.release()
 
 
 def test_portal_db_connection_reuses_cached_conn(monkeypatch):

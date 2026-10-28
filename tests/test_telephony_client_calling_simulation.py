@@ -53,6 +53,23 @@ class ClientCallingSimulationDb:
     def execute(self, query: str, params: tuple[Any, ...] = ()):
         sql = " ".join(query.lower().split())
 
+        if "update sessions set ended_at" in sql:
+            session = next((s for s in self.sessions if s["room_name"] == params[-1] and s["ended_at"] is None), None)
+            if session:
+                session["ended_at"] = "now"
+            return FakeCursor((session["id"], session["tenant_id"]) if session else None)
+        if "select id, tenant_id, platform_status, quota_reserved_at" in sql:
+            call = next((c for c in self.calls if c["room_name"] == params[0]), None)
+            return FakeCursor((call["id"], call["tenant_id"], call["platform_status"], "now", call["quota_released_at"]) if call else None)
+        if "select platform_status from telephony_calls" in sql:
+            call = next((c for c in self.calls if c["id"] == params[0]), None)
+            return FakeCursor((call["platform_status"],) if call else None)
+        if "update telephony_calls set livekit_sip_call_id" in sql:
+            call = next((c for c in self.calls if c["id"] == params[-1]), None)
+            if call:
+                call["livekit_sip_call_id"], call["livekit_sip_call_id_full"] = params[:2]
+            return FakeCursor()
+
         # A-01.3: outbound calls get a sessions row in the same transaction.
         if "insert into sessions" in sql:
             self.sessions.append({
@@ -334,6 +351,7 @@ def test_client_calling_agent_inbound_resolution_flow():
     resolved = resolve_inbound_sip_call(
         participant_attributes=attrs,
         db_conn=db,
+        room_name="inbound-resolution-flow",
     )
     assert resolved["tenant_id"] == "tenant_client_1"
     assert resolved["agent_id"] == "agent_voice_1"
@@ -356,6 +374,7 @@ def test_client_calling_agent_inbound_quota_exhaustion():
         resolve_inbound_sip_call(
             participant_attributes=attrs,
             db_conn=db,
+            room_name="inbound-quota-exhaustion",
         )
 
 

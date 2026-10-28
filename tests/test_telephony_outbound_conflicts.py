@@ -82,6 +82,8 @@ class ConflictQuotaDb:
             return FakeCursor((5, 100000, "active"))
         if "insert into quota_state" in sql:
             return FakeCursor()
+        if "update quota_state set minutes_this_month" in sql:
+            return FakeCursor()
         if "from telephony_idempotency_keys" in sql:
             return FakeCursor(None)
         if "insert into telephony_idempotency_keys" in sql or "update telephony_idempotency_keys" in sql or "delete from telephony_idempotency_keys" in sql:

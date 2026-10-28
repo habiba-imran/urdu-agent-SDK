@@ -13,8 +13,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@awaazlabs-uva/agents": "file:../packages/awaazlabs-uva-agents-0.1.2-humanization.0.tgz",
-    "@awaazlabs-uva/telephony": "0.1.1",
+    "@awaazlabs-uva/agents": "file:../packages/awaazlabs-uva-agents-0.1.2-humanization.0-lifecycle.tgz",
+    "@awaazlabs-uva/telephony": "file:../packages/awaazlabs-uva-telephony-0.1.1-lifecycle.tgz",
     "dotenv": "^16.6.1",
     "express": "^4.21.2"
   }

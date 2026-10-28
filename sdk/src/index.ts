@@ -5,7 +5,7 @@ import {
   mapSessionHttpError,
   type AwaazLabsUvaVoiceErrorCode,
 } from './internal/errors.js';
-import { DEFAULT_FETCH_TIMEOUT_MS, delay, fetchWithTimeout } from './internal/http.js';
+import { DEFAULT_FETCH_TIMEOUT_MS, fetchTextWithTimeout, withDeadline } from './internal/http.js';
 import { applyRefreshedLiveKitToken } from './internal/livekitToken.js';
 
 /**
@@ -45,6 +45,8 @@ export interface AwaazLabsUvaVoiceOptions {
    * Default: 15000 ms.
    */
   fetchTimeoutMs?: number;
+  /** Maximum wait for the worker to start its pipeline (default 30 seconds). */
+  agentReadyTimeoutMs?: number;
 }
 
 export type UrduVoiceAgentOptions = AwaazLabsUvaVoiceOptions;
@@ -74,7 +76,7 @@ export interface Voice {
 }
 
 
-export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
+export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnecting';
 
 export type AwaazLabsUvaVoiceEvent =
   | 'transcript'
@@ -88,7 +90,9 @@ export type AwaazLabsUvaVoiceEvent =
   | 'metrics_updated'
   | 'audio_blocked'
   | 'audio_ready'
-  | 'turn_latency';
+  | 'turn_latency'
+  | 'connection_state_changed'
+  | 'session_outcome';
 
 export type UvaEvent = AwaazLabsUvaVoiceEvent;
 
@@ -125,7 +129,16 @@ export interface MetricsEvent {
   [key: string]: unknown;
 }
 
+export interface SessionOutcome {
+  type: string;
+  reason?: string;
+  stage?: string;
+  code?: string;
+  session_id?: string;
+}
+
 interface SessionResponse {
+  sessionId?: string;
   token: string;
   wsUrl: string;
   roomName: string;
@@ -134,6 +147,8 @@ interface SessionResponse {
 }
 
 export interface AwaazLabsUvaVoiceEventMap {
+  connection_state_changed: [ConnectionState];
+  session_outcome: [SessionOutcome];
   transcript: [TranscriptEvent];
   speaking: [boolean];
   error: [AwaazLabsUvaVoiceError];
@@ -171,6 +186,37 @@ function normalizeExpiresInSec(value: unknown): number {
 
 export class AwaazLabsUvaVoice {
   private room: Room | null = null;
+  private generation = 0;
+  private connectController: AbortController | null = null;
+  private refreshController: AbortController | null = null;
+  private readyRoom: Room | null = null;
+  private readyResolve: (() => void) | null = null;
+  private terminalOutcome: SessionOutcome | null = null;
+  private disconnectReason: unknown;
+  private metricSequences = new Map<string, number>();
+
+  private setState(state: ConnectionState): void {
+    if (this.state === state) return;
+    this.state = state;
+    this.emit('connection_state_changed', state);
+  }
+
+  private owns(room: Room, generation: number): boolean {
+    return this.room === room && this.generation === generation;
+  }
+
+  private observeAgent(room: Room): void {
+    // Native agent state can be "listening" before its provider handshake finishes.
+    // Only the worker's authenticated awaaz_agent_ready packet establishes readiness.
+    void room;
+  }
+
+  private markAgentReady(room: Room): void {
+    if (this.room !== room) return;
+    this.readyRoom = room;
+    this.readyResolve?.();
+  }
+
   private readonly listeners = new Map<AwaazLabsUvaVoiceEvent, Set<Listener>>();
   private readonly remoteAudioElements = new Map<string, HTMLMediaElement>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -192,13 +238,9 @@ export class AwaazLabsUvaVoice {
       throw new AwaazLabsUvaVoiceError('session_failed', 'voice catalog endpoint is required');
     }
     try {
-      const res = await fetchWithTimeout(endpointUrl, undefined, timeoutMs);
-      if (!res.ok) {
-        // F-M16: same status/body taxonomy as connect() — do not collapse every failure to session_failed.
-        const errorBody = await res.text().catch(() => '');
-        throw mapSessionHttpError(res.status, errorBody || res.statusText);
-      }
-      return (await res.json()) as Voice[];
+      const { response, text } = await fetchTextWithTimeout(endpointUrl, undefined, timeoutMs);
+      if (!response.ok) throw mapSessionHttpError(response.status, text || response.statusText);
+      return JSON.parse(text) as Voice[];
     } catch (e) {
       if (e instanceof AwaazLabsUvaVoiceError) throw e;
       throw new AwaazLabsUvaVoiceError('session_failed', `Failed to reach voices endpoint: ${String(e)}`);
@@ -207,6 +249,11 @@ export class AwaazLabsUvaVoice {
 
   constructor(private readonly options: AwaazLabsUvaVoiceOptions) {
 
+    for (const value of [options.fetchTimeoutMs, options.agentReadyTimeoutMs]) {
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        throw new AwaazLabsUvaVoiceError('session_failed', 'Timeouts must be positive finite milliseconds');
+      }
+    }
     if (!options.publishableKey.trim()) {
       throw new AwaazLabsUvaVoiceError('session_failed', 'publishableKey is required');
     }
@@ -260,124 +307,121 @@ export class AwaazLabsUvaVoice {
 
   /** Enable/disable the local microphone track. No-op if not connected. */
   async setMicMuted(muted: boolean): Promise<void> {
-    if (!this.room) return;
-    await this.room.localParticipant.setMicrophoneEnabled(!muted, MIC_CAPTURE_OPTIONS);
+    const room = this.room;
+    const generation = this.generation;
+    if (!room) return;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!muted, MIC_CAPTURE_OPTIONS);
+    } finally {
+      if (!this.owns(room, generation)) {
+        await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      }
+    }
   }
 
   async connect(opts: ConnectOptions): Promise<void> {
-    if (this.room) {
-      throw new AwaazLabsUvaVoiceError('session_failed', 'already connected - call disconnect() first');
+    if (this.room || this.state !== 'idle') {
+      throw new AwaazLabsUvaVoiceError('session_failed', 'already connecting or connected - call disconnect() first');
     }
-    if (!opts.agentId.trim()) {
-      throw new AwaazLabsUvaVoiceError('session_failed', 'agentId is required');
-    }
-
-    this.state = 'connecting';
-
-    const room = new Room({
-      audioCaptureDefaults: MIC_CAPTURE_OPTIONS,
-    });
+    if (!opts.agentId.trim()) throw new AwaazLabsUvaVoiceError('session_failed', 'agentId is required');
+    const generation = ++this.generation;
+    const controller = new AbortController();
+    this.connectController = controller;
+    const room = new Room({ audioCaptureDefaults: MIC_CAPTURE_OPTIONS });
+    this.room = room;
+    this.terminalOutcome = null;
+    this.disconnectReason = undefined;
+    this.readyRoom = null;
+    this.metricSequences.clear();
     this.wireRoomEvents(room);
-
-    // Acquire microphone access concurrently with fetching the session token
-    const micPromise = room.localParticipant
-      .setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS)
-      .catch(() => {
-        // Ignore here, we will check isMicrophoneEnabled after connecting
-      });
-
-    let body: SessionResponse;
-    const mintStarted = performance.now();
-    try {
-      const sessionHeaders = await this.resolveSessionHeaders();
-      const res = await fetchWithTimeout(
-        this.options.sessionEndpoint,
-        {
-          method: 'POST',
-          credentials: this.options.sessionCredentials ?? 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            ...sessionHeaders,
-          },
-          body: JSON.stringify({
-            publishableKey: this.options.publishableKey,
-            agentId: opts.agentId,
-          }),
-        },
-        this.fetchTimeoutMs,
-      );
-      if (!res.ok) {
-        const errorBody = await res.text().catch(() => '');
-        throw mapSessionHttpError(res.status, errorBody);
+    this.setState('connecting');
+    const assertCurrent = () => {
+      if (!this.owns(room, generation) || controller.signal.aborted) {
+        throw new AwaazLabsUvaVoiceError('session_failed', 'Connection cancelled');
       }
-      const parsed = (await res.json()) as Partial<SessionResponse>;
-      if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-        throw new AwaazLabsUvaVoiceError('session_failed', 'session endpoint returned an incomplete response');
-      }
-      body = parsed as SessionResponse;
-    } catch (err) {
-      this.state = 'idle';
-      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
-      if (err instanceof AwaazLabsUvaVoiceError) throw err;
-      throw new AwaazLabsUvaVoiceError('session_failed', 'could not reach sessionEndpoint');
-    }
-    const mintMs = Math.round(performance.now() - mintStarted);
-
-    const connectStarted = performance.now();
-    try {
-      // Align LiveKit join timeouts with fetchTimeoutMs so a hung signalling path
-      // cannot sit open forever after a successful mint (F-M14 adjacent hang).
-      await room.connect(body.wsUrl, body.token, {
-        peerConnectionTimeout: this.fetchTimeoutMs,
-        websocketTimeout: this.fetchTimeoutMs,
-      });
-    } catch (err) {
-      this.state = 'idle';
-      await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
-      await room.disconnect().catch(() => {});
-      if (err instanceof AwaazLabsUvaVoiceError) throw err;
-      throw new AwaazLabsUvaVoiceError('session_failed', 'LiveKit connection failed');
-    }
-    const livekitConnectMs = Math.round(performance.now() - connectStarted);
-    let livekitUrlHost: string | undefined;
-    try {
-      livekitUrlHost = new URL(body.wsUrl).host;
-    } catch {
-      livekitUrlHost = undefined;
-    }
-    const quality = room.localParticipant?.connectionQuality;
-    this.lastConnectTiming = {
-      mintMs,
-      livekitConnectMs,
-      livekitUrlHost,
-      connectionQuality: quality != null ? String(quality) : undefined,
     };
-    this.emit('connect_timing', this.lastConnectTiming);
-    // Emit after timings so hosts can read connectTiming inside connected handlers.
-    this.state = 'connected';
-    this.room = room;
-    this.emit('connected');
-
-    await micPromise;
-    if (!room.localParticipant.isMicrophoneEnabled) {
-      // Pre-connect enable often no-ops; retry after the room is connected.
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS);
-      } catch {
-        // Fall through to the enabled check below.
+    // Browser permissions can resolve after cancellation. Always stop those late tracks.
+    const micPromise = room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS)
+      .catch(() => {}).then(async () => {
+        if (!this.owns(room, generation)) await room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      });
+    try {
+      const mintStarted = performance.now();
+      const body = await withDeadline(async signal => {
+        const headers = await this.resolveSessionHeaders();
+        if (signal.aborted) throw new Error('Connection cancelled');
+        const { response, text } = await fetchTextWithTimeout(this.options.sessionEndpoint, {
+          method: 'POST', credentials: this.options.sessionCredentials ?? 'same-origin',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ publishableKey: this.options.publishableKey, agentId: opts.agentId }),
+        }, this.fetchTimeoutMs, signal);
+        if (!response.ok) throw mapSessionHttpError(response.status, text);
+        const parsed = JSON.parse(text) as SessionResponse;
+        if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
+          throw new AwaazLabsUvaVoiceError('session_failed', 'session endpoint returned an incomplete response');
+        }
+        return parsed;
+      }, this.fetchTimeoutMs, controller.signal);
+      assertCurrent();
+      this.session = body;
+      this.sessionReceivedAt = Date.now();
+      const mintMs = Math.round(performance.now() - mintStarted);
+      const connectStarted = performance.now();
+      await withDeadline(async () => {
+        await room.connect(body.wsUrl, body.token, {
+          peerConnectionTimeout: this.fetchTimeoutMs, websocketTimeout: this.fetchTimeoutMs,
+        });
+        if (!this.owns(room, generation)) await room.disconnect();
+      }, this.fetchTimeoutMs, controller.signal);
+      assertCurrent();
+      const livekitConnectMs = Math.round(performance.now() - connectStarted);
+      await withDeadline(async () => {
+        await micPromise;
+        assertCurrent();
+        if (!room.localParticipant.isMicrophoneEnabled) {
+          await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE_OPTIONS);
+          if (!this.owns(room, generation)) await room.localParticipant.setMicrophoneEnabled(false);
+        }
+      }, this.fetchTimeoutMs, controller.signal);
+      assertCurrent();
+      if (!room.localParticipant.isMicrophoneEnabled) {
+        throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
       }
+      this.updatePlaybackReady(room);
+      this.observeAgent(room);
+      // Data can arrive before the waiter is installed; readyRoom retains that edge.
+      await withDeadline(async () => {
+        const ready = new Promise<void>(resolve => {
+          this.readyResolve = resolve;
+          if (this.readyRoom === room) resolve();
+        });
+        void room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({
+          type: 'awaaz_lifecycle_request',
+        })), { reliable: true }).catch(() => {});
+        await ready;
+      }, this.options.agentReadyTimeoutMs ?? 30_000, controller.signal);
+      assertCurrent();
+      this.readyResolve = null;
+      let livekitUrlHost: string | undefined;
+      try { livekitUrlHost = new URL(body.wsUrl).host; } catch { /* optional diagnostic */ }
+      this.lastConnectTiming = { mintMs, livekitConnectMs, livekitUrlHost,
+        connectionQuality: String(room.localParticipant.connectionQuality ?? 'unknown') };
+      this.emit('connect_timing', this.lastConnectTiming);
+      this.setState('connected');
+      this.updatePlaybackReady(room);
+      this.scheduleTokenRefresh(body);
+      this.emit('connected');
+    } catch (error) {
+      if (this.owns(room, generation)) {
+        this.finishDisconnect(room, this.terminalOutcome ?? 'connection_failed');
+      }
+      void room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      void room.disconnect().catch(() => {});
+      if (error instanceof AwaazLabsUvaVoiceError) throw error;
+      throw new AwaazLabsUvaVoiceError('session_failed', 'Connection establishment failed');
+    } finally {
+      if (this.connectController === controller) this.connectController = null;
     }
-    if (!room.localParticipant.isMicrophoneEnabled) {
-      await room.disconnect();
-      this.state = 'idle';
-      throw new AwaazLabsUvaVoiceError('session_failed', 'microphone permission denied or unavailable');
-    }
-
-    this.room = room;
-    this.updatePlaybackReady(room);
-    this.session = body;
-    this.sessionReceivedAt = Date.now();
-    this.scheduleTokenRefresh(body);
   }
 
   on<K extends AwaazLabsUvaVoiceEvent>(event: K, cb: Listener<AwaazLabsUvaVoiceEventMap[K]>): this {
@@ -394,6 +438,12 @@ export class AwaazLabsUvaVoice {
   }
 
   async disconnect(reason?: unknown): Promise<void> {
+    this.disconnectReason = reason;
+    this.connectController?.abort();
+    this.refreshController?.abort();
+    this.refreshController = null;
+    this.refreshInFlight = false;
+    this.generation++;
     this.clearRefreshTimer();
     this.playbackReady = false;
     const room = this.room;
@@ -402,13 +452,13 @@ export class AwaazLabsUvaVoice {
       this.sessionReceivedAt = null;
       this.lastCallerSpeaking = null;
       this.lastAgentSpeaking = null;
-      this.state = 'idle';
+      this.setState('idle');
       return;
     }
-    this.state = 'disconnecting';
+    this.setState('disconnecting');
     const canDisconnect = typeof (room as { disconnect?: unknown }).disconnect === 'function';
     if (canDisconnect) {
-      await (room as { disconnect: () => Promise<void> }).disconnect().catch(() => {});
+      await withDeadline(() => (room as { disconnect: () => Promise<void> }).disconnect(), this.fetchTimeoutMs).catch(() => {});
     }
     // Real LiveKit Room fires RoomEvent.Disconnected, which already clears state + emits.
     // Stubs / failed-refresh paths still need local cleanup when that event never runs.
@@ -422,13 +472,19 @@ export class AwaazLabsUvaVoice {
    * the LiveKit Room's internal AudioContext must be resumed explicitly here.
    */
   async startAudio(): Promise<void> {
-    if (this.room) {
-      await this.room.startAudio();
+    const room = this.room;
+    if (room) {
+      await room.startAudio();
+      if (this.room !== room) return;
       await Promise.all([...this.remoteAudioElements].map(async ([sid, element]) => {
-        try { await element.play(); this.blockedRemoteAudio.delete(sid); }
-        catch { this.blockedRemoteAudio.add(sid); }
+        try {
+          await element.play();
+          if (this.room === room && this.remoteAudioElements.get(sid) === element) this.blockedRemoteAudio.delete(sid);
+        } catch {
+          if (this.room === room && this.remoteAudioElements.get(sid) === element) this.blockedRemoteAudio.add(sid);
+        }
       }));
-      this.updatePlaybackReady(this.room);
+      this.updatePlaybackReady(room);
     }
   }
 
@@ -444,7 +500,8 @@ export class AwaazLabsUvaVoice {
   }
 
   private updatePlaybackReady(room: Room): void {
-    const ready = this.state === 'connected' && room.canPlaybackAudio === true && this.blockedRemoteAudio.size === 0;
+    if (this.room !== room) return;
+    const ready = ['connecting', 'connected'].includes(this.state) && room.canPlaybackAudio === true && this.blockedRemoteAudio.size === 0;
     if (this.playbackReady !== ready) {
       this.playbackReady = ready;
       this.emit('audio_ready', ready);
@@ -459,9 +516,25 @@ export class AwaazLabsUvaVoice {
   }
 
   private wireRoomEvents(room: Room): void {
-    room.on(RoomEvent.Connected, () => {
-      // Public `connected` is emitted from connect() after mint/join timings are recorded.
-      this.state = 'connected';
+    room.on(RoomEvent.Reconnecting, () => {
+      if (this.room !== room || this.state !== 'connected') return;
+      this.setState('reconnecting');
+      this.updatePlaybackReady(room);
+    });
+    room.on(RoomEvent.SignalReconnecting, () => {
+      if (this.room !== room || this.state !== 'connected') return;
+      this.setState('reconnecting');
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      if (this.room !== room || this.state !== 'reconnecting') return;
+      this.setState('connected');
+      this.updatePlaybackReady(room);
+    });
+    room.on(RoomEvent.ParticipantAttributesChanged, () => this.observeAgent(room));
+    room.on(RoomEvent.ParticipantDisconnected, participant => {
+      if (this.room !== room || !participant.isAgent) return;
+      this.emit('error', new AwaazLabsUvaVoiceError('session_failed', 'Voice worker disconnected'));
+      void this.disconnect(this.terminalOutcome ?? 'worker_disconnected');
     });
 
     room.on(RoomEvent.Disconnected, (reason) => {
@@ -469,7 +542,7 @@ export class AwaazLabsUvaVoice {
     });
 
     room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
-      if (!participant?.isLocal || !this.lastConnectTiming) return;
+      if (this.room !== room || !participant?.isLocal || !this.lastConnectTiming) return;
       // Refresh quality on the last timing snapshot for hosts that re-read connectTiming.
       this.lastConnectTiming = {
         ...this.lastConnectTiming,
@@ -480,6 +553,7 @@ export class AwaazLabsUvaVoice {
     room.on(
       RoomEvent.TranscriptionReceived,
       (segments: TranscriptionSegment[], participant?: Participant) => {
+        if (this.room !== room) return;
         const speaker: 'user' | 'agent' = participant?.isLocal ? 'user' : 'agent';
         for (const seg of segments) {
           this.emit('transcript', { id: seg.id, text: seg.text, final: seg.final, speaker });
@@ -488,6 +562,7 @@ export class AwaazLabsUvaVoice {
     );
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      if (this.room !== room) return;
       // Local mic only — do not treat remote/agent speakers as "caller speaking"
       // (that false positive made demos look like VAD barge-in when the agent talked).
       const callerSpeaking = speakers.some((speaker) => speaker.isLocal);
@@ -508,6 +583,7 @@ export class AwaazLabsUvaVoice {
     // elements. Without this, LiveKit's default audio playback relies on the
     // browser's AudioContext which is suspended until a user gesture.
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (this.room !== room) return;
       if (track.kind !== Track.Kind.Audio || participant.isLocal) {
         return;
       }
@@ -520,6 +596,7 @@ export class AwaazLabsUvaVoice {
     });
 
     room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+      if (this.room !== room) return;
       if (track.kind !== Track.Kind.Audio) {
         return;
       }
@@ -528,25 +605,43 @@ export class AwaazLabsUvaVoice {
     });
 
     room.on(RoomEvent.MediaDevicesError, (error: Error) => {
+      if (this.room !== room) return;
       this.emit('error', new AwaazLabsUvaVoiceError('session_failed', error.message));
     });
 
     room.on(RoomEvent.RoomMetadataChanged, (metadata?: string) => {
-      const metrics = this.tryParseMetrics(metadata);
-      if (metrics) this.emitLatencyEvents(metrics);
+      // Room metadata is not an authenticated worker message. Metrics use agent data packets.
+      void metadata;
     });
 
     room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: Participant) => {
+      if (this.room !== room) return;
       const text = this.decodePayload(payload);
       try {
         const packet = JSON.parse(text);
-        if (packet?.type === 'awaaz_playback_request') this.updatePlaybackReady(room);
-        if (packet?.type === 'awaaz_session_failure' && participant?.isAgent) {
-          this.emit('error', new AwaazLabsUvaVoiceError('session_failed', `Voice session unavailable: ${String(packet.stage)}`));
+        if (packet?.type === 'awaaz_playback_request' && participant?.isAgent) this.updatePlaybackReady(room);
+        if (!participant?.isAgent) return;
+        if (this.session?.sessionId && packet.type !== 'awaaz_playback_request' && packet.session_id !== this.session.sessionId) return;
+        if (packet?.type === 'awaaz_agent_ready') this.markAgentReady(room);
+        if (['awaaz_session_failure', 'awaaz_session_ended'].includes(packet?.type)) {
+          this.terminalOutcome = packet as SessionOutcome;
+          this.emit('session_outcome', this.terminalOutcome);
+          if (packet.type === 'awaaz_session_failure') {
+            this.emit('error', new AwaazLabsUvaVoiceError('session_failed',
+              'Voice session unavailable: ' + String(packet.stage ?? packet.reason ?? 'provider')));
+          }
         }
-      } catch { /* Other room messages are parsed by the existing metrics path. */ }
-      const metrics = this.tryParseMetrics(this.decodePayload(payload));
-      if (metrics) this.emitLatencyEvents(metrics);
+        const metrics = this.tryParseMetrics(text);
+        if (metrics) {
+          if (metrics.sequence !== undefined) {
+            if (!Number.isSafeInteger(metrics.sequence) || metrics.sequence < 0) return;
+            const key = metrics.type;
+            if (metrics.sequence <= (this.metricSequences.get(key) ?? -1)) return;
+            this.metricSequences.set(key, metrics.sequence);
+          }
+          this.emitLatencyEvents(metrics);
+        }
+      } catch { /* Ignore unrelated/malformed packets. */ }
     });
 
     // Browsers block audio autoplay without a prior user gesture.
@@ -555,6 +650,7 @@ export class AwaazLabsUvaVoice {
     // We forward it as 'audio_blocked' so the host app can show an
     // "Unlock Audio" button and call agent.startAudio() on click.
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      if (this.room !== room) return;
       const blocked = !room.canPlaybackAudio;
       this.emit('audio_blocked', blocked);
       this.updatePlaybackReady(room);
@@ -564,6 +660,15 @@ export class AwaazLabsUvaVoice {
   private finishDisconnect(room: Room, reason?: unknown): void {
     // Ignore duplicate/late events, including an old room closing after reconnect.
     if (this.room !== room) return;
+    this.connectController?.abort();
+    this.refreshController?.abort();
+    this.refreshController = null;
+    this.refreshInFlight = false;
+    this.readyResolve = null;
+    this.readyRoom = null;
+    const outcome = this.terminalOutcome ?? this.disconnectReason ?? reason;
+    this.terminalOutcome = null;
+    this.disconnectReason = undefined;
     this.clearRefreshTimer();
     this.detachAllRemoteAudio();
     this.room = null;
@@ -571,11 +676,11 @@ export class AwaazLabsUvaVoice {
     this.sessionReceivedAt = null;
     this.lastCallerSpeaking = null;
     this.lastAgentSpeaking = null;
-    this.state = 'idle';
+    this.setState('idle');
     this.playbackReady = false;
     this.emit('audio_ready', false);
-    this.emit('disconnected', reason);
-    this.emit('ended', reason);
+    this.emit('disconnected', outcome);
+    this.emit('ended', outcome);
   }
 
   private attachRemoteAudio(trackSid: string, element: HTMLMediaElement): void {
@@ -592,9 +697,11 @@ export class AwaazLabsUvaVoice {
     // Attempt .play() eagerly. If the browser blocks it (NotAllowedError),
     // LiveKit will fire AudioPlaybackStatusChanged, which we relay as 'audio_blocked'.
     void element.play().then(() => {
+      if (this.remoteAudioElements.get(trackSid) !== element) return;
       this.blockedRemoteAudio.delete(trackSid);
       if (this.room) this.updatePlaybackReady(this.room);
     }).catch(() => {
+      if (this.remoteAudioElements.get(trackSid) !== element) return;
       this.blockedRemoteAudio.add(trackSid);
       this.playbackReady = false;
       this.emit('audio_ready', false);
@@ -646,111 +753,63 @@ export class AwaazLabsUvaVoice {
   }
 
   private async refreshToken(): Promise<void> {
-    // Single-flight: a second timer tick must not start a parallel retry storm.
-    if (this.refreshInFlight) return;
-    if (!this.room || !this.session) return;
+    if (this.refreshInFlight || !this.room || !this.session) return;
+    const room = this.room;
+    const generation = this.generation;
+    const session = this.session;
+    const controller = new AbortController();
+    this.refreshController = controller;
     this.refreshInFlight = true;
+    const current = () => this.owns(room, generation) && !controller.signal.aborted;
+    const endpoint = this.resolveRefreshEndpoint();
+    const deadline = (this.sessionReceivedAt ?? Date.now()) + normalizeExpiresInSec(session.expiresIn) * 1000;
+    let backoffMs = 1000;
     try {
-      await this.refreshTokenLoop();
-    } finally {
-      this.refreshInFlight = false;
-    }
-  }
-
-  private async refreshTokenLoop(): Promise<void> {
-    if (!this.room || !this.session) return;
-    const refreshEndpoint = this.resolveRefreshEndpoint();
-    const expiresInSec = normalizeExpiresInSec(this.session.expiresIn);
-    const receivedAt = this.sessionReceivedAt ?? Date.now();
-    const deadline = receivedAt + expiresInSec * 1000;
-    // 1s → 2s → 4s → 8s (cap). A ~15s DevTools block must only burn a few attempts.
-    let backoffMs = 1_000;
-    let attempt = 0;
-
-    while (this.room && this.session) {
-      attempt += 1;
-      let permanentAuthFailure = false;
-      try {
-        const sessionHeaders = await this.resolveSessionHeaders();
-        const res = await fetchWithTimeout(
-          refreshEndpoint,
-          {
-            method: 'POST',
-            credentials: this.options.sessionCredentials ?? 'same-origin',
-            headers: {
-              ...sessionHeaders,
-              // LiveKit session token must win over any portal JWT in sessionHeaders.
-              Authorization: `Bearer ${this.session.token}`,
-            },
-          },
-          this.fetchTimeoutMs,
-        );
-        if (res.status === 401 || res.status === 403) {
-          permanentAuthFailure = true;
-        } else if (!res.ok) {
-          throw new Error('refresh failed');
-        } else {
-          const parsed = (await res.json()) as Partial<SessionResponse>;
-          if (!parsed.token || !parsed.wsUrl || !parsed.roomName) {
-            throw new Error('refresh response incomplete');
+      for (let attempt = 0; attempt < 20 && current() && Date.now() < deadline; attempt++) {
+        let terminal = false;
+        try {
+          const result = await withDeadline(async signal => {
+            const headers = await this.resolveSessionHeaders();
+            if (signal.aborted) throw new Error('Refresh cancelled');
+            return fetchTextWithTimeout(endpoint, { method: 'POST',
+              credentials: this.options.sessionCredentials ?? 'same-origin',
+              headers: { ...headers, Authorization: 'Bearer ' + session.token },
+            }, this.fetchTimeoutMs, signal);
+          }, Math.min(this.fetchTimeoutMs, Math.max(1, deadline - Date.now())), controller.signal);
+          if (!current()) return;
+          terminal = [400, 401, 403, 404, 409, 429].includes(result.response.status);
+          if (result.response.ok) {
+            const parsed = JSON.parse(result.text) as SessionResponse;
+            if (!parsed.token || parsed.roomName !== session.roomName || parsed.wsUrl !== session.wsUrl ||
+                (session.sessionId && parsed.sessionId && parsed.sessionId !== session.sessionId)) {
+              terminal = true;
+            } else {
+              await applyRefreshedLiveKitToken(room, parsed.token);
+              if (!current()) return;
+              this.session = { ...session, ...parsed };
+              this.sessionReceivedAt = Date.now();
+              this.scheduleTokenRefresh(this.session);
+              return;
+            }
           }
-          this.session = {
-            token: parsed.token,
-            wsUrl: parsed.wsUrl,
-            roomName: parsed.roomName,
-            refreshUrl: parsed.refreshUrl ?? this.session.refreshUrl,
-            expiresIn: parsed.expiresIn ?? this.session.expiresIn,
-          };
-          this.sessionReceivedAt = Date.now();
-          // F-H12: Room has no public updateToken — push JWT into engine + region provider
-          // so reconnect uses the refreshed credential (see applyRefreshedLiveKitToken).
-          await applyRefreshedLiveKitToken(this.room, this.session.token);
-          this.scheduleTokenRefresh(this.session);
-          return;
-        }
-      } catch {
-        // Transient failure (network, DevTools block, timeout, 5xx, incomplete body).
+        } catch { /* A bounded transient failure can retry until the original JWT expires. */ }
+        if (!current()) return;
+        if (terminal) break;
+        await withDeadline(() => new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, Math.min(backoffMs, Math.max(1, deadline - Date.now())));
+          controller.signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+        }), Math.max(1, deadline - Date.now()), controller.signal).catch(() => {});
+        backoffMs = Math.min(8000, backoffMs * 2);
       }
-
-      if (!this.room || !this.session) return;
-
-      if (permanentAuthFailure) {
-        this.emit(
-          'error',
-          new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh rejected'),
-        );
-        // Do not limp until JWT death — tear down so hosts get a clean ended signal.
-        await this.disconnect('token_refresh_failed');
-        return;
-      }
-
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        break;
-      }
-
-      // Always sleep between attempts while time remains — never spin.
-      const waitMs = Math.min(backoffMs, 8_000, remainingMs);
-      await delay(waitMs);
-      backoffMs = Math.min(backoffMs * 2, 8_000);
-
-      if (Date.now() >= deadline) {
-        break;
-      }
-
-      // Safety cap so a clock skew / bad expiresIn cannot hammer the host forever.
-      if (attempt >= 20) {
-        break;
+      if (!current()) return;
+      this.emit('error', new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh failed'));
+      await this.disconnect('token_refresh_failed');
+    } finally {
+      if (this.refreshController === controller) {
+        this.refreshController = null;
+        this.refreshInFlight = false;
       }
     }
-
-    if (!this.room || !this.session) return;
-    // F-H12: only emit terminal error after retries are exhausted (or past token expiry).
-    this.emit(
-      'error',
-      new AwaazLabsUvaVoiceError('token_refresh_failed', 'token refresh failed'),
-    );
-    await this.disconnect('token_refresh_failed');
   }
 
   private resolveRefreshEndpoint(): string {

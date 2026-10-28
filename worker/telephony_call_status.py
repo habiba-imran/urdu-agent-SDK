@@ -136,11 +136,38 @@ class TelephonyCallStatusTracker:
         self.telephony_call_id = (telephony_call_id or "").strip() or None
         self.tenant_id = (tenant_id or "").strip()
         self._conn_factory = conn_factory or _open_conn
-        self._run_blocking = run_blocking or _default_run_blocking
+        self._pending: set[asyncio.Task] = set()
+        self._write_lock = asyncio.Lock()
+        self._run_blocking = run_blocking or self._submit
         self._last_rank = -1
         self.answered = False
         self.finalized = False
         self._call: dict[str, Any] | None = None
+
+    def _submit(self, fn) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            fn()
+            return
+        async def write():
+            async with self._write_lock:
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(fn)
+                        return
+                    except Exception:
+                        if attempt == 2:
+                            logger.exception("telephony_status_persist_failed room=%s", self.room_name)
+                            return
+                        await asyncio.sleep(.25 * (attempt + 1))
+        task = loop.create_task(write(), name="persist_sip_status")
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def aclose(self) -> None:
+        if self._pending:
+            await asyncio.gather(*list(self._pending), return_exceptions=True)
 
     # ------------------------------------------------------------------ wiring
     def attach(self, room: Any) -> "TelephonyCallStatusTracker":
@@ -184,9 +211,6 @@ class TelephonyCallStatusTracker:
         rank = STATUS_RANK[mapped]
         if rank <= self._last_rank:
             return
-        self._last_rank = rank
-        if mapped == "in_progress":
-            self.answered = True
         lower = [s for s, r in STATUS_RANK.items() if r < rank]
         self._run_blocking(
             lambda: self._write_transition(mapped, raw_participant_status=f"sip.callStatus:{raw}", only_from=lower)
@@ -209,7 +233,6 @@ class TelephonyCallStatusTracker:
             )
             return
         status, error_code = mapped
-        self.finalized = True
         self._run_blocking(
             lambda: self._write_finalize(status, error_code=error_code, raw_participant_status=f"disconnect:{reason}")
         )
@@ -237,29 +260,34 @@ class TelephonyCallStatusTracker:
 
         conn = self._conn_factory()
         try:
-            call = self._resolve_call(conn)
-            if call is None:
-                logger.info(
-                    "telephony_call_status room=%s no telephony_calls row yet; skipped status=%s",
-                    self.room_name,
+            from control_plane.db_limits import bounded_transaction
+            with bounded_transaction(conn):
+                call = self._resolve_call(conn)
+                if call is None:
+                    logger.info(
+                        "telephony_call_status room=%s no telephony_calls row yet; skipped status=%s",
+                        self.room_name,
+                        status,
+                    )
+                    raise RuntimeError("Call row is not yet visible")
+                changed = queries.transition_call_status(
+                    conn,
+                    call["id"],
                     status,
+                    raw_participant_status=raw_participant_status,
+                    answered=(status == "in_progress"),
+                    only_from=only_from,
                 )
-                return
-            changed = queries.transition_call_status(
-                conn,
-                call["id"],
-                status,
-                raw_participant_status=raw_participant_status,
-                answered=(status == "in_progress"),
-                only_from=only_from,
-            )
-            logger.info(
-                "telephony_call_status room=%s call=%s status=%s applied=%s",
-                self.room_name,
-                call["id"],
-                status,
-                bool(changed),
-            )
+                self._last_rank = max(self._last_rank, STATUS_RANK[status])
+                if status == "in_progress":
+                    self.answered = True
+                logger.info(
+                    "telephony_call_status room=%s call=%s status=%s applied=%s",
+                    self.room_name,
+                    call["id"],
+                    status,
+                    bool(changed),
+                )
         finally:
             _close_quietly(conn)
 
@@ -268,31 +296,34 @@ class TelephonyCallStatusTracker:
 
         conn = self._conn_factory()
         try:
-            call = self._resolve_call(conn)
-            if call is None:
-                logger.warning(
-                    "telephony_call_status room=%s dial failed (%s) but no telephony_calls row found",
-                    self.room_name,
+            from control_plane.db_limits import bounded_transaction
+            with bounded_transaction(conn):
+                call = self._resolve_call(conn)
+                if call is None:
+                    logger.warning(
+                        "telephony_call_status room=%s dial failed (%s) but no telephony_calls row found",
+                        self.room_name,
+                        status,
+                    )
+                    raise RuntimeError("Call row is not yet visible")
+                outcome = queries.finalize_call(
+                    conn,
+                    call["id"],
+                    call["tenant_id"],
                     status,
+                    error_code=error_code,
+                    error_message=f"Dial did not connect: {raw_participant_status}",
+                    raw_participant_status=raw_participant_status,
                 )
-                return
-            outcome = queries.finalize_call(
-                conn,
-                call["id"],
-                call["tenant_id"],
-                status,
-                error_code=error_code,
-                error_message=f"Dial did not connect: {raw_participant_status}",
-                raw_participant_status=raw_participant_status,
-            )
-            logger.info(
-                "telephony_call_status room=%s call=%s finalized status=%s status_changed=%s quota_released=%s",
-                self.room_name,
-                call["id"],
-                status,
-                outcome["status_changed"],
-                outcome["quota_released"],
-            )
+                self.finalized = bool(outcome["found"])
+                logger.info(
+                    "telephony_call_status room=%s call=%s finalized status=%s status_changed=%s quota_released=%s",
+                    self.room_name,
+                    call["id"],
+                    status,
+                    outcome["status_changed"],
+                    outcome["quota_released"],
+                )
         finally:
             _close_quietly(conn)
 

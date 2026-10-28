@@ -25,6 +25,33 @@ const SECRET = 'secret-xyz';
 const TS_SEC = 1726500000;
 const NONCE = 'nonce-abc';
 
+describe('connection policy', () => {
+  it('sends agent duration for create and update and rejects an invalid ceiling', async () => {
+    const requests = [];
+    const previous = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return new Response('{}');
+    };
+    try {
+      const client = new AwaazLabsUvaAgentsClient({tenantId: TENANT_ID, tenantSecret: SECRET, baseUrl: 'https://fixture'});
+      await client.createAgent({name: 'n', prompt: 'p', voiceId: 'v', maxCallDurationSeconds: 1800});
+      await client.updateAgent('a', {maxCallDurationSeconds: 7200});
+      await assert.rejects(client.updateAgent('a', {maxCallDurationSeconds: 7201}), /between 60 and 7200/);
+      assert.deepEqual(requests.map(body => body.max_call_duration_seconds), [1800, 7200]);
+    } finally { globalThis.fetch = previous; }
+  });
+
+  it('bounds a successful response whose body never finishes', async () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = async () => ({ok: true, text: () => new Promise(() => {})});
+    try {
+      const client = new AwaazLabsUvaAgentsClient({tenantId: TENANT_ID, tenantSecret: SECRET, baseUrl: 'https://fixture', requestTimeoutMs: 10});
+      await assert.rejects(client.listAgents(), error => error.status === 504 && error.code === 'request_timeout');
+    } finally { globalThis.fetch = previous; }
+  });
+});
+
 // Server-generated vector (see header comment). Includes Urdu-script text, a nested object,
 // an array, a float and a null, so key sorting, ensure_ascii=False and number formatting are
 // all exercised.

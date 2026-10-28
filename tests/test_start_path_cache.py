@@ -168,6 +168,7 @@ def test_worker_db_pool_reuses_connection(monkeypatch):
         return conn
 
     monkeypatch.setattr(dp.psycopg, "connect", _connect)
+    monkeypatch.setattr(dp, "conn_kwargs", lambda: {})
     with dp.worker_db_connection(connect_timeout=2) as c1:
         assert c1 is created[0]
     with dp.worker_db_connection(connect_timeout=2) as c2:

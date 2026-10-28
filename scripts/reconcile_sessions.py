@@ -5,11 +5,11 @@ Usage:
     python scripts/reconcile_sessions.py [--max-age-minutes 30] [--dry-run]
 
 What it does:
-1. Identifies open sessions (ended_at is null) older than --max-age-minutes (default: 30m),
-   skipping sessions that belong to a telephony call which is still live (A-01.5: the
-   call's own lifecycle — webhook, worker close, telephony_reconcile's 2h sweep — ends it).
+1. Identifies open sessions older than --max-age-minutes (default: 30m), requiring
+   an expired worker lease and confirmed absence of a worker in the LiveKit room.
+   Unknown room presence and live telephony calls are preserved.
 2. Closes stale sessions with end_reason='reconciled_stale' (duration_sec stays 0).
-3. P3-H4: writes capped agent_sec usage_events for closed sessions that never flushed usage.
+3. Leaves unknown crash usage unbilled; durable worker payloads can settle actual usage later.
 4. Re-calculates the true slot count per tenant and updates quota_state.concurrent_now to
    match. Browser sessions count while open; telephony calls count through their ledger
    (telephony_calls.quota_reserved_at set, quota_released_at null) and their linked
@@ -101,11 +101,13 @@ def _reconcile_on_conn(
             FROM sessions s
             WHERE ended_at IS NULL
               AND started_at < NOW() - (INTERVAL '1 minute' * %s)
+              AND coalesce(worker_heartbeat_at, started_at) < NOW() - INTERVAL '3 minutes'
               {_NOT_LIVE_TELEPHONY_SESSION}
             """,
             (max_age_minutes,),
         )
-        stale_rows = cur.fetchall()
+        from worker.room_presence import room_is_active
+        stale_rows = [row for row in cur.fetchall() if room_is_active(row[2]) is False]
         stats["stale_sessions_closed"] = len(stale_rows)
 
         if stale_rows:
@@ -127,67 +129,18 @@ def _reconcile_on_conn(
                         duration_sec = 0,
                         end_reason = 'reconciled_stale'
                     WHERE ended_at IS NULL
-                      AND started_at < NOW() - (INTERVAL '1 minute' * %s)
+                      AND id = ANY(%s)
+              AND coalesce(worker_heartbeat_at, started_at) < NOW() - INTERVAL '3 minutes'
                       {_NOT_LIVE_TELEPHONY_SESSION}
                     """,
-                    (max_age_minutes,),
+                    ([row[0] for row in stale_rows],),
                 )
                 print(
                     f"[reconcile] Marked {cur.rowcount} session(s) as closed ('reconciled_stale')."
                 )
-                # P3-H4: crash/kill never reached shutdown usage flush. Cap estimate at
-                # max_age so a long-orphaned row cannot bill days of wall clock.
-                cap_sec = float(max_age_minutes * 60)
-                for s_id, t_id, _r_name, s_at in stale_rows:
-                    if not t_id:
-                        continue
-                    cur.execute(
-                        """
-                        SELECT 1 FROM usage_events
-                        WHERE session_id = %s AND kind = 'agent_sec'
-                        LIMIT 1
-                        """,
-                        (s_id,),
-                    )
-                    if cur.fetchone():
-                        continue
-                    cur.execute(
-                        """
-                        INSERT INTO usage_events (tenant_id, session_id, kind, qty)
-                        VALUES (
-                            %s,
-                            %s,
-                            'agent_sec',
-                            LEAST(
-                                %s,
-                                GREATEST(
-                                    EXTRACT(EPOCH FROM (NOW() - %s::timestamptz)),
-                                    0
-                                )
-                            )
-                        )
-                        """,
-                        (t_id, s_id, cap_sec, s_at),
-                    )
-                    minutes = cap_sec / 60.0
-                    # Prefer true elapsed when we can; fall back to cap minutes.
-                    cur.execute(
-                        """
-                        UPDATE quota_state
-                        SET minutes_this_month = minutes_this_month + LEAST(
-                            %s,
-                            GREATEST(EXTRACT(EPOCH FROM (NOW() - %s::timestamptz)) / 60.0, 0)
-                        )
-                        WHERE tenant_id = %s
-                        """,
-                        (minutes, s_at, t_id),
-                    )
-                    stats["usage_events_written"] += 1
-                if stats["usage_events_written"]:
-                    print(
-                        f"[reconcile] Wrote {stats['usage_events_written']} "
-                        "estimated agent_sec usage event(s) for crash recovery."
-                    )
+                # A worker's durable payload settles actual usage, including after
+                # this orphan close. Wall-clock orphan age is not measured usage;
+                # leave missing usage unknown instead of inventing a charge.
         else:
             print(f"[reconcile] No stale sessions > {max_age_minutes}m old found.")
 
@@ -197,71 +150,79 @@ def _reconcile_on_conn(
         # row is for transcript/usage only, so count each call once via the ledger and
         # exclude its linked session. Counting only sessions here used to zero every
         # live phone call's reservation.
-        cur.execute(
-            """
-            SELECT t.id,
-                   COALESCE(s.open_count, 0) + COALESCE(c.open_count, 0) AS true_open_count,
-                   q.concurrent_now
-            FROM tenants t
-            LEFT JOIN (
-                SELECT s.tenant_id, COUNT(*) AS open_count
-                FROM sessions s
-                WHERE s.ended_at IS NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM telephony_calls tc
-                      WHERE tc.session_id = s.id
-                        AND tc.quota_reserved_at IS NOT NULL
-                  )
-                GROUP BY s.tenant_id
-            ) s ON t.id = s.tenant_id
-            LEFT JOIN (
-                SELECT tenant_id, COUNT(*) AS open_count
-                FROM telephony_calls
-                WHERE quota_reserved_at IS NOT NULL
-                  AND quota_released_at IS NULL
-                GROUP BY tenant_id
-            ) c ON t.id = c.tenant_id
-            LEFT JOIN quota_state q ON t.id = q.tenant_id
-            """
-        )
-        tenant_rows = cur.fetchall()
-
-        to_update = []
-        for t_id, true_open, current_quota in tenant_rows:
-            current_val = current_quota if current_quota is not None else 0
-            if true_open != current_val:
-                to_update.append((t_id, true_open, current_val))
-
-        stats["tenants_reconciled"] = len(to_update)
-        stats["total_open_sessions_remaining"] = sum(r[1] for r in tenant_rows)
-
-        if to_update:
-            print(
-                f"[reconcile] Found {len(to_update)} tenant(s) with mismatched concurrency counts:"
+        from control_plane.db_limits import bounded_transaction
+        with bounded_transaction(conn):
+            if isinstance(conn, psycopg.Connection) and not dry_run:
+                # Lock before the following count statement takes its snapshot.
+                # Mint/release use the same quota rows, so reconciliation cannot
+                # overwrite a concurrent reservation with an older count.
+                cur.execute("select tenant_id from quota_state order by tenant_id for update")
+                cur.fetchall()
+            cur.execute(
+                """
+                SELECT t.id,
+                       COALESCE(s.open_count, 0) + COALESCE(c.open_count, 0) AS true_open_count,
+                       q.concurrent_now
+                FROM tenants t
+                LEFT JOIN (
+                    SELECT s.tenant_id, COUNT(*) AS open_count
+                    FROM sessions s
+                    WHERE s.ended_at IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM telephony_calls tc
+                          WHERE tc.session_id = s.id
+                            AND tc.quota_reserved_at IS NOT NULL
+                      )
+                    GROUP BY s.tenant_id
+                ) s ON t.id = s.tenant_id
+                LEFT JOIN (
+                    SELECT tenant_id, COUNT(*) AS open_count
+                    FROM telephony_calls
+                    WHERE quota_reserved_at IS NOT NULL
+                      AND quota_released_at IS NULL
+                    GROUP BY tenant_id
+                ) c ON t.id = c.tenant_id
+                LEFT JOIN quota_state q ON t.id = q.tenant_id
+                """
             )
-            for t_id, true_open, current_val in to_update:
-                print(
-                    f"  - Tenant {t_id}: quota_state={current_val} -> corrected to {true_open}"
-                )
+            tenant_rows = cur.fetchall()
 
-            if not dry_run:
-                for t_id, true_open, _ in to_update:
-                    cur.execute(
-                        """
-                        INSERT INTO quota_state (tenant_id, concurrent_now)
-                        VALUES (%s, %s)
-                        ON CONFLICT (tenant_id) DO UPDATE
-                        SET concurrent_now = EXCLUDED.concurrent_now
-                        """,
-                        (t_id, true_open),
+            to_update = []
+            for t_id, true_open, current_quota in tenant_rows:
+                current_val = current_quota if current_quota is not None else 0
+                if true_open != current_val:
+                    to_update.append((t_id, true_open, current_val))
+
+            stats["tenants_reconciled"] = len(to_update)
+            stats["total_open_sessions_remaining"] = sum(r[1] for r in tenant_rows)
+
+            if to_update:
+                print(
+                    f"[reconcile] Found {len(to_update)} tenant(s) with mismatched concurrency counts:"
+                )
+                for t_id, true_open, current_val in to_update:
+                    print(
+                        f"  - Tenant {t_id}: quota_state={current_val} -> corrected to {true_open}"
                     )
+
+                if not dry_run:
+                    for t_id, true_open, _ in to_update:
+                        cur.execute(
+                            """
+                            INSERT INTO quota_state (tenant_id, concurrent_now)
+                            VALUES (%s, %s)
+                            ON CONFLICT (tenant_id) DO UPDATE
+                            SET concurrent_now = EXCLUDED.concurrent_now
+                            """,
+                            (t_id, true_open),
+                        )
+                    print(
+                        f"[reconcile] Successfully updated {len(to_update)} quota_state record(s)."
+                    )
+            else:
                 print(
-                    f"[reconcile] Successfully updated {len(to_update)} quota_state record(s)."
+                    "[reconcile] All tenant quota_state.concurrent_now values are up to date."
                 )
-        else:
-            print(
-                "[reconcile] All tenant quota_state.concurrent_now values are up to date."
-            )
 
     if dry_run:
         print("[reconcile] DRY RUN complete — no changes were committed.")

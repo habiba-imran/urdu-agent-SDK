@@ -19,7 +19,7 @@ type TranscriptTurn = {
   timestamp: string;
 };
 
-type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
+type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnecting';
 
 function friendlyError(code: AwaazLabsUvaVoiceErrorCode, message: string): string {
   const hasRealDetail = Boolean(message) && message !== code;
@@ -97,7 +97,12 @@ export default function TestStudioPage() {
         },
       ]);
     };
-    const onDisconnected = () => {
+    const onDisconnected = (reason: unknown) => {
+      const outcome = typeof reason === 'object' && reason !== null ? reason as { reason?: string; stage?: string; code?: string } : null;
+      if (outcome?.reason || outcome?.stage) setErrorMsg(
+        outcome.code === 'provider_quota_exhausted' ? 'A provider has exhausted its quota. The call ended.' :
+        outcome.reason === 'max_duration_reached' ? 'The configured call duration limit was reached.' :
+        'The call ended: ' + (outcome.stage ?? outcome.reason));
       setConnectionState('idle');
       setAgentSpeaking(false);
       setAudioBlocked(false);
@@ -145,6 +150,7 @@ export default function TestStudioPage() {
       setErrorMsg(friendlyError(err.code, err.message));
     };
 
+    client.on('connection_state_changed', setConnectionState);
     client.on('connected', onConnected);
     client.on('disconnected', onDisconnected);
     client.on('transcript', onTranscript);
@@ -154,6 +160,8 @@ export default function TestStudioPage() {
     client.on('error', onError);
 
     return () => {
+      client.off('connection_state_changed', setConnectionState);
+      void client.disconnect();
       client.off('connected', onConnected);
       client.off('disconnected', onDisconnected);
       client.off('transcript', onTranscript);
@@ -166,7 +174,7 @@ export default function TestStudioPage() {
 
   useEffect(() => {
     return () => {
-      if (clientRef.current?.isConnected) {
+      if (clientRef.current) {
         void clientRef.current.disconnect();
       }
     };
@@ -215,10 +223,10 @@ export default function TestStudioPage() {
   const selectedAgent = agents?.find((a) => a.id === selectedAgentId);
   const isConnected = connectionState === 'connected';
   const isBusy = connectionState === 'connecting' || connectionState === 'disconnecting';
-  const showInCallControls = connectionState === 'connected' || connectionState === 'disconnecting';
+  const showInCallControls = connectionState !== 'idle';
 
   const statusText =
-    connectionState === 'connecting'
+    connectionState === 'reconnecting' ? 'Reconnecting voice transport...' : connectionState === 'connecting'
       ? 'Connecting to Voice Agent...'
       : connectionState === 'disconnecting'
         ? 'Ending session...'
@@ -341,7 +349,7 @@ export default function TestStudioPage() {
                   className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
                   <Play className="h-4 w-4" />
-                  {connectionState === 'connecting' ? 'Connecting...' : 'Start WebRTC Call'}
+                  Start WebRTC Call
                 </button>
               ) : (
                 <div className="space-y-2">

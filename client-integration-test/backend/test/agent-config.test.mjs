@@ -28,13 +28,13 @@ test('prompt routes read and persist Unicode instructions through the installed 
   }));
   const url = await listen(t, createApp({ portalApiUrl: portalUrl, tenantId: 'fixture', hmacSecret: 'fixture-secret', allowedOrigins: [] }));
   const loaded = await (await fetch(`${url}/api/agents/test-agent/config`)).json();
-  assert.deepEqual(loaded, { id: 'test-agent', name: 'Test agent', prompt: 'Original', firstSpeaker: 'agent', greeting: 'Hello' });
+  assert.deepEqual(loaded, { id: 'test-agent', name: 'Test agent', prompt: 'Original', firstSpeaker: 'agent', greeting: 'Hello', maxCallDurationSeconds: 1800 });
   const next = { prompt: 'آپ مددگار ہیں۔\nKeep replies concise.', firstSpeaker: 'user', greeting: '' };
   const response = await fetch(`${url}/api/agents/test-agent/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...next, toolsAuthSecret: 'must-not-forward' }) });
   assert.equal(response.status, 200);
   assert.deepEqual(updates, [{ prompt: next.prompt, first_speaker: 'user', greeting: '' }]);
   const saved = await response.json();
-  assert.deepEqual(saved, { id: 'test-agent', name: 'Test agent', ...next });
+  assert.deepEqual(saved, { id: 'test-agent', name: 'Test agent', ...next, maxCallDurationSeconds: 1800 });
   assert.equal((await (await fetch(`${url}/api/agents/test-agent/config`)).json()).prompt, next.prompt);
   assert.equal((await fetch(`${url}/api/agents/missing/config`)).status, 404);
 });

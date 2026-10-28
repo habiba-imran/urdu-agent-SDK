@@ -5,6 +5,7 @@ export function publicAgentConfig(agent) {
     id: agent.id,
     name: agent.name,
     prompt: agent.prompt ?? '',
+    maxCallDurationSeconds: agent.max_call_duration_seconds ?? 1800,
     firstSpeaker: agent.first_speaker ?? 'agent',
     greeting: agent.greeting ?? '',
     ...(agent.llm_options?.humanization ? { humanization: agent.llm_options.humanization } : {}),
@@ -25,10 +26,13 @@ export function mountAgentConfigRoutes(app, getClient) {
   });
 
   app.post('/api/agents/:agentId/config', async (req, res) => {
-    const { prompt, firstSpeaker, greeting, humanization } = req.body ?? {};
+    const { prompt, firstSpeaker, greeting, humanization, maxCallDurationSeconds } = req.body ?? {};
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 24000 ||
         !['agent', 'user'].includes(firstSpeaker) || typeof greeting !== 'string' || greeting.trim().length > 500) {
       return res.status(400).json({ error: 'invalid_agent_config', message: 'Use a non-empty prompt (up to 24,000 characters), firstSpeaker (agent/user), and greeting (up to 500 characters).' });
+    }
+    if (maxCallDurationSeconds !== undefined && (!Number.isInteger(maxCallDurationSeconds) || maxCallDurationSeconds < 60 || maxCallDurationSeconds > 7200)) {
+      return res.status(400).json({error: 'invalid_duration', message: 'Call duration must be 60 to 7200 seconds.'});
     }
     if (humanization !== undefined) {
       try { validateHumanization(humanization); }
@@ -36,7 +40,7 @@ export function mountAgentConfigRoutes(app, getClient) {
     }
     try {
       const client = await getClient();
-      const agent = await client.updateAgent(req.params.agentId, { prompt, firstSpeaker, greeting,
+      const agent = await client.updateAgent(req.params.agentId, { prompt, firstSpeaker, greeting, maxCallDurationSeconds,
         ...(humanization === undefined ? {} : { humanization }) });
       res.json(publicAgentConfig(agent));
     } catch (error) {

@@ -81,7 +81,9 @@ def _normalize_idle(conn: Connection) -> None:
 @contextmanager
 def mint_db_connection(*, connect_timeout: float = 10.0) -> Iterator[Connection]:
     """Checkout the process-local mint connection for the duration of the ``with`` block."""
-    with _lock:
+    if not _lock.acquire(timeout=connect_timeout):
+        raise TimeoutError("DB checkout deadline exceeded")
+    try:
         try:
             conn = _ensure_connection(connect_timeout)
         except Exception:
@@ -93,3 +95,5 @@ def mint_db_connection(*, connect_timeout: float = 10.0) -> Iterator[Connection]
         except Exception:
             _drop_cached_unlocked()
             raise
+    finally:
+        _lock.release()

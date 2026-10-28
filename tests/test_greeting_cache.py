@@ -230,7 +230,7 @@ def test_plan_greeting_prewarm_cache_miss_and_generate_reply():
     assert miss.cache_hit is False
     assert miss.await_prewarm is False
     assert miss.await_synthesis is True
-    assert miss.prewarm_timeout == 5.0
+    assert miss.prewarm_timeout == 6.25
 
     gen = plan_greeting_prewarm(
         _cfg(greeting=""),

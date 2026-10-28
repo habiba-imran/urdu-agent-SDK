@@ -272,6 +272,12 @@ def assign_number_to_agent(
 
 # Call & Quota Repository
 def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
+    from control_plane.db_limits import bounded_transaction
+    with bounded_transaction(conn):
+        return _reserve_call_quota(conn, tenant_id)
+
+
+def _reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
     """Atomically reserve quota for a call in quota_state.
 
     F-H17: this used to read only tenants.max_concurrent, so a tenant blocked from browser
@@ -305,6 +311,8 @@ def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
         """,
         (tenant_id,),
     )
+    conn.execute("update quota_state set minutes_this_month = 0, period_start = date_trunc('month', now())::date "
+                 "where tenant_id = %s and period_start < date_trunc('month', now())::date", (tenant_id,))
     quota_row = conn.execute(
         "select concurrent_now, minutes_this_month from quota_state "
         "where tenant_id = %s for update",
@@ -312,6 +320,8 @@ def reserve_call_quota(conn: DbConnection, tenant_id: str) -> bool:
     ).fetchone()
     curr = quota_row[0] if quota_row else 0
     minutes_used = (quota_row[1] if quota_row else 0) or 0
+    from control_plane.quota_usage import active_minutes
+    minutes_used = float(minutes_used) + active_minutes(conn, tenant_id)
     if curr >= max_conc:
         return False
     # F-H17: the monthly minutes cap applies to PSTN too.
@@ -341,18 +351,21 @@ def release_call_quota_once(conn: DbConnection, call_id: str, tenant_id: str) ->
     autocommit connections (worker) as well as inside a transaction (API/reconciler):
     concurrent callers race on the row, exactly one gets ``returning id``.
     """
-    claimed = conn.execute(
-        "update telephony_calls set quota_released_at = now() "
-        "where id = %s and quota_released_at is null returning id",
-        (call_id,),
-    ).fetchone()
-    if not claimed:
-        return False  # Already released or invalid call
-    conn.execute(
-        "update quota_state set concurrent_now = greatest(0, concurrent_now - 1) where tenant_id = %s",
-        (tenant_id,),
-    )
-    return True
+    from control_plane.db_limits import bounded_transaction
+    with bounded_transaction(conn):
+
+        claimed = conn.execute(
+            "update telephony_calls set quota_released_at = now() "
+            "where id = %s and quota_released_at is null returning id",
+            (call_id,),
+        ).fetchone()
+        if not claimed:
+            return False  # Already released or invalid call
+        conn.execute(
+            "update quota_state set concurrent_now = greatest(0, concurrent_now - 1) where tenant_id = %s",
+            (tenant_id,),
+        )
+        return True
 
 
 def release_call_quota_unpersisted(conn: DbConnection, tenant_id: str) -> None:
@@ -461,29 +474,33 @@ def finalize_call(
     ``release_call_quota_once`` as well, so whichever lands first wins and the rest are
     no-ops — ``quota_released_at`` is the ledger.
     """
-    if status not in TERMINAL_CALL_STATUSES:
-        raise ValueError(f"finalize_call requires a terminal status, got {status!r}")
-    row = conn.execute(
-        "select platform_status from telephony_calls where id = %s for update",
-        (call_id,),
-    ).fetchone()
-    if not row:
-        return {"found": False, "status_changed": False, "quota_released": False}
-    current = row[0]
-    status_changed = False
-    if current not in TERMINAL_CALL_STATUSES:
-        transition_call_status(
-            conn,
-            call_id,
-            status,
-            raw_participant_status=raw_participant_status,
-            error_code=error_code,
-            error_message=error_message,
-            ended=True,
-        )
-        status_changed = True
-    released = release_call_quota_once(conn, call_id, tenant_id)
-    return {"found": True, "status_changed": status_changed, "quota_released": released}
+    from control_plane.db_limits import bounded_transaction
+    with bounded_transaction(conn):
+
+        if status not in TERMINAL_CALL_STATUSES:
+            raise ValueError(f"finalize_call requires a terminal status, got {status!r}")
+        row = conn.execute(
+            "select platform_status from telephony_calls where id = %s for update",
+            (call_id,),
+        ).fetchone()
+        if not row:
+            return {"found": False, "status_changed": False, "quota_released": False}
+        current = row[0]
+        status_changed = False
+        if current not in TERMINAL_CALL_STATUSES:
+            transition_call_status(
+                conn,
+                call_id,
+                status,
+                raw_participant_status=raw_participant_status,
+                error_code=error_code,
+                error_message=error_message,
+                ended=True,
+                only_from=ACTIVE_CALL_STATUSES,
+            )
+            status_changed = True
+        released = release_call_quota_once(conn, call_id, tenant_id)
+        return {"found": True, "status_changed": status_changed, "quota_released": released}
 
 
 def release_leaked_call_quota(conn: DbConnection, batch_size: int = 100) -> int:

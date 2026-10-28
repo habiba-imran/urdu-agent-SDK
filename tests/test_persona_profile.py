@@ -175,7 +175,7 @@ def test_real_session_builder_loads_saved_profile_for_each_entry_channel(channel
         reads.append((agent, tenant, kwargs))
         return cfg, "synthetic_voice"
     monkeypatch.setattr(main, "load_agent_session_bundle", load)
-    monkeypatch.setattr(main, "build_components_cached", lambda _: (ProviderComponents(None, None, SyntheticTTS()), False))
+    monkeypatch.setattr(main, "build_components_cached", lambda _, **kwargs: (ProviderComponents(None, None, SyntheticTTS()), False))
     monkeypatch.setattr(main, "_load_vad", lambda: None)
     monkeypatch.setattr("worker.telemetry.provider_snapshot", lambda *a: {})
     def prewarm(**kwargs):

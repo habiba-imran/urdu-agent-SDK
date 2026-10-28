@@ -147,6 +147,15 @@ def build(voice_id: str, *, rendered_identity: str | None = None) -> Any:
             phrase_replacement_config_id=phrase_id,
         )
 
+    raise ValueError(f"Unsupported UPLIFT_MODE: {mode!r}")
+
+
+def _transport_factory(plugin: Any) -> Any:
+    if not hasattr(plugin, "WebSocketClient"):
+        return None
+    from .uplift_transport import ReliableWebSocketClient
+    return ReliableWebSocketClient
+
 
 def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
     """Uplift TTS that opens its websocket before the first utterance.
@@ -167,9 +176,9 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
     first ``synthesize`` call. Opening it during the greeting window moves that cost off
     the first reply, and keeping it open keeps it off every later reply.
 
-    Everything here is best-effort: ``connect()`` is idempotent and returns a bool rather
-    than raising, and any failure must leave synthesis to construct the client itself as
-    before. Warm-up never blocks or breaks the greeting.
+    The session owns one reliable client. Its five-second connection budget includes
+    the provider's explicit ready message; transport connection alone is insufficient.
+    Prewarm and synthesis share that handshake, and synthesis errors terminate the call.
     """
     import asyncio
 
@@ -184,6 +193,14 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
     class PrewarmableUpliftTTS(base):
         _interruption_warm_task: asyncio.Task | None = None
         _closing = False
+
+        def synthesize(self, *args: Any, **kwargs: Any) -> Any:
+            self._ws_client()
+            return super().synthesize(*args, **kwargs)
+
+        def stream(self, *args: Any, **kwargs: Any) -> Any:
+            self._ws_client()
+            return super().stream(*args, **kwargs)
 
         def _ws_client(self) -> Any | None:
             """Existing socket.io client, constructing one if the plugin has not yet.
@@ -200,7 +217,7 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
                 from livekit.plugins.upliftai import tts as _plugin_tts
             except Exception:
                 return None
-            factory = getattr(_plugin_tts, "WebSocketClient", None)
+            factory = _transport_factory(_plugin_tts)
             if opts is None or factory is None:
                 return None
             client = factory(opts)

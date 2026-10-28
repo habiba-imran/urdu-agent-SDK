@@ -392,6 +392,7 @@ def test_stt_unavailable_is_terminal_and_tool_dependency_is_truthful():
         session.emit("error", NS(error=error))
         await asyncio.sleep(0)
         assert session.userdata.humanization_runtime.failure_outcome["stage"] == "STT"
+        await session._awaaz_failure_task
         assert session.shutdowns == [{"drain": False}]
         assert (
             failure(TimeoutError(), write=False, dispatched=True).outcome

@@ -35,3 +35,6 @@ scratch/
 
 # Temporary raw-body verification project; never ship its credentials or artifacts.
 /uva-signing-test/
+
+# Durable worker finalization payloads contain session data and stay private.
+/state/pending-finalizations/

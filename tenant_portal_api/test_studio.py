@@ -71,6 +71,7 @@ def _normalize_cp_failure(status: int, payload: Any) -> tuple[int, dict]:
 
 def _session_payload(payload: dict, refresh_url: str) -> dict:
     return {
+        "sessionId": payload.get("sessionId"),
         "token": payload["token"],
         "wsUrl": payload.get("wsUrl") or payload.get("ws_url"),
         "roomName": payload.get("roomName") or payload.get("room_name"),

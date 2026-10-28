@@ -1151,6 +1151,7 @@ class TelephonyService:
                         message="Concurrent request in progress for this idempotency key.",
                     )
 
+            external_attempted = False
             try:
                 if conn is None:
                     phone = next(
@@ -1222,110 +1223,92 @@ class TelephonyService:
 
                 call_id = str(uuid.uuid4())
                 room_name = f"telephony-outbound-{uuid.uuid4().hex[:8]}"
+                session_id = str(uuid.uuid4()) if conn is not None else None
+                res = {"telephony_call_id": call_id, "session_id": session_id,
+                    "room_name": room_name, "platform_status": CallPublicStatus.DIALING.value,
+                    "direction": "outbound", "error_code": None, "error_message": None}
+                if conn is not None:
+                    conn.execute(
+                        "insert into sessions (id, tenant_id, agent_id, room_name) values (%s, %s, %s, %s)",
+                        (session_id, tenant_id, agent_id, room_name),
+                    )
+                    conn.execute(
+                        """
+                        insert into telephony_calls (
+                            id, tenant_id, agent_id, phone_number_id, direction, room_name,
+                            from_number, to_number, recipient, call_context, external_customer_ref,
+                            external_workflow_ref, outbound_trunk_record_id, livekit_sip_call_id,
+                            livekit_sip_call_id_full, platform_status, provider_status,
+                            quota_reserved_at, session_id
+                        ) values (%s, %s, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
+                                  %s, %s, %s, %s, %s, %s, %s, now(), %s)
+                        """,
+                        (
+                            call_id,
+                            tenant_id,
+                            agent_id,
+                            from_number_id,
+                            room_name,
+                            phone_e164,
+                            to_number,
+                            recipient,
+                            json.dumps(context or {}),
+                            external_customer_ref,
+                            external_workflow_ref,
+                            outbound_trunk_record_id,
+                            None,
+                            None,
+                            CallPublicStatus.DIALING.value,
+                            "pending_dispatch",
+                            session_id,
+                        ),
+                    )
+                    # Persist the operation identity and quota before any external side effect.
+                    queries.save_idempotency_key(conn, tenant_id, idempotency_key, action, request_hash, res)
+                    conn.commit()
+                external_attempted = True
                 lk_client = self._get_livekit_sip_client()
                 try:
-                    lk_client.create_agent_dispatch(
-                        room_name,
-                        metadata={
-                            "direction": "outbound",
-                            "tenant_id": tenant_id,
-                            "agent_id": agent_id,
-                            "telephony_call_id": call_id,
-                            "from_number_id": from_number_id,
-                            "from_number": phone_e164,
-                            "to_number": to_number,
-                        },
-                    )
+                    lk_client.create_agent_dispatch(room_name, metadata={
+                        "direction": "outbound", "tenant_id": tenant_id, "agent_id": agent_id,
+                        "session_id": session_id, "telephony_call_id": call_id,
+                        "from_number_id": from_number_id, "from_number": phone_e164, "to_number": to_number,
+                    })
+                    sip_part = lk_client.create_sip_participant(room_name=room_name,
+                        outbound_trunk_id=outbound_trunk_id, to_number=to_number)
                 except Exception:
-                    # A-01.2: the reservation was taken above but no telephony_calls row
-                    # exists yet, so nothing downstream could ever release it.
+                    # A timeout can mean the provider accepted the operation. Keep its
+                    # idempotency record and compensate using the known room identity.
+                    try:
+                        lk_client.end_room(room_name)
+                    except Exception:
+                        logger.exception("outbound compensation failed room=%s", room_name)
                     if conn is not None:
-                        queries.release_call_quota_unpersisted(conn, tenant_id)
+                        rollback = getattr(conn, "rollback", None)
+                        if callable(rollback):
+                            rollback()
+                        from control_plane.db_limits import bounded_transaction
+                        with bounded_transaction(conn):
+                            queries.finalize_call(conn, call_id, tenant_id, "failed",
+                                error_code="call_setup_failed", error_message="Outbound setup failed")
+                            conn.execute("update sessions set ended_at = now(), duration_sec = 0, "
+                                "end_reason = 'outbound_setup_failed' where id = %s and ended_at is null", (session_id,))
+                            failed = {**res, "platform_status": "failed", "error_code": "call_setup_failed",
+                                      "error_message": "Outbound setup failed"}
+                            queries.complete_idempotency_key(conn, tenant_id, idempotency_key, action, failed)
+                        conn.commit()
                     raise
-                try:
-                    sip_part = lk_client.create_sip_participant(
-                        room_name=room_name,
-                        outbound_trunk_id=outbound_trunk_id,
-                        to_number=to_number,
-                    )
-                except TelephonyError as exc:
-                    if conn is not None:
-                        queries.release_call_quota_unpersisted(conn, tenant_id)
-                    detail = exc.detail if isinstance(exc.detail, dict) else {}
-                    provider_message = detail.get("provider_message") if isinstance(detail, dict) else None
-                    raise TelephonyError(
-                        status=exc.status,
-                        code=exc.code,
-                        message=exc.message,
-                        detail={
-                            **detail,
-                            "from_number": phone_e164,
-                            "to_number": to_number,
-                            "room_name": room_name,
-                            "outbound_trunk_id": outbound_trunk_id,
-                            **({"provider_message": provider_message} if provider_message else {}),
-                        },
-                    ) from exc
-
-                # A-01.3: every call gets a ``sessions`` row like browser sessions do, so the
-                # worker's shutdown path (transcript, usage_events, minutes, retention) and
-                # the dashboard rollups that join on sessions see PSTN calls too.
-                session_id = str(uuid.uuid4()) if conn is not None else None
-                res = {
-                    "telephony_call_id": call_id,
-                    "session_id": session_id,
-                    "room_name": room_name,
-                    "platform_status": CallPublicStatus.DIALING.value,
-                    "direction": "outbound",
-                    "error_code": None,
-                    "error_message": None,
-                }
                 if conn is None:
                     self._idempotency[idemp_id] = res
                     self._calls[call_id] = {**res, "id": call_id, "tenant_id": tenant_id, "agent_id": agent_id}
                     return res
-
-                conn.execute(
-                    "insert into sessions (id, tenant_id, agent_id, room_name) values (%s, %s, %s, %s)",
-                    (session_id, tenant_id, agent_id, room_name),
-                )
-                conn.execute(
-                    """
-                    insert into telephony_calls (
-                        id, tenant_id, agent_id, phone_number_id, direction, room_name,
-                        from_number, to_number, recipient, call_context, external_customer_ref,
-                        external_workflow_ref, outbound_trunk_record_id, livekit_sip_call_id,
-                        livekit_sip_call_id_full, platform_status, provider_status,
-                        quota_reserved_at, session_id
-                    ) values (%s, %s, %s, %s, 'outbound', %s, %s, %s, %s, %s::jsonb,
-                              %s, %s, %s, %s, %s, %s, %s, now(), %s)
-                    """,
-                    (
-                        call_id,
-                        tenant_id,
-                        agent_id,
-                        from_number_id,
-                        room_name,
-                        phone_e164,
-                        to_number,
-                        recipient,
-                        json.dumps(context or {}),
-                        external_customer_ref,
-                        external_workflow_ref,
-                        outbound_trunk_record_id,
-                        sip_part.get("livekit_sip_call_id"),
-                        sip_part.get("livekit_sip_call_id_full"),
-                        CallPublicStatus.DIALING.value,
-                        sip_part.get("status"),
-                        session_id,
-                    ),
-                )
-                queries.save_idempotency_key(
-                    conn, tenant_id, idempotency_key, action, request_hash, res
-                )
+                conn.execute("update telephony_calls set livekit_sip_call_id = %s, "
+                    "livekit_sip_call_id_full = %s, provider_status = %s where id = %s",
+                    (sip_part.get("livekit_sip_call_id"), sip_part.get("livekit_sip_call_id_full"),
+                     sip_part.get("status"), call_id))
                 return res
             except Exception as exc:
-                if conn is not None:
+                if conn is not None and not external_attempted:
                     queries.fail_idempotency_key(conn, tenant_id, idempotency_key, action)
                 if isinstance(exc, (psycopg.errors.UniqueViolation, psycopg.errors.InvalidColumnReference)) or "InvalidColumnReference" in exc.__class__.__name__ or "UniqueViolation" in exc.__class__.__name__:
                     self._raise_database_conflict("create outbound call", exc)

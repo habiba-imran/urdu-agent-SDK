@@ -319,7 +319,8 @@ def test_anthropic_snapshot_uses_cached_claude_options_and_no_gemini_fields(monk
     assert snapshot['llm']['effective_model'] == 'claude-haiku-5-5'
     assert snapshot['llm']['effective_options'] == {
         'max_tokens': 160, 'effort': 'low', 'thinking': 'disabled',
-        'timeout_seconds': 30, 'max_retries': 0,
+        'http_client_timeout_seconds': 30, 'request_timeout_seconds': 5,
+        'useful_progress_timeout_seconds': 6, 'max_retries': 0,
         'caching': caching,
     }
     assert 'SECRET' not in json.dumps(snapshot)
@@ -625,7 +626,7 @@ def test_worker_identity_uses_public_context_and_excludes_secret_metadata():
     assert identity["job_id"] == "AJ_fixture"
     assert identity["dispatch_agent_name"] == "uva-humanization-ab-fixture"
     assert identity["process_id"] > 0
-    assert identity["runtime_revision"] == "humanization_p0_20261010_activation_observation_v1"
+    assert identity["runtime_revision"] == "connection_lifecycle_20261027"
     assert "SECRET" not in json.dumps(identity)
     invalid = worker_runtime_identity(NS(worker_id="https://secret.example/key", job=NS(
         id="secret arbitrary text", agent_name="secret arbitrary text")))

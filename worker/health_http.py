@@ -98,6 +98,8 @@ def readiness_payload() -> tuple[dict[str, Any], int]:
         "livekit": "configured" if lk_ok else "missing_credentials",
         "vad": "loaded" if vad_ok else "not_loaded",
         "database": db_label,
+        "provider_connectivity": "checked_per_session",
+        "worker_registration": "not_probed",
     }
     return body, (200 if healthy else 503)
 

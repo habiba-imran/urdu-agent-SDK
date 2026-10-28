@@ -70,6 +70,9 @@ def collect_model_usage(session: object) -> dict[str, float]:
     concurrency slot because a usage field moved in a livekit upgrade would be a far worse failure
     than losing one call's usage numbers. Returns {} if usage is unavailable for any reason.
     """
+    final_usage = getattr(session, "_awaaz_final_usage", None)
+    if isinstance(final_usage, dict):
+        return dict(final_usage)
     out = {"stt_sec": 0.0, "tts_sec": 0.0, "llm_tokens": 0.0}
     try:
         model_usage = session.usage.model_usage  # type: ignore[attr-defined]

@@ -203,17 +203,13 @@ def test_inbound_quota_exhausted_rejects_and_rolls_back():
     assert db.quota["tenant_client_1"] == 2
 
 
-def test_inbound_persistence_failure_fails_open_and_rolls_back_reservation():
+def test_inbound_persistence_failure_ends_setup_and_rolls_back_reservation():
     db = TxDb()
     db.fail_on = "insert into telephony_calls"
 
-    res = _resolve(db)
+    with pytest.raises(ValueError, match="persistence unavailable"):
+        _resolve(db)
 
-    # Caller is already connected: resolution still succeeds so the agent answers...
-    assert res["tenant_id"] == "tenant_client_1"
-    assert res["telephony_call_id"] is None
-    assert res["session_id"] is None
-    # ...but nothing half-written survives, and the reservation is not leaked.
     assert db.rollbacks == 1
     assert db.commits == 0
     assert db.calls == []
@@ -221,7 +217,7 @@ def test_inbound_persistence_failure_fails_open_and_rolls_back_reservation():
     assert db.quota["tenant_client_1"] == 0
 
 
-def test_inbound_without_room_name_keeps_legacy_reservation_only(caplog):
+def test_inbound_without_room_name_is_metadata_only(caplog):
     import logging
 
     db = TxDb()
@@ -229,9 +225,8 @@ def test_inbound_without_room_name_keeps_legacy_reservation_only(caplog):
         res = _resolve(db, room=None)
     assert res["telephony_call_id"] is None
     assert db.calls == [] and db.sessions == []
-    assert db.quota["tenant_client_1"] == 1
-    assert db.commits == 1
-    assert any("no room_name supplied" in r.message for r in caplog.records)
+    assert db.quota["tenant_client_1"] == 0
+    assert db.commits == 0
 
 
 def test_inbound_unknown_number_writes_nothing():

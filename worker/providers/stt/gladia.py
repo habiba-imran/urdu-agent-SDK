@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+_reliable_stt_class: type | None = None
+
 
 def build(language: str) -> Any:
+    global _reliable_stt_class
     from livekit.plugins import gladia
 
     # code_switching EXPLICIT False — the livekit-plugins-gladia STT() constructor default is
@@ -28,4 +31,23 @@ def build(language: str) -> Any:
     #
     # Phase 2 humanization: do NOT flip code_switching on for "naturalness" — keep False.
     # No stt_options passthrough until portal allowlists safe Gladia keys.
-    return gladia.STT(languages=[language], code_switching=False)
+    if not isinstance(gladia.STT, type):
+        return gladia.STT(languages=[language], code_switching=False)
+    if _reliable_stt_class is not None and issubclass(_reliable_stt_class, gladia.STT):
+        from .lifecycle import metered
+        return metered(_reliable_stt_class(languages=[language], code_switching=False))
+    from livekit.agents import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN
+    from livekit.agents.utils import is_given
+    from .gladia_transport import ReliableSpeechStream
+
+    class ReliableGladiaSTT(gladia.STT):
+        def stream(self, *, language=NOT_GIVEN, conn_options=DEFAULT_API_CONNECT_OPTIONS):
+            opts = self._sanitize_options(languages=[language] if is_given(language) else None)
+            stream = ReliableSpeechStream(stt=self, opts=opts, conn_options=conn_options,
+                api_key=self._api_key, http_session=self._ensure_session(), base_url=self._base_url)
+            self._streams.add(stream)
+            return stream
+
+    _reliable_stt_class = ReliableGladiaSTT
+    from .lifecycle import metered
+    return metered(ReliableGladiaSTT(languages=[language], code_switching=False))

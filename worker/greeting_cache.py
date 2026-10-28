@@ -187,7 +187,7 @@ class GreetingAudioCache:
 
 _cache = GreetingAudioCache()
 # Single-flight in-progress synthesis tasks (one TTS request per key).
-_inflight: dict[tuple[int, GreetingCacheKey], asyncio.Task[list[rtc.AudioFrame]]] = {}
+_inflight: dict[tuple[int, int, GreetingCacheKey], asyncio.Task[list[rtc.AudioFrame]]] = {}
 
 
 def get_greeting_cache() -> GreetingAudioCache:
@@ -218,7 +218,9 @@ def start_greeting_synthesis(
 
         return asyncio.create_task(_cached(), name="greeting_synth_cached")
 
-    flight_key = (id(asyncio.get_running_loop()), key)
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
+    flight_key = (id(asyncio.get_running_loop()), id(lifecycle) if lifecycle is not None else 0, key)
     existing = _inflight.get(flight_key)
     if existing is not None and not existing.done():
         return existing
@@ -254,6 +256,8 @@ def start_greeting_synthesis(
         _synth(), name="greeting_synth"
     )
     _inflight[flight_key] = task
+    if lifecycle is not None:
+        lifecycle.own_task(task)
     def done(completed):
         if _inflight.get(flight_key) is completed:
             _inflight.pop(flight_key, None)
@@ -293,7 +297,9 @@ async def await_greeting_frames(
     if hit is not None:
         return hit
 
-    task = _inflight.get((id(asyncio.get_running_loop()), key))
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
+    task = _inflight.get((id(asyncio.get_running_loop()), id(lifecycle) if lifecycle is not None else 0, key))
     if task is None:
         return None
     try:

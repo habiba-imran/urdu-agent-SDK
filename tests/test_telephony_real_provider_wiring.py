@@ -558,6 +558,9 @@ def test_webhook_endpoint_rejects_unsigned_request_in_real_mode(monkeypatch):
 
 
 class OutboundCallDb(ActiveConnectionDb):
+    def commit(self):
+        pass
+
     def __init__(self):
         super().__init__(encrypted_ref=encrypt_provider_secret(RAW_TELNYX_KEY))
         self.inserted_call_params: tuple[Any, ...] | None = None
@@ -598,6 +601,10 @@ class OutboundCallDb(ActiveConnectionDb):
             )
         if "from quota_state" in sql:
             return FakeCursor(row=None)
+        if "from sessions" in sql or "update quota_state set minutes_this_month" in sql:
+            return FakeCursor(row=None)
+        if "update telephony_calls set livekit_sip_call_id" in sql:
+            return FakeCursor()
         if "insert into sessions" in sql:
             self.inserted_session_params = params
             return FakeCursor()

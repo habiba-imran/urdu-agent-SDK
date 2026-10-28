@@ -62,6 +62,7 @@ export class TelephonyClient {
   readonly #signatureVersion: 'canonical-json-v1' | 'raw-body-v1';
   readonly #extraHeaders: Record<string, string>;
   readonly #fetcher: TelephonyFetch;
+  readonly #requestTimeoutMs: number;
   readonly #nowSeconds: () => number;
   readonly #nonceFactory: () => string;
 
@@ -77,6 +78,8 @@ export class TelephonyClient {
     this.#baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.#extraHeaders = sanitizeExtraHeaders(options.extraHeaders);
     this.#fetcher = resolveFetch(options.fetch);
+    this.#requestTimeoutMs = options.requestTimeoutMs ?? 15000;
+    if (!Number.isFinite(this.#requestTimeoutMs) || this.#requestTimeoutMs <= 0) throw new Error('requestTimeoutMs must be positive');
     this.#nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
     this.#nonceFactory = options.nonceFactory ?? createNonce;
   }
@@ -235,8 +238,16 @@ export class TelephonyClient {
       timestamp: String(this.#nowSeconds()),
       nonce: this.#nonceFactory(),
     });
-    const response = await this.send(operation, body, pathParams, signed.headers);
-    return parseTelephonyResponse<TResponse>(response);
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([(async () => {
+        const response = await this.send(operation, body, pathParams, signed.headers, controller.signal);
+        return parseTelephonyResponse<TResponse>(response);
+      })(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(createNetworkError()); }, this.#requestTimeoutMs);
+      })]);
+    } finally { clearTimeout(timer); }
   }
 
   private async send(
@@ -244,8 +255,10 @@ export class TelephonyClient {
     body: JsonInputObject,
     pathParams: Record<string, string>,
     authHeaders: Record<string, string>,
+    signal: AbortSignal,
   ): Promise<TelephonyFetchResponse> {
     const init = makeRequestInit(operation.method, body, this.#extraHeaders, authHeaders);
+    init.signal = signal;
     const url = buildUrl(this.#baseUrl, fillPath(operation.path, pathParams));
     try {
       return await this.#fetcher(url, init);

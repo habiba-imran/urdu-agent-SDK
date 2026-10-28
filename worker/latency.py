@@ -203,7 +203,7 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
         with worker_db_connection(connect_timeout=5) as conn:
             row = conn.execute(
                 """
-                select tenant_id, agent_id
+                select tenant_id, agent_id, id
                 from sessions
                 where room_name = %s and ended_at is null
                 order by started_at desc
@@ -220,7 +220,7 @@ def load_session_identity(room_name: str) -> dict[str, str] | None:
         return None
     if row is None or not row[0] or not row[1]:
         return None
-    return {"tenant_id": str(row[0]), "agent_id": str(row[1])}
+    return {"tenant_id": str(row[0]), "agent_id": str(row[1]), "session_id": str(row[2])}
 
 
 def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
@@ -246,6 +246,9 @@ def parse_dispatch_metadata(raw: str | None) -> dict[str, str] | None:
             "tenant_id": str(tenant_id),
             "agent_id": str(agent_id),
         }
+        for key in ("session_id", "telephony_call_id"):
+            if parsed.get(key):
+                out[key] = str(parsed[key])
         direction = parsed.get("direction")
         if direction:
             out["direction"] = str(direction)
@@ -272,20 +275,22 @@ async def _invoke_provider_prewarm(prewarm: Any) -> None:
         await result
 
 
-async def prewarm_tts(tts: Any) -> None:
+async def prewarm_tts(tts: Any) -> str:
     """Open the TTS provider websocket pool before the first utterance (UVA-11)."""
     prewarm = getattr(tts, "prewarm", None)
     if prewarm is None:
-        return
+        return "unsupported"
     await _invoke_provider_prewarm(prewarm)
+    return "hook_completed"
 
 
-async def prewarm_stt(stt: Any) -> None:
+async def prewarm_stt(stt: Any) -> str:
     """Open the STT provider connection pool before the first user turn (UVA-9/UVA-14)."""
     prewarm = getattr(stt, "prewarm", None)
     if prewarm is None:
-        return
+        return "unsupported"
     await _invoke_provider_prewarm(prewarm)
+    return "hook_completed"
 
 
 def session_room_options(*, audio_channel: str = "webrtc") -> Any:
@@ -415,20 +420,22 @@ def wire_interruption_tts_prewarm(session: Any) -> None:
     session.on("close", on_close)
 
 
-async def prewarm_llm(llm: Any) -> None:
+async def prewarm_llm(llm: Any) -> str:
     """Small LLM request so the first user turn avoids cold HTTP/TLS setup (UVA-7).
 
     Prefer a provider's transport-only hook. Never issue a Groq completion for
     warm-up: that consumes TPM needed by real conversational turns.
     """
-    from livekit.agents.llm import ChatContext
+    from livekit.agents.llm import ChatContext, LLM
 
     if callable(inspect.getattr_static(llm, "prewarm", None)):
+        if getattr(type(llm), "prewarm", None) is LLM.prewarm:
+            return "unsupported"
         await _invoke_provider_prewarm(llm.prewarm)
-        return
+        return "hook_completed"
     module = type(llm).__module__
     if "groq" in module.lower():
-        return
+        return "unsupported"
 
     stream = None
     try:
@@ -437,8 +444,10 @@ async def prewarm_llm(llm: Any) -> None:
         stream = llm.chat(chat_ctx=chat_ctx)
         async for _chunk in stream:
             break
+        return "request_completed"
     except Exception as exc:
         logger.warning("stage=prewarm_llm failed module=%s err=%s", module, exc)
+        return "failed"
     finally:
         if stream is not None:
             await stream.aclose()
@@ -459,14 +468,20 @@ async def prewarm_greeting_providers(
     some Windows / livekit-agents 1.6.x event-loop setups.
     """
     started = time.monotonic()
-    tasks: list[tuple[str, asyncio.Task[None]]] = []
+    tasks: list[tuple[str, asyncio.Task[str]]] = []
     if tts is not None:
         tasks.append(("tts", asyncio.create_task(prewarm_tts(tts))))
     if stt is not None:
         tasks.append(("stt", asyncio.create_task(prewarm_stt(stt))))
     if not tasks:
         return
-    await asyncio.wait([task for _, task in tasks])
+    try:
+        await asyncio.wait([task for _, task in tasks])
+    finally:
+        for _, task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*(task for _, task in tasks), return_exceptions=True)
     if logger is not None:
         for label, task in tasks:
             if task.cancelled():
@@ -484,6 +499,9 @@ async def prewarm_greeting_providers(
                     room_name or "?",
                     exc,
                 )
+            else:
+                logger.info("provider_prewarm_result provider=%s room=%s status=%s readiness_verified=false",
+                            label, room_name or "?", task.result())
         logger.info(
             "greeting provider prewarm finished room=%s ms=%s",
             room_name or "?",
@@ -587,8 +605,14 @@ def schedule_provider_prewarm(
     # Give the model the entire opening/setup window to warm, including time
     # spent connecting STT/TTS. The returned task still gates only the greeting
     # providers, so a slow model cannot delay static opening audio.
-    asyncio.create_task(_llm())
-    return asyncio.create_task(_greeting())
+    llm_task = asyncio.create_task(_llm())
+    greeting_task = asyncio.create_task(_greeting())
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
+    if lifecycle is not None:
+        lifecycle.own_task(llm_task)
+        lifecycle.own_task(greeting_task)
+    return greeting_task
 
 
 async def await_greeting_prewarm(

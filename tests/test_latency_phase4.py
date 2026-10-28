@@ -219,13 +219,19 @@ def test_deepgram_interim_results_enabled_for_partial_llm_feed(monkeypatch):
             created.update(kwargs)
 
     fake_deepgram = SimpleNamespace(STT=FakeSTT)
+    import livekit.plugins
+    monkeypatch.setattr(livekit.plugins, "deepgram", fake_deepgram, raising=False)
+    monkeypatch.setenv("UVA_DEEPGRAM_STT_MODE", "nova")
     monkeypatch.setitem(__import__("sys").modules, "livekit.plugins.deepgram", fake_deepgram)
     dg_mod.build("en")
     assert created["interim_results"] is True
     assert created["no_delay"] is True
 
 
-def test_warm_health_endpoint():
+def test_warm_health_endpoint(monkeypatch):
+    import control_plane.warm as warm
+    monkeypatch.setattr(warm, "conn_kwargs", lambda: {})
+    monkeypatch.setattr(warm.psycopg, "connect", lambda **_: (_ for _ in ()).throw(OSError("offline DB")))
     client = TestClient(cp_app)
     response = client.get("/healthz/warm")
     assert response.status_code in (200, 503)

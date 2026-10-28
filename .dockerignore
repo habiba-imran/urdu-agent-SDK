@@ -28,6 +28,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+tmp/
 htmlcov/
 .coverage
 

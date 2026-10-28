@@ -102,19 +102,25 @@ def _normalize_idle(conn: Connection) -> None:
 def worker_db_connection(*, connect_timeout: float = 5.0) -> Iterator[Connection]:
     """Checkout the process-local connection for the duration of the ``with`` block."""
     global _last_used_at
-    with _lock:
+    if not _lock.acquire(timeout=connect_timeout):
+        raise TimeoutError("DB checkout deadline exceeded")
+    try:
         try:
             conn = _ensure_connection(connect_timeout)
         except Exception:
             _drop_cached_unlocked()
             raise
         try:
-            yield conn
+            from control_plane.db_limits import bounded_transaction
+            with bounded_transaction(conn):
+                yield conn
             _normalize_idle(conn)
             _last_used_at = time.monotonic()
         except Exception:
             _drop_cached_unlocked()
             raise
+    finally:
+        _lock.release()
 
 
 def worker_db_execute(

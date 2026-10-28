@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
@@ -47,7 +48,7 @@ def worker_runtime_identity(ctx: Any) -> dict[str, Any]:
     import os
     job = getattr(ctx, "job", None)
     return {
-        "runtime_revision": "humanization_p0_20261010_activation_observation_v1",
+        "runtime_revision": os.getenv("WORKER_REVISION") or os.getenv("RENDER_GIT_COMMIT") or "connection_lifecycle_20261027",
         "worker_id": identifier(getattr(ctx, "worker_id", None)),
         "job_id": identifier(getattr(job, "id", None)),
         "dispatch_agent_name": identifier(getattr(job, "agent_name", None)),
@@ -172,6 +173,10 @@ def provider_snapshot(cfg: Any, runtime_cfg: Any, components: Any) -> dict[str, 
         llm_options = {"temperature": .35, "max_output_tokens": 180, "timeout_seconds": 30}
         llm_options.update({"thinking_level": _resolve_thinking_level()} if "gemini-3" in llm_model.lower()
                            else {"thinking_budget": 0})
+    from worker.provider_retries import read_provider_retry_settings, PROGRESS_TIMEOUT
+    llm_options["http_client_timeout_seconds"] = llm_options.pop("timeout_seconds", None)
+    llm_options["request_timeout_seconds"] = read_provider_retry_settings().timeout
+    llm_options["useful_progress_timeout_seconds"] = PROGRESS_TIMEOUT
     llm_model = known_model(getattr(components.llm, "model", None)) or llm_model
 
     tts = runtime_cfg.tts_provider

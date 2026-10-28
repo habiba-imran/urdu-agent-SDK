@@ -69,13 +69,17 @@ def reconcile_telephony_state(
             # Query stale calls > 2h with batch limit
             rows = db_conn.execute(
                 """
-                select id, tenant_id from telephony_calls
+                select id, tenant_id, room_name from telephony_calls
                 where platform_status in ('queued', 'dialing', 'ringing', 'in_progress')
-                  and created_at < now() - interval '2 hours'
+                  and created_at < now() - interval '3 minutes'
+                  and not exists (select 1 from sessions s where s.room_name = telephony_calls.room_name
+                    and s.ended_at is null and s.worker_heartbeat_at > now() - interval '3 minutes')
                 limit %s
                 """,
                 (batch_size,),
             ).fetchall()
+            from worker.room_presence import room_is_active
+            rows = [row for row in rows if room_is_active(row[2]) is False]
             repairs["stale_calls_cleaned"] = len(rows)
 
             if not dry_run and rows:

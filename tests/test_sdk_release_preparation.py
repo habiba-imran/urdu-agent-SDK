@@ -242,14 +242,22 @@ def test_trusted_publish_path_is_token_free_and_legacy_path_preserved():
     assert "--dry-run" in dry["run"]
 
 
-def test_dashboard_uses_published_voice_package():
+def test_dashboard_uses_reviewed_voice_snapshot():
     source = json.loads((ROOT / "sdk/package.json").read_text())
     dashboard = json.loads((ROOT / "dashboard/package-lock.json").read_text())
     manifest = json.loads((ROOT / "dashboard/package.json").read_text())
     locked = dashboard["packages"]["node_modules/@awaazlabs-uva/voice"]
-    assert manifest["dependencies"][source["name"]] == source["version"] == "1.1.1"
+    snapshots = json.loads((ROOT / "client-integration-test/packages/lifecycle-manifest.json").read_text())
+    snapshot = next(item for item in snapshots["packages"] if item["name"] == source["name"])
+    expected = "file:../client-integration-test/packages/" + snapshot["artifact"]
+    assert manifest["dependencies"][source["name"]] == expected
+    assert source["version"] == snapshot["version"] == "1.1.1"
     assert locked["version"] == source["version"]
     assert locked["license"] == source["license"] == "MIT"
-    assert locked["resolved"].startswith("https://registry.npmjs.org/@awaazlabs-uva/voice/-/")
-    assert locked["integrity"]
+    assert locked["resolved"] == expected
+    import hashlib
+    import base64
+    archive = (ROOT / "client-integration-test/packages" / snapshot["artifact"]).read_bytes()
+    assert hashlib.sha256(archive).hexdigest() == snapshot["sha256"]
+    assert locked["integrity"] == "sha512-" + base64.b64encode(hashlib.sha512(archive).digest()).decode()
     assert not locked.get("link")

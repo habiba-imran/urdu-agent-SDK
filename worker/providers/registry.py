@@ -22,11 +22,15 @@ class UnsupportedProviderError(Exception):
 
 
 def build_components(cfg: AgentRuntimeConfig) -> ProviderComponents:
-    return ProviderComponents(
-        stt=_build_stt(cfg),
-        llm=_build_llm(cfg),
-        tts=_build_tts(cfg),
-    )
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
+    parts = []
+    for factory in (_build_stt, _build_llm, _build_tts):
+        provider = factory(cfg)
+        parts.append(provider)
+        if lifecycle is not None:
+            lifecycle.own_provider(provider)
+    return ProviderComponents(*parts)
 
 
 def _build_stt(cfg: AgentRuntimeConfig):

@@ -36,7 +36,7 @@ describe('P0 browser playback readiness', () => {
 
   it('answers a late worker readiness request without claiming heard speech', () => {
     const { client, room, events } = setup(true);
-    events.get(RoomEvent.DataReceived)!(new TextEncoder().encode('{"type":"awaaz_playback_request"}'));
+    events.get(RoomEvent.DataReceived)!(new TextEncoder().encode('{"type":"awaaz_playback_request"}'), { isAgent: true });
     expect(client.isAudioReady).toBe(true);
     const packet = JSON.parse(new TextDecoder().decode(room.localParticipant.publishData.mock.calls[0]![0]));
     expect(packet).toEqual({ type: 'awaaz_playback_state', ready: true });

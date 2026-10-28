@@ -135,7 +135,9 @@ def test_row_lookup_is_retried_until_portal_commits_the_row():
     """Agent dispatch happens before the portal commits telephony_calls; do not cache a miss."""
     db = QuotaDb()
     t = _tracker(db)
-    t.on_sip_call_status("dialing")  # no row yet -> skipped
+    import pytest
+    with pytest.raises(RuntimeError, match="not yet visible"):
+        t.on_sip_call_status("dialing")  # retryable; rank must not advance
     assert not any("set platform_status" in s for s in db.executed)
     db.add_call("c1", status="dialing")
     t.on_sip_call_status("active")

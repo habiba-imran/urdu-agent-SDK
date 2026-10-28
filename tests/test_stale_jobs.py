@@ -168,8 +168,11 @@ async def test_abandon_stale_job_if_needed_allows_fresh_sessions():
     ctx.shutdown.assert_not_called()
 
 
-def test_load_session_job_state_returns_none_on_db_error():
+def test_load_session_job_state_returns_none_on_db_error(monkeypatch):
     from worker import stale_jobs as sj
+    from worker import db_pool
+    db_pool.reset_worker_db_pool()
+    monkeypatch.setattr(db_pool, "conn_kwargs", lambda: {})
 
     with patch("psycopg.connect", side_effect=TimeoutError("connection timeout")):
         assert sj.load_session_job_state("any-room") is None

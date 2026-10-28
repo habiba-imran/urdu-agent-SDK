@@ -29,6 +29,7 @@ def build(
     model: str | None = None,
 ) -> Any:
     from livekit.plugins import deepgram
+    from .lifecycle import metered
 
     from worker.humanization.turn import (
         resolve_deepgram_endpointing_ms,
@@ -74,7 +75,7 @@ def build(
                 lang,
                 eager,
             )
-            return deepgram.STTv2(**kwargs)
+            return metered(_with_connection_metrics(deepgram.STTv2(**kwargs)))
 
     endpointing_ms = resolve_deepgram_endpointing_ms(stt_options)
     logger.info(
@@ -85,7 +86,7 @@ def build(
         nova_model,
         endpointing_ms,
     )
-    return deepgram.STT(
+    return metered(deepgram.STT(
         model=nova_model,
         language=lang,
         no_delay=True,
@@ -94,4 +95,24 @@ def build(
         # smart_format adds post-processing latency on finals; voice path prefers speed
         # (numbers/punctuation are fine for Cartesia without it).
         smart_format=False,
-    )
+    ))
+
+
+def _with_connection_metrics(provider: Any) -> Any:
+    """Flux 1.6.x does not emit the handshake event that Nova already emits."""
+    if not callable(getattr(provider, "stream", None)):
+        return provider
+    original_stream = provider.stream
+    def stream(*args: Any, **kwargs: Any) -> Any:
+        import time
+        result = original_stream(*args, **kwargs)
+        original_connect = result._connect_ws
+        async def connect():
+            started = time.perf_counter()
+            websocket = await original_connect()
+            result._report_connection_acquired(time.perf_counter() - started, False)
+            return websocket
+        result._connect_ws = connect
+        return result
+    provider.stream = stream
+    return provider

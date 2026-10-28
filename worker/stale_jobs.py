@@ -327,12 +327,16 @@ async def drain_orphan_sessions(
             from sessions
             where ended_at is null
               and started_at < now() - (%s * interval '1 second')
+              and coalesce(worker_heartbeat_at, started_at) < now() - interval '3 minutes'
             order by started_at asc
             """,
             (max_age,),
         ).fetchall()
 
+    from worker.room_presence import room_is_active
     for (room_name,) in rows:
+        if await asyncio.to_thread(room_is_active, room_name) is not False:
+            continue
         if dry_run:
             print(f"[dry-run] would close orphan session room={room_name}")
             stats["sessions_closed"] += 1

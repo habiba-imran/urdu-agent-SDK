@@ -73,6 +73,7 @@ class AgentConfig:
     tools_auth_secret: str | None = None
     # F-C4 Phase B: per-agent recording opt-in (default off). Column may be absent
     # until Ehsan migration lands — loader defaults False when missing.
+    max_call_duration_seconds: int = 1800
     recording_enabled: bool = False
 
 
@@ -177,6 +178,14 @@ def _load_agent_and_provider_voice(
         else:
             cfg = _row_to_config(row, recording_enabled=False)
 
+        from dataclasses import replace
+        duration_row = conn.execute(
+            "select max_call_duration_seconds from agents where id = %s and tenant_id = %s",
+            (agent_id, tenant_id),
+        ).fetchone()
+        if duration_row is None:
+            raise AgentNotFound("agent duration policy unavailable")
+        cfg = replace(cfg, max_call_duration_seconds=int(duration_row[0]))
         internal_voice_id = cfg.tts_voice_id or cfg.voice_id
         local = resolve_provider_voice_id_local(internal_voice_id)
         if local is not None or not internal_voice_id:

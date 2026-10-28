@@ -32,10 +32,12 @@ Your frontend only knows these routes on **your** host:
 
 | Route | Body / auth | Success body |
 |-------|-------------|--------------|
-| \`POST /api/voice/session\` | \`{ publishableKey, agentId }\` | \`{ token, wsUrl, roomName, refreshUrl?, expiresIn? }\` |
+| \`POST /api/voice/session\` | \`{ publishableKey, agentId }\` | \`{ token, wsUrl, roomName, sessionId?, refreshUrl?, expiresIn? }\` |
 | \`POST /api/voice/session/refresh\` | \`Authorization: Bearer <token>\` (or \`{ token }\`) | same shape |
 
 Rewrite any upstream refresh URL to **your** \`/api/voice/session/refresh\` before returning to the browser.
+Pass \`sessionId\` through unchanged on both responses. It correlates worker readiness,
+terminal outcomes, and metrics for the lifecycle SDK snapshot.
 
 ## HMAC mint to the control plane
 
@@ -153,6 +155,7 @@ export class VoiceSessionController {
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,
+      sessionId: payload.sessionId,
       refreshUrl: \`\${publicBase}/api/voice/session/refresh\`,
       expiresIn: payload.expiresIn ?? 120,
     };
@@ -201,6 +204,7 @@ export class VoiceSessionController {
       token: payload.token,
       wsUrl: payload.wsUrl,
       roomName: payload.roomName,
+      sessionId: payload.sessionId,
       refreshUrl: \`\${publicBase}/api/voice/session/refresh\`,
       expiresIn: payload.expiresIn ?? 120,
     };

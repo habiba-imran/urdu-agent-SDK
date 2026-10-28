@@ -5,6 +5,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+import pytest
+
+@pytest.fixture(autouse=True)
+def offline_room_presence(monkeypatch):
+    monkeypatch.setattr("worker.room_presence.room_is_active", lambda room: False)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -154,10 +160,10 @@ def test_reconcile_closes_stale_and_fixes_concurrent_now() -> None:
     assert stats["stale_sessions_closed"] == 1
     assert stats["tenants_reconciled"] == 1
     assert stats["total_open_sessions_remaining"] == 1  # only sess-live
-    assert stats["usage_events_written"] == 1
+    assert stats["usage_events_written"] == 0
     assert db.quota[tenant] == 1
     assert db.quota_writes == 1
-    assert db.usage_writes == 1
+    assert db.usage_writes == 0
     assert any("reconciled_stale" in sql.lower() for sql, _ in db.executed)
 
 

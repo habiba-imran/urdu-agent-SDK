@@ -447,6 +447,14 @@ export default function AgentsPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <SectionLabel>Call duration</SectionLabel>
+              <p className="rounded-input border border-border bg-surface-muted px-3.5 py-3 text-sm text-text-muted">
+                {(activeAgent.max_call_duration_seconds ?? 1800) / 60} minutes for web and phone calls.
+                {' '}Change this setting from your host codebase when creating or updating the agent.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <SectionLabel>Recording</SectionLabel>
               <div className="flex flex-col gap-2 rounded-input border border-border bg-surface-muted px-3.5 py-3">
                 <div className="flex flex-wrap items-center gap-2">

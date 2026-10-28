@@ -298,12 +298,16 @@ def resolve_inbound_sip_call(
     }
 
     room = result["room_name"]
+    if not room:
+        # Metadata-only callers do not create calls or reserve quota. Real call
+        # startup always supplies a room and commits its reservation ledger below.
+        return result
     if room:
         try:
             existing = _find_inbound_call_for_room(db_conn, room)
         except Exception as err:
-            existing = None
-            logger.warning("inbound call: existing-row lookup failed room=%s: %s", room, err)
+            _rollback(db_conn)
+            raise ValueError("Inbound call persistence unavailable") from err
         if existing:
             # Worker retry / second participant for a room we already persisted.
             logger.info(
@@ -323,7 +327,8 @@ def resolve_inbound_sip_call(
     except Exception as err:
         if isinstance(err, ValueError):
             raise
-        logger.warning("Could not verify call quota during inbound resolution: %s", err)
+        _rollback(db_conn)
+        raise ValueError("Inbound quota verification unavailable") from err
 
     if room:
         try:
@@ -340,9 +345,7 @@ def resolve_inbound_sip_call(
                 )
             )
         except Exception as err:
-            # Fail open on persistence: the caller is already connected, dropping them
-            # for a DB blip is worse than an untracked call. Reservation is rolled back
-            # with the rows so nothing leaks.
+            # Roll back reservation and rows together; an untracked call must not run.
             _rollback(db_conn)
             logger.error(
                 "inbound call: failed to persist sessions/telephony_calls rows room=%s tenant=%s: %s",
@@ -350,21 +353,14 @@ def resolve_inbound_sip_call(
                 tenant_id,
                 err,
             )
-            return result
-    else:
-        logger.warning(
-            "inbound call: no room_name supplied — quota reserved for tenant %s but no "
-            "telephony_calls row written; the slot can only be released by reconciliation",
-            tenant_id,
-        )
+            raise ValueError("Inbound call persistence unavailable") from err
 
     try:
         _commit(db_conn)
     except Exception as err:
         _rollback(db_conn)
         logger.error("inbound call: commit failed room=%s tenant=%s: %s", room, tenant_id, err)
-        result["telephony_call_id"] = None
-        result["session_id"] = None
+        raise ValueError("Inbound call commit failed") from err
 
     return result
 

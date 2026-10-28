@@ -50,11 +50,11 @@ def _telephony_end_status(current_status: str | None, end_reason: str) -> str:
     ``completed``. A call still ``queued/dialing/ringing`` when the job shuts down was
     never answered: ``failed`` if the shutdown reason is an error, else ``no_answer``.
     """
-    if current_status == "in_progress":
-        return "completed"
     reason = (end_reason or "").lower()
     if any(tok in reason for tok in _TELEPHONY_FAILURE_REASONS):
         return "failed"
+    if current_status == "in_progress":
+        return "completed"
     if current_status in ("queued", "dialing", "ringing"):
         return "no_answer"
     return "completed"
@@ -78,7 +78,7 @@ def _finalize_telephony_call(
         from tenant_portal_api import telephony_queries as queries
     except Exception as e:  # pragma: no cover - import environment issue
         logger.error("session_close stage=telephony_lookup import failed err=%s", e)
-        return None, False, None
+        raise
 
     try:
         call = queries.find_open_call_by_room(conn, room_name)
@@ -89,7 +89,7 @@ def _finalize_telephony_call(
             tenant_id or "-",
             e,
         )
-        return None, False, None
+        raise
     if not call:
         return None, False, None
 
@@ -123,7 +123,7 @@ def _finalize_telephony_call(
             call_tenant,
             e,
         )
-        return call_id, False, call_tenant
+        raise
     logger.info(
         "session_close stage=telephony_close ok room=%s call=%s tenant_id=%s status=%s "
         "status_changed=%s quota_released=%s",
@@ -183,9 +183,10 @@ def release_session_quota_slot(
     end_reason: str,
     session_obj: Any | None = None,
     transcript: list[dict[str, Any]] | None = None,
+    lifecycle_metrics: dict | None = None,
     conn: Any | None = None,
 ) -> SessionCloseResult:
-    """Close open session row, release concurrency, then best-effort billing extras.
+    """Atomically close the row, release concurrency, persist transcript and usage.
 
     If ``conn`` is provided (tests), it is used and not closed by this function.
     Otherwise a short-lived autocommit connection is opened.
@@ -201,24 +202,29 @@ def release_session_quota_slot(
                 tenant_id or "-",
                 e,
             )
-            return SessionCloseResult(
-                closed=False,
-                session_id=None,
-                quota_decremented=False,
-                usage_events=0,
-                transcript_attached=False,
-            )
+            raise
 
     try:
-        return _release_on_conn(
-            conn,
-            room_name=room_name,
-            tenant_id=tenant_id,
-            elapsed_sec=elapsed_sec,
-            end_reason=end_reason,
-            session_obj=session_obj,
-            transcript=transcript,
-        )
+        from control_plane.db_limits import bounded_transaction
+        with bounded_transaction(conn):
+            result = _release_on_conn(
+                conn,
+                room_name=room_name,
+                tenant_id=tenant_id,
+                elapsed_sec=elapsed_sec,
+                end_reason=end_reason,
+                session_obj=session_obj,
+                transcript=transcript,
+            )
+            if result.session_id and lifecycle_metrics is not None:
+                from psycopg.types.json import Jsonb
+                settled = {**lifecycle_metrics, "finalization": "completed"}
+                conn.execute("update sessions set lifecycle_metrics = %s where id = %s",
+                             (Jsonb(settled), result.session_id))
+            if result.session_id:
+                conn.execute("update sessions set finalized_at = now() where id = %s and finalized_at is null",
+                             (result.session_id,))
+            return result
     finally:
         if owns_conn and conn is not None:
             try:
@@ -243,12 +249,13 @@ def _release_on_conn(
     quota_decremented = False
     usage_events = 0
     transcript_attached = False
+    resuming = False
 
     # --- Stage 1: mark session ended (no transcript yet — isolation) ---
     try:
         updated = conn.execute(
             "update sessions set ended_at = now(), duration_sec = %s, end_reason = %s "
-            "where room_name = %s and ended_at is null returning id",
+            "where room_name = %s and ended_at is null returning id, tenant_id",
             (elapsed_sec, end_reason, room_name),
         ).fetchone()
     except Exception as e:
@@ -258,13 +265,20 @@ def _release_on_conn(
             tenant_id or "-",
             e,
         )
-        return SessionCloseResult(
-            closed=False,
-            session_id=None,
-            quota_decremented=False,
-            usage_events=0,
-            transcript_attached=False,
-        )
+        raise
+
+    if not updated:
+        pending = conn.execute(
+            "select id, tenant_id from sessions s where room_name = %s "
+            "and ended_at is not null and finalized_at is null "
+            "and not exists (select 1 from usage_events u where u.session_id = s.id and u.kind = 'agent_sec') "
+            "for update", (room_name,)
+        ).fetchone()
+        if pending:
+            updated = pending
+            resuming = True
+            conn.execute("update sessions set duration_sec = %s, end_reason = %s where id = %s",
+                         (elapsed_sec, end_reason, pending[0]))
 
     if not updated:
         # No open ``sessions`` row. Either a browser room that is already closed, or a
@@ -285,8 +299,7 @@ def _release_on_conn(
             )
         else:
             # Retention on telephony_calls is keyed by room_name and idempotent; usage
-            # is deliberately skipped here (no open session to attribute it to — the
-            # reconcile_sessions P3-H4 backfill owns usage for stale-closed sessions).
+            # is skipped when it was already settled or there is no session row.
             _apply_retention(conn, room_name=room_name, tenant_id=tenant_id, session_id=None)
         return SessionCloseResult(
             closed=False,
@@ -297,8 +310,10 @@ def _release_on_conn(
             telephony_call_id=tele_call_id,
         )
 
-    closed = True
+    closed = not resuming
     session_id = str(updated[0])
+    if len(updated) > 1:
+        tenant_id = str(updated[1])
     logger.info(
         "session_close stage=close_session ok room=%s tenant_id=%s session_id=%s "
         "duration_sec=%s end_reason=%s",
@@ -324,7 +339,7 @@ def _release_on_conn(
         quota_decremented = tele_released
         # Dispatch metadata can lack tenant_id; the call row is authoritative.
         tenant_id = tenant_id or tele_tenant or ""
-    elif tenant_id:
+    elif tenant_id and not resuming:
         try:
             conn.execute(
                 "update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
@@ -344,14 +359,15 @@ def _release_on_conn(
                 tenant_id,
                 e,
             )
-    else:
+            raise
+    elif not tenant_id:
         logger.error(
             "session_close stage=quota_decrement skipped room=%s tenant_id=- "
             "(no tenant_id; reconcile_sessions.py must correct concurrent_now)",
             room_name,
         )
 
-    # --- Stage 3+: best-effort extras (must not undo close/quota) ---
+    # --- Stage 3+: accounting and transcript share the close transaction. ---
     if transcript is None:
         transcript = build_transcript(session_obj) if session_obj is not None else []
 
@@ -411,7 +427,7 @@ def _attach_transcript(
             tenant_id or "-",
             e,
         )
-        return False
+        raise
 
 
 def _apply_retention(
@@ -465,7 +481,7 @@ def _record_usage_and_minutes(
         conn.execute(
             """
             insert into quota_state (tenant_id, minutes_this_month, period_start)
-            values (%s, %s, date_trunc('month', now())::date)
+            values (%s, least(%s, extract(epoch from (now() - date_trunc('month', now()))) / 60.0), date_trunc('month', now())::date)
             on conflict (tenant_id) do update set
               minutes_this_month = case
                 when quota_state.period_start < date_trunc('month', now())::date
@@ -492,4 +508,4 @@ def _record_usage_and_minutes(
             session_id,
             e,
         )
-        return 0
+        raise

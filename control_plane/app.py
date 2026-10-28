@@ -11,6 +11,7 @@ this keeps blocking DB work off the event loop without an async driver.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime
 import json
 import logging
@@ -401,6 +402,7 @@ class RefreshBody(BaseModel):
 
 
 class RefreshResponse(BaseModel):
+    sessionId: str | None = None
     token: str
     wsUrl: str
     roomName: str
@@ -535,15 +537,9 @@ def _enforce_refresh_gates(*, tenant_id: str, room: str) -> None:
             if session_row is not None and session_row[0] is not None:
                 raise HTTPException(status_code=409, detail="session already closed")
 
-            quota = conn.execute(
-                "select minutes_this_month from quota_state where tenant_id = %s",
-                (tenant_id,),
-            ).fetchone()
-            if quota is not None and max_minutes is not None and quota[0] is not None:
-                if quota[0] >= max_minutes:
-                    raise HTTPException(
-                        status_code=429, detail="monthly minutes cap reached"
-                    )
+            from .quota_usage import monthly_exhausted
+            if max_minutes is not None and monthly_exhausted(conn, tenant_id):
+                raise HTTPException(status_code=429, detail="monthly minutes cap reached")
     except HTTPException:
         raise
     except Exception:
@@ -621,6 +617,7 @@ def _mint_refresh_token(token: str) -> RefreshResponse:
         .to_jwt()
     )
     return RefreshResponse(
+        sessionId=metadata.get("session_id"),
         token=refreshed,
         wsUrl=_LK_URL,
         roomName=room,
@@ -741,44 +738,54 @@ async def _dispatch_agent(
     *,
     tenant_id: str,
     agent_id: str,
+    session_id: str | None = None,
     greeting: str | None = None,
     verified_caller_phone: str | None = None,
 ) -> None:
     metadata: dict[str, str] = {"tenant_id": tenant_id, "agent_id": agent_id}
+    if session_id:
+        metadata["session_id"] = session_id
     if greeting:
         metadata["greeting"] = greeting
     if verified_caller_phone:
         # Read by worker/caller_identity.py::resolve_verified_caller_phone (A.4 source 1).
         metadata["verified_caller_phone"] = verified_caller_phone
-    try:
-        await _get_dispatch_client().agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(
-                agent_name=_LK_AGENT_NAME,
-                room=room_name,
-                metadata=json.dumps(metadata),
-            )
+    await _get_dispatch_client().agent_dispatch.create_dispatch(
+        api.CreateAgentDispatchRequest(
+            agent_name=_LK_AGENT_NAME,
+            room=room_name,
+            metadata=json.dumps(metadata),
         )
-    except BaseException:
-        await _reset_dispatch_client()
-        raise
+    )
 
 
 def _rollback_dispatched_session(
     *, tenant_id: str, room_name: str, end_reason: str = "dispatch_failed"
 ) -> None:
     with psycopg.connect(**conn_kwargs(), connect_timeout=10, autocommit=True) as conn:
-        conn.execute(
-            "update sessions "
-            "set ended_at = now(), duration_sec = 0, end_reason = %s "
-            "where tenant_id = %s and room_name = %s and ended_at is null",
-            (end_reason, tenant_id, room_name),
-        )
-        conn.execute(
-            "update quota_state "
-            "set concurrent_now = greatest(concurrent_now - 1, 0) "
-            "where tenant_id = %s",
-            (tenant_id,),
-        )
+        from .db_limits import bounded_transaction
+        with bounded_transaction(conn):
+            closed = conn.execute(
+                "update sessions set ended_at = now(), duration_sec = 0, end_reason = %s "
+                "where tenant_id = %s and room_name = %s and ended_at is null returning id",
+                (end_reason, tenant_id, room_name),
+            ).fetchone()
+            if closed:
+                conn.execute("update quota_state set concurrent_now = greatest(concurrent_now - 1, 0) "
+                             "where tenant_id = %s", (tenant_id,))
+
+
+async def _compensate_dispatch(room_name: str) -> None:
+    client = _get_dispatch_client()
+    try:
+        dispatches = await client.agent_dispatch.list_dispatch(room_name)
+        for dispatch in dispatches:
+            await client.agent_dispatch.delete_dispatch(dispatch.id, room_name)
+    finally:
+        try:
+            await client.room.delete_room(api.DeleteRoomRequest(room=room_name))
+        except Exception:
+            _dispatch_log.warning("dispatch room compensation unavailable room=%s", room_name, exc_info=True)
 
 
 def _session_response(payload: dict) -> JSONResponse:
@@ -818,7 +825,17 @@ def _watch_dispatch(
             tenant_id,
             agent_id,
         )
-        _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+        try:
+            _rollback_dispatched_session(tenant_id=tenant_id, room_name=room_name)
+        except Exception:
+            _dispatch_log.exception("dispatch rollback failed room=%s", room_name)
+        cleanup = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(_compensate_dispatch(room_name), 5.0), _get_dispatch_loop())
+        try:
+            cleanup.result(timeout=6.0)
+        except Exception:
+            cleanup.cancel()
+            _dispatch_log.warning("dispatch compensation failed room=%s", room_name, exc_info=True)
 
 
 def _schedule_dispatch(
@@ -826,6 +843,7 @@ def _schedule_dispatch(
     tenant_id: str,
     agent_id: str,
     *,
+    session_id: str | None = None,
     greeting: str | None = None,
     verified_caller_phone: str | None = None,
 ) -> "concurrent.futures.Future[None]":
@@ -839,6 +857,7 @@ def _schedule_dispatch(
             room_name,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            session_id=session_id,
             greeting=greeting,
             verified_caller_phone=verified_caller_phone,
         ),
@@ -873,6 +892,7 @@ def _with_dispatch(
         res["roomName"],
         tenant_id,
         agent_id,
+        session_id=res.get("sessionId"),
         greeting=greeting,
         verified_caller_phone=verified_caller_phone,
     )

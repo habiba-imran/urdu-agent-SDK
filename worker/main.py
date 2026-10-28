@@ -367,7 +367,12 @@ async def build_session(
         audio_channel=audio_channel,
     )
     _comp_t0 = time.monotonic()
-    components, components_cache_hit = build_components_cached(runtime_cfg)
+    components, components_cache_hit = build_components_cached(runtime_cfg, use_cache=False)
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
+    if lifecycle is not None:
+        for provider in (components.stt, components.llm, components.tts):
+            lifecycle.own_provider(provider)
     components_ms = int(round((time.monotonic() - _comp_t0) * 1000))
     from worker.telemetry import provider_snapshot
 
@@ -473,6 +478,8 @@ async def build_session(
         # Interruptible say/generate_reply: warm STT now so barge-in can be answered.
         skip_stt=(opening.mode == "say" and bool(opening.text) and not interruptible_opening),
     )
+    if lifecycle is not None:
+        lifecycle.own_task(greeting_prewarm)
     resolved_llm_model = getattr(components.llm, "model", cfg.llm_model)
     logger.info(
         "session pipeline room=%s agent=%s llm=%s/%s tts=%s voice=%s first_speaker=%s",
@@ -865,6 +872,9 @@ async def _resolve_session_from_participant(
                 "tenant_id": raw_md["tenant_id"],
                 "agent_id": raw_md["agent_id"],
             }
+            for key in ("session_id", "telephony_call_id"):
+                if raw_md.get(key):
+                    md[key] = str(raw_md[key])
             verified = raw_md.get("verified_caller_phone")
             if isinstance(verified, str) and verified.strip():
                 md["verified_caller_phone"] = verified.strip()
@@ -908,6 +918,10 @@ async def _resolve_session_from_participant(
                     "tenant_id": resolved.get("tenant_id", ""),
                     "agent_id": resolved.get("agent_id", ""),
                 }
+                for key in ("session_id", "telephony_call_id"):
+                    value = resolved.get(key) or (resolved.get("telephony") or {}).get(key)
+                    if value:
+                        md[key] = str(value)
                 audio_channel = session_audio_channel(resolved)
                 # Prefer SIP ANI over trunk e164 for F-C7 ownership (never job e164).
                 from worker.caller_identity import resolve_verified_caller_phone
@@ -1242,7 +1256,46 @@ def room_has_remote_participant(room: Any) -> bool:
     return False
 
 
-async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
+async def entrypoint(ctx: Any) -> None:
+    from worker.lifecycle import SessionLifecycle, current_lifecycle, publish_outcome
+    lifecycle = SessionLifecycle(ctx)
+    token = current_lifecycle.set(lifecycle)
+    async def emergency_close(reason: str = "") -> None:
+        try:
+            await lifecycle.close(reason)
+        finally:
+            if lifecycle.finalizer is None:
+                from worker.finalization_retry import settle_session
+                from types import SimpleNamespace
+                await asyncio.to_thread(settle_session,
+                    room_name=ctx.room.name, tenant_id=lifecycle.tenant_id,
+                    elapsed_sec=0, end_reason=lifecycle.reason or reason or "startup_failed",
+                    session_obj=SimpleNamespace(_awaaz_final_usage=dict(lifecycle.usage),
+                        _awaaz_lifecycle_metrics=dict(lifecycle.metrics),
+                        history=SimpleNamespace(messages=lambda: [])))
+    ctx.add_shutdown_callback(emergency_close)
+    lifecycle.start_lease()
+    from worker.finalization_retry import retry_pending
+    lifecycle.own_task(asyncio.create_task(asyncio.to_thread(retry_pending), name="retry_finalizations"))
+    try:
+        await _entrypoint(ctx)
+    except BaseException as error:
+        lifecycle.reason = "startup_cancelled" if isinstance(error, asyncio.CancelledError) else "startup_failed"
+        await publish_outcome(ctx.room, {"type": "awaaz_session_failure", "stage": "STARTUP",
+            "reason": lifecycle.reason, "session_id": lifecycle.session_id})
+        try:
+            from worker.stale_jobs import cleanup_livekit_room
+            await asyncio.wait_for(cleanup_livekit_room(ctx.room.name), 5.0)
+        except Exception:
+            from livekit.agents.log import logger
+            logger.exception("startup_room_cleanup_failed room=%s", ctx.room.name)
+        ctx.shutdown(reason=lifecycle.reason)
+        raise
+    finally:
+        current_lifecycle.reset(token)
+
+
+async def _entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     """LiveKit job entrypoint.
 
     Session identity resolution order:
@@ -1261,6 +1314,8 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     job_metadata = getattr(getattr(ctx, "job", None), "metadata", None)
     from_dispatch = parse_dispatch_metadata(job_metadata)
     room_name = ctx.room.name
+    from worker.lifecycle import current_lifecycle
+    lifecycle = current_lifecycle.get()
 
     audio_channel = (
         "telephony"
@@ -1269,11 +1324,16 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     )
 
     connect_task = asyncio.create_task(ctx.connect(), name="ctx_connect")
+    if lifecycle is not None:
+        lifecycle.own_task(connect_task)
     build_task: asyncio.Task[Any] | None = None
     early_md: dict[str, str] | None = None
 
     if from_dispatch is not None:
         early_md = dict(from_dispatch)
+        if lifecycle is not None:
+            lifecycle.tenant_id = early_md["tenant_id"]
+            lifecycle.session_id = early_md.get("session_id")
         if early_md.pop("direction", None) in {"inbound", "outbound"}:
             audio_channel = "telephony"
         # Safe to build without a connected room: DB/config/providers/AgentSession only.
@@ -1281,6 +1341,8 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             build_session(early_md, room_name, audio_channel=audio_channel),
             name="build_session_overlap",
         )
+        if lifecycle is not None:
+            lifecycle.own_task(build_task)
 
     try:
         await connect_task
@@ -1290,7 +1352,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             try:
                 await build_task
             except (asyncio.CancelledError, Exception):
-                # noqa-f-m1: expected when cancelling overlapped build_session on connect failure
+                # Expected when cancelling the overlapped build on connect failure.
                 pass
         raise
 
@@ -1303,11 +1365,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
     )
 
     # Overlap stale DB check with identity + pipeline build — do not serialize it
-    # in front of session.start / first audio. Fresh dispatch metadata (mint just
-    # created this job) skips the Supabase stale round-trip entirely.
+    # in front of session.start / first audio. Dispatch metadata never bypasses
+    # validation of the persisted session.
     stale_task = asyncio.create_task(
-        abandon_stale_job_if_needed(ctx, skip_db=from_dispatch is not None)
+        abandon_stale_job_if_needed(ctx, skip_db=False)
     )
+    if lifecycle is not None:
+        lifecycle.own_task(stale_task)
 
     if early_md is None:
         early_md = await _early_session_identity(ctx, room_name)
@@ -1333,23 +1397,29 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         import time as _time
 
         _session_started_at = _time.monotonic()
+        from worker.lifecycle import current_lifecycle
+        lifecycle = current_lifecycle.get()
+        if lifecycle is not None:
+            lifecycle.session = session_obj
+            lifecycle.tenant_id = md_obj.get("tenant_id", "")
+            lifecycle.session_id = md_obj.get("session_id") or lifecycle.session_id
 
         async def _release_quota_slot(reason: str = "") -> None:
             # F-H18 Phase B: logic lives in worker/session_close.py (testable + isolated).
-            from worker.session_close import release_session_quota_slot
+            from worker.finalization_retry import settle_session
 
             try:
-                release_session_quota_slot(
+                await asyncio.to_thread(settle_session,
                     room_name=ctx.room.name,
                     tenant_id=md_obj.get("tenant_id", ""),
                     elapsed_sec=int(_time.monotonic() - _session_started_at),
-                    end_reason=reason or "normal",
+                    end_reason=(lifecycle.reason if lifecycle is not None else None) or reason or "normal",
                     session_obj=session_obj,
                 )
             finally:
                 import gc
 
-                gc.collect()
+                await asyncio.to_thread(gc.collect)
 
         async def _record_agent_minutes(reason: str = "") -> None:
             import math
@@ -1364,7 +1434,7 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
 
             elapsed_sec = _time.monotonic() - _session_started_at
             minutes = max(1, math.ceil(elapsed_sec / 60))
-            increment("livekit_agent_min", minutes)
+            await asyncio.to_thread(increment, "livekit_agent_min", minutes)
 
         async def _persist_session_recording(reason: str = "") -> None:
             from worker.session_recording import finalize_and_persist_session_recording
@@ -1375,13 +1445,19 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
                 tenant_id=md_obj.get("tenant_id", ""),
             )
 
-        ctx.add_shutdown_callback(_release_quota_slot)
+        if lifecycle is not None:
+            lifecycle.finalizer = _release_quota_slot
+        else:
+            ctx.add_shutdown_callback(_release_quota_slot)
         ctx.add_shutdown_callback(_record_agent_minutes)
         ctx.add_shutdown_callback(_persist_session_recording)
 
         delivery_context = getattr(agent_obj, "delivery_context", None)
         if delivery_context is not None:
-            ctx.add_shutdown_callback(delivery_context.aclose)
+            if lifecycle is not None:
+                lifecycle.before_finalize.append(delivery_context.aclose)
+            else:
+                ctx.add_shutdown_callback(delivery_context.aclose)
             delivery_context.enable_session_reuse()
 
         if channel == "telephony":
@@ -1390,12 +1466,14 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             # without depending on Telnyx webhooks (or the 2h reconciler).
             from worker.telephony_call_status import attach_call_status_tracker
 
-            attach_call_status_tracker(
+            status_tracker = attach_call_status_tracker(
                 ctx.room,
                 room_name=ctx.room.name,
                 telephony_call_id=md_obj.get("telephony_call_id"),
                 tenant_id=md_obj.get("tenant_id", ""),
             )
+            if status_tracker is not None and lifecycle is not None:
+                lifecycle.before_finalize.append(status_tracker.aclose)
 
         def _on_session_close(ev: Any) -> None:
             from livekit.agents.log import logger
@@ -1409,7 +1487,13 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
                 )
 
             reason = getattr(getattr(ev, "reason", None), "value", None) or "session_closed"
-            if getattr(getattr(session_obj, "userdata", None), "ended_by_agent", False):
+            from worker.provider_retries import session_runtime
+            failure = getattr(session_runtime(session_obj), "failure_outcome", None)
+            if failure:
+                reason = "provider_failure:" + str(failure.get("stage", "PIPELINE"))
+            if lifecycle is not None and lifecycle.reason:
+                reason = lifecycle.reason
+            if getattr(getattr(session_obj, "userdata", None), "ended_by_agent", False) and not failure:
                 reason = "agent_ended"
             logger.info(
                 "agent session closed (reason=%s) — shutting the job down so the session row is "
@@ -1484,6 +1568,8 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
             record=session_start_record_option(may_start=_may_start),
         )
         agent_obj.bind_playback_evidence()
+        if lifecycle is not None:
+            await lifecycle.pipeline_ready(session_obj, cfg_obj)
         _entry_logger.info(
             "entrypoint session.start room=%s start_ms=%s since_connect_ms=%s "
             "interruption_mode=%s record_audio=%s agent_recording_enabled=%s "
@@ -1507,6 +1593,8 @@ async def entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         wait_task = asyncio.create_task(
             wait_for_session_participant(ctx, already_connected=True)
         )
+        if lifecycle is not None:
+            lifecycle.own_task(wait_task)
         _build_at = time.monotonic()
         if build_task is not None:
             session, cfg, greeting_prewarm, provider_voice_id = await build_task
@@ -1753,15 +1841,8 @@ def prewarm(proc: Any) -> list[str]:  # proc: livekit.agents.JobProcess | None
 
         _prewarm_logger.warning("greeting PCM seed skipped: %s", e)
 
-    if proc is not None:
-        try:
-            from worker.provider_client_cache import seed_default_provider_stack
-
-            seed_default_provider_stack()
-        except Exception as e:
-            from livekit.agents.log import logger as _prewarm_logger
-
-            _prewarm_logger.warning("provider stack seed skipped: %s", e)
+    # Provider transports belong to each session; do not seed unowned clients
+    # into the old thread cache. Greeting PCM remains safe to share.
 
     return imported
 
@@ -1776,6 +1857,8 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
 
     load_dotenv(".env.local")
+    from worker.finalization_retry import start_retry_service
+    start_retry_service()
     _agent_name = os.getenv("LIVEKIT_AGENT_NAME", "uva-dev-agent")
 
     # Run prewarm() HERE, directly, at true __main__ top-level scope — this process's
@@ -1813,6 +1896,7 @@ if __name__ == "__main__":
             prewarm_fnc=prewarm,
             request_fnc=reject_stale_job_request,
             agent_name=_agent_name,
+            shutdown_process_timeout=60.0,
             # Keep several warm job runners ready — first inbound after idle otherwise
             # pays ~15–20s ("no warmed process available") on local Windows. Default 3
             # (provider-agnostic). Override with LIVEKIT_NUM_IDLE_PROCESSES.

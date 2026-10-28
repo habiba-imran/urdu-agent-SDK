@@ -132,7 +132,7 @@ async def await_playback_ready(session: Any, *, timeout: float = 10.0) -> bool:
 
 # Opening-path prewarm / synthesis budgets (seconds).
 # Cache hits skip the wait entirely. Say-miss awaits single-flight TTS (not STT).
-_SAY_SYNTHESIS_AWAIT_SEC = 5.0
+_SAY_SYNTHESIS_AWAIT_SEC = 6.25
 _GENERATE_REPLY_PREWARM_SEC = 2.0
 
 

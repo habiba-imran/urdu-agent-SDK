@@ -62,7 +62,7 @@ class FakeConn:
         if "set transcript" in low:
             self.transcript_updates += 1
             return _FakeResult(None)
-        if "usage_events" in low:
+        if "insert into usage_events" in low:
             self.usage_inserts += 1
             return _FakeResult(None)
         if "minutes_this_month" in low:
@@ -224,7 +224,7 @@ def test_idempotent_two_calls_second_skips_quota(monkeypatch: pytest.MonkeyPatch
     assert conn.quota_updates == 1
 
 
-def test_transcript_failure_does_not_skip_quota(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transcript_failure_propagates_for_transaction_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "worker.session_retention.apply_retention_on_session_close",
         lambda *a, **k: None,
@@ -236,26 +236,22 @@ def test_transcript_failure_does_not_skip_quota(monkeypatch: pytest.MonkeyPatch)
     )
 
     conn = FakeConn(close_row=("sess-1",), fail_stage="transcript")
-    result = release_session_quota_slot(
-        room_name="room-a",
-        tenant_id="tenant-1",
-        elapsed_sec=5,
-        end_reason="normal",
-        transcript=[{"role": "user", "text": "x", "at": 1}],
-        conn=conn,
-    )
-    assert result.closed is True
-    assert result.quota_decremented is True
-    assert result.transcript_attached is False
-    assert conn.quota_updates == 1
-
+    with pytest.raises(RuntimeError, match="transcript boom"):
+        release_session_quota_slot(
+            room_name="room-a",
+            tenant_id="tenant-1",
+            elapsed_sec=5,
+            end_reason="normal",
+            transcript=[{"role": "user", "text": "x", "at": 1}],
+            conn=conn,
+        )
 
 def test_close_failure_logs_error_no_quota(caplog: pytest.LogCaptureFixture) -> None:
     import logging
 
     conn = FakeConn(fail_stage="close")
-    with caplog.at_level(logging.ERROR, logger="worker.session_close"):
-        result = release_session_quota_slot(
+    with caplog.at_level(logging.ERROR, logger="worker.session_close"), pytest.raises(RuntimeError, match="close boom"):
+        release_session_quota_slot(
             room_name="room-a",
             tenant_id="tenant-1",
             elapsed_sec=5,
@@ -263,8 +259,6 @@ def test_close_failure_logs_error_no_quota(caplog: pytest.LogCaptureFixture) -> 
             transcript=[],
             conn=conn,
         )
-    assert result.closed is False
-    assert result.quota_decremented is False
     assert any("stage=close_session failed" in r.message for r in caplog.records)
 
 
@@ -288,7 +282,7 @@ def test_missing_tenant_still_closes_session(monkeypatch: pytest.MonkeyPatch) ->
     assert result.usage_events == 0
 
 
-def test_quota_failure_still_attempts_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_quota_failure_propagates_for_transaction_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "worker.session_retention.apply_retention_on_session_close",
         lambda *a, **k: None,
@@ -299,15 +293,12 @@ def test_quota_failure_still_attempts_transcript(monkeypatch: pytest.MonkeyPatch
         lambda conn, tenant_id, session_id, items: 0,
     )
     conn = FakeConn(close_row=("sess-1",), fail_stage="quota")
-    result = release_session_quota_slot(
-        room_name="room-a",
-        tenant_id="tenant-1",
-        elapsed_sec=5,
-        end_reason="normal",
-        transcript=[],
-        conn=conn,
-    )
-    assert result.closed is True
-    assert result.quota_decremented is False
-    assert result.transcript_attached is True
-    assert conn.transcript_updates == 1
+    with pytest.raises(RuntimeError, match="quota boom"):
+        release_session_quota_slot(
+            room_name="room-a",
+            tenant_id="tenant-1",
+            elapsed_sec=5,
+            end_reason="normal",
+            transcript=[],
+            conn=conn,
+        )

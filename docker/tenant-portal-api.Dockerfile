@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements-tenant-portal.txt
 COPY tenant_portal_api/ tenant_portal_api/
 COPY control_plane/ control_plane/
 COPY worker/__init__.py worker/
+COPY worker/room_presence.py worker/
 COPY worker/providers/ worker/providers/
 COPY scripts/ scripts/
 

@@ -31,13 +31,16 @@ export function createTelephonyClient(config) {
       tenantId: config.tenantId,
       tenantSecret: config.hmacSecret,
       signatureVersion: 'raw-body-v1',
+      requestTimeoutMs: config.telephonyOperationTimeoutMs ?? 120000,
       fetch: (url, init) => {
         // Several machine reads use POST. Do not give list/status requests the
         // provisioning timeout, or multiply the budget across sequential steps.
         const path = new URL(url).pathname;
         const readOnly = init?.method === 'GET' || /\/(list|get|search|drift)$/.test(path);
         const deadline = readOnly ? AbortSignal.timeout(config.telephonyReadTimeoutMs ?? 10000) : operationBudget;
-        return fetch(url, { ...init, signal: AbortSignal.any([operationBudget, deadline]) });
+        return fetch(url, { ...init, signal: AbortSignal.any([
+          operationBudget, deadline, ...(init?.signal ? [init.signal] : []),
+        ]) });
       },
     });
   });

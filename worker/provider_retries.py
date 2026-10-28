@@ -156,26 +156,56 @@ def session_runtime(session: Any) -> Any:
     return getattr(userdata, "humanization_runtime", None)
 
 
-def fail_session(session: Any, stage: str, *, room: Any = None) -> dict:
+def _error_status(error: Any) -> int | None:
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        status = getattr(error, "status_code", None)
+        if isinstance(status, int):
+            return status
+        error = getattr(error, "error", None) or getattr(error, "__cause__", None)
+    return None
+
+
+def fail_session(session: Any, stage: str, *, room: Any = None, code: str | None = None) -> dict:
     outcome = {"type": "awaaz_session_failure", "stage": stage,
-               "outcome": "PROVIDER_UNAVAILABLE", "spokenFallback": False}
+               "outcome": "PROVIDER_UNAVAILABLE", "reason": "provider_failure",
+               "code": code or "provider_unavailable", "spokenFallback": False}
+    room = room or getattr(session, "_awaaz_room", None)
+    previous = getattr(session, "_awaaz_failure_outcome", None)
+    if previous is not None:
+        return previous
     runtime = session_runtime(session)
     if runtime is not None:
         if runtime.failure_outcome is not None:
             return runtime.failure_outcome
         runtime.failure_outcome = outcome
+    session._awaaz_failure_outcome = outcome
     logger.error("bounded_provider_failure stage=%s spoken_fallback=false", stage)
-    if room is not None:
-        import asyncio
-        import json
-        async def publish():
-            try:
-                await room.local_participant.publish_data(json.dumps(outcome).encode(), reliable=True)
-            except Exception:
-                logger.debug("failure outcome publish unavailable")
-        task = asyncio.create_task(publish())
+    import asyncio
+    from worker.lifecycle import current_lifecycle, publish_outcome
+    lifecycle = current_lifecycle.get()
+    if lifecycle is not None:
+        lifecycle.reason = "provider_failure:" + stage
+        outcome["session_id"] = lifecycle.session_id
+    if room is None:
+        session.shutdown(drain=False)
+        return outcome
+    async def terminate():
+        try:
+            if room is not None:
+                await publish_outcome(room, outcome)
+        finally:
+            session.shutdown(drain=False)
+        if lifecycle is not None:
+            await lifecycle.stop_transport(lifecycle.reason or "provider_failure")
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(terminate(), name="provider_failure_shutdown")
+        session._awaaz_failure_task = task
         task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-    session.shutdown(drain=False)
+    except RuntimeError:  # synchronous harnesses do not have a running event loop
+        session.shutdown(drain=False)
     return outcome
 
 
@@ -209,17 +239,24 @@ async def bounded_provider_stream(stream: Any, agent: Any, stage: str, *, timeou
         runtime = getattr(agent, "humanization_runtime", None)
         callback = getattr(runtime, "failure_callback", None)
         if callback is not None:
-            callback(stage)
+            if _error_status(error) in (402, 429):
+                callback(stage, code="provider_quota_exhausted")
+            else:
+                callback(stage)
         else:
             fail_session(agent.session, stage)
         raise
     finally:
         close = getattr(stream, "aclose", None)
         if close is not None:
-            await close()
+            try:
+                await asyncio.wait_for(close(), timeout=3.0)
+            except Exception:
+                logger.warning("provider_stream_close_failed stage=%s", stage, exc_info=True)
 
 
 def wire_provider_failure(session: Any, room: Any) -> None:
+    session._awaaz_room = room
     def on_error(ev: Any) -> None:
         err = getattr(ev, "error", ev)
         name = type(err).__name__.upper()
@@ -233,12 +270,14 @@ def wire_provider_failure(session: Any, room: Any) -> None:
                        stage, recoverable, type(api_error).__name__,
                        type(cause).__name__ if cause is not None else None,
                        getattr(api_error, "status_code", None))
-        if recoverable:
+        status = _error_status(api_error)
+        if recoverable and status not in (400, 401, 402, 403, 404, 429):
             # The SDK is about to retry. Shutting down here cancels its retry
             # and turns a recoverable connection error into a dropped call.
             return
-        fail_session(session, stage, room=room)
+        fail_session(session, stage, room=room,
+                     code="provider_quota_exhausted" if status in (402, 429) else "provider_unavailable")
     runtime = session_runtime(session)
     if runtime is not None:
-        runtime.failure_callback = lambda stage: fail_session(session, stage, room=room)
+        runtime.failure_callback = lambda stage, code=None: fail_session(session, stage, room=room, code=code)
     session.on("error", on_error)

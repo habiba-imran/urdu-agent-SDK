@@ -70,6 +70,7 @@ def fake_plugin(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "livekit.plugins.upliftai", package)
     monkeypatch.setitem(sys.modules, "livekit.plugins.upliftai.tts", plugin_tts)
+    monkeypatch.setattr(uplift, "_transport_factory", lambda plugin: getattr(plugin, "WebSocketClient", None))
     return package
 
 

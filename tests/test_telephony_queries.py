@@ -96,8 +96,7 @@ def test_reserve_call_quota():
     assert res is True
     assert "from tenants where id = %s" in conn.executed_queries[0][0].lower()
     assert "for update" not in conn.executed_queries[0][0].lower()
-    assert "from quota_state " in conn.executed_queries[2][0].lower()
-    assert "for update" in conn.executed_queries[2][0].lower()
+    assert any("from quota_state " in sql.lower() and "for update" in sql.lower() for sql, _ in conn.executed_queries)
 
 
 def test_reserve_call_quota_exceeded():

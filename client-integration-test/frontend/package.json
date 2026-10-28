@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@awaazlabs-uva/voice": "1.1.1"
+    "@awaazlabs-uva/voice": "file:../packages/awaazlabs-uva-voice-1.1.1-lifecycle.tgz"
   },
   "devDependencies": {
     "happy-dom": "^21.0.3",

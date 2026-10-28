@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -34,9 +35,9 @@ def _supabase_client() -> Any | None:
         )
         return None
     try:
-        from supabase import create_client
+        from supabase import create_client, ClientOptions
 
-        return create_client(url, key)
+        return create_client(url, key, options=ClientOptions(storage_client_timeout=5))
     except Exception as exc:
         logger.warning("session recording: failed to create supabase client: %s", exc)
         return None
@@ -153,7 +154,8 @@ def persist_recording_urls(
     url_value = recording_url  # callers should pass None
 
     try:
-        with psycopg.connect(**conn_kwargs(), connect_timeout=5, autocommit=True) as conn:
+        from control_plane.db_limits import bounded_transaction
+        with psycopg.connect(**conn_kwargs(), connect_timeout=5, autocommit=True) as conn, bounded_transaction(conn):
             conn.execute(
                 """
                 update sessions
@@ -207,12 +209,12 @@ async def finalize_and_persist_session_recording(
         recorder_io = getattr(session, "_recorder_io", None) if session is not None else None
         if recorder_io is not None and getattr(recorder_io, "recording", False):
             try:
-                await recorder_io.aclose()
+                await asyncio.wait_for(recorder_io.aclose(), 8.0)
             except Exception as exc:
                 logger.warning("session recording: recorder close failed: %s", exc)
 
         session_dir = getattr(job_ctx, "session_directory", None)
-        audio_path = find_session_audio(session_dir)
+        audio_path = await asyncio.to_thread(find_session_audio, session_dir)
         if audio_path is None:
             logger.info("session recording: no audio.ogg for room %s", room_name)
             return
@@ -222,22 +224,22 @@ async def finalize_and_persist_session_recording(
                 "session recording: persist skipped by policy room=%s",
                 room_name,
             )
-            _delete_local_audio(audio_path)
+            await asyncio.to_thread(_delete_local_audio, audio_path)
             return
 
-        uploaded = upload_session_audio(
+        uploaded = await asyncio.to_thread(upload_session_audio,
             audio_path=audio_path,
             tenant_id=tenant_id,
             room_name=room_name,
         )
         if not uploaded:
             return
-        persist_recording_urls(
+        await asyncio.to_thread(persist_recording_urls,
             room_name=room_name,
             storage_path=uploaded,
             recording_url=None,
         )
-        _delete_local_audio(audio_path)
+        await asyncio.to_thread(_delete_local_audio, audio_path)
     except Exception as exc:
         logger.warning(
             "session recording: finalize failed for room %s: %s",

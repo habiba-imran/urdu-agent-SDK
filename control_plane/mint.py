@@ -87,7 +87,8 @@ def mint_session(
         now if now is not None else int(datetime.datetime.now(datetime.UTC).timestamp())
     )
 
-    with conn.transaction():
+    from .db_limits import bounded_transaction
+    with bounded_transaction(conn):
         # tenant record (need config + the stored hash; the raw secret comes from the provider)
         # F-L9: hmac_secret_hash used to be selected here and never used, which read as if
         # the mint verified a hash. It does not — it compares against the raw secret from
@@ -182,11 +183,15 @@ def mint_session(
             raise MintError(403, "origin not allowed")
 
         # 7. quota — checked BEFORE the token exists
+        conn.execute("insert into quota_state (tenant_id, concurrent_now) values (%s, 0) on conflict (tenant_id) do nothing", (tenant_id,))
+        conn.execute("update quota_state set minutes_this_month = 0, period_start = date_trunc('month', now())::date where tenant_id = %s and period_start < date_trunc('month', now())::date", (tenant_id,))
         q = conn.execute(
-            "select concurrent_now, minutes_this_month from quota_state where tenant_id = %s",
+            "select concurrent_now, minutes_this_month from quota_state where tenant_id = %s for update",
             (tenant_id,),
         ).fetchone()
         concurrent_now, minutes = q if q else (0, 0)
+        from .quota_usage import active_minutes
+        minutes = float(minutes or 0) + active_minutes(conn, tenant_id)
         if concurrent_now >= max_concurrent:
             raise MintError(429, "concurrent cap reached")
         if minutes >= max_minutes:
@@ -195,11 +200,13 @@ def mint_session(
         # 8. mint the scoped JWT
         room = str(uuid.uuid4())
         identity = str(uuid.uuid4())
+        session_id = str(uuid.uuid4())
         # F-C7 / A.4: carry the host-verified caller phone on the token too, so the worker
         # sees it from participant metadata even if it misses the dispatch metadata.
         token_metadata: dict[str, str] = {
             "tenant_id": tenant_id,
             "agent_id": agent_id,
+            "session_id": session_id,
         }
         if verified_caller_phone:
             token_metadata["verified_caller_phone"] = verified_caller_phone
@@ -218,8 +225,8 @@ def mint_session(
 
         # 9. session row + quota increment, same transaction as the nonce
         conn.execute(
-            "insert into sessions (tenant_id, agent_id, room_name) values (%s, %s, %s)",
-            (tenant_id, agent_id, room),
+            "insert into sessions (tenant_id, agent_id, room_name, id) values (%s, %s, %s, %s)",
+            (tenant_id, agent_id, room, session_id),
         )
         conn.execute(
             "insert into quota_state (tenant_id, concurrent_now) values (%s, 1) "
@@ -227,4 +234,4 @@ def mint_session(
             (tenant_id,),
         )
 
-    return {"token": token, "wsUrl": livekit_url, "roomName": room}
+    return {"token": token, "wsUrl": livekit_url, "roomName": room, "sessionId": session_id}

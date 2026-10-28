@@ -30,7 +30,7 @@ _AGENT_COLUMNS = (
     "id, name, prompt, voice_id, llm_model, created_at, "
     "agent_language, stt_provider, stt_model, stt_options, "
     "llm_provider, llm_options, tts_provider, tts_voice_id, tts_options, "
-    "greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret"
+    "greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret, max_call_duration_seconds"
 )
 
 
@@ -55,6 +55,7 @@ def _agent_row_to_dict(row) -> dict:
         "greeting": row[15],
         "first_speaker": row[16],
         "recording_enabled": bool(row[17]),
+        "max_call_duration_seconds": row[20] if len(row) > 20 else 1800,
         "tools_base_url": row[18],
         # Never return the raw secret over the API — only whether one is configured.
         "tools_auth_secret_configured": bool(secret),
@@ -79,7 +80,7 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
                a.agent_language, a.stt_provider, a.stt_model, a.stt_options,
                a.llm_provider, a.llm_options, a.tts_provider, a.tts_voice_id, a.tts_options,
                a.greeting, a.first_speaker, a.recording_enabled, a.tools_base_url,
-               a.tools_auth_secret,
+               a.tools_auth_secret, a.max_call_duration_seconds,
                coalesce(u.total_agent_sec, 0) as total_agent_sec
         from agents a
         left join (
@@ -96,8 +97,8 @@ def list_agents(conn: psycopg.Connection, tenant_id: str) -> list[dict]:
     ).fetchall()
     out = []
     for r in rows:
-        d = _agent_row_to_dict(r[:20])
-        d["total_agent_sec"] = float(r[20])
+        d = _agent_row_to_dict(r[:21])
+        d["total_agent_sec"] = float(r[21])
         out.append(d)
     return out
 
@@ -131,6 +132,7 @@ def create_agent(
     tts_options: dict,
     greeting: str | None = None,
     first_speaker: str = "agent",
+    max_call_duration_seconds: int | None = None,
     recording_enabled: bool = False,
     tools_base_url: str | None = None,
     tools_auth_secret: str | None = None,
@@ -141,9 +143,9 @@ def create_agent(
             tenant_id, name, prompt, voice_id, llm_model,
             agent_language, stt_provider, stt_model, stt_options,
             llm_provider, llm_options, tts_provider, tts_voice_id, tts_options,
-            greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret
+            greeting, first_speaker, recording_enabled, tools_base_url, tools_auth_secret, max_call_duration_seconds
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning {_AGENT_COLUMNS}
         """,
         (
@@ -167,6 +169,7 @@ def create_agent(
             tools_base_url,
             # F-M8: stored encrypted when a key is configured; unchanged otherwise.
             encrypt_tool_secret(tools_auth_secret),
+            1800 if max_call_duration_seconds is None else max_call_duration_seconds,
         ),
     ).fetchone()
     return _agent_row_to_dict(row)
@@ -192,6 +195,7 @@ def update_agent(
     tts_options: dict | None = None,
     greeting=_UNSET,
     first_speaker=_UNSET,
+    max_call_duration_seconds=_UNSET,
     recording_enabled=_UNSET,
     tools_base_url=_UNSET,
     tools_auth_secret=_UNSET,
@@ -220,7 +224,8 @@ def update_agent(
             first_speaker = %s,
             recording_enabled = %s,
             tools_base_url = %s,
-            tools_auth_secret = %s
+            tools_auth_secret = %s,
+            max_call_duration_seconds = %s
         where id = %s and tenant_id = %s
         returning {_AGENT_COLUMNS}
         """,
@@ -253,6 +258,8 @@ def update_agent(
                 if tools_auth_secret is _UNSET
                 else tools_auth_secret
             ),
+            current.get("max_call_duration_seconds", 1800) if max_call_duration_seconds is _UNSET
+            else (1800 if max_call_duration_seconds is None else max_call_duration_seconds),
             agent_id,
             tenant_id,
         ),
@@ -359,19 +366,8 @@ def rotate_own_secret(conn: psycopg.Connection, tenant_id: str) -> str:
     return new_secret
 
 
-# An open session (ended_at IS NULL) older than this is NOT live — it leaked.
-#
-# The mint opens a `sessions` row; only worker/main.py's `_release_quota_slot` shutdown callback
-# closes it. Any ungraceful worker exit (Ctrl-C in dev, crash, OOM, dispatch that never lands)
-# leaves the row open forever, so `ended_at IS NULL` alone means "not known to have ended", NOT
-# "currently on a call". Treating it as live made the dashboard report 13 live calls against a
-# tenant whose oldest "live" session was 96 hours old.
-#
-# 30 minutes is not a new invention: it is scripts/reconcile_sessions.py's own
-# `--max-age-minutes` default, i.e. the staleness bound this repo already uses when it decides a
-# session is dead. Reusing that number keeps ONE definition of stale instead of two that can
-# disagree. Evaluated in Postgres against now(), so no app-server clock skew enters into it.
-LIVE_SESSION_MAX_AGE_MIN = 30
+# Live display follows the worker lease, independently of the configured call duration.
+LIVE_SESSION_MAX_AGE_MIN = 3
 
 
 # F-M3: the route caps this too, but a helper that accepts any integer is one careless
@@ -400,7 +396,7 @@ def list_recent_sessions(
                    s.duration_sec, s.end_reason,
                    (
                      s.ended_at is null
-                     and s.started_at > now() - (%s || ' minutes')::interval
+                     and coalesce(s.worker_heartbeat_at, s.started_at) > now() - (%s || ' minutes')::interval
                    ) as live,
                    s.summary, s.transcript,
                    (
@@ -423,7 +419,7 @@ def list_recent_sessions(
                    s.duration_sec, s.end_reason,
                    (
                      s.ended_at is null
-                     and s.started_at > now() - (%s || ' minutes')::interval
+                     and coalesce(s.worker_heartbeat_at, s.started_at) > now() - (%s || ' minutes')::interval
                    ) as live,
                    s.summary, null,
                    (
@@ -469,14 +465,14 @@ def get_session(
                s.duration_sec, s.end_reason,
                (
                  s.ended_at is null
-                 and s.started_at > now() - (%s || ' minutes')::interval
+                 and coalesce(s.worker_heartbeat_at, s.started_at) > now() - (%s || ' minutes')::interval
                ) as live,
                s.summary, s.transcript, s.recording_url, s.recording_storage_path,
                (
                  select coalesce(sum(ue.qty), 0)
                  from usage_events ue
                  where ue.session_id = s.id and ue.kind = 'agent_sec'
-               ) as billable_agent_sec
+               ) as billable_agent_sec, s.lifecycle_metrics
         from sessions s
         join agents a on a.id = s.agent_id
         where s.tenant_id = %s and s.id = %s
@@ -502,6 +498,7 @@ def get_session(
         "recording_url": row[11],
         "recording_storage_path": row[12],
         "billable_agent_sec": float(row[13] or 0),
+        "lifecycle_metrics": row[14] if len(row) > 14 else {},
     }
 
 
