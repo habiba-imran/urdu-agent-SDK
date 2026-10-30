@@ -278,6 +278,54 @@ class SpeechChunkPlanner:
         self.chunks += 1
         return chunk
 
+    def release_first_safe_prefix(self):
+        """Soft deadline for ordinary first-clause text; protected values can wait.
+
+        Keep one word of lookahead and never split known pronunciation spans,
+        literal numbers/IDs, abbreviations, or spelled-out digit sequences.
+        This is a prefix of the original text, not filler or a rewritten answer.
+        """
+        if self.closed or self.chunks:
+            return []
+        spans = protected_spans(self.buffer, PronunciationPlan(tuple(
+            PronunciationSpan(s.start-self.offset, s.end-self.offset, s.source, s.mode,
+                              s.alias, s.phoneme, s.group_sizes)
+            for s in self.pronunciation.spans if s.end > self.offset)))
+        risky = re.search(r'\d|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|hundred|thousand|صفر|ایک|دو|تین|چار|پانچ|چھ|سات|آٹھ|نو)\b',
+                          self.buffer, re.I)
+        limit = risky.start() if risky else len(self.buffer)
+        boundary = None
+        clause_boundary = None
+        weak_endings = {
+            'a', 'an', 'the', 'to', 'of', 'for', 'with', 'from', 'by', 'at', 'in', 'on',
+            'and', 'or', 'but', 'because', 'that', 'which', 'your', 'my', 'our', 'their',
+            'is', 'are', 'was', 'were', 'be', 'been', 'can', 'could', 'will', 'would',
+            'should', 'have', 'has', 'had', 'do', 'does', 'not',
+            'check', 'checking', 'find', 'finding', 'choose', 'choosing', 'provide', 'providing',
+            'get', 'getting', 'send', 'sending', 'give', 'giving', 'select', 'selecting',
+            'کے', 'کی', 'کا', 'کو', 'سے', 'اور', 'کہ', 'میں', 'پر', 'لیے', 'کر',
+            'ke', 'ki', 'ka', 'ko', 'se', 'aur', 'liye', 'kar',
+        }
+        for match in re.finditer(r'\s+(?=\S)', self.buffer):
+            end = match.end()
+            prefix = self.buffer[:end]
+            words = len(prefix.split())
+            if end > limit or words > 12:
+                break
+            if words < 4 or any(start < end < stop for start, stop in spans):
+                continue
+            if re.search(r'\b(?:Dr|Mr|Mrs|Ms|Prof|Rs)\.\s*$', prefix):
+                continue
+            last = prefix.split()[-1].strip('.,;:!?؟۔،؛').casefold()
+            if last in weak_endings:
+                continue
+            boundary = end
+            following = self.buffer[end:].split(maxsplit=1)[0].casefold()
+            if following in {'and', 'but', 'so', 'while', 'because', 'before', 'after', 'by', 'اور', 'لیکن'}:
+                clause_boundary = end
+        boundary = clause_boundary or boundary
+        return [self._take(boundary, 'first_safe_prefix')] if boundary is not None else []
+
     def finish(self):
         if self.closed:
             return []
@@ -341,6 +389,10 @@ class SpeechPlan:
     first_chunk_at: float | None = None
     last_audio_at: float | None = None
     inter_chunk_gap_ms: list[float] = field(default_factory=list)
+    worker_audio_gap_ms: list[float] = field(default_factory=list)
+    worker_audio_gap_max_ms: float = 0
+    last_frame_duration_ms: float = 0
+    last_audio_chunk: int | None = None
     synthesized_ms: float = 0
     accepted_audio_ms: float = 0
     rejected_audio_ms: float = 0
@@ -445,10 +497,29 @@ class SpeechPlan:
         self.lead_estimate_ms = max(0, self.accepted_audio_ms - (time.monotonic()-self.audio_anchor)*1000)
         return True
 
+    def observe_audio(self, frame, *, now=None):
+        """Observe actual frame handoff gaps, never infer receiver playback."""
+        now = time.monotonic() if now is None else now
+        chunk = self.provider_context.get('audio_chunk_start')
+        if self.last_audio_at is not None:
+            gap = max(0, (now-self.last_audio_at)*1000-self.last_frame_duration_ms)
+            self.worker_audio_gap_ms.append(round(gap, 1))
+            self.worker_audio_gap_max_ms = max(self.worker_audio_gap_max_ms, round(gap, 1))
+            del self.worker_audio_gap_ms[:-128]
+            if chunk is not None and self.last_audio_chunk is not None and chunk != self.last_audio_chunk:
+                self.inter_chunk_gap_ms.append(round(gap, 1))
+                del self.inter_chunk_gap_ms[:-64]
+        self.last_audio_at = now
+        self.last_frame_duration_ms = frame.duration*1000
+        self.last_audio_chunk = chunk
+
     def metrics(self):
         return dict(generation_id=self.generation_id, streaming_policy_version=STREAMING_VERSION,
                     provider=self.provider, chunks=len(self.planned_chunks), cancelled=self.cancelled,
-                    chunk_wait_ms=self.chunk_wait_ms, inter_chunk_gap_ms=self.inter_chunk_gap_ms,
+                    chunk_wait_ms=self.chunk_wait_ms, inter_chunk_gap_ms=self.inter_chunk_gap_ms or None,
+                    worker_audio_gap_ms=self.worker_audio_gap_ms,
+                    worker_audio_gap_max_ms=self.worker_audio_gap_max_ms,
+                    audio_gap_measurement='worker_frame_handoff_estimate',
                     audio_lead_estimate_ms=self.lead_estimate_ms,
                     synthesized_ms=self.synthesized_ms, rejected_audio_ms=self.rejected_audio_ms,
                     cancelled_synthesized_ms=self.synthesized_ms if self.cancelled else 0,

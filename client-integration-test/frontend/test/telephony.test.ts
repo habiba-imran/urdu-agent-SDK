@@ -48,6 +48,25 @@ test('unrouted numbers block calls and already managed numbers cannot be importe
   expect($('[data-import]').textContent).toContain('Already managed');
 });
 
+test('outbound agent picker previews providers and an empty choice never falls back to the web agent', async () => {
+  document.body.innerHTML = '<div id="telephony-root"></div>';
+  mountTelephonyPanel({ backendOrigin: 'http://localhost:3100', getAgentId: () => 'agent-1', getAgents: () => [
+    { id: 'agent-1', name: 'Support', llm_provider: 'groq', llm_model: 'fast' },
+    { id: 'agent-2', name: 'Appointments', llm_provider: 'anthropic', llm_model: 'claude' },
+  ] });
+  await vi.waitFor(() => expect(document.querySelector('[data-id="number-1"]')).not.toBeNull());
+  selectNumber();
+  const picker = $<HTMLSelectElement>('#tel-agent-picker');
+  picker.value = 'agent-2'; picker.dispatchEvent(new Event('change'));
+  expect($('#tel-provider-cards').textContent).toContain('Anthropic');
+  expect($('#tel-provider-cards').textContent).toContain('claude');
+  expect(request.mock.calls.filter(([path]) => path.endsWith('/assign'))).toHaveLength(0);
+  picker.value = ''; picker.dispatchEvent(new Event('change'));
+  expect($<HTMLButtonElement>('#tel-assign-btn').disabled).toBe(true);
+  expect($<HTMLButtonElement>('#tel-outbound-btn').disabled).toBe(true);
+  expect($('#tel-provider-cards').textContent).toContain('Not configured');
+});
+
 test('routing failure refreshes the saved assignment and keeps outbound disabled', async () => {
   selectNumber();
   failAssignment = 'provider';

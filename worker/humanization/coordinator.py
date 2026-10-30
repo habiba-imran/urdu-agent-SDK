@@ -6,9 +6,10 @@ import re
 import time
 
 
-def overlap_enabled() -> bool:
+def overlap_enabled(*, persona_enabled: bool = False) -> bool:
     import os
-    return os.getenv("UVA_OVERLAP_POLICY", "baseline") == "overlap_v1"
+    value = os.getenv("UVA_OVERLAP_POLICY")
+    return persona_enabled if value is None else value == "overlap_v1"
 
 
 @dataclass
@@ -29,7 +30,10 @@ class TurnCoordinator:
                        language: str = "en", awaiting_answer: bool = False) -> str:
         # Short listener feedback is tolerated only during an existing, free-form
         # agent turn. Unknown duration is insufficient evidence to suppress a turn.
-        normalized = re.sub(r"[^\w\s]", "", text.casefold()).strip()
+        normalized = ' '.join(re.sub(r"[^\w\s]", "", text.casefold()).split())
+        normalized = {'mmhmm': 'mhm', 'mm hmm': 'mhm', 'mhmm': 'mhm', 'uh huh': 'mhm',
+                      'uhhuh': 'mhm', 'uhhuhh': 'mhm', 'hmmm': 'hmm', 'ok': 'okay',
+                      'ji haan': 'جی', 'جی ہاں': 'جی'}.get(normalized, normalized)
         english = {"wait", "stop", "no", "hold on"}
         urdu = {"nahi", "nahin", "نہیں", "ruko", "rukain", "رکو", "رکیں", "بس"}
         takeovers = english | (urdu if language.startswith("ur") else set())

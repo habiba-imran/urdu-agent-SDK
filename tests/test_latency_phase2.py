@@ -23,7 +23,7 @@ def test_phase2_endpointing_tighter_than_phase1_defaults():
     assert TURN_HANDLING_OPTIONS["endpointing"]["min_delay"] == 0.12
     assert TURN_HANDLING_OPTIONS["endpointing"]["max_delay"] == 1.2
     assert TURN_HANDLING_OPTIONS["preemptive_generation"]["preemptive_tts"] is True
-    assert TURN_HANDLING_OPTIONS["interruption"]["min_duration"] == 0.65
+    assert TURN_HANDLING_OPTIONS["interruption"]["min_duration"] == 0.35
 
 
 def test_vad_silence_gate_tuned_for_eou():

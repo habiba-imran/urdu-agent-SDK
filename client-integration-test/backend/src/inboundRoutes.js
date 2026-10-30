@@ -37,6 +37,9 @@ export function mountInboundRoutes(app, config, getAgents, applyPipeline, matche
       const [client, telephony] = await Promise.all([getAgents(), getTelephony()]);
       const number = await telephony.getManagedPhoneNumber(req.params.numberId);
       const agentId = assignedAgent(number);
+      if (req.body?.expectedAgentId !== undefined && req.body.expectedAgentId !== agentId) {
+        fail('This number is now assigned to a different agent. Refresh before saving providers.', 'inbound_assignment_changed');
+      }
       // Verify visibility in this tenant before any write. Do not trust an ID from the form.
       const before = (await client.listAgents()).find(agent => agent.id === agentId);
       if (!before) fail('The assigned agent is unavailable in this tenant.', 'inbound_agent_missing', 404);

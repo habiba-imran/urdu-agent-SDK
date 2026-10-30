@@ -4,6 +4,7 @@ cryptography==50.0.0
 fastapi==0.139.0
 google-genai==2.12.1
 httpx==0.28.1
+h2==4.4.1
 livekit-agents==1.6.5
 livekit-api==1.2.0
 livekit-plugins-anthropic==1.6.5

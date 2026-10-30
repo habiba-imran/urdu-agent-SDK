@@ -22,7 +22,7 @@ def test_turn_profile_webrtc_defaults_match_legacy():
     assert opts["preemptive_generation"]["enabled"] is True
     assert opts["turn_detection"] == "stt"
     assert opts["endpointing"]["min_delay"] == 0.12
-    assert opts["interruption"]["min_duration"] == 0.65
+    assert opts["interruption"]["min_duration"] == 0.35
 
 
 def test_turn_profile_telephony_gemini_preemptive_groq_off(monkeypatch):
@@ -34,7 +34,7 @@ def test_turn_profile_telephony_gemini_preemptive_groq_off(monkeypatch):
     assert tel["preemptive_generation"]["enabled"] is True
     assert tel["preemptive_generation"]["preemptive_tts"] is True
     assert tel["interruption"]["resume_false_interruption"] is False
-    assert tel["interruption"]["min_duration"] == 0.55
+    assert tel["interruption"]["min_duration"] == 0.30
 
     groq_web = turn_profile_to_livekit_options(
         build_turn_profile(audio_channel="webrtc", llm_provider="groq")
@@ -100,7 +100,7 @@ def test_deepgram_build_uses_resolved_endpointing(monkeypatch):
     )
     import worker.providers.stt.deepgram as dg
 
-    dg.build("en")
+    dg.build("en", stt_options={"stt_mode": "nova"})
     assert created["endpointing_ms"] == 100
     assert created["model"] == "nova-3"
 
@@ -115,9 +115,9 @@ def test_gladia_still_disables_code_switching(monkeypatch):
     """
     created: dict = {}
 
-    class FakeSTT:
-        def __init__(self, **kwargs):
-            created.update(kwargs)
+    def FakeSTT(**kwargs):
+        created.update(kwargs)
+        return SimpleNamespace()
 
     fake = SimpleNamespace(STT=FakeSTT)
     monkeypatch.setitem(sys.modules, "livekit.plugins.gladia", fake)

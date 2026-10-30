@@ -148,11 +148,18 @@ def resolve_anthropic_model(model: str) -> tuple[str, str | None]:
 def _make_client() -> Any:
     """Own the AsyncAnthropic client so warm-up and chat share one connection."""
     import anthropic as anthropic_sdk
+    from .claude_cache import claude_latency_enabled
 
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise ValueError("ANTHROPIC_API_KEY is required")
-    return anthropic_sdk.AsyncAnthropic(
+    async def on_response(response):
+        # Record negotiated protocol only; never URL, headers or payload.
+        options = getattr(client, '_awaaz_voice_options', None)
+        if options is not None:
+            options['http_version'] = response.http_version
+
+    client = anthropic_sdk.AsyncAnthropic(
         api_key=key,
         # LiveKit already retries at the session layer; a second retry budget here would
         # stack inside the 6s useful-progress watchdog (worker/provider_retries.py).
@@ -163,6 +170,10 @@ def _make_client() -> Any:
         # (84ms + 88ms in the 2026-10-23 staging log). DefaultAsyncHttpxClient keeps the
         # SDK's own defaults for everything this does not override.
         http_client=anthropic_sdk.DefaultAsyncHttpxClient(
+            # HTTP/1.1 cancellation discards the connection; HTTP/2 can reset the
+            # speculative stream while retaining the shared TLS connection.
+            http2=claude_latency_enabled(),
+            event_hooks={'response': [on_response]},
             limits=httpx2.Limits(
                 max_connections=50,
                 max_keepalive_connections=50,
@@ -170,6 +181,7 @@ def _make_client() -> Any:
             ),
         ),
     )
+    return client
 
 
 def build(model: str) -> Any:
@@ -205,6 +217,8 @@ def build(model: str) -> Any:
     class VoiceClaude(anthropic_plugin.LLM):
         def __init__(self) -> None:
             self._transport_client = _make_client()
+            from .claude_cache import install_cache_boundary
+            install_cache_boundary(self._transport_client)
             self._transport_warmed_at: float | None = None
             self._transport_warm_task: asyncio.Task[None] | None = None
             # Safe constructor settings for telemetry, including cached clients
@@ -215,6 +229,7 @@ def build(model: str) -> Any:
                 "timeout_seconds": 30, "max_retries": 0,
                 "caching": "ephemeral",
             }
+            self._transport_client._awaaz_voice_options = self.voice_options
             # No temperature / top_k on purpose — both return 400 on current models.
             super().__init__(
                 model=resolved_model,
@@ -236,7 +251,14 @@ def build(model: str) -> Any:
             caller = kwargs.pop("extra_kwargs", NOT_GIVEN)
             if is_given(caller) and caller:
                 extra.update(caller)
-            return super().chat(extra_kwargs=extra, **kwargs)
+            from .claude_cache import claude_latency_enabled, context_prefix, system_prefix
+            token = system_prefix.set(context_prefix(kwargs.get('chat_ctx')) if claude_latency_enabled() else None)
+            try:
+                # The plugin creates its stream task here. ContextVar ownership
+                # follows that task, including concurrent speculative requests.
+                return super().chat(extra_kwargs=extra, **kwargs)
+            finally:
+                system_prefix.reset(token)
 
         def prewarm(self) -> asyncio.Task[None]:
             """LiveKit calls this synchronously; own and share the async work.

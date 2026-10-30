@@ -178,7 +178,9 @@ def test_real_framework_streams_before_llm_finishes_and_keeps_canonical_history(
             assert len(received) == 2 and len(closed) == 1
             assert plan.provider_context["lifecycle"] == "generation_plugin"
             assert plan.chunk_wait_ms is not None and plan.chunk_wait_ms >= 0
-            assert plan.inter_chunk_gap_ms == []  # one generation client; audio gaps require playback evidence
+            assert plan.inter_chunk_gap_ms and all(gap >= 0 for gap in plan.inter_chunk_gap_ms)
+            assert plan.metrics()['audio_gap_measurement'] == 'worker_frame_handoff_estimate'
+            assert plan.metrics()['caller_heard_latency_ms'] is None
             assert plan.playout_completed is True and plan.heard_reference is None
             assert all('<emotion' not in c.text for c in plan.planned_chunks)
             static = session.say('<spell>ZX9</spell> is your code.', allow_interruptions=True)

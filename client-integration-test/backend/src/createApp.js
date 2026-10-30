@@ -123,7 +123,7 @@ function agentPipelineMatches(agent, applied) {
  * so the next mint/worker session uses that pipeline.
  * Skips the portal PATCH when the agent already matches (demo Connect hot path).
  */
-async function applyPipelineSelection(client, agentId, selection, { force = false } = {}) {
+async function resolvePipelineSelection(client, selection) {
   const maxCallDurationSeconds = selection.maxCallDurationSeconds;
   if (maxCallDurationSeconds !== undefined && (!Number.isInteger(maxCallDurationSeconds) || maxCallDurationSeconds < 60 || maxCallDurationSeconds > 7200)) {
     throw Object.assign(new Error('Call duration must be 60 to 7200 seconds.'), {code: 'invalid_duration'});
@@ -215,6 +215,12 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
     ttsVoiceId,
   };
 
+  return applied;
+}
+
+async function applyPipelineSelection(client, agentId, selection, { force = false } = {}) {
+  const applied = await resolvePipelineSelection(client, selection);
+
   if (!force) {
     try {
       const agents = await client.listAgents();
@@ -230,16 +236,8 @@ async function applyPipelineSelection(client, agentId, selection, { force = fals
   }
 
   const agent = await client.updateAgent(agentId, {
-    ...(humanization === undefined ? {} : { humanization }),
-    ...(maxCallDurationSeconds === undefined ? {} : { maxCallDurationSeconds }),
-    agentLanguage: language,
-    sttProvider,
-    sttModel,
-    llmProvider,
-    llmModel,
-    ttsProvider,
-    ttsVoiceId,
-    voiceId: ttsVoiceId,
+    ...applied,
+    voiceId: applied.ttsVoiceId,
   });
 
   return {
@@ -342,6 +340,29 @@ export function createApp(config, fetchImpl = fetch, agentsClientFactory = () =>
         error: err?.code || 'list_agents_failed',
         message: err instanceof Error ? err.message : String(err),
       });
+    }
+  });
+
+  app.post('/api/agents', async (req, res) => {
+    const { name, prompt, greeting = '', firstSpeaker = 'agent' } = req.body ?? {};
+    if (typeof name !== 'string' || !name.trim() || name.length > 120 ||
+        typeof prompt !== 'string' || !prompt.trim() || prompt.length > 24000 ||
+        typeof greeting !== 'string' || greeting.length > 500 || !['agent', 'user'].includes(firstSpeaker)) {
+      return res.status(400).json({ error: 'invalid_agent', message: 'Enter a name, instructions, and valid opening settings.' });
+    }
+    try {
+      const client = await agentsClientFactory();
+      const applied = await resolvePipelineSelection(client, req.body);
+      const created = await client.createAgent({ name: name.trim(), prompt, greeting, firstSpeaker,
+        ...applied, voiceId: applied.ttsVoiceId });
+      // Return only fields the playground displays; tool credentials stay on the server.
+      const record = { id: created.id, name: created.name, agent_language: created.agent_language,
+        stt_provider: created.stt_provider, stt_model: created.stt_model, llm_provider: created.llm_provider,
+        llm_model: created.llm_model, tts_provider: created.tts_provider, tts_voice_id: created.tts_voice_id || created.voice_id };
+      res.status(201).json({ agent: record, applied });
+    } catch (err) {
+      res.status(err?.status || err?.statusCode || 422).json({ error: err?.code || 'agent_creation_failed',
+        message: err instanceof Error ? err.message : String(err) });
     }
   });
 

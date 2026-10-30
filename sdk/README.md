@@ -106,6 +106,31 @@ The shared worker must be deployed for the server behavior; browser cleanup fixe
 require a package release and consumer update. Building locally does not update
 already published npm packages or running workers.
 
+### Barge-in and interruptions
+
+Interruption handling runs in the shared worker for all SDK integrations, including
+browser sessions and inbound/outbound phone calls. Clients do not need to detect
+keywords or send an interrupt command. The browser SDK requests microphone echo
+cancellation and noise suppression; keep those enabled in custom audio capture.
+
+The worker uses local sustained-speech detection with a 350 ms browser gate and a
+300 ms phone gate, plus streaming STT as a fallback. It does not wait for a final
+transcript or LLM response to accept an interruption. The initial echo warm-up is
+250 ms on browser sessions and disabled on phone legs, replacing the runtime's
+three-second initial interruption/input blackout. These are configured detection
+gates, not guaranteed caller-heard stopping times.
+
+Accepted interruptions stop buffered output while slow direct-audio cleanup
+finishes. Cancelled audio is cleared before output resumes for the next reply.
+Required uninterruptible disclosures, tool effects, history truncation, and the
+selected providers retain their existing handling. Native false-interruption
+pause/resume remains separately controlled.
+
+Deploy/restart the shared worker to activate these changes for existing clients;
+no browser package release is required for this worker-only change. Operator
+timing overrides, rollback settings, and verification limits are in
+[shared interruption behavior](../docs/INTERRUPTION_SMOOTHNESS.md).
+
 ### Supported events
 
 | Event | Payload |

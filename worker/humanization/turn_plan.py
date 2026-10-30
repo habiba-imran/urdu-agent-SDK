@@ -166,7 +166,7 @@ def conversational_signals(text: str) -> TurnSignals:
     ))
     # Explicit lexical cues only; no inference from a bare "no" or question mark.
     concern = bool(re.search(
-        r"\b(?:i(?:'m| am) (?:worried|concerned|frustrated|upset)|this is frustrating|"
+        r"\b(?:i(?:'m| am) (?:really |very )?(?:worried|concerned|frustrated|upset|scared|anxious|angry|disappointed)|this is frustrating|"
         r"i(?:'ve| have) (?:already|been) (?:called|calling)|still not working)\b"
         r"|\u0645\u062c\u06be\u06d2 (?:\u0641\u06a9\u0631|\u067e\u0631\u06cc\u0634\u0627\u0646\u06cc)"
         r"|\b(?:mujhe fikr|main pareshan|mein pareshan)\b", value))

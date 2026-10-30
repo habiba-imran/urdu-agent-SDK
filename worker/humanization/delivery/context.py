@@ -38,10 +38,13 @@ class DeliveryContext:
     def enable_session_reuse(self) -> None:
         """Enable only after the job has registered our shutdown callback.
 
-        Cartesia clients are leased exclusively, never shared by concurrent
-        generations. Their exact constructor options and tokenizer must match.
+        Clients are leased exclusively, never shared by concurrent generations.
+        Exact constructor options and tokenizer must match. Existing Cartesia
+        reuse remains; other providers are enabled for Claude sessions only.
         """
-        if self.cfg.tts_provider == 'cartesia' and self._client_pool is None:
+        from worker.providers.llm.claude_cache import claude_latency_enabled
+        reusable = self.cfg.tts_provider == 'cartesia' or (self.cfg.llm_provider == 'anthropic' and claude_latency_enabled())
+        if reusable and self._client_pool is None:
             from .client_pool import DeliveryClientPool
             self._client_pool = DeliveryClientPool(max_idle=4)
 
@@ -72,8 +75,10 @@ class DeliveryContext:
                 return
             # This bounded hook retries preparation after a cancelled socket and
             # owns its task until client close. It does not synthesize audio.
-            plugin.prepare_transport()
-            logging.getLogger(__name__).debug('delivery transport prepare provider=cartesia created=%s', created)
+            prepare = getattr(plugin, 'prepare_transport', None) or getattr(plugin, 'prewarm_after_interruption', None)
+            if callable(prepare):
+                prepare()
+            logging.getLogger(__name__).debug('delivery transport prepare provider=%s created=%s', self.cfg.tts_provider, created)
         except Exception as exc:
             # Transport preparation must never prevent the real generation.
             logging.getLogger(__name__).warning('delivery transport prepare failed error_type=%s', type(exc).__name__)
@@ -84,7 +89,7 @@ class DeliveryContext:
         import logging
         key = self._client_key(result, planned=planned)
         plugin, reused = self._client_pool.acquire(key, lambda: self._plugin(result, planned=planned))
-        logging.getLogger(__name__).debug('delivery client provider=cartesia reused=%s planned=%s', reused, planned)
+        logging.getLogger(__name__).debug('delivery client provider=%s reused=%s planned=%s', self.cfg.tts_provider, reused, planned)
         return plugin, key
 
     async def _release_plugin(self, plugin, key, *, healthy):
@@ -208,6 +213,7 @@ class DeliveryContext:
                         async for event in output:
                             if not speech_plan.valid:
                                 return
+                            speech_plan.provider_context['audio_chunk_start'] = chunk.start
                             yield event.frame
                     finally:
                         await output.aclose()

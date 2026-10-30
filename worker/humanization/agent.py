@@ -104,6 +104,9 @@ class AwaazAgent(Agent):
                         runtime.latest_plan = derive_turn_plan(runtime.state, replace(runtime.latest_signals, write_phase=phase))
                     from .context_projection import conversational_context
                     chat_ctx = conversational_context(chat_ctx, runtime)
+                    from .context_memory import memory_enabled
+                    if self.delivery_context is not None and self.delivery_context.cfg.llm_provider == 'anthropic' and memory_enabled():
+                        chat_ctx = runtime.context_memory.project(chat_ctx, runtime.state)
                 import json
                 effects = [call.result_data for call in runtime.state.tool_state.calls.values()
                            if call.business_effect in {"committed", "unknown", "escalation_recorded"}]
@@ -346,7 +349,6 @@ class AwaazAgent(Agent):
 
     async def _streaming_tts(self, text, plan, connection):
         import asyncio
-        import time
         from .streaming import StreamSafeNormalizer
         from .delivery.pronunciation import plan_pronunciation
         context = self.delivery_context
@@ -377,13 +379,24 @@ class AwaazAgent(Agent):
             return plan.planner.feed(plain)
 
         async def chunks():
-            async for piece in text:
-                if not plan.valid:
-                    return
-                plain = piece if has_llm_text else normalizer.feed(piece)
-                for chunk in prepare(plain):
+            from worker.providers.llm.claude_cache import claude_latency_enabled
+            if context.cfg.llm_provider == 'anthropic' and claude_latency_enabled():
+                from .chunk_latency import deadline_chunks
+                def prepare_piece(piece):
+                    if not plan.valid:
+                        return []
+                    return prepare(piece if has_llm_text else normalizer.feed(piece))
+                async for chunk in deadline_chunks(text, plan.planner, prepare_piece, valid=lambda: plan.valid):
                     if plan.accept_chunk(chunk):
                         yield chunk
+            else:
+                async for piece in text:
+                    if not plan.valid:
+                        return
+                    plain = piece if has_llm_text else normalizer.feed(piece)
+                    for chunk in prepare(plain):
+                        if plan.accept_chunk(chunk):
+                            yield chunk
             if not has_llm_text:
                 for chunk in prepare(normalizer.finish()):
                     if plan.accept_chunk(chunk):
@@ -398,7 +411,7 @@ class AwaazAgent(Agent):
             async for frame in audio:
                 if not await plan.pace_audio(frame, lead_limit_ms=context.channel.audio_lead_ms):
                     return
-                plan.last_audio_at = time.monotonic()
+                plan.observe_audio(frame)
                 yield frame
             finished = plan.valid
             plan.synthesis_completed = finished

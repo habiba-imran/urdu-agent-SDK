@@ -51,6 +51,7 @@ def test_deepgram_stt_mode_flux_env_and_options(monkeypatch):
 
 
 def test_flux_eager_disabled_by_default_and_blocked_for_groq(monkeypatch):
+    monkeypatch.delenv("UVA_DEEPGRAM_FLUX_EAGER_EOT_THRESHOLD", raising=False)
     monkeypatch.delenv("UVA_DEEPGRAM_FLUX_EAGER_EOT", raising=False)
     assert resolve_deepgram_flux_eager_threshold(None, llm_provider="gemini") is None
 

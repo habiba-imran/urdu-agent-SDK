@@ -1,3 +1,4 @@
+import { providerCards, type PipelineAgent } from './providers';
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
 function escapeHtml(value: unknown): string {
@@ -33,22 +34,20 @@ function agentOnNumber(row: ManagedNumber): string {
 export function mountTelephonyPanel(opts: {
   backendOrigin: string;
   getAgentId: () => string;
+  getAgents?: () => PipelineAgent[];
 }): void {
   const root = document.querySelector<HTMLDivElement>('#telephony-root');
   if (!root) return;
 
   root.innerHTML = `
     <section class="panel telephony-panel">
-      <h2>Telephony (Telnyx · npm @awaazlabs-uva/telephony)</h2>
-      <p class="hint">
-        Telnyx API key stays in <code>backend/.env</code> only. This panel talks to
-        <strong>your host backend</strong>, which signs calls with the tenant HMAC.
-      </p>
+      <div class="section-heading"><div><p class="eyebrow">04 / Reach out</p><h2>Outbound calls & numbers</h2><p class="hint">Choose a caller ID and an agent, then start a phone conversation.</p></div><span class="chip">Telnyx</span></div>
 
       <div class="telephony-status" id="tel-status" role="status">Checking Telnyx connection…</div>
       <p id="tel-feedback" class="feedback" role="status" aria-live="polite">Check your connection and select a number to begin.</p>
       <p id="tel-progress" class="telephony-progress" hidden><strong id="tel-progress-action" role="status" aria-live="polite"></strong><span id="tel-progress-elapsed" aria-hidden="true"></span></p>
 
+      <details class="number-management"><summary>Connection & number management</summary><p class="hint">Connect your account, sync existing numbers, or purchase a new number.</p>
       <div class="actions telephony-actions">
         <button id="tel-connect-btn" type="button">Connect / refresh Telnyx</button>
         <button id="tel-sync-btn" type="button">Sync account numbers</button>
@@ -56,6 +55,7 @@ export function mountTelephonyPanel(opts: {
         <button id="tel-prepare-btn" type="button">Prepare outbound</button>
         <button id="tel-calls-btn" type="button">Recent calls</button>
       </div>
+      <div id="tel-management-extra"></div></details>
 
       <div class="telephony-grid">
         <div>
@@ -68,8 +68,8 @@ export function mountTelephonyPanel(opts: {
         </div>
       </div>
 
-      <div class="telephony-grid">
-        <div>
+      <div class="telephony-grid" id="tel-number-management">
+        <div id="tel-buy-section">
           <h3 class="telephony-subhead">Buy a number</h3>
           <div class="telephony-buy-row">
             <label>
@@ -85,28 +85,23 @@ export function mountTelephonyPanel(opts: {
           <div id="tel-search-results" class="telephony-list">Search to list purchasable numbers.</div>
         </div>
         <div>
-          <h3 class="telephony-subhead">Assign + calls</h3>
-          <label>
-            Managed number id
-            <input id="tel-number-id" placeholder="from managed list" autocomplete="off" />
-          </label>
-          <label>
-            Agent id (defaults to Session field)
-            <input id="tel-agent-id" placeholder="agent uuid" autocomplete="off" />
-          </label>
-          <p class="hint">Outbound calls use this agent’s saved speech persona. To edit it, select the same agent in <a href="#prompt-section">Agent prompt</a> and save its speech persona before calling.</p>
+          <h3 class="telephony-subhead">Set up your call</h3>
+          <div class="call-selection-grid"><label>01 · Call from<select id="tel-number-picker"><option value="">Choose a managed number</option></select></label><label>02 · Calling agent<select id="tel-agent-picker"><option value="">Choose an agent</option></select></label></div>
+          <input id="tel-number-id" type="hidden" autocomplete="off" />
+          <input id="tel-agent-id" type="hidden" autocomplete="off" />
+          <div id="tel-provider-cards" aria-label="Calling agent saved providers"></div>
           <div class="actions">
-            <button id="tel-assign-btn" type="button">Assign to agent + configure inbound routing</button>
+            <button id="tel-assign-btn" type="button">Save agent & enable routing</button>
           </div>
           <p class="hint" id="tel-inbound-hint">
-            Inbound: after assign + routing, dial the E.164 number from a real phone.
+            Saving also routes incoming calls on this number to the selected agent.
           </p>
           <label>
-            Outbound to (E.164)
-            <input id="tel-to-number" placeholder="+15551234567" autocomplete="off" />
+            03 · Destination number (E.164)
+            <input id="tel-to-number" type="tel" placeholder="+15551234567" autocomplete="off" />
           </label>
           <div class="actions">
-            <button id="tel-outbound-btn" type="button" aria-describedby="tel-call-hint">Place outbound call</button>
+            <button id="tel-outbound-btn" class="primary" type="button" aria-describedby="tel-call-hint">Place outbound call</button>
           </div>
           <p id="tel-call-hint" class="hint" role="status"></p>
         </div>
@@ -115,6 +110,13 @@ export function mountTelephonyPanel(opts: {
       <pre id="tel-log" class="log-box telephony-log">Telephony log…</pre>
     </section>
   `;
+
+  const management = root.querySelector<HTMLElement>('#tel-management-extra')!;
+  management.append(root.querySelector('#tel-managed')!.parentElement!.parentElement!, root.querySelector('#tel-buy-section')!);
+  const callLayout = root.querySelector<HTMLElement>('#tel-number-management')!;
+  callLayout.className = 'outbound-call-layout';
+  const numberPicker = root.querySelector<HTMLSelectElement>('#tel-number-picker')!;
+  const agentPicker = root.querySelector<HTMLSelectElement>('#tel-agent-picker')!;
 
   const els = {
     status: root.querySelector<HTMLElement>('#tel-status')!,
@@ -155,6 +157,25 @@ export function mountTelephonyPanel(opts: {
   let managedNumbers: ManagedNumber[] = [];
   let outboundReady = false;
   let readinessReasons: string[] = [];
+
+  function renderAgentOptions() {
+    const rows = opts.getAgents?.() || [];
+    const current = els.agentId.value || opts.getAgentId();
+    agentPicker.innerHTML = '<option value="">Choose an agent</option>' + rows.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || item.id)}</option>`).join('');
+    agentPicker.value = rows.some(item => item.id === current) ? current : '';
+    if (opts.getAgents) els.agentId.value = agentPicker.value;
+    renderBusy();
+  }
+  agentPicker.addEventListener('change', () => { els.agentId.value = agentPicker.value; renderBusy(); });
+  numberPicker.addEventListener('change', () => {
+    els.numberId.value = numberPicker.value;
+    renderManaged(managedNumbers); renderBusy();
+  });
+  document.addEventListener('playground:agents-updated', () => { if (root.isConnected) renderAgentOptions(); });
+  document.addEventListener('playground:agent-saved', () => { if (root.isConnected) renderAgentOptions(); });
+  document.addEventListener('playground:phone-updated', event => {
+    if (root.isConnected && (event as CustomEvent).detail?.source !== 'telephony') void Promise.all([refreshNumbers(), refreshStatus()]);
+  });
 
   function outboundBlockReason() {
     const selected = managedNumbers.find(number => numberId(number) === els.numberId.value.trim());
@@ -198,6 +219,9 @@ export function mountTelephonyPanel(opts: {
     // Keep the panel usable during reads. Only fields belonging to a running
     // write are locked; browsing managed numbers and independent reads stay live.
     els.numberId.disabled = els.agentId.disabled = mutating;
+    els.assignBtn.disabled ||= !managedNumbers.some(number => numberId(number) === els.numberId.value) || !resolveAgentId();
+    numberPicker.disabled = agentPicker.disabled = mutating;
+    root!.querySelector<HTMLElement>('#tel-provider-cards')!.innerHTML = providerCards(opts.getAgents?.().find(item => item.id === resolveAgentId()));
     els.toNumber.disabled = isPending('/outbound');
     const reason = outboundBlockReason();
     els.outboundBtn.disabled ||= Boolean(reason);
@@ -282,6 +306,10 @@ export function mountTelephonyPanel(opts: {
 
   function renderManaged(rows: ManagedNumber[]) {
     managedNumbers = rows;
+    const selectedId = els.numberId.value;
+    numberPicker.innerHTML = '<option value="">Choose a managed number</option>' + rows.map(row => `<option value="${escapeHtml(numberId(row))}">${escapeHtml(numberE164(row))} · ${escapeHtml(row.routing_status || 'Not configured')}</option>`).join('');
+    numberPicker.value = rows.some(row => numberId(row) === selectedId) ? selectedId : '';
+    els.numberId.value = numberPicker.value;
     if (!rows.length) {
       els.managed.textContent = 'No managed numbers yet — Connect + Sync, or Buy.';
       return;
@@ -302,6 +330,7 @@ export function mountTelephonyPanel(opts: {
     els.managed.querySelectorAll<HTMLButtonElement>('.telephony-item').forEach((btn) => {
       btn.addEventListener('click', () => {
         els.numberId.value = btn.dataset.id || '';
+        numberPicker.value = els.numberId.value;
         els.managed.querySelectorAll<HTMLButtonElement>('.telephony-item').forEach(item => item.setAttribute('aria-pressed', String(item === btn)));
         log('selected managed number', { id: btn.dataset.id, e164: btn.dataset.e164 });
         renderBusy();
@@ -369,7 +398,11 @@ export function mountTelephonyPanel(opts: {
           const managed = (data.managed || []) as ManagedNumber[];
           renderManaged(managed);
           const bought = managed.find((m) => numberE164(m) === btn.dataset.buy);
-          if (bought) els.numberId.value = numberId(bought);
+          if (bought) {
+            els.numberId.value = numberId(bought);
+            numberPicker.value = els.numberId.value;
+          }
+          renderBusy();
         } catch (err: any) {
           log('purchase failed', err?.body || err?.message || String(err));
         }
@@ -419,7 +452,7 @@ export function mountTelephonyPanel(opts: {
   }
 
   function resolveAgentId() {
-    return els.agentId.value.trim() || opts.getAgentId().trim();
+    return opts.getAgents ? els.agentId.value.trim() : els.agentId.value.trim() || opts.getAgentId().trim();
   }
 
   els.connectBtn.addEventListener('click', async () => {
@@ -503,6 +536,7 @@ export function mountTelephonyPanel(opts: {
       );
       await Promise.all([refreshNumbers(), refreshStatus()]);
       log('assignment and routing ready', data);
+      document.dispatchEvent(new CustomEvent('playground:phone-updated', { detail: { source: 'telephony' } }));
     } catch (err: any) {
       await Promise.all([refreshNumbers(), refreshStatus()]);
       log('assign failed', err?.body || err?.message || String(err));
@@ -542,6 +576,7 @@ export function mountTelephonyPanel(opts: {
   });
 
   els.agentId.value = opts.getAgentId();
+  renderAgentOptions();
   root.addEventListener('input', renderBusy);
   void refreshStatus();
   void refreshNumbers();

@@ -78,6 +78,12 @@ def _build(fake_plugin):
     return uplift._build_prewarmable(fake_plugin, voice_id="v_test", output_format="PCM_22050_16")
 
 
+def run_prewarm(tts):
+    async def run():
+        await tts.prewarm()
+    asyncio.run(run())
+
+
 def test_adapter_exposes_the_hooks_the_worker_duck_types(fake_plugin):
     tts = _build(fake_plugin)
     # These exact names are what worker/latency.py looks for; a rename silently
@@ -89,7 +95,7 @@ def test_adapter_exposes_the_hooks_the_worker_duck_types(fake_plugin):
 
 def test_prewarm_opens_the_socket_before_any_synthesis(fake_plugin):
     tts = _build(fake_plugin)
-    asyncio.run(tts.prewarm())
+    run_prewarm(tts)
 
     assert len(_FakeWebSocketClient.instances) == 1
     client = _FakeWebSocketClient.instances[0]
@@ -108,6 +114,25 @@ def test_prewarm_is_idempotent_and_reuses_the_same_client(fake_plugin):
 
     asyncio.run(run())
     assert len(_FakeWebSocketClient.instances) == 1
+
+
+def test_sync_sdk_hook_starts_single_owned_task_and_close_cancels_it(fake_plugin):
+    tts = _build(fake_plugin)
+    entered = asyncio.Event()
+    class Pending(_FakeWebSocketClient):
+        async def connect(self):
+            entered.set()
+            await asyncio.Event().wait()
+    fake_plugin.tts.WebSocketClient = Pending
+    async def run():
+        task = tts.prewarm()  # LiveKit intentionally does not await this call.
+        assert isinstance(task, asyncio.Task) and tts.prewarm() is task
+        await asyncio.wait_for(entered.wait(), .5)
+        await tts.aclose()
+        assert task.done() and tts.closed
+        await tts.prewarm()
+        assert len(_FakeWebSocketClient.instances) == 1
+    asyncio.run(run())
 
 
 def test_prewarm_never_raises_when_the_handshake_fails(fake_plugin):
@@ -153,7 +178,7 @@ def test_prewarm_degrades_to_a_noop_if_the_plugin_renames_its_internals(fake_plu
     tts = _build(fake_plugin)
     del fake_plugin.tts.WebSocketClient
 
-    asyncio.run(tts.prewarm())
+    run_prewarm(tts)
     assert tts._client is None
 
 
@@ -227,7 +252,7 @@ def test_build_returns_a_prewarmable_tts_in_live_mode(fake_plugin, monkeypatch):
 
     assert callable(getattr(tts, "prewarm", None)), "build() lost the warm-up hooks"
     assert callable(getattr(tts, "prewarm_after_interruption", None))
-    asyncio.run(tts.prewarm())
+    run_prewarm(tts)
     assert _FakeWebSocketClient.instances[0].connected is True
 
 

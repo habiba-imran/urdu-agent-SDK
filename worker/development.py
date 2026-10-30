@@ -22,6 +22,8 @@ def configure(agent_name: str, *, environ=None) -> dict[str, str]:
         "UVA_OVERLAP_POLICY": "overlap_v1",
         "UVA_OPENING_POLICY": "opening_v1",
         "UVA_PUBLISH_TURN_LATENCY": "1",
+        "UVA_TOOL_ACKNOWLEDGEMENTS": "1",
+        "UVA_CLAUDE_CONTEXT_WINDOW": "1",
     }
     for provider in PROVIDERS:
         values["UVA_TTS_RENDERER_" + provider.upper()] = "delivery_v1"
@@ -41,6 +43,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", choices=("worker", "control-plane"))
     parser.add_argument("--agent-name", required=True)
+    parser.add_argument('--port', type=int, default=8100, help='Local control-plane port')
     parser.add_argument("--check", action="store_true", help="resolve flags only; no worker, network or synthesis")
     args = parser.parse_args()
     from dotenv import load_dotenv
@@ -58,7 +61,7 @@ def main() -> None:
         runpy.run_module("worker.main", run_name="__main__")
     else:
         import uvicorn
-        uvicorn.run("control_plane.app:app", host="127.0.0.1", port=8100)
+        uvicorn.run("control_plane.app:app", host="127.0.0.1", port=args.port)
 
 
 if __name__ == "__main__":

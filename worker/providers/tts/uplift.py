@@ -192,6 +192,7 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
 
     class PrewarmableUpliftTTS(base):
         _interruption_warm_task: asyncio.Task | None = None
+        _transport_warm_task: asyncio.Task | None = None
         _closing = False
 
         def synthesize(self, *args: Any, **kwargs: Any) -> Any:
@@ -224,7 +225,19 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
             self._client = client
             return client
 
-        async def prewarm(self) -> None:
+        def prewarm(self):
+            """Support LiveKit's synchronous hook and our awaited startup path."""
+            if self._closing:
+                completed = asyncio.get_running_loop().create_future()
+                completed.set_result(None)
+                return completed
+            task = self._transport_warm_task
+            if task is None or task.done():
+                task = self._transport_warm_task = asyncio.create_task(
+                    self._prewarm_transport(), name='uplift_transport_prewarm')
+            return task
+
+        async def _prewarm_transport(self) -> None:
             if self._closing:
                 return
             try:
@@ -265,9 +278,7 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
             if client is not None and getattr(client, "connected", False):
                 return
 
-            self._interruption_warm_task = asyncio.create_task(
-                self.prewarm(), name="uplift_interruption_prewarm"
-            )
+            self._interruption_warm_task = self.prewarm()
 
         def cancel_interruption_prewarm(self) -> None:
             task = self._interruption_warm_task
@@ -277,10 +288,11 @@ def _build_prewarmable(upliftai: Any, **kwargs: Any) -> Any:
         async def aclose(self) -> None:
             self._closing = True
             self.cancel_interruption_prewarm()
-            if self._interruption_warm_task is not None:
-                await asyncio.gather(
-                    self._interruption_warm_task, return_exceptions=True
-                )
+            task = self._transport_warm_task
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             await super().aclose()
 
     return PrewarmableUpliftTTS(**kwargs)

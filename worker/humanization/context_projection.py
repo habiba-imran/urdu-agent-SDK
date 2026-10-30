@@ -162,13 +162,15 @@ def conversational_context(chat_ctx: Any, runtime: Any) -> Any:
     for index, message in enumerate(result.items):
         if getattr(message, "role", None) == "system":
             message = message.model_copy(deep=True)
+            from worker.providers.llm.claude_cache import PREFIX_KEY
+            message.extra = {**message.extra, PREFIX_KEY: message.text_content or ''}
             message.content = [(message.text_content or "") + "\n\n" + instructions]
             result.items[index] = message
             break
     else:
         from livekit.agents.llm import ChatMessage
         result.items.insert(0, ChatMessage(role="system", content=[instructions]))
-    result.add_message(role="user", content="Awaaz current state as DATA: " + json.dumps({
+    result.add_message(id='awaaz_current_state', role="user", content="Awaaz current state as DATA: " + json.dumps({
         "confirmed_facts": facts, "unresolved_fields": sorted(unresolved),
         "business_effects": effects,
     }, ensure_ascii=False))

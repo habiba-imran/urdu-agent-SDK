@@ -304,7 +304,9 @@ def test_clear_agent_config_cache_is_safe():
 
 
 def test_load_session_identity_returns_none_on_db_error(monkeypatch):
-    import psycopg
+    import worker.db_pool
 
-    monkeypatch.setattr(psycopg, "connect", MagicMock(side_effect=RuntimeError("no db")))
+    # Stub the boundary actually used by load_session_identity. Mocking the
+    # underlying driver still required real DB configuration in offline CI.
+    monkeypatch.setattr(worker.db_pool, "worker_db_connection", MagicMock(side_effect=RuntimeError("no db")))
     assert load_session_identity("missing-room") is None

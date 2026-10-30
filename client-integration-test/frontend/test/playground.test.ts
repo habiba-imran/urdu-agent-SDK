@@ -58,7 +58,7 @@ beforeEach(async () => {
   await vi.waitFor(() => expect($<HTMLTextAreaElement>('#agent-prompt').value).toBe('Be helpful.'));
   await vi.waitFor(() => expect(button('connect-btn').disabled).toBe(false));
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 function editPrompt(value: string) {
   $<HTMLTextAreaElement>('#agent-prompt').value = value;
@@ -72,6 +72,19 @@ test('startup loads saved prompt and live capabilities without agent mutations',
   expect(button('disconnect-btn').disabled).toBe(true);
   expect($('#mic-text').textContent).toBe('Off');
   expect($<HTMLSelectElement>('#tts-voice').options.length).toBe(2);
+});
+
+test('explicit loopback test mode routes provider reads and voice minting to the isolated local backend', async () => {
+  window.history.replaceState({}, '', '/?voiceTest=local');
+  vi.resetModules();
+  fetchMock.mockClear();
+  document.body.innerHTML = '<div id="app"></div>';
+  await import('../src/main');
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect($<HTMLInputElement>('#session-endpoint').value).toBe('http://localhost:13100/api/voice/session');
+  expect($<HTMLInputElement>('#refresh-endpoint').value).toBe('http://localhost:13100/api/voice/session/refresh');
+  expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith('http://localhost:13100/'))).toBe(true);
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
 });
 
 test('persona changes block connect until saved and survive reload', async () => {
@@ -253,7 +266,8 @@ test('transcript revisions replace partials and render text safely', async () =>
   expect($('#transcript-list').textContent).toContain('<img');
   expect(button('download-transcript-btn').disabled).toBe(false);
   document.querySelector<HTMLAnchorElement>('a[href="#telephony-section"]')!.click();
-  expect($<HTMLDetailsElement>('#telephony-section').open).toBe(true);
+  expect($('#telephony-section').tagName).toBe('SECTION');
+  expect($('#telephony-section').hidden).toBe(false);
 });
 
 test('telephony requests disable repeat actions and recover after failures', async () => {

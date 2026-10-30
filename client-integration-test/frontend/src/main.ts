@@ -7,6 +7,8 @@ import {
 import { mountTelephonyPanel } from './telephonyPanel';
 import { mountPromptPanel } from './promptPanel';
 import { mountInboundPanel } from './inboundPanel';
+import { mountAgentCreator } from './agentCreator';
+import { providerCards, providerName } from './providers';
 import './style.css';
 
 type ProviderCapabilityEntry = {
@@ -100,10 +102,14 @@ const ERROR_TAXONOMY: Array<{ code: string; meaning: string }> = [
   { code: 'session_failed', meaning: 'host misconfiguration or upstream failure' },
 ];
 
+const localVoiceTest = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
+  && new URLSearchParams(window.location.search).get('voiceTest') === 'local';
 const envDefaults = {
   publishableKey: import.meta.env.VITE_UVA_PUBLISHABLE_KEY ?? '',
-  sessionEndpoint: import.meta.env.VITE_UVA_SESSION_ENDPOINT || 'http://localhost:3100/api/voice/session',
-  refreshEndpoint: import.meta.env.VITE_UVA_REFRESH_ENDPOINT ?? '',
+  sessionEndpoint: localVoiceTest ? 'http://localhost:13100/api/voice/session'
+    : import.meta.env.VITE_UVA_SESSION_ENDPOINT || 'http://localhost:3100/api/voice/session',
+  refreshEndpoint: localVoiceTest ? 'http://localhost:13100/api/voice/session/refresh'
+    : import.meta.env.VITE_UVA_REFRESH_ENDPOINT ?? '',
   agentId: import.meta.env.VITE_UVA_AGENT_ID ?? '',
   fetchTimeoutMs: Number(import.meta.env.VITE_UVA_FETCH_TIMEOUT_MS || 15000),
 };
@@ -172,19 +178,26 @@ appRoot.innerHTML = `
   <main class="shell">
     <header class="header">
       <p class="brand">AwaazLabs UVA</p>
-      <p class="eyebrow">Developer playground</p>
-      <h1>A conversation starts here<span class="accent">.</span></h1>
-      <p>Configure your agent, shape its instructions, and hear it in action.</p>
+      <p class="eyebrow">Voice workspace / Playground</p>
+      <h1>Your agents. Ready to talk<span class="accent">.</span></h1>
+      <p>Create a voice, connect your numbers, and bring every conversation together.</p>
       <p id="package-badge" class="package-badge">${escapeHtml(state.packageLabel)}</p>
     </header>
-    <nav class="workspace-nav" aria-label="Playground sections"><a href="#session-section">Voice session</a><a href="#prompt-section">Agent prompt</a><a href="#transcript-section">Transcript</a><a href="#diagnostics-section">Diagnostics</a><a href="#inbound-root">Inbound settings</a><a href="#telephony-root">Telephony</a></nav>
+    <nav class="workspace-nav" aria-label="Playground sections"><a href="#agents-section">Agents</a><a href="#session-section">Web conversation</a><a href="#inbound-root">Inbound calls</a><a href="#telephony-root">Outbound & numbers</a><a href="#transcript-section">Transcript</a><a href="#diagnostics-section">Diagnostics</a></nav>
+
+    <section class="panel agent-library" id="agents-section" aria-labelledby="agents-heading">
+      <div class="section-heading"><div><p class="eyebrow">01 / Your team</p><h2 id="agents-heading">Voice agents <span id="agent-count" class="count-badge">0</span></h2><p class="hint">Choose an agent to edit its pipeline and instructions.</p></div><button id="create-agent-btn" type="button" class="primary" disabled>+ Create agent</button></div>
+      <div id="agent-library-list" class="agent-library-grid" aria-label="Your voice agents"><p class="hint">Loading your agents…</p></div>
+      <p id="agent-library-feedback" class="feedback" role="status" aria-live="polite"></p>
+    </section>
 
     <div class="workspace-grid">
     <section class="panel session-panel" id="session-section">
-      <div class="section-heading"><div><p class="eyebrow">01 / Configuration</p><h2>Voice session</h2></div><button id="reload-agents-btn" type="button">Refresh agents</button></div>
+      <div class="section-heading"><div><p class="eyebrow">02 / Configure & test</p><h2>Web conversation</h2></div><button id="reload-agents-btn" type="button">Refresh agents</button></div>
       <form id="voice-form" class="form" novalidate>
         <p id="services-status" class="hint" role="status">Preparing backend services… First launch can take a moment.</p>
         <label>Test agent<select id="agent-picker"><option value="">Loading agents…</option></select></label>
+        <div id="selected-provider-cards" aria-label="Selected agent saved providers"></div>
         <details class="connection-details"><summary>Connection settings</summary>
         <div class="session-grid">
           <label>
@@ -210,38 +223,12 @@ appRoot.innerHTML = `
         </div>
         </details>
 
-        <div class="pipeline-grid">
-          <label>
-            Language
-            <select id="agent-language" name="agentLanguage" disabled>
-              <option value="">Loading…</option>
-            </select>
-          </label>
-          <label>
-            STT
-            <select id="stt-provider" name="sttProvider" disabled>
-              <option value="">Loading…</option>
-            </select>
-          </label>
-          <label>
-            LLM
-            <select id="llm-provider" name="llmProvider" disabled>
-              <option value="">Loading…</option>
-            </select>
-          </label>
-          <label>
-            TTS
-            <select id="tts-provider" name="ttsProvider" disabled>
-              <option value="">Loading…</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="pipeline-grid model-grid">
-          <label>STT model<select id="stt-model" name="sttModel" disabled><option value="">Loading…</option></select></label>
-          <label>LLM model<select id="llm-model" name="llmModel" disabled><option value="">Loading…</option></select></label>
-          <label>Voice<select id="tts-voice" name="ttsVoiceId" disabled><option value="">Loading…</option></select></label>
-        </div>
+        <div class="pipeline-editor"><div class="editor-heading"><div><h3>Provider pipeline</h3><p class="hint">Speech in → reasoning → voice out</p></div><label>Language<select id="agent-language" name="agentLanguage" disabled><option value="">Loading…</option></select></label></div>
+        <div class="provider-editor-grid">
+          <fieldset><legend>01 · Listening / STT</legend><label>Provider<select id="stt-provider" name="sttProvider" disabled><option value="">Loading…</option></select></label><label>Model<select id="stt-model" name="sttModel" disabled><option value="">Loading…</option></select></label></fieldset>
+          <fieldset><legend>02 · Reasoning / LLM</legend><label>Provider<select id="llm-provider" name="llmProvider" disabled><option value="">Loading…</option></select></label><label>Model<select id="llm-model" name="llmModel" disabled><option value="">Loading…</option></select></label></fieldset>
+          <fieldset><legend>03 · Speaking / TTS</legend><label>Provider<select id="tts-provider" name="ttsProvider" disabled><option value="">Loading…</option></select></label><label>Voice<select id="tts-voice" name="ttsVoiceId" disabled><option value="">Loading…</option></select></label></fieldset>
+        </div></div>
 
         <p id="pipeline-summary" class="hint">Loading provider capabilities…</p>
         <p class="hint">Changes update the selected test agent for its next session.</p>
@@ -255,10 +242,6 @@ appRoot.innerHTML = `
         <p id="session-feedback" class="feedback" role="status" aria-live="polite">Select an agent and review its prompt before connecting.</p>
         <details class="connection-details"><summary>Test connection timeout</summary><p class="hint">Temporarily use an endpoint that never replies, then start a session to test the SDK timeout.</p><div class="actions"><button id="timeout-smoke-btn" type="button">Arm timeout test</button><button id="restore-endpoint-btn" type="button">Restore endpoint</button></div></details>
       </form>
-      <p class="hint">
-        Backend signs mint/refresh with HMAC and uses <code>@awaazlabs-uva/agents</code>
-        for provider capabilities + pipeline PATCH. Browser never holds the tenant secret.
-      </p>
     </section>
     <div id="prompt-root"></div>
     </div>
@@ -325,7 +308,7 @@ appRoot.innerHTML = `
       <button id="unlock-audio-btn" type="button">Unlock audio</button>
     </div>
 
-    <details class="telephony-disclosure" id="telephony-section"><summary>Phone calls & numbers / Telephony SDK</summary><div id="telephony-root"></div></details>
+    <section id="telephony-section"><div id="telephony-root"></div></section>
     <footer>Built with AwaazLabs UVA · Voice, Agents & Telephony SDKs</footer>
   </main>
 `;
@@ -371,6 +354,36 @@ const applyPipelineButton = requireEl<HTMLButtonElement>('#apply-pipeline-btn');
 const reloadAgentsButton = requireEl<HTMLButtonElement>('#reload-agents-btn');
 const sessionFeedback = requireEl<HTMLElement>('#session-feedback');
 const promptPanel = mountPromptPanel({ backendOrigin, getAgentId: () => agentIdInput.value, onBusyChange: () => render() });
+const agentCreator = mountAgentCreator({ backendOrigin, getCapabilities: () => capabilities,
+  onBusyChange: () => render(), onCreated: async record => {
+    agents.push(record); rememberAgentPipeline(record);
+    fillSelect(agentPicker, agents.map(item => ({ value: item.id, label: item.name || item.id })), record.id);
+    await changeAgent(record.id, true);
+    document.dispatchEvent(new Event('playground:agents-updated'));
+    requireEl<HTMLElement>('#agent-library-feedback').textContent = `${record.name || 'Agent'} created. Providers are saved and ready to use.`;
+  } });
+requireEl<HTMLButtonElement>('#create-agent-btn').addEventListener('click', () => {
+  if (promptPanel.isDirty() && !confirm('Create an agent and discard unsaved prompt changes when it is selected?')) return;
+  agentCreator.open();
+});
+document.addEventListener('playground:agent-saved', event => {
+  const updated = (event as CustomEvent<AgentRecord>).detail;
+  const previousPipeline = savedPipelines.get(updated.id);
+  let hasPipelineEdits = true;
+  try { hasPipelineEdits = JSON.stringify(selectedPipeline()) !== previousPipeline; } catch { /* keep unfinished choices */ }
+  agents = agents.map(record => record.id === updated.id ? { ...record, ...updated } : record);
+  rememberAgentPipeline(updated);
+  if (updated.id === agentIdInput.value && !sessionBusy && !pipelineBusy && !agent?.isConnected) {
+    if (!hasPipelineEdits && capabilities) {
+      languageSelect.value = updated.agent_language || languageSelect.value;
+      refillProvidersForLanguage(languageSelect.value, { preferredStt: updated.stt_provider, preferredLlm: updated.llm_provider, preferredTts: updated.tts_provider });
+      refillModels(updated); updatePipelineSummary();
+    }
+    if (!promptPanel.isDirty() && !promptPanel.isBusy()) void promptPanel.load();
+  }
+  renderAgentLibrary();
+  render();
+});
 document.querySelector('#telephony-section')!.insertAdjacentHTML('beforebegin', '<div id="inbound-root"></div>');
 mountInboundPanel({ backendOrigin });
 let selectedAgentId = agentIdInput.value;
@@ -403,6 +416,8 @@ async function applySelectedPipeline(agentId: string) {
   if (record) Object.assign(record, { agent_language: selection.agentLanguage, stt_provider: selection.sttProvider,
     stt_model: selection.sttModel, llm_provider: selection.llmProvider, llm_model: selection.llmModel,
     tts_provider: selection.ttsProvider, tts_voice_id: selection.ttsVoiceId });
+  renderAgentLibrary();
+  document.dispatchEvent(new Event('playground:agents-updated'));
   return result;
 }
 
@@ -435,8 +450,8 @@ function refillModels(preferred?: AgentRecord) {
   }
 }
 
-async function changeAgent(id: string) {
-  if (promptPanel.isDirty() && !confirm('Switch agents and discard unsaved prompt changes?')) {
+async function changeAgent(id: string, discardConfirmed = false) {
+  if (!discardConfirmed && promptPanel.isDirty() && !confirm('Switch agents and discard unsaved prompt changes?')) {
     agentIdInput.value = selectedAgentId;
     agentPicker.value = selectedAgentId;
     return;
@@ -452,6 +467,7 @@ async function changeAgent(id: string) {
     updatePipelineSummary();
   }
   await promptPanel.load();
+  renderAgentLibrary();
 }
 agentPicker.addEventListener('change', () => { void changeAgent(agentPicker.value); });
 agentIdInput.addEventListener('change', () => { void changeAgent(agentIdInput.value.trim()); });
@@ -676,14 +692,16 @@ void bootstrapPipelineControls();
 mountTelephonyPanel({
   backendOrigin,
   getAgentId: () => requireEl<HTMLInputElement>('#agent-id').value,
+  getAgents: () => agents,
 });
+const transcriptSection = requireEl<HTMLElement>('#transcript-section');
+transcriptSection.before(requireEl<HTMLElement>('#inbound-root'), requireEl<HTMLElement>('#telephony-section'));
 render();
 
 const navLinks = document.querySelectorAll<HTMLAnchorElement>('.workspace-nav a');
 navLinks.forEach(link => {
   if (link.hash === '#telephony-root') link.href = '#telephony-section';
   link.addEventListener('click', () => {
-    if (link.hash === '#telephony-section') requireEl<HTMLDetailsElement>('#telephony-section').open = true;
     navLinks.forEach(item => item.toggleAttribute('aria-current', item === link));
     link.setAttribute('aria-current', 'location');
   });
@@ -901,7 +919,10 @@ async function bootstrapPipelineControls(): Promise<void> {
       agents = payload.agents || [];
       savedPipelines.clear();
       agents.forEach(rememberAgentPipeline);
-      const id = agentIdInput.value.trim() || agents[0]?.id || '';
+      renderAgentLibrary();
+      document.dispatchEvent(new Event('playground:agents-updated'));
+      const configuredId = agentIdInput.value.trim();
+      const id = agents.some(item => item.id === configuredId) ? configuredId : agents[0]?.id || configuredId;
       fillSelect(agentPicker, [{ value: '', label: agents.length ? 'Choose an agent' : 'No agents available — enter an ID in connection settings' }, ...agents.map(item => ({ value: item.id, label: item.name || item.id }))], id);
       agentIdInput.value = id;
       selectedAgentId = id;
@@ -944,6 +965,7 @@ async function bootstrapPipelineControls(): Promise<void> {
     });
     refillModels(preferred);
     updatePipelineSummary();
+    renderAgentLibrary();
     pushDebug('info', 'Provider capabilities loaded', `${languages.length} language(s)`);
   } catch (error) {
     capabilities = null;
@@ -995,17 +1017,17 @@ function refillProvidersForLanguage(
 
   fillSelect(
     sttSelect,
-    sttKeys.map((value) => ({ value, label: value })),
+    sttKeys.map((value) => ({ value, label: providerName(value) })),
     pickPreferred(sttKeys, opts.keepCurrent ? sttSelect.value : '', opts.preferredStt),
   );
   fillSelect(
     llmSelect,
-    llmKeys.map((value) => ({ value, label: value })),
+    llmKeys.map((value) => ({ value, label: providerName(value) })),
     pickPreferred(llmKeys, opts.keepCurrent ? llmSelect.value : '', opts.preferredLlm),
   );
   fillSelect(
     ttsSelect,
-    ttsKeys.map((value) => ({ value, label: value })),
+    ttsKeys.map((value) => ({ value, label: providerName(value) })),
     pickPreferred(ttsKeys, opts.keepCurrent ? ttsSelect.value : '', opts.preferredTts),
   );
 
@@ -1137,9 +1159,18 @@ function renderError(error: unknown): void {
   render();
 }
 
+function renderAgentLibrary(): void {
+  requireEl<HTMLElement>('#agent-count').textContent = String(agents.length);
+  requireEl<HTMLElement>('#agent-library-list').innerHTML = agents.length ? agents.map(record => `<button type="button" class="agent-tile" data-agent="${escapeHtml(record.id)}" aria-pressed="${record.id === agentIdInput.value}"><span class="agent-tile-top"><span class="agent-avatar" aria-hidden="true">${escapeHtml((record.name || 'A').slice(0, 2).toUpperCase())}</span><span><strong>${escapeHtml(record.name || 'Untitled agent')}</strong><span class="agent-tile-language">${escapeHtml(capabilities?.languages[record.agent_language || '']?.label || record.agent_language || 'Language not set')}</span></span><span class="selection-dot" aria-hidden="true"></span></span><span class="agent-provider-row">${['stt', 'llm', 'tts'].map(key => `<span><small>${key.toUpperCase()}</small>${escapeHtml(providerName(record[`${key}_provider` as keyof AgentRecord]))}</span>`).join('')}</span></button>`).join('') : '<div class="empty-agents"><strong>Your next voice starts here</strong><p class="hint">Create your first agent with its own instructions and providers.</p></div>';
+  requireEl<HTMLElement>('#selected-provider-cards').innerHTML = providerCards(agents.find(record => record.id === agentIdInput.value));
+  document.querySelectorAll<HTMLButtonElement>('[data-agent]').forEach(button => button.addEventListener('click', () => { if (!button.disabled) void changeAgent(button.dataset.agent!); }));
+}
+
 function render(): void {
   const connected = !!agent?.isConnected;
   const locked = sessionBusy || connected || pipelineBusy;
+  requireEl<HTMLButtonElement>('#create-agent-btn').disabled = locked || bootstrapBusy || !capabilities || agentCreator?.isBusy() || promptPanel.isBusy();
+  document.querySelectorAll<HTMLButtonElement>('[data-agent]').forEach(button => { button.disabled = locked || bootstrapBusy || promptPanel.isBusy(); button.setAttribute('aria-pressed', String(button.dataset.agent === agentIdInput.value)); });
   connectButton.disabled = locked || bootstrapBusy || !servicesReady || promptPanel.isBusy() || promptPanel.isDirty();
   connectButton.textContent = sessionBusy ? (state.status === 'disconnecting' ? 'Ending session…' : 'Connecting…') : connected ? 'Session live' : 'Start conversation';
   disconnectButton.disabled = !connected || sessionBusy;

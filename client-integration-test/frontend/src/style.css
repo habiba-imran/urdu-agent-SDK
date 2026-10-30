@@ -133,3 +133,96 @@ footer { font-size: .7rem; text-align: center; color: var(--muted); padding: 14p
   button { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; } }
+
+/* Workspace: calm surfaces, visible pipelines, and task-focused call setup. */
+html { scroll-padding-top: 96px; }
+:root { --accent: #145b46; --radius: 14px; --soft: #f5f7f5; --line: #dce5df; --muted: #56675f; background: #f2f5f2; }
+[hidden] { display: none !important; }
+.shell { width: min(1440px, calc(100% - 80px)); padding-top: 28px; }
+.header { padding-bottom: 32px; }
+.brand { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 32px; font-size: 1.05rem; }
+.header h1 { font-size: clamp(1.8rem, 3.3vw, 2.65rem); }
+.header .package-badge { top: 0; font-size: .65rem; }
+.workspace-nav { position: sticky; top: 10px; z-index: 5; width: 100%; background: #e6ede7; padding: 5px; margin-bottom: 28px; box-shadow: 0 4px 15px #274b2510; }
+.workspace-nav a { flex: 1; text-align: center; padding: 11px 12px; }
+.section-heading h2 { font-size: 1.15rem; }
+.section-heading .hint { margin-top: 5px; }
+.agent-library { padding: 26px; }
+.count-badge { display: inline-block; background: #edf2ed; color: #52685b; font: 600 .7rem 'Segoe UI', sans-serif; border-radius: 6px; padding: 4px 8px; vertical-align: 2px; margin-left: 5px; }
+.agent-library-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; max-height: 440px; overflow: auto; padding: 3px; }
+.agent-tile { display: grid; gap: 24px; border-radius: 12px; padding: 20px; text-align: left; background: #fff; border: 1px solid #d6e0d9; }
+.agent-tile[aria-pressed=true] { background: #f0f7f2; border-color: #4f8b6c; box-shadow: 0 0 0 1px #4f8b6c; }
+.agent-tile-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-tile-top > span:nth-child(2) { min-width: 0; flex: 1; }
+.agent-tile strong { display: block; font-size: .9rem; overflow-wrap: anywhere; }
+.agent-avatar { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 12px; background: #e5efe7; color: var(--accent); font: 700 .8rem 'Segoe UI', sans-serif; border: 1px solid #d3e3d6; }
+.agent-tile-language { display: block; color: var(--muted); font-weight: 400; font-size: .7rem; margin-top: 3px; }
+.selection-dot { flex: none; width: 14px; height: 14px; border: 1px solid #acbdb1; border-radius: 50%; }
+.agent-tile[aria-pressed=true] .selection-dot { background: var(--accent); border: 3px solid #fff; outline: 1px solid var(--accent); }
+.agent-provider-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agent-provider-row > span { display: grid; gap: 3px; font-size: .7rem; font-weight: 600; overflow-wrap: anywhere; }
+.agent-provider-row small { color: var(--muted); font-size: .58rem; font-weight: 500; letter-spacing: .08em; }
+.empty-agents { grid-column: 1 / -1; text-align: center; padding: 35px; background: var(--soft); border: 1px dashed #bdcfc1; border-radius: 12px; }
+#agent-library-feedback:empty { display: none; }
+#agent-library-feedback { margin-top: 14px; }
+.workspace-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; gap: 22px; }
+.workspace-grid .panel { height: auto; }
+.provider-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 4px 0; }
+.provider-card { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 14px; border: 1px solid #dce5df; border-radius: 10px; background: #f8faf8; }
+.provider-card-heading { display: flex; align-items: center; gap: 5px; font-size: .62rem; color: #58695f; }
+.provider-symbol { font-size: 1rem; line-height: 1; color: #3b7759; }
+.provider-layer { margin-left: auto; font-size: .52rem; letter-spacing: .04em; padding: 2px 4px; border-radius: 3px; background: #e8efe9; }
+.provider-card strong { font-size: .8rem; overflow-wrap: anywhere; }
+.provider-model { color: var(--muted); font: .65rem/1.5 Consolas, monospace; overflow-wrap: anywhere; }
+.provider-card[data-layer=llm] { background: #f7f7fb; border-color: #e2e1ed; }
+.provider-card[data-layer=llm] .provider-layer { background: #eae8f3; color: #605178; }
+.provider-card[data-layer=tts] { background: #fbf8f3; border-color: #eae3d8; }
+.provider-card[data-layer=tts] .provider-layer { background: #f1e9da; color: #77603b; }
+.editor-heading { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 14px; }
+.editor-heading h3 { font-size: .85rem; margin: 0 0 3px; }
+.editor-heading > label { max-width: 180px; }
+.pipeline-editor { border-top: 1px solid var(--line); padding-top: 18px; }
+.provider-editor-grid, .creator-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.provider-editor-grid fieldset, .creator-providers fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 9px; margin: 0; padding: 12px; display: grid; gap: 12px; }
+.provider-editor-grid legend, .creator-providers legend { padding: 0 4px; font-size: .62rem; color: var(--muted); font-weight: 600; }
+.provider-editor-grid select { font-size: .73rem; padding: 9px 7px; }
+.session-panel .form { gap: 16px; }
+.session-panel .actions { padding-top: 4px; }
+.prompt-panel textarea { min-height: 230px; background: #fbfcfa; }
+.call-selection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.inbound-panel { padding: 28px; gap: 18px; }
+.inbound-panel .section-heading { margin-bottom: 0; }
+.route-strip { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid #dedfcf; border-radius: 10px; background: #fbfaf4; }
+.route-strip .hint { flex: 1; }
+.route-indicator { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #987123; }
+.route-strip[data-ready=true] { background: #eff7f0; border-color: #c5ddcd; }
+.route-strip[data-ready=true] .route-indicator { background: #247344; }
+.route-strip button { flex: none; }
+.inbound-provider-details, .number-management { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: #fbfcfa; }
+.inbound-provider-details[open] { display: grid; gap: 16px; }
+.inbound-provider-details > .pipeline-grid { margin-top: 14px; }
+.inbound-provider-details > label, .inbound-provider-details > button, .inbound-provider-details > p { margin-top: 14px; }
+.telephony-panel { margin: 0 0 20px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+.telephony-panel > .number-management { margin-top: 20px; }
+.number-management > .hint, .number-management .actions { margin-top: 14px; }
+.outbound-call-layout { margin: 24px 0; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: #fcfdfb; }
+.outbound-call-layout .provider-cards { margin: 16px 0; }
+.outbound-call-layout > div > label { margin-top: 20px; }
+.outbound-call-layout .actions { margin-top: 14px; }
+.outbound-call-layout > div > .hint { margin-top: 10px; }
+.outbound-call-layout #tel-outbound-btn { min-width: 200px; }
+.agent-dialog { width: min(800px, calc(100% - 32px)); max-height: calc(100dvh - 48px); padding: 30px; border: 1px solid var(--line); border-radius: 18px; background: #fff; color: #202e2a; box-shadow: 0 24px 100px #122b2440; overflow: auto; }
+.agent-dialog::backdrop { background: #132e27a6; backdrop-filter: blur(3px); }
+.agent-dialog h2 { margin: 0; font-size: 1.4rem; letter-spacing: -.04em; }
+.agent-dialog #create-close { font-size: 1.2rem; min-width: 40px; padding: 0; }
+.creator-fields { display: grid; gap: 18px; margin-top: 22px; }
+.creator-fields textarea { min-height: 125px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--line); padding-top: 20px; margin-top: 20px; }
+.agent-dialog .feedback { margin-top: 18px; }
+#create-review { margin-top: 24px; }
+#create-review h3 { margin: 5px 0; font-size: 1.2rem; }
+#create-review .provider-cards { margin: 20px 0; }
+.review-prompt { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 18px; background: var(--soft); border: 1px solid var(--line); border-radius: 9px; font-size: .82rem; }
+@media (max-width: 1150px) { .workspace-grid { grid-template-columns: 1fr; } .route-strip { flex-wrap: wrap; } .route-strip .hint { flex-basis: 80%; } }
+@media (max-width: 850px) { html { scroll-padding-top: 24px; } .shell { width: calc(100% - 36px); } .agent-library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workspace-nav { position: static; } .workspace-nav a { flex: 1 1 30%; } }
+@media (max-width: 550px) { .shell { width: calc(100% - 24px); padding-top: 18px; } .panel, .agent-library, .inbound-panel, .telephony-panel { padding: 20px 16px; } .agent-library-grid, .call-selection-grid, .creator-providers, .provider-editor-grid { grid-template-columns: 1fr; } .provider-cards { gap: 6px; } .provider-card { padding: 10px 8px; } .provider-card-heading { font-size: .55rem; } .provider-symbol, .provider-layer { display: none; } .provider-card strong { font-size: .7rem; } .provider-model { font-size: .6rem; } .agent-dialog { padding: 22px 18px; } .editor-heading { align-items: start; flex-direction: column; } .editor-heading > label { max-width: none; width: 100%; } .outbound-call-layout { padding: 16px; } .route-strip button { width: 100%; } }

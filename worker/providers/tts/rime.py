@@ -45,4 +45,13 @@ def build(
     if tokenizer is not None:
         kwargs["tokenizer"] = tokenizer
     allowed = set(inspect.signature(rime.TTS).parameters)
-    return rime.TTS(**{k: v for k, v in kwargs.items() if k in allowed})
+    target = rime.TTS
+    if isinstance(target, type):
+        from .transport_warmup import TransportWarmupMixin
+        class PreparedRime(TransportWarmupMixin, rime.TTS):
+            async def _prepare_voice_transport(self):
+                if self._use_websocket:
+                    connection = await self._pool.get(timeout=4)
+                    self._pool.put(connection)
+        target = PreparedRime
+    return target(**{k: v for k, v in kwargs.items() if k in allowed})

@@ -1,5 +1,9 @@
 # Independent client integration test
 
+For the coordinated Claude latency, interruption and speech-delivery test build,
+use the [local test launcher and current verification notes](../docs/VOICE_EXPERIENCE_TESTING_2026_10_31.md).
+The explicit local-test URL uses an isolated worker; normal hosted and phone routes stay configured as before.
+
 This folder is a standalone client: copy the folder, including `packages/`, outside the platform repository and run it there. It uses installed SDK artifacts and public platform endpoints through its own host backend. It does not import worker, dashboard, database, or SDK source files.
 
 ## SDK distribution
@@ -64,13 +68,15 @@ npm run dev:frontend
 
 Open `http://localhost:5174`. Host health: `http://localhost:3100/healthz`.
 
+The **Voice agents** library shows each agent's saved providers. Use **Create agent** to enter its name, instructions, opening behavior, language, providers, models, and voice. **Review agent** shows the final configuration; only **Confirm & create agent** writes it through the backend Agents SDK. The new agent is selected automatically and appears in both phone agent pickers. If creation times out, refresh agents before trying again to avoid duplicates.
+
 Choose a **dedicated test agent** from the agent picker. Its saved prompt appears beside the session controls. Edit the prompt, first speaker, and optional opening line, then use **Save prompt**; **Reset changes**, **Reload**, and **Copy prompt** act on that editor. Unsaved edits block connecting. Saved instructions apply to new sessions, including future phone calls using that agent. Prompt and greeting limits follow the platform (24,000 and 500 characters).
 
 Choose language, STT/LLM/TTS providers, STT/LLM models, and voice from the live platform capabilities. **Apply pipeline** validates and saves the selection. **Start conversation** saves local pipeline edits before minting; unchanged selections skip that network step and use the agent's current server configuration. Refresh agents to reload changes made in another editor. Browsing the controls and loading the page do not update the agent. English uses the existing English providers; Pakistani Urdu and Urdu-English mixed tests use the existing Urdu route. There is no separate mixed-language API enum. Gladia's existing single-language limitation remains.
 
 The page checks the deployed control plane and tenant API before loading the picker and enabling **Start conversation**. Initial backend preparation may take tens of seconds when the services are asleep; its status is visible above the controls. This checks backend health, not worker registration or provider readiness. After a minute of inactivity the next connect rechecks backend health. No session is minted and no agent dispatched during page preparation.
 
-Connection settings contain the public key, editable agent ID, session/refresh endpoints, and timeout. When the frontend key is empty, the demo loads the backend's public key. Controls show loading states and lock conflicting edits during a session. Transcript controls copy or download the conversation. Diagnostics retain SDK errors, per-turn timing, playback readiness, and copy/clear actions. The expandable Telephony panel disables repeat actions while requests are pending.
+Connection settings contain the public key, editable agent ID, session/refresh endpoints, and timeout. When the frontend key is empty, the demo loads the backend's public key. Controls show loading states and lock conflicting edits during a session. Transcript controls copy or download the conversation. Diagnostics retain SDK errors, per-turn timing, playback readiness, and copy/clear actions. Phone setup disables repeat actions while requests are pending. Connection, sync, preparation, import, and purchase tools are under **Connection & number management**.
 
 Use **Start conversation**, grant microphone access, and click **Unlock audio** if blocked. **Mute mic** toggles the microphone and **End session** disconnects. The page reports room connection and playback readiness separately. Metrics are worker/SDK diagnostics; active-speaker signals and TTS TTFB do not prove caller-acoustic FUAW.
 
@@ -80,9 +86,11 @@ See [the latency fix verification](LATENCY_FIX_VERIFICATION_2026-10-20.md) for c
 
 ## Phone testing
 
-Use **Inbound call settings** above the Telephony panel, then **Refresh inbound settings**. Choose the number to load its assigned agent's stored language, STT, LLM, TTS, models and voice. **Save for future inbound calls** validates against live capabilities, updates that assigned agent through the Agents SDK, and reads it back before confirming success. These settings persist across calls; any other sessions using that same agent also receive them. Active calls retain their existing configuration. Refresh this panel after changes made elsewhere, and refresh the browser agent picker before using it with that agent again.
+In **Inbound calls**, choose a managed number and its answering agent. The three provider cards preview that agent's saved pipeline. **Save agent & enable routing** saves the assignment and configures routing through the existing Telephony SDK operation. Selecting an agent alone does not change routing. Expand **Edit this agent's providers & voice** for language, models, voices, persona, and call duration. **Save for future inbound calls** validates and reads back the number's assigned agent. Provider changes also refresh the other agent summaries. These settings affect future calls using the same agent; active calls keep their settings.
 
-Allow 30 seconds after saving before the next call because the current worker caches agent configuration for up to 30 seconds. This panel uses the demo tenant's existing backend credentials. It does not move a phone number or alter Telnyx/LiveKit dispatch rules. You can save providers while routing is incomplete, but the panel explicitly reports that calls remain blocked. In English, Groq is an explicit alternative to Gemini when enabled by the live capability registry; provider availability and successful call audio still require live verification. The Urdu lane only offers the providers currently enabled for Urdu.
+Allow 30 seconds after provider changes before calling because the worker caches agent configuration. Both call panels use the demo tenant's existing backend credentials and preserve the platform's tenant routing checks. Provider saves leave routing unchanged; assignment saves automatically configure routing and report errors. You can save providers while routing is incomplete, but calls remain blocked. Provider availability and successful audio still require live verification.
+
+In **Outbound calls & numbers**, choose **Call from** and **Calling agent**, review its saved providers, and use **Save agent & enable routing** if the assignment is missing or differs. This also changes the answering agent for that number's incoming calls. Enter an E.164 destination and use **Place outbound call** once routing and outbound readiness pass. Use **Prepare outbound** in connection management if tenant infrastructure needs preparation.
 
 The Telephony panel uses the backend-only telephony SDK. Check connection/readiness and assigned numbers before testing an existing inbound/outbound route. Number purchase and outbound calls incur provider charges; this app performs them only when you use those controls. Verify status and end reason in the dashboard Sessions/Telephony views. GitHub publication does not apply database migrations or provision phone routes.
 

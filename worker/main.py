@@ -160,6 +160,10 @@ def build_agent(cfg: AgentConfig, *, humanization_runtime: Any = None) -> Any:
         cfg.agent_language
     )
     tools = session_tools(tools_base_url=cfg.tools_base_url)
+    if conversational and cfg.llm_provider == 'anthropic' and humanization_runtime is not None:
+        from worker.humanization.context_memory import memory_enabled, recall_tool
+        if memory_enabled():
+            tools.append(recall_tool(humanization_runtime.context_memory))
     tool_names = [getattr(t, "__name__", str(t)) for t in tools]
     dump_path = dump_session_prompt(
         agent_id=cfg.agent_id,
@@ -407,6 +411,12 @@ async def build_session(
         "activation_verified": False,
     }
     humanization_runtime.provider_snapshot["delivery"] = dict(diagnostic_snapshot["delivery"])
+    delivery = humanization_runtime.delivery_context
+    if delivery is not None:
+        controls = {'energy': delivery.capabilities.energy_control, 'intensity': delivery.capabilities.intensity_control}
+        diagnostic_snapshot['delivery']['prosody_controls'] = controls
+        humanization_runtime.provider_snapshot['delivery']['prosody_controls'] = dict(controls)
+    humanization_runtime.provider_snapshot['interaction']['tool_acknowledgements'] = humanization_runtime.tools.bridges_enabled
     # Freeze effective candidate identities for this session's diagnostic events.
     diagnostic_snapshot["humanization_policy_version"] = humanization_runtime.policy.effective_version
     diagnostic_snapshot["interaction"] = dict(humanization_runtime.provider_snapshot["interaction"])
@@ -526,6 +536,7 @@ async def build_session(
         llm_provider=cfg.llm_provider,
         agent_language=cfg.agent_language,
         stt_options=runtime_cfg.stt_options,
+        persona_enabled=bool(humanization_runtime.persona_profile and humanization_runtime.persona_profile.enabled),
     )
     logger.info(
         "turn_profile room=%s channel=%s stt=%s llm=%s lang=%s detector=%s "
@@ -578,6 +589,10 @@ async def build_session(
         "use_tts_aligned_transcript": False,
     }
     session_kwargs["conn_options"] = build_session_connect_options()
+    from worker.interruption import aec_warmup_duration
+    session_kwargs["aec_warmup_duration"] = aec_warmup_duration(audio_channel)
+    logger.info("interruption timing policy=local_vad_20261030 channel=%s min_duration=%.2f min_words=0 aec_warmup=%.2f",
+                audio_channel, turn_profile.interruption_min_duration, session_kwargs["aec_warmup_duration"])
     session_kwargs.update(_tts_agent_session_extra(cfg, AgentSession, logger))
 
     # Default interruption mode is local Silero VAD (UVA_INTERRUPTION_MODE=vad) so
@@ -1521,6 +1536,8 @@ async def _entrypoint(ctx: Any) -> None:  # ctx: livekit.agents.JobContext
         )
         wire_barge_in_flush(session_obj, _opening_logger, audio_channel=channel)
         wire_interruption_tts_prewarm(session_obj)
+        from worker.interruption import wire_interruption_output_stop
+        wire_interruption_output_stop(session_obj)
         from worker.session_opening import bind_opening_transport
         from worker.provider_retries import wire_provider_failure
         bind_opening_transport(session_obj, ctx.room, channel)

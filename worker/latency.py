@@ -72,11 +72,12 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
     # resume_false_interruption is OFF for WebRTC too: laptop speakers → mic echo still
     # trips Silero; pause/resume then flickers audio and can wedge playout
     # (``SegmentSynchronizerImpl.on_playback_started called after start_fut is set``).
-    # min_duration balances snappy barge-in vs echo chops (was 0.75 — felt sluggish).
+    # Keep a sustained-speech gate without waiting for provider transcription.
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": True,
-        "min_duration": 0.65,
+        "min_duration": 0.35,
+        "min_words": 0,
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.6,
     },
@@ -92,7 +93,7 @@ TURN_HANDLING_OPTIONS: dict[str, Any] = {
 
 # PSTN/SIP: no browser AEC — same false-interruption resume hazard as WebRTC speakers.
 # Keep barge-in enabled; do not discard caller audio after an intentional interrupt.
-# Slightly lower min_duration than WebRTC (force barge flush helps on PSTN).
+# Slightly lower sustained-speech gate than WebRTC; native interruption owns acceptance.
 # Preemptive on telephony is re-enabled for non-Groq LLMs in build_turn_profile
 # (hides Gemini TTFT); Groq stays off to protect free-tier TPM.
 TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
@@ -100,7 +101,8 @@ TELEPHONY_TURN_HANDLING_OPTIONS: dict[str, Any] = {
     "interruption": {
         "enabled": True,
         "discard_audio_if_uninterruptible": False,
-        "min_duration": 0.55,
+        "min_duration": 0.30,
+        "min_words": 0,
         "resume_false_interruption": False,
         "false_interruption_timeout": 0.6,
     },
@@ -319,8 +321,8 @@ def _force_barge_in_flush_enabled(audio_channel: str) -> bool:
 
     WebRTC default **off**: laptop/headset mics routinely trip Silero without an STT
     transcript, which chops replies mid-sentence and leaves dead air (nothing to answer).
-    LiveKit native interruption (``min_duration`` + STT turn commit) still barge-in when
-    the caller actually speaks, then ``generate_reply`` runs on that transcript.
+    LiveKit native interruption uses sustained VAD (``min_duration``) with a
+    transcript fallback; stopping audio does not have to wait for turn commitment.
 
     Telephony also defaults **off**: bare VAD echo/noise must not destroy a
     reply before native interruption has confirmed sustained caller speech.
@@ -343,13 +345,16 @@ def wire_barge_in_flush(
 ) -> None:
     """Optionally force-cancel in-flight LLM/TTS when the user speaks over the agent (UVA-13).
 
-    On WebRTC, prefer LiveKit native interruption + STT turn commit so false VAD
-    spikes cannot kill a reply with no user transcript to respond to.
+    Prefer the native sustained-speech gate and transcript fallback over force
+    cancellation at the first bare-VAD onset.
     """
     from worker.humanization.coordinator import overlap_enabled
     # Candidate tolerance uses native pause/resume plus transcript takeover; a
     # forced bare-VAD cancellation would destroy the paused generation first.
-    force_enabled = _force_barge_in_flush_enabled(audio_channel) and not overlap_enabled()
+    options = getattr(session, 'options', None)
+    interruption_options = getattr(options, 'interruption', None)
+    native_resume = isinstance(interruption_options, dict) and interruption_options.get('resume_false_interruption') is True
+    force_enabled = _force_barge_in_flush_enabled(audio_channel) and not (overlap_enabled() or native_resume)
     agent_state: dict[str, str | None] = {"current": None}
 
     def _on_agent_state(ev: Any) -> None:
@@ -369,7 +374,7 @@ def wire_barge_in_flush(
         if not force_enabled:
             logger.info(
                 "barge-in: VAD speaking during agent speech — force flush off "
-                "(channel=%s); native interrupt waits for real STT turn",
+                "(channel=%s); native sustained-speech/transcript handling active",
                 audio_channel,
             )
             return

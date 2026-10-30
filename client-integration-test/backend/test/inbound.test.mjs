@@ -89,6 +89,14 @@ test('unsupported model is rejected before writes', async t => {
   assert.equal((await save({ ...selection, llmModel: 'wrong-model' })).status, 422);
   assert.equal(writes.length, 0);
 });
+
+test('stale inbound editor cannot change providers on a newly assigned agent', async t => {
+  const { save, writes } = await host(t);
+  const response = await save({ ...selection, expectedAgentId: 'previous-agent' });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, 'inbound_assignment_changed');
+  assert.equal(writes.length, 0);
+});
 for (const [options, code, status] of [
   [{ missing: true }, 'inbound_agent_missing', 404],
   [{ stale: true }, 'inbound_save_unverified', 502],

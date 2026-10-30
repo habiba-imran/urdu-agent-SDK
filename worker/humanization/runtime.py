@@ -59,7 +59,8 @@ class HumanizationRuntime:
         self.coordinator = TurnCoordinator()
         from .coordinator import overlap_enabled
         from .delivery.renderers import LanguageProfile, ChannelProfile
-        self.overlap_enabled = overlap_enabled()
+        persona_enabled = bool(persona_profile and persona_profile.enabled)
+        self.overlap_enabled = overlap_enabled(persona_enabled=persona_enabled)
         self.language_profile = LanguageProfile(language)
         self.channel_profile = ChannelProfile(channel)
         self.provider_snapshot["interaction"] = {
@@ -75,7 +76,12 @@ class HumanizationRuntime:
         self.last_speech_handle = None
         self.playback_evidence = {}
         self.heard_items = {}
-        self.tools = ToolOrchestrator(self)  # spoken bridges OFF until listening gate
+        from .context_memory import ConversationMemory
+        self.context_memory = ConversationMemory()
+        import os
+        ack_setting = os.getenv('UVA_TOOL_ACKNOWLEDGEMENTS')
+        acknowledgements = persona_enabled if ack_setting is None else ack_setting.strip().lower() in {'1', 'true', 'on', 'yes'}
+        self.tools = ToolOrchestrator(self, bridges_enabled=acknowledgements)
         self.semantic_revision = 0
         self.offered_slots: set[str] = set()
         self._understood_turns: set[str] = set()
@@ -201,6 +207,9 @@ class HumanizationRuntime:
         opener = re.match(r"^(sure thing|absolutely|of course|sure|got it|okay|certainly)\b", plain)
         with self._lock:
             recent = self._state.recent_behavior_state
+            if re.search(r"\b(?:checking|looking (?:it|that) up|let me check)\b|تفصیل (?:دیکھ|چیک)", plain):
+                import time
+                recent.phrase_at['TOOL_ACK_CHECK'] = time.monotonic()
             recent.opening_phrases.append(opener.group(1) if opener else "direct")
             del recent.opening_phrases[:-4]
             recent.question_streak = recent.question_streak + 1 if plain.endswith(("?", "\u061f")) else 0
@@ -245,6 +254,7 @@ class HumanizationRuntime:
 
     def attach_session(self, session: Any) -> None:
         """Public AgentSession events; no raw transcript is copied into state."""
+        self._session = session
         def on_item(ev: Any) -> None:
             item = getattr(ev, "item", None)
             role = getattr(item, "role", None)

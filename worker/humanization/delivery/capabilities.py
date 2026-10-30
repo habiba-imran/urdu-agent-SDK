@@ -32,6 +32,8 @@ class ProviderCapabilities:
     fast_cancellation: bool = False  # caller-side stop latency is not verified
     native_output_formats: tuple[str, ...] = ()
     live_verified: bool = False
+    energy_control: str = 'wording'
+    intensity_control: str = 'wording'
 
 
 def effective_options(provider: str, voice: str, language: str, options: dict, channel: str) -> dict:
@@ -104,6 +106,8 @@ def resolve_capabilities(provider: str, effective: dict) -> ProviderCapabilities
         )),
         emotion=sonic and effective.get("language", "en").startswith("en"),
         speed=sonic or rime_speed or eleven_speed, pause=sonic,
+        energy_control='volume_and_speed' if sonic else 'speed' if rime_speed or eleven_speed else 'wording',
+        intensity_control='stability' if eleven_speed else 'wording',
         # Soft laughter is deliberately omitted until lane listening verifies it.
         pronunciation=pronunciation,
         native_output_formats=(

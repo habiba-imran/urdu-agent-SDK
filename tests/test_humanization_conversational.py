@@ -225,7 +225,7 @@ def test_concern_and_critical_delivery_are_supported_without_fabricated_tags(pro
         assert result.provider_options["speed"] < ctx.effective["speed"]
     elif provider == "elevenlabs":
         assert result.provider_options["voice_settings"]["speed"] == .9
-        assert "stability" not in result.provider_options["voice_settings"]
+        assert result.provider_options["voice_settings"]["stability"] == .55
     else:
         assert result.provider_text == result.canonical_text
         assert "<" not in result.provider_text and "[" not in result.provider_text

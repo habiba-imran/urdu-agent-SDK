@@ -24,10 +24,18 @@ def build(
     from livekit.plugins import elevenlabs
 
     kwargs = resolve_elevenlabs_tts_kwargs(voice_id, language, tts_options)
+    target = elevenlabs.TTS
+    if isinstance(target, type):
+        from .transport_warmup import TransportWarmupMixin
+        class PreparedElevenLabs(TransportWarmupMixin, elevenlabs.TTS):
+            async def _prepare_voice_transport(self):
+                # Pinned plugin owns the lock, current connection and contexts.
+                await self._current_connection()
+        target = PreparedElevenLabs
     if tokenizer is not None:
         kwargs["word_tokenizer"] = tokenizer
     sig = inspect.signature(elevenlabs.TTS)
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-        return elevenlabs.TTS(**kwargs)
+        return target(**kwargs)
     allowed = set(sig.parameters)
-    return elevenlabs.TTS(**{k: v for k, v in kwargs.items() if k in allowed})
+    return target(**{k: v for k, v in kwargs.items() if k in allowed})

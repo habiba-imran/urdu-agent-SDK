@@ -64,10 +64,21 @@ def _build_llm(cfg: AgentRuntimeConfig):
 
 
 def _build_tts(cfg: AgentRuntimeConfig, *, tokenizer=None):
+    if tokenizer is None and cfg.llm_provider == 'anthropic' and cfg.tts_provider in {'cartesia', 'rime', 'elevenlabs'}:
+        from worker.providers.llm.claude_cache import claude_latency_enabled
+        if claude_latency_enabled():
+            from worker.humanization.chunk_latency import ClaudeSentenceTokenizer
+            tokenizer = ClaudeSentenceTokenizer(cfg.tts_provider)
     if cfg.tts_provider == "uplift":
         from .tts.uplift import build
 
-        return build(cfg.tts_voice_id)
+        provider = build(cfg.tts_voice_id)
+        if cfg.llm_provider == 'anthropic' and getattr(getattr(provider, 'capabilities', None), 'streaming', False):
+            from worker.providers.llm.claude_cache import claude_latency_enabled
+            if claude_latency_enabled():
+                from .tts.claude_uplift_stream import ClaudeUpliftStreamAdapter
+                return ClaudeUpliftStreamAdapter(provider)
+        return provider
     if cfg.tts_provider == "cartesia":
         from .tts.cartesia import build
 

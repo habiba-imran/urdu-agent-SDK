@@ -72,6 +72,7 @@ def fake_plugin(monkeypatch):
 
         def __init__(self, **kwargs):
             self.limits = kwargs.get("limits")
+            self.http2 = kwargs.get('http2')
 
     sdk.DefaultAsyncHttpxClient = _FakeHttpxClient
 
@@ -227,6 +228,15 @@ def test_sync_sdk_prewarm_shares_pending_task_and_close_cancels_it(fake_plugin):
 def test_client_disables_sdk_retries_so_they_cannot_stack_in_the_watchdog(fake_plugin):
     adapter.build("claude-opus-5-5")
     assert _FakeAsyncAnthropic.instances[0].ctor_kwargs["max_retries"] == 0
+
+
+def test_claude_http2_transport_has_an_explicit_rollback(fake_plugin, monkeypatch):
+    monkeypatch.delenv('UVA_CLAUDE_LOW_LATENCY', raising=False)
+    adapter.build('claude-haiku-5-5')
+    assert _FakeAsyncAnthropic.instances[-1].ctor_kwargs['http_client'].http2 is True
+    monkeypatch.setenv('UVA_CLAUDE_LOW_LATENCY', '0')
+    adapter.build('claude-haiku-5-5')
+    assert _FakeAsyncAnthropic.instances[-1].ctor_kwargs['http_client'].http2 is False
 
 
 def test_aclose_closes_both_the_plugin_and_our_client(fake_plugin):

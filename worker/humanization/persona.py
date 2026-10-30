@@ -82,6 +82,12 @@ def personalize(intent, profile: PersonaProfile | None, plan=None):
 def clause_intent(intent, text: str, profile: PersonaProfile | None):
     """Vary only on actual linguistic evidence, never random chunk position."""
     if profile and profile.enabled and intent.affect in {"warm", "neutral", "upbeat"} and intent.speech_mode == "normal":
+        folded = text.strip().casefold().replace('’', "'")
+        if folded.startswith(("i understand your concern", "i'm sorry this has", "that sounds frustrating", "آپ کی پریشانی")):
+            return replace(intent, affect='reassuring', energy='low', intensity='low',
+                           pace='slower' if profile.adaptive_pace else intent.pace)
+        if folded.startswith(("that's great news", "that is great news", "wonderful news", "یہ اچھی خبر")):
+            return replace(intent, affect='upbeat')
         if text.rstrip().endswith(("?", "\u061f")):
             return replace(intent, affect="curious")
     return intent

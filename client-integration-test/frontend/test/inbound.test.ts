@@ -61,3 +61,31 @@ test('failed save unlocks controls and requests readback before retrying', async
   await vi.waitFor(() => expect(el('status').textContent).toContain('Refresh to confirm'));
   expect(el<HTMLButtonElement>('refresh').disabled).toBe(false);
 });
+
+test('agent selection previews saved providers without writing and assignment enables routing explicitly', async () => {
+  await load();
+  const other = { ...agent, id: 'second', name: 'Second agent', llm_provider: 'groq', llm_model: 'fast' };
+  const setup = { tenantId: 'demo', numbers: [number], agents: [agent, other], capabilities: { languages: { en: { label: 'English',
+    stt: { deepgram: { models: ['nova-3'] } }, llm: { groq: { models: ['fast'] }, gemini: { models: ['flash'] } },
+    tts: { cartesia: { voices: ['voice'] } } } } } };
+  fetchMock.mockResolvedValueOnce(Response.json(setup));
+  el('refresh').click();
+  await vi.waitFor(() => expect(el<HTMLSelectElement>('agent-picker').options.length).toBe(3));
+  el<HTMLSelectElement>('agent-picker').value = 'second';
+  el('agent-picker').dispatchEvent(new Event('change'));
+  expect(el('provider-cards').textContent).toContain('Groq');
+  expect(el('provider-cards').textContent).toContain('fast');
+  expect(el<HTMLButtonElement>('save').disabled).toBe(true);
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  const assigned = { ...number, assigned_agent_id: 'second', routing_status: 'ready' };
+  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+    ? Response.json({ assigned, routing: { routing_status: 'ready' } })
+    : Response.json({ ...setup, numbers: [assigned] }));
+  el('assign').click(); el('assign').click();
+  await vi.waitFor(() => expect(el('status').textContent).toContain('routing verified'));
+  const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+  expect(writes).toHaveLength(1);
+  expect(writes[0][0]).toContain('/api/telephony/assign');
+  expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ numberId: 'phone', agentId: 'second' });
+  expect(el<HTMLSelectElement>('agent-picker').value).toBe('second');
+});

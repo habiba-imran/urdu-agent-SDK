@@ -153,16 +153,18 @@ class ToolOrchestrator:
         if self.runtime:
             self.runtime.observe("tool_started", tool_call_id=plan.tool_call_id)
         finished = False
+        bridge_handle = None
         async def bridge():
+            nonlocal bridge_handle
             await asyncio.sleep(self.delay)
             if not finished and self.current(plan) and self.bridge_callback:
-                if self.runtime and self.runtime.coordinator.state in {"USER_SPEAKING", "INTERRUPTION_CANDIDATE"}:
+                if self.runtime and self.runtime.coordinator.state in {"USER_SPEAKING", "INTERRUPTION_CANDIDATE", "AGENT_SPEAKING"}:
                     return
                 # say() queues interruptible audio; never await playout before HTTP.
                 text = (self.runtime.functional_phrase("TOOL_ACK_CHECK")
                         if self.runtime else "I'm checking that for you.")
                 if text:
-                    self.bridge_callback(text)
+                    bridge_handle = self.bridge_callback(text)
         waiting = None
         if self.bridges_enabled and plan.acknowledgement == "delayed":
             waiting = asyncio.create_task(bridge())
@@ -178,6 +180,12 @@ class ToolOrchestrator:
             result = failure(exc, write=not plan.may_cancel, dispatched=True, idempotency_key=idempotency_key)
         finally:
             finished = True
+            session = getattr(self.runtime, '_session', None)
+            if bridge_handle is not None and session is not None and session.current_speech is not bridge_handle:
+                # Retire only our queued receipt once its result is ready. Never
+                # interrupt an already playing receipt or the business operation.
+                if callable(getattr(bridge_handle, 'done', None)) and not bridge_handle.done():
+                    bridge_handle.interrupt()
             if waiting:
                 waiting.cancel()
                 # The cancelled scheduler has no I/O; consume completion without

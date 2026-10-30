@@ -146,8 +146,33 @@ def render(
     if delivery_intent.emphasis:
         degraded.append("emphasis")  # no fabricated vendor emphasis control
 
-    if caps.speed and delivery_intent.pace != "normal":
-        factor = .9 if delivery_intent.pace == "slower" else 1.05
+    # Subtle acoustic variation using controls supported by the pinned adapters.
+    # Explicit tenant speed stays authoritative unless adaptive pace is opted in.
+    energy_factor = ({'low': .97, 'medium': 1.0, 'high': 1.03}[delivery_intent.energy]
+                     if delivery_intent.pace == 'normal' else 1.0)
+    if caps.emotion and delivery_intent.energy != 'medium':
+        # Sonic SSML can vary energy within a continuous context without changing
+        # the selected voice, creating another client or increasing style latency.
+        if 'volume' not in options or delivery_intent.adaptive_pace:
+            volume = round(max(.5, min(2.0, float(effective.get('volume', 1)) * {'low': .96, 'high': 1.04}[delivery_intent.energy])), 3)
+            text = f'<volume ratio="{volume}"/> ' + text
+        else:
+            degraded.append('energy_saved_volume_preserved')
+    elif delivery_intent.energy != 'medium' and not caps.speed:
+        degraded.append('energy_from_wording')
+    if caps.provider == 'elevenlabs':
+        settings = options.setdefault('voice_settings', {})
+        may_adapt_voice = not (stored_options or {}).get('voice_settings') or delivery_intent.adaptive_pace
+        if may_adapt_voice:
+            settings.setdefault('style', 0)  # avoid style-amplification latency; saved settings still win
+        if may_adapt_voice and 'stability' not in settings:
+            # Wider range for explicit balanced expression, steadier for repairs.
+            settings['stability'] = .45 if delivery_intent.intensity in {'medium', 'high'} else .55
+    elif delivery_intent.intensity != 'low':
+        degraded.append('intensity_from_wording')
+
+    if caps.speed and (delivery_intent.pace != "normal" or delivery_intent.energy != 'medium'):
+        factor = (.9 if delivery_intent.pace == "slower" else 1.05 if delivery_intent.pace == 'slightly_fast' else 1.0) * energy_factor
         if caps.provider == "cartesia":
             if "speed" not in options or delivery_intent.adaptive_pace:
                 options["speed"] = max(.6, min(1.5, float(effective.get("speed", .95)) * factor))

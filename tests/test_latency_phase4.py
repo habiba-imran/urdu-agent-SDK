@@ -22,8 +22,8 @@ def test_turn_handling_barge_in_and_preemptive_partial_feed():
     interruption = TURN_HANDLING_OPTIONS["interruption"]
     assert interruption["enabled"] is True
     assert interruption["discard_audio_if_uninterruptible"] is True
-    # Longer than brief echo blips; keep intentional barge-in under ~1s.
-    assert 0.4 <= interruption["min_duration"] <= 0.9
+    # Longer than brief noise blips, without an extra half-second wait.
+    assert 0.3 <= interruption["min_duration"] <= 0.4
     assert interruption["resume_false_interruption"] is False
     preemptive = TURN_HANDLING_OPTIONS["preemptive_generation"]
     assert preemptive["enabled"] is True
@@ -46,7 +46,7 @@ def test_telephony_turn_handling_disables_false_interruption_resume():
     web = turn_handling_for_channel("webrtc")
     assert web["preemptive_generation"]["enabled"] is True
     assert web["interruption"]["resume_false_interruption"] is False
-    assert web["interruption"]["min_duration"] >= 0.4
+    assert web["interruption"]["min_duration"] == 0.35
     groq_web = turn_handling_for_channel("webrtc", llm_provider="groq")
     assert groq_web["preemptive_generation"]["enabled"] is False
 

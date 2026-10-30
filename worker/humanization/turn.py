@@ -149,6 +149,7 @@ def build_turn_profile(
     llm_provider: str | None = None,
     agent_language: str | None = None,
     stt_options: dict | None = None,
+    persona_enabled: bool = False,
 ) -> TurnProfile:
     """Build turn policy for the *effective* providers (after telephony remaps).
 
@@ -165,8 +166,10 @@ def build_turn_profile(
         **base["interruption"],
         "mode": interruption_mode(),
     }
+    from worker.interruption import interruption_min_duration
+    interruption["min_duration"] = interruption_min_duration(channel)
     from .coordinator import overlap_enabled
-    if overlap_enabled():
+    if overlap_enabled(persona_enabled=persona_enabled):
         interruption["resume_false_interruption"] = True
         interruption["false_interruption_timeout"] = .6
     preemptive = dict(base["preemptive_generation"])
@@ -232,7 +235,7 @@ def build_turn_profile(
         discard_audio_if_uninterruptible=bool(
             interruption.get("discard_audio_if_uninterruptible", True)
         ),
-        interruption_min_duration=float(interruption.get("min_duration", 0.65)),
+        interruption_min_duration=float(interruption["min_duration"]),
         preemptive_max_speech_duration=float(
             preemptive.get("max_speech_duration", 12.0)
         ),
@@ -260,6 +263,7 @@ def turn_profile_to_livekit_options(profile: TurnProfile) -> dict[str, Any]:
             "enabled": profile.interruption_enabled,
             "discard_audio_if_uninterruptible": profile.discard_audio_if_uninterruptible,
             "min_duration": profile.interruption_min_duration,
+            "min_words": 0,
             "resume_false_interruption": profile.resume_false_interruption,
             "false_interruption_timeout": profile.false_interruption_timeout,
             "mode": profile.interruption_mode,
